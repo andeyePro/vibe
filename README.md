@@ -19,7 +19,7 @@ That's it. On first run for a repo, `vibe` walks you through any setup it needs.
 
 ## Prerequisites
 
-- macOS (tested) / Linux (should work)
+- macOS (testing) / Linux (should work, if macOS does)
 - [ClaudeBox](https://github.com/RchGrav/claudebox) — `wget https://github.com/RchGrav/claudebox/releases/latest/download/claudebox.run && chmod +x claudebox.run && ./claudebox.run`
 - A Docker backend — [OrbStack](https://orbstack.dev) (recommended, lighter) or [Docker Desktop](https://www.docker.com/products/docker-desktop/)
 - [GitHub CLI](https://cli.github.com) (`gh`) — for repo creation and auth
