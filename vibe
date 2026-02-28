@@ -14,6 +14,7 @@ set -euo pipefail
 # ── Configuration ─────────────────────────────────────────────────────────────
 CONFIG_FILE="${VIBE_CONFIG:-$HOME/.vibe/config}"
 TOKENS_FILE="$HOME/.vibe/tokens"
+SKIPPED_FILE="$HOME/.vibe/skipped"
 
 if [ -f "$CONFIG_FILE" ]; then
   # shellcheck source=/dev/null
@@ -35,9 +36,25 @@ require() {
   fi
 }
 
+# Three-way prompt: returns "yes", "no", or "never"
+ask_yes_no_never() {
+  local prompt="$1"
+  local reply
+  while true; do
+    read -rp "  $prompt [Y/n/never]: " reply
+    reply="${reply:-y}"
+    case "${reply,,}" in
+      y|yes)   echo "yes";   return ;;
+      n|no)    echo "no";    return ;;
+      never)   echo "never"; return ;;
+      *) echo "  Please answer y, n, or never." ;;
+    esac
+  done
+}
+
 ask_yes_no() {
   local prompt="$1" default="${2:-y}"
-  local options="y/n"
+  local options
   [[ "$default" == "n" ]] && options="y/N" || options="Y/n"
   local reply
   read -rp "  $prompt [$options]: " reply
@@ -51,7 +68,6 @@ ask_yes_no() {
 detect_github_repo() {
   local url
   url=$(git remote get-url origin 2>/dev/null) || return 1
-  # Handle both https://github.com/owner/repo.git and git@github.com:owner/repo.git
   if [[ "$url" =~ github\.com[:/]([^/]+/[^/.]+)(\.git)?$ ]]; then
     echo "${BASH_REMATCH[1]}"
     return 0
@@ -59,20 +75,60 @@ detect_github_repo() {
   return 1
 }
 
-# Offer to create a new GitHub repo for the current directory
-create_github_repo() {
-  local suggested_name="$1"
+# Check if this workspace has been marked as "never ask about GitHub"
+is_github_skipped() {
+  [ -f "$SKIPPED_FILE" ] || return 1
+  grep -qxF "$WORKSPACE" "$SKIPPED_FILE"
+}
 
+# Mark this workspace so we never ask about GitHub again
+mark_github_skipped() {
+  mkdir -p "$(dirname "$SKIPPED_FILE")"
+  echo "$WORKSPACE" >> "$SKIPPED_FILE"
+  echo "  ✓ Got it — won't ask about GitHub for this project again."
+}
+
+# Ensure we have at least one commit (required before pushing to GitHub)
+ensure_initial_commit() {
+  if ! git rev-parse --git-dir &>/dev/null; then
+    echo "  Initialising git repository..."
+    git init
+  fi
+
+  if ! git rev-parse HEAD &>/dev/null 2>&1; then
+    # No commits yet — stage whatever exists (may be nothing) and commit
+    git add -A 2>/dev/null || true
+    if ! git commit -m "Initial commit" --allow-empty-message 2>/dev/null; then
+      git commit --allow-empty -m "Initial commit"
+    fi
+    echo "  ✓ Initial commit created."
+  fi
+}
+
+# Offer to create a new GitHub repo for the current workspace
+create_github_repo() {
   echo ""
   echo "  No GitHub repo found for this project."
   echo ""
 
-  ask_yes_no "Create a new GitHub repo?" y || { echo "  Skipping — launching without GitHub."; return; }
+  local answer
+  answer=$(ask_yes_no_never "Create a GitHub repo for it?")
+
+  case "$answer" in
+    never)
+      mark_github_skipped
+      return
+      ;;
+    no)
+      echo "  Skipping — launching without GitHub."
+      return
+      ;;
+  esac
 
   # Repo name
   local repo_name
-  read -rp "  Repo name [$suggested_name]: " repo_name
-  repo_name="${repo_name:-$suggested_name}"
+  read -rp "  Repo name [$PROJECT_NAME]: " repo_name
+  repo_name="${repo_name:-$PROJECT_NAME}"
 
   # Visibility
   local visibility="private"
@@ -82,23 +138,8 @@ create_github_repo() {
   local description=""
   read -rp "  Description (optional): " description
 
-  # Ensure we have a git repo
-  if ! git rev-parse --git-dir &>/dev/null; then
-    echo ""
-    echo "  Initialising git repository..."
-    git init
-    git add -A
-    git commit -m "Initial commit"
-  elif ! git rev-parse HEAD &>/dev/null; then
-    # Git repo exists but no commits yet
-    echo ""
-    echo "  No commits yet — creating an initial commit..."
-    git add -A
-    git commit -m "Initial commit" 2>/dev/null || {
-      echo "  Nothing to commit — creating an empty initial commit..."
-      git commit --allow-empty -m "Initial commit"
-    }
-  fi
+  # Make sure we have a git repo with at least one commit
+  ensure_initial_commit
 
   # Get GitHub username
   local gh_user
@@ -107,29 +148,27 @@ create_github_repo() {
     return
   }
 
-  echo ""
   echo "  Creating $visibility repo $gh_user/$repo_name on GitHub..."
 
   local create_args=("$repo_name" "--$visibility" "--source=." "--push")
   [ -n "$description" ] && create_args+=("--description=$description")
 
-  gh repo create "${create_args[@]}"
-
-  GITHUB_REPO="$gh_user/$repo_name"
-  echo ""
-  echo "  ✓ Repo created: https://github.com/$GITHUB_REPO"
+  if gh repo create "${create_args[@]}"; then
+    GITHUB_REPO="$gh_user/$repo_name"
+    echo "  ✓ Repo created: https://github.com/$GITHUB_REPO"
+  else
+    echo "  ✗ Repo creation failed — launching without GitHub."
+  fi
 }
 
 # ── Token helpers ─────────────────────────────────────────────────────────────
 
-# Look up saved token for a repo
 lookup_token() {
   local repo="$1"
   [ -f "$TOKENS_FILE" ] || return 0
   grep "^${repo}=" "$TOKENS_FILE" 2>/dev/null | cut -d= -f2 || true
 }
 
-# Save a token for a repo (replaces existing entry)
 save_token() {
   local repo="$1" token="$2"
   mkdir -p "$(dirname "$TOKENS_FILE")"
@@ -142,7 +181,6 @@ save_token() {
   chmod 600 "$TOKENS_FILE"
 }
 
-# Interactive token setup — walks the user through creating a fine-grained PAT
 setup_token() {
   local repo="$1"
 
@@ -228,9 +266,9 @@ GITHUB_TOKEN=""
 GITHUB_REPO=""
 cd "$WORKSPACE"
 
-GITHUB_REPO=$(detect_github_repo || true)
-
-if [ -n "$GITHUB_REPO" ]; then
+if is_github_skipped; then
+  : # silently skip — user said never
+elif GITHUB_REPO=$(detect_github_repo); then
   # Existing GitHub repo — look up or create token
   GITHUB_TOKEN=$(lookup_token "$GITHUB_REPO")
   if [ -z "$GITHUB_TOKEN" ]; then
@@ -238,8 +276,8 @@ if [ -n "$GITHUB_REPO" ]; then
   fi
 else
   # No GitHub remote — offer to create one
-  create_github_repo "$PROJECT_NAME"
-  # If repo was created, now set up its token
+  create_github_repo
+  # If a repo was just created, set up its token
   if [ -n "$GITHUB_REPO" ]; then
     setup_token "$GITHUB_REPO"
   fi
