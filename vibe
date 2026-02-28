@@ -255,10 +255,11 @@ fi
 # ── Checks ────────────────────────────────────────────────────────────────────
 require claudebox "Install from: https://github.com/RchGrav/claudebox"
 
-if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-  echo "  ✗ ANTHROPIC_API_KEY is not set."
-  echo "    Add this to your ~/.zshrc:  export ANTHROPIC_API_KEY=sk-ant-..."
-  exit 1
+# Warn if API key is set — subscription users don't need it and it overrides OAuth
+if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+  echo "  ⚠  ANTHROPIC_API_KEY is set — Claude Code will bill against your API credits."
+  echo "     Unset it to use your Pro/Max subscription instead."
+  echo ""
 fi
 
 # ── GitHub setup ──────────────────────────────────────────────────────────────

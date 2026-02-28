@@ -23,7 +23,7 @@ That's it. On first run for a repo, `vibe` walks you through any setup it needs.
 - [ClaudeBox](https://github.com/RchGrav/claudebox) — `wget https://github.com/RchGrav/claudebox/releases/latest/download/claudebox.run && chmod +x claudebox.run && ./claudebox.run`
 - A Docker backend — [OrbStack](https://orbstack.dev) (recommended, lighter) or [Docker Desktop](https://www.docker.com/products/docker-desktop/)
 - [GitHub CLI](https://cli.github.com) (`gh`) — for repo creation and auth
-- `ANTHROPIC_API_KEY` set in your environment
+- A Claude **Pro or Max subscription** (no API key needed — see Authentication below)
 
 ## Installation
 
@@ -40,9 +40,15 @@ cat > ~/.vibe/config <<'EOF'
 VIBE_PROJECTS_DIR="$HOME/Projects"   # adjust to your projects folder
 EOF
 
-# 4. Add your Anthropic key to ~/.zshrc or ~/.bashrc if not already set
-echo 'export ANTHROPIC_API_KEY=sk-ant-...' >> ~/.zshrc
 ```
+
+## Authentication
+
+`vibe` uses your **Claude Pro/Max subscription** — no API key required, no per-token billing.
+
+On the first run for each project, Claude Code will print a URL in the terminal. Visit it in your browser to log in with your Claude account. Credentials are stored inside the container and reused for all future sessions on that project.
+
+> **Note:** If `ANTHROPIC_API_KEY` is set in your environment, Claude Code will use API billing instead of your subscription. `vibe` will warn you if it detects this — unset the variable to switch back to subscription mode.
 
 ## Usage
 
