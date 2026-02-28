@@ -218,20 +218,9 @@ has_active_session() {
 
 # Creates a slot and walks the user through authenticating with Claude
 setup_claudebox_slot() {
-  local slots_output
-  slots_output=$(claudebox slots 2>/dev/null || true)
-
-  # If a session is already running (e.g. in another terminal), don't interfere
-  if echo "$slots_output" | grep -q "Active"; then
-    echo "  ℹ  An active Claude session is already running in this project."
-    echo "     Only one session per project slot is supported at a time."
-    echo "     Close the other session, then run vibe again."
-    exit 0
-  fi
-
   echo ""
   echo "  ────────────────────────────────────────────────────────────────"
-  echo "  First time in this project — setting up a Claude container."
+  echo "  Setting up a new Claude container slot."
   echo "  ────────────────────────────────────────────────────────────────"
   echo ""
   echo "  Step 1/2: Creating container slot..."
@@ -331,10 +320,14 @@ fi
 
 # ── ClaudeBox slot check ──────────────────────────────────────────────────────
 if has_active_session; then
-  echo "  ℹ  An active Claude session is already running in this project."
-  echo "     Only one session per project slot is supported at a time."
-  echo "     Close the other session, then run vibe again."
-  exit 0
+  echo "  ℹ  A Claude session is already running in this project."
+  echo ""
+  if ask_yes_no "Open a new parallel slot?" y; then
+    setup_claudebox_slot
+  else
+    echo "  Exiting — the existing session is still running."
+    exit 0
+  fi
 elif ! has_authenticated_slot; then
   setup_claudebox_slot
 fi
