@@ -230,31 +230,45 @@ has_active_session() {
   claudebox slots 2>/dev/null | grep -q "Active"
 }
 
-# Creates a slot and walks the user through authenticating with Claude
+# Returns true if there's an authenticated slot that isn't currently running.
+# This means claudebox can start a new session without creating a new slot.
+has_idle_authenticated_slot() {
+  claudebox slots 2>/dev/null | grep "Authenticated" | grep -q "Inactive"
+}
+
+# Authenticates a slot, reusing an existing unauthenticated one if available
+# rather than always creating a new one.
 setup_claudebox_slot() {
   echo ""
   echo "  ────────────────────────────────────────────────────────────────"
-  echo "  Setting up a new Claude container slot."
+  echo "  Setting up a Claude container slot."
   echo "  ────────────────────────────────────────────────────────────────"
   echo ""
-  echo "  Step 1/2: Creating container slot..."
-  claudebox create
-  echo ""
 
-  # Find the slot number we just created (last unauthenticated slot)
-  local new_slot
-  new_slot=$(claudebox slots 2>/dev/null | grep "Unauthenticated" | awk '{print $1}' | tail -1)
-  new_slot="${new_slot:-1}"
+  # Prefer reusing an existing unauthenticated slot over creating a new one.
+  local target_slot
+  target_slot=$(claudebox slots 2>/dev/null | grep "Unauthenticated" | awk '{print $1}' | head -1)
 
-  echo "  Step 2/2: Authenticate with your Claude Pro/Max account."
+  if [ -n "$target_slot" ]; then
+    echo "  Reusing existing slot $target_slot."
+    echo ""
+  else
+    echo "  Step 1/2: Creating container slot..."
+    claudebox create
+    echo ""
+    target_slot=$(claudebox slots 2>/dev/null | grep "Unauthenticated" | awk '{print $1}' | tail -1)
+    target_slot="${target_slot:-1}"
+  fi
+
+  echo "  Authenticate with your Claude Pro/Max account."
   echo ""
   echo "  ⚠  The browser won't open automatically from inside Docker."
   echo "     When you see the login URL, copy it and paste it into"
   echo "     your browser. After logging in, type 'exit' to return here."
   echo ""
-  read -rp "  Press Enter to open slot $new_slot for authentication..."
+  read -rp "  Press Enter to open slot $target_slot for authentication..."
   echo ""
-  claudebox slot "$new_slot" || true   # user authenticates then types exit
+  claudebox slot "$target_slot" || true   # user authenticates then types exit
 
   echo ""
   if has_authenticated_slot; then
@@ -262,7 +276,7 @@ setup_claudebox_slot() {
     echo ""
   else
     echo "  ⚠  No authenticated slot found."
-    echo "     If you didn't finish, run:  claudebox slot $new_slot"
+    echo "     If you didn't finish, run:  claudebox slot $target_slot"
     echo "     Then run vibe again."
     exit 1
   fi
@@ -352,14 +366,18 @@ fi
 
 # ── ClaudeBox slot check ──────────────────────────────────────────────────────
 if has_active_session; then
-  echo "  ℹ  A Claude session is already running in this project."
-  echo ""
-  if ask_yes_no "Open a new parallel slot?" y; then
-    setup_claudebox_slot
-  else
-    echo "  Exiting — the existing session is still running."
-    exit 0
+  if ! has_idle_authenticated_slot; then
+    # All authenticated slots are busy — offer to set up an additional one.
+    echo "  ℹ  A Claude session is already running in this project."
+    echo ""
+    if ask_yes_no "Open a new parallel slot?" y; then
+      setup_claudebox_slot
+    else
+      echo "  Exiting — the existing session is still running."
+      exit 0
+    fi
   fi
+  # else: an idle authenticated slot is available — claudebox will use it.
 elif ! has_authenticated_slot; then
   setup_claudebox_slot
 fi
