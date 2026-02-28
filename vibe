@@ -1,14 +1,13 @@
 #!/bin/bash
 # vibe — a thin wrapper around ClaudeBox for per-project YOLO vibe coding sessions
-# https://github.com/martincurrie/vibe
+# https://github.com/Aqueum/vibe
 #
 # Usage:
-#   vibe                        # use current directory as workspace
-#   vibe <project-name>         # use named project from VIBE_PROJECTS_DIR
-#   vibe <project-name> <org/repo>  # also authenticate GitHub CLI for that repo
-#   vibe --rebuild              # force rebuild of ClaudeBox image
-#   vibe --list                 # list available projects
-#   vibe --help                 # show this help
+#   vibe                  # cd to your project folder, then just run this
+#   vibe <project-name>   # launch by name from anywhere (uses VIBE_PROJECTS_DIR)
+#   vibe --rebuild        # force rebuild of ClaudeBox image
+#   vibe --list           # list available projects
+#   vibe --help           # show this help
 
 set -euo pipefail
 
@@ -16,7 +15,6 @@ set -euo pipefail
 CONFIG_FILE="${VIBE_CONFIG:-$HOME/.vibe/config}"
 TOKENS_FILE="$HOME/.vibe/tokens"
 
-# Load config file if it exists (sets VIBE_PROJECTS_DIR etc.)
 if [ -f "$CONFIG_FILE" ]; then
   # shellcheck source=/dev/null
   source "$CONFIG_FILE"
@@ -32,10 +30,81 @@ usage() {
 
 require() {
   if ! command -v "$1" &>/dev/null; then
-    echo "Error: '$1' is not installed or not in PATH."
-    echo "       $2"
+    echo "  ✗ '$1' not found. $2"
     exit 1
   fi
+}
+
+# Detect GitHub owner/repo from git remote in current directory
+detect_github_repo() {
+  local url
+  url=$(git remote get-url origin 2>/dev/null) || return 1
+  # Handle both https://github.com/owner/repo.git and git@github.com:owner/repo.git
+  if [[ "$url" =~ github\.com[:/]([^/]+/[^/.]+)(\.git)?$ ]]; then
+    echo "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  return 1
+}
+
+# Look up saved token for a repo
+lookup_token() {
+  local repo="$1"
+  [ -f "$TOKENS_FILE" ] || return 0
+  grep "^${repo}=" "$TOKENS_FILE" 2>/dev/null | cut -d= -f2 || true
+}
+
+# Save a token for a repo (replaces existing entry)
+save_token() {
+  local repo="$1" token="$2"
+  mkdir -p "$(dirname "$TOKENS_FILE")"
+  touch "$TOKENS_FILE"
+  # Remove any existing entry for this repo, then append new one
+  local tmp
+  tmp=$(mktemp)
+  grep -v "^${repo}=" "$TOKENS_FILE" > "$tmp" || true
+  echo "${repo}=${token}" >> "$tmp"
+  mv "$tmp" "$TOKENS_FILE"
+  chmod 600 "$TOKENS_FILE"
+}
+
+# Interactive token setup — walks the user through creating a fine-grained PAT
+setup_token() {
+  local repo="$1"
+  local owner
+  owner=$(echo "$repo" | cut -d/ -f1)
+
+  echo ""
+  echo "  No GitHub token found for $repo."
+  echo ""
+  echo "  I'll open GitHub so you can create a fine-grained token."
+  echo "  On that page:"
+  echo "    1. Give it a name, e.g.: vibe-$(echo "$repo" | cut -d/ -f2)"
+  echo "    2. Set an expiry (90 days is a good default)"
+  echo "    3. Under 'Repository access' → 'Only select repositories'"
+  echo "       → choose $(echo "$repo" | cut -d/ -f2)"
+  echo "    4. Under 'Permissions' enable:"
+  echo "         Contents        → Read and write"
+  echo "         Metadata        → Read-only  (auto-selected)"
+  echo "         Pull requests   → Read and write"
+  echo "    5. Click 'Generate token' and copy it"
+  echo ""
+  read -rp "  Press Enter to open GitHub in your browser (or Ctrl+C to skip)..."
+  open "https://github.com/settings/personal-access-tokens/new"
+  echo ""
+  read -rsp "  Paste your token (input is hidden): " input_token
+  echo ""
+
+  if [ -z "$input_token" ]; then
+    echo ""
+    echo "  No token entered — launching without GitHub auth."
+    GITHUB_TOKEN=""
+    return
+  fi
+
+  save_token "$repo" "$input_token"
+  echo "  ✓ Token saved — you won't be asked again for this repo."
+  GITHUB_TOKEN="$input_token"
 }
 
 # ── Flags ─────────────────────────────────────────────────────────────────────
@@ -55,24 +124,19 @@ done
 
 # ── Resolve workspace ─────────────────────────────────────────────────────────
 if [ "$#" -eq 0 ]; then
-  # No arguments — use current directory
   WORKSPACE="$(pwd)"
   PROJECT_NAME="$(basename "$WORKSPACE")"
-  GITHUB_REPO=""
-elif [ "$#" -ge 1 ]; then
+else
   PROJECT_NAME="$1"
-  GITHUB_REPO="${2:-}"
-
-  # If argument looks like a path, use it directly; otherwise look in PROJECTS_DIR
   if [ -d "$PROJECT_NAME" ]; then
     WORKSPACE="$(cd "$PROJECT_NAME" && pwd)"
     PROJECT_NAME="$(basename "$WORKSPACE")"
   else
     WORKSPACE="$PROJECTS_DIR/$PROJECT_NAME"
     if [ ! -d "$WORKSPACE" ]; then
-      echo "Error: Project not found: $WORKSPACE"
+      echo "  Error: Project not found: $WORKSPACE"
       echo ""
-      echo "Available projects:"
+      echo "  Available projects:"
       ls "$PROJECTS_DIR"
       exit 1
     fi
@@ -83,18 +147,21 @@ fi
 require claudebox "Install from: https://github.com/RchGrav/claudebox"
 
 if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-  echo "Error: ANTHROPIC_API_KEY is not set."
-  echo "       Add to ~/.zshrc: export ANTHROPIC_API_KEY=sk-ant-..."
+  echo "  ✗ ANTHROPIC_API_KEY is not set."
+  echo "    Add this to your ~/.zshrc:  export ANTHROPIC_API_KEY=sk-ant-..."
   exit 1
 fi
 
-# ── GitHub token lookup ───────────────────────────────────────────────────────
+# ── GitHub token handling ─────────────────────────────────────────────────────
 GITHUB_TOKEN=""
-if [ -n "$GITHUB_REPO" ] && [ -f "$TOKENS_FILE" ]; then
-  GITHUB_TOKEN=$(grep "^${GITHUB_REPO}=" "$TOKENS_FILE" 2>/dev/null | cut -d= -f2 || true)
+cd "$WORKSPACE"
+
+GITHUB_REPO=$(detect_github_repo || true)
+
+if [ -n "$GITHUB_REPO" ]; then
+  GITHUB_TOKEN=$(lookup_token "$GITHUB_REPO")
   if [ -z "$GITHUB_TOKEN" ]; then
-    echo "Warning: No token found for '$GITHUB_REPO' in $TOKENS_FILE"
-    echo "         Add a line: ${GITHUB_REPO}=ghp_your_token_here"
+    setup_token "$GITHUB_REPO"
   fi
 fi
 
@@ -103,13 +170,11 @@ echo ""
 echo "  🚀 vibe session starting"
 echo "     project : $PROJECT_NAME"
 echo "     path    : $WORKSPACE"
-[ -n "$GITHUB_REPO" ] && echo "     github  : $GITHUB_REPO"
+[ -n "${GITHUB_REPO:-}" ] && echo "     github  : $GITHUB_REPO"
 echo ""
 
 CLAUDEBOX_ARGS=(--dangerously-skip-permissions)
 [ "$REBUILD" = true ] && CLAUDEBOX_ARGS+=(--rebuild)
-
-cd "$WORKSPACE"
 
 if [ -n "$GITHUB_TOKEN" ]; then
   GITHUB_TOKEN="$GITHUB_TOKEN" claudebox "${CLAUDEBOX_ARGS[@]}"
