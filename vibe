@@ -1,0 +1,118 @@
+#!/bin/bash
+# vibe — a thin wrapper around ClaudeBox for per-project YOLO vibe coding sessions
+# https://github.com/martincurrie/vibe
+#
+# Usage:
+#   vibe                        # use current directory as workspace
+#   vibe <project-name>         # use named project from VIBE_PROJECTS_DIR
+#   vibe <project-name> <org/repo>  # also authenticate GitHub CLI for that repo
+#   vibe --rebuild              # force rebuild of ClaudeBox image
+#   vibe --list                 # list available projects
+#   vibe --help                 # show this help
+
+set -euo pipefail
+
+# ── Configuration ─────────────────────────────────────────────────────────────
+CONFIG_FILE="${VIBE_CONFIG:-$HOME/.vibe/config}"
+TOKENS_FILE="$HOME/.vibe/tokens"
+
+# Load config file if it exists (sets VIBE_PROJECTS_DIR etc.)
+if [ -f "$CONFIG_FILE" ]; then
+  # shellcheck source=/dev/null
+  source "$CONFIG_FILE"
+fi
+
+PROJECTS_DIR="${VIBE_PROJECTS_DIR:-$HOME/Projects}"
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+usage() {
+  grep '^#' "$0" | grep -v '#!/' | sed 's/^# \?//'
+  exit 0
+}
+
+require() {
+  if ! command -v "$1" &>/dev/null; then
+    echo "Error: '$1' is not installed or not in PATH."
+    echo "       $2"
+    exit 1
+  fi
+}
+
+# ── Flags ─────────────────────────────────────────────────────────────────────
+REBUILD=false
+while [[ "${1:-}" == --* ]]; do
+  case "$1" in
+    --rebuild) REBUILD=true; shift ;;
+    --list)
+      echo "Projects in $PROJECTS_DIR:"
+      ls "$PROJECTS_DIR"
+      exit 0
+      ;;
+    --help|-h) usage ;;
+    *) echo "Unknown flag: $1"; exit 1 ;;
+  esac
+done
+
+# ── Resolve workspace ─────────────────────────────────────────────────────────
+if [ "$#" -eq 0 ]; then
+  # No arguments — use current directory
+  WORKSPACE="$(pwd)"
+  PROJECT_NAME="$(basename "$WORKSPACE")"
+  GITHUB_REPO=""
+elif [ "$#" -ge 1 ]; then
+  PROJECT_NAME="$1"
+  GITHUB_REPO="${2:-}"
+
+  # If argument looks like a path, use it directly; otherwise look in PROJECTS_DIR
+  if [ -d "$PROJECT_NAME" ]; then
+    WORKSPACE="$(cd "$PROJECT_NAME" && pwd)"
+    PROJECT_NAME="$(basename "$WORKSPACE")"
+  else
+    WORKSPACE="$PROJECTS_DIR/$PROJECT_NAME"
+    if [ ! -d "$WORKSPACE" ]; then
+      echo "Error: Project not found: $WORKSPACE"
+      echo ""
+      echo "Available projects:"
+      ls "$PROJECTS_DIR"
+      exit 1
+    fi
+  fi
+fi
+
+# ── Checks ────────────────────────────────────────────────────────────────────
+require claudebox "Install from: https://github.com/RchGrav/claudebox"
+
+if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+  echo "Error: ANTHROPIC_API_KEY is not set."
+  echo "       Add to ~/.zshrc: export ANTHROPIC_API_KEY=sk-ant-..."
+  exit 1
+fi
+
+# ── GitHub token lookup ───────────────────────────────────────────────────────
+GITHUB_TOKEN=""
+if [ -n "$GITHUB_REPO" ] && [ -f "$TOKENS_FILE" ]; then
+  GITHUB_TOKEN=$(grep "^${GITHUB_REPO}=" "$TOKENS_FILE" 2>/dev/null | cut -d= -f2 || true)
+  if [ -z "$GITHUB_TOKEN" ]; then
+    echo "Warning: No token found for '$GITHUB_REPO' in $TOKENS_FILE"
+    echo "         Add a line: ${GITHUB_REPO}=ghp_your_token_here"
+  fi
+fi
+
+# ── Launch ────────────────────────────────────────────────────────────────────
+echo ""
+echo "  🚀 vibe session starting"
+echo "     project : $PROJECT_NAME"
+echo "     path    : $WORKSPACE"
+[ -n "$GITHUB_REPO" ] && echo "     github  : $GITHUB_REPO"
+echo ""
+
+CLAUDEBOX_ARGS=(--dangerously-skip-permissions)
+[ "$REBUILD" = true ] && CLAUDEBOX_ARGS+=(--rebuild)
+
+cd "$WORKSPACE"
+
+if [ -n "$GITHUB_TOKEN" ]; then
+  GITHUB_TOKEN="$GITHUB_TOKEN" claudebox "${CLAUDEBOX_ARGS[@]}"
+else
+  claudebox "${CLAUDEBOX_ARGS[@]}"
+fi

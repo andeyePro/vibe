@@ -1,0 +1,5 @@
+# Never commit tokens or personal config
+.vibe/
+*.tokens
+.env
+.env.*
