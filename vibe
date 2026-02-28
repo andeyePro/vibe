@@ -382,6 +382,20 @@ elif ! has_authenticated_slot; then
   setup_claudebox_slot
 fi
 
+# ── Ensure Claude skips approval prompts ─────────────────────────────────────
+# Write settings.local.json so Claude Code runs without tool-use approval
+# prompts inside the container. This is the reliable mechanism — the CLI flag
+# --dangerously-skip-permissions passed to claudebox is not always forwarded.
+mkdir -p "$WORKSPACE/.claude"
+printf '{\n  "dangerouslySkipPermissions": true\n}\n' > "$WORKSPACE/.claude/settings.local.json"
+
+# Keep settings.local.json out of git (it's personal/session config).
+if [ -f "$WORKSPACE/.gitignore" ]; then
+  if ! grep -qF ".claude/settings.local.json" "$WORKSPACE/.gitignore"; then
+    echo ".claude/settings.local.json" >> "$WORKSPACE/.gitignore"
+  fi
+fi
+
 # ── Launch ────────────────────────────────────────────────────────────────────
 echo ""
 echo "  🚀 vibe session starting"
