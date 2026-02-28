@@ -35,6 +35,18 @@ require() {
   fi
 }
 
+ask_yes_no() {
+  local prompt="$1" default="${2:-y}"
+  local options="y/n"
+  [[ "$default" == "n" ]] && options="y/N" || options="Y/n"
+  local reply
+  read -rp "  $prompt [$options]: " reply
+  reply="${reply:-$default}"
+  [[ "${reply,,}" == "y" ]]
+}
+
+# ── Git helpers ───────────────────────────────────────────────────────────────
+
 # Detect GitHub owner/repo from git remote in current directory
 detect_github_repo() {
   local url
@@ -46,6 +58,69 @@ detect_github_repo() {
   fi
   return 1
 }
+
+# Offer to create a new GitHub repo for the current directory
+create_github_repo() {
+  local suggested_name="$1"
+
+  echo ""
+  echo "  No GitHub repo found for this project."
+  echo ""
+
+  ask_yes_no "Create a new GitHub repo?" y || { echo "  Skipping — launching without GitHub."; return; }
+
+  # Repo name
+  local repo_name
+  read -rp "  Repo name [$suggested_name]: " repo_name
+  repo_name="${repo_name:-$suggested_name}"
+
+  # Visibility
+  local visibility="private"
+  ask_yes_no "Make it public?" n && visibility="public"
+
+  # Description
+  local description=""
+  read -rp "  Description (optional): " description
+
+  # Ensure we have a git repo
+  if ! git rev-parse --git-dir &>/dev/null; then
+    echo ""
+    echo "  Initialising git repository..."
+    git init
+    git add -A
+    git commit -m "Initial commit"
+  elif ! git rev-parse HEAD &>/dev/null; then
+    # Git repo exists but no commits yet
+    echo ""
+    echo "  No commits yet — creating an initial commit..."
+    git add -A
+    git commit -m "Initial commit" 2>/dev/null || {
+      echo "  Nothing to commit — creating an empty initial commit..."
+      git commit --allow-empty -m "Initial commit"
+    }
+  fi
+
+  # Get GitHub username
+  local gh_user
+  gh_user=$(gh api user --jq '.login' 2>/dev/null) || {
+    echo "  ✗ Not logged in to GitHub CLI. Run: gh auth login"
+    return
+  }
+
+  echo ""
+  echo "  Creating $visibility repo $gh_user/$repo_name on GitHub..."
+
+  local create_args=("$repo_name" "--$visibility" "--source=." "--push")
+  [ -n "$description" ] && create_args+=("--description=$description")
+
+  gh repo create "${create_args[@]}"
+
+  GITHUB_REPO="$gh_user/$repo_name"
+  echo ""
+  echo "  ✓ Repo created: https://github.com/$GITHUB_REPO"
+}
+
+# ── Token helpers ─────────────────────────────────────────────────────────────
 
 # Look up saved token for a repo
 lookup_token() {
@@ -59,7 +134,6 @@ save_token() {
   local repo="$1" token="$2"
   mkdir -p "$(dirname "$TOKENS_FILE")"
   touch "$TOKENS_FILE"
-  # Remove any existing entry for this repo, then append new one
   local tmp
   tmp=$(mktemp)
   grep -v "^${repo}=" "$TOKENS_FILE" > "$tmp" || true
@@ -71,8 +145,6 @@ save_token() {
 # Interactive token setup — walks the user through creating a fine-grained PAT
 setup_token() {
   local repo="$1"
-  local owner
-  owner=$(echo "$repo" | cut -d/ -f1)
 
   echo ""
   echo "  No GitHub token found for $repo."
@@ -96,7 +168,6 @@ setup_token() {
   echo ""
 
   if [ -z "$input_token" ]; then
-    echo ""
     echo "  No token entered — launching without GitHub auth."
     GITHUB_TOKEN=""
     return
@@ -152,15 +223,24 @@ if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
   exit 1
 fi
 
-# ── GitHub token handling ─────────────────────────────────────────────────────
+# ── GitHub setup ──────────────────────────────────────────────────────────────
 GITHUB_TOKEN=""
+GITHUB_REPO=""
 cd "$WORKSPACE"
 
 GITHUB_REPO=$(detect_github_repo || true)
 
 if [ -n "$GITHUB_REPO" ]; then
+  # Existing GitHub repo — look up or create token
   GITHUB_TOKEN=$(lookup_token "$GITHUB_REPO")
   if [ -z "$GITHUB_TOKEN" ]; then
+    setup_token "$GITHUB_REPO"
+  fi
+else
+  # No GitHub remote — offer to create one
+  create_github_repo "$PROJECT_NAME"
+  # If repo was created, now set up its token
+  if [ -n "$GITHUB_REPO" ]; then
     setup_token "$GITHUB_REPO"
   fi
 fi
@@ -170,7 +250,7 @@ echo ""
 echo "  🚀 vibe session starting"
 echo "     project : $PROJECT_NAME"
 echo "     path    : $WORKSPACE"
-[ -n "${GITHUB_REPO:-}" ] && echo "     github  : $GITHUB_REPO"
+[ -n "$GITHUB_REPO" ] && echo "     github  : $GITHUB_REPO"
 echo ""
 
 CLAUDEBOX_ARGS=(--dangerously-skip-permissions)
