@@ -203,13 +203,33 @@ setup_token() {
 
 # ── ClaudeBox slot helpers ────────────────────────────────────────────────────
 
-# Returns true if there's at least one authenticated slot for this project
+# Returns true if there's at least one authenticated (but not unauthenticated) slot.
+# "Authenticated" has capital A; "Unauthenticated" has lowercase a — case-sensitive
+# grep correctly distinguishes them.
 has_authenticated_slot() {
   claudebox slots 2>/dev/null | grep -q "Authenticated"
 }
 
+# Returns true if any slot has an actively running container.
+# "Active" has capital A; "Inactive" has lowercase a — same trick applies.
+has_active_session() {
+  claudebox slots 2>/dev/null | grep -q "Active"
+}
+
 # Creates a slot and walks the user through authenticating with Claude
 setup_claudebox_slot() {
+  local slots_output
+  slots_output=$(claudebox slots 2>/dev/null || true)
+
+  # If a session is already running (e.g. in another terminal), don't interfere
+  if echo "$slots_output" | grep -q "Active"; then
+    echo "  ℹ  An active Claude session is already running in this project."
+    echo "     Only one session per project slot is supported at a time."
+    echo "     Close the other session, then run vibe again."
+    exit 0
+  fi
+
+  echo ""
   echo "  ────────────────────────────────────────────────────────────────"
   echo "  First time in this project — setting up a Claude container."
   echo "  ────────────────────────────────────────────────────────────────"
@@ -217,22 +237,29 @@ setup_claudebox_slot() {
   echo "  Step 1/2: Creating container slot..."
   claudebox create
   echo ""
+
+  # Find the slot number we just created (last unauthenticated slot)
+  local new_slot
+  new_slot=$(claudebox slots 2>/dev/null | grep "Unauthenticated" | awk '{print $1}' | tail -1)
+  new_slot="${new_slot:-1}"
+
   echo "  Step 2/2: Authenticate with your Claude Pro/Max account."
   echo ""
-  echo "  A browser tab will open (or a URL will be printed)."
-  echo "  Log in, then come back here and press Enter or type 'exit'."
+  echo "  ⚠  The browser won't open automatically from inside Docker."
+  echo "     When you see the login URL, copy it and paste it into"
+  echo "     your browser. After logging in, type 'exit' to return here."
   echo ""
-  read -rp "  Press Enter to open the container for authentication..."
+  read -rp "  Press Enter to open slot $new_slot for authentication..."
   echo ""
-  claudebox slot 1 || true   # user authenticates then exits — non-zero exit is fine
-  echo ""
+  claudebox slot "$new_slot" || true   # user authenticates then types exit
 
+  echo ""
   if has_authenticated_slot; then
     echo "  ✓ Authenticated — launching your vibe session now."
     echo ""
   else
-    echo "  ⚠  No authenticated slot detected."
-    echo "     If you didn't finish authenticating, run: claudebox slot 1"
+    echo "  ⚠  No authenticated slot found."
+    echo "     If you didn't finish, run:  claudebox slot $new_slot"
     echo "     Then run vibe again."
     exit 1
   fi
@@ -302,8 +329,13 @@ else
   fi
 fi
 
-# ── ClaudeBox slot check ───────────────────────────────────────────────────────
-if ! has_authenticated_slot; then
+# ── ClaudeBox slot check ──────────────────────────────────────────────────────
+if has_active_session; then
+  echo "  ℹ  An active Claude session is already running in this project."
+  echo "     Only one session per project slot is supported at a time."
+  echo "     Close the other session, then run vibe again."
+  exit 0
+elif ! has_authenticated_slot; then
   setup_claudebox_slot
 fi
 
