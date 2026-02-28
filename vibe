@@ -36,14 +36,20 @@ require() {
   fi
 }
 
-# Three-way prompt: returns "yes", "no", or "never"
+# Portable lowercase — avoids ${var,,} which requires bash 4+ (macOS ships bash 3.2)
+lowercase() {
+  echo "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+# Three-way prompt: prints "yes", "no", or "never"
 ask_yes_no_never() {
   local prompt="$1"
-  local reply
+  local reply reply_lc
   while true; do
     read -rp "  $prompt [Y/n/never]: " reply
     reply="${reply:-y}"
-    case "${reply,,}" in
+    reply_lc=$(lowercase "$reply")
+    case "$reply_lc" in
       y|yes)   echo "yes";   return ;;
       n|no)    echo "no";    return ;;
       never)   echo "never"; return ;;
@@ -54,17 +60,16 @@ ask_yes_no_never() {
 
 ask_yes_no() {
   local prompt="$1" default="${2:-y}"
-  local options
-  [[ "$default" == "n" ]] && options="y/N" || options="Y/n"
-  local reply
+  local options reply reply_lc
+  [ "$default" = "n" ] && options="y/N" || options="Y/n"
   read -rp "  $prompt [$options]: " reply
   reply="${reply:-$default}"
-  [[ "${reply,,}" == "y" ]]
+  reply_lc=$(lowercase "$reply")
+  [ "$reply_lc" = "y" ]
 }
 
 # ── Git helpers ───────────────────────────────────────────────────────────────
 
-# Detect GitHub owner/repo from git remote in current directory
 detect_github_repo() {
   local url
   url=$(git remote get-url origin 2>/dev/null) || return 1
@@ -75,37 +80,29 @@ detect_github_repo() {
   return 1
 }
 
-# Check if this workspace has been marked as "never ask about GitHub"
 is_github_skipped() {
   [ -f "$SKIPPED_FILE" ] || return 1
   grep -qxF "$WORKSPACE" "$SKIPPED_FILE"
 }
 
-# Mark this workspace so we never ask about GitHub again
 mark_github_skipped() {
   mkdir -p "$(dirname "$SKIPPED_FILE")"
   echo "$WORKSPACE" >> "$SKIPPED_FILE"
   echo "  ✓ Got it — won't ask about GitHub for this project again."
 }
 
-# Ensure we have at least one commit (required before pushing to GitHub)
 ensure_initial_commit() {
   if ! git rev-parse --git-dir &>/dev/null; then
     echo "  Initialising git repository..."
     git init
   fi
-
   if ! git rev-parse HEAD &>/dev/null 2>&1; then
-    # No commits yet — stage whatever exists (may be nothing) and commit
     git add -A 2>/dev/null || true
-    if ! git commit -m "Initial commit" --allow-empty-message 2>/dev/null; then
-      git commit --allow-empty -m "Initial commit"
-    fi
+    git commit --allow-empty -m "Initial commit" 2>/dev/null || true
     echo "  ✓ Initial commit created."
   fi
 }
 
-# Offer to create a new GitHub repo for the current workspace
 create_github_repo() {
   echo ""
   echo "  No GitHub repo found for this project."
@@ -115,33 +112,22 @@ create_github_repo() {
   answer=$(ask_yes_no_never "Create a GitHub repo for it?")
 
   case "$answer" in
-    never)
-      mark_github_skipped
-      return
-      ;;
-    no)
-      echo "  Skipping — launching without GitHub."
-      return
-      ;;
+    never) mark_github_skipped; return ;;
+    no)    echo "  Skipping — launching without GitHub."; return ;;
   esac
 
-  # Repo name
   local repo_name
   read -rp "  Repo name [$PROJECT_NAME]: " repo_name
   repo_name="${repo_name:-$PROJECT_NAME}"
 
-  # Visibility
   local visibility="private"
   ask_yes_no "Make it public?" n && visibility="public"
 
-  # Description
   local description=""
   read -rp "  Description (optional): " description
 
-  # Make sure we have a git repo with at least one commit
   ensure_initial_commit
 
-  # Get GitHub username
   local gh_user
   gh_user=$(gh api user --jq '.login' 2>/dev/null) || {
     echo "  ✗ Not logged in to GitHub CLI. Run: gh auth login"
@@ -183,7 +169,6 @@ save_token() {
 
 setup_token() {
   local repo="$1"
-
   echo ""
   echo "  No GitHub token found for $repo."
   echo ""
@@ -214,6 +199,43 @@ setup_token() {
   save_token "$repo" "$input_token"
   echo "  ✓ Token saved — you won't be asked again for this repo."
   GITHUB_TOKEN="$input_token"
+}
+
+# ── ClaudeBox slot helpers ────────────────────────────────────────────────────
+
+# Returns true if there's at least one authenticated slot for this project
+has_authenticated_slot() {
+  claudebox slots 2>/dev/null | grep -q "Authenticated"
+}
+
+# Creates a slot and walks the user through authenticating with Claude
+setup_claudebox_slot() {
+  echo "  ────────────────────────────────────────────────────────────────"
+  echo "  First time in this project — setting up a Claude container."
+  echo "  ────────────────────────────────────────────────────────────────"
+  echo ""
+  echo "  Step 1/2: Creating container slot..."
+  claudebox create
+  echo ""
+  echo "  Step 2/2: Authenticate with your Claude Pro/Max account."
+  echo ""
+  echo "  A browser tab will open (or a URL will be printed)."
+  echo "  Log in, then come back here and press Enter or type 'exit'."
+  echo ""
+  read -rp "  Press Enter to open the container for authentication..."
+  echo ""
+  claudebox slot 1 || true   # user authenticates then exits — non-zero exit is fine
+  echo ""
+
+  if has_authenticated_slot; then
+    echo "  ✓ Authenticated — launching your vibe session now."
+    echo ""
+  else
+    echo "  ⚠  No authenticated slot detected."
+    echo "     If you didn't finish authenticating, run: claudebox slot 1"
+    echo "     Then run vibe again."
+    exit 1
+  fi
 }
 
 # ── Flags ─────────────────────────────────────────────────────────────────────
@@ -255,7 +277,6 @@ fi
 # ── Checks ────────────────────────────────────────────────────────────────────
 require claudebox "Install from: https://github.com/RchGrav/claudebox"
 
-# Warn if API key is set — subscription users don't need it and it overrides OAuth
 if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
   echo "  ⚠  ANTHROPIC_API_KEY is set — Claude Code will bill against your API credits."
   echo "     Unset it to use your Pro/Max subscription instead."
@@ -270,18 +291,20 @@ cd "$WORKSPACE"
 if is_github_skipped; then
   : # silently skip — user said never
 elif GITHUB_REPO=$(detect_github_repo); then
-  # Existing GitHub repo — look up or create token
   GITHUB_TOKEN=$(lookup_token "$GITHUB_REPO")
   if [ -z "$GITHUB_TOKEN" ]; then
     setup_token "$GITHUB_REPO"
   fi
 else
-  # No GitHub remote — offer to create one
   create_github_repo
-  # If a repo was just created, set up its token
   if [ -n "$GITHUB_REPO" ]; then
     setup_token "$GITHUB_REPO"
   fi
+fi
+
+# ── ClaudeBox slot check ───────────────────────────────────────────────────────
+if ! has_authenticated_slot; then
+  setup_claudebox_slot
 fi
 
 # ── Launch ────────────────────────────────────────────────────────────────────
