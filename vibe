@@ -239,6 +239,11 @@ has_idle_authenticated_slot() {
 # Authenticates a slot, reusing an existing unauthenticated one if available
 # rather than always creating a new one.
 setup_claudebox_slot() {
+  # Guard: if an idle authenticated slot already exists, nothing to do.
+  if has_idle_authenticated_slot; then
+    return 0
+  fi
+
   echo ""
   echo "  ────────────────────────────────────────────────────────────────"
   echo "  Setting up a Claude container slot."
@@ -365,20 +370,20 @@ else
 fi
 
 # ── ClaudeBox slot check ──────────────────────────────────────────────────────
-if has_active_session; then
-  if ! has_idle_authenticated_slot; then
-    # All authenticated slots are busy — offer to set up an additional one.
-    echo "  ℹ  A Claude session is already running in this project."
-    echo ""
-    if ask_yes_no "Open a new parallel slot?" y; then
-      setup_claudebox_slot
-    else
-      echo "  Exiting — the existing session is still running."
-      exit 0
-    fi
+if has_idle_authenticated_slot; then
+  : # An idle authenticated slot is available — claudebox will use it.
+elif has_authenticated_slot; then
+  # Every authenticated slot is currently active (busy).
+  echo "  ℹ  All Claude slots are busy for this project."
+  echo ""
+  if ask_yes_no "Open a new parallel slot?" y; then
+    setup_claudebox_slot
+  else
+    echo "  Exiting — existing sessions are still running."
+    exit 0
   fi
-  # else: an idle authenticated slot is available — claudebox will use it.
-elif ! has_authenticated_slot; then
+else
+  # No authenticated slots exist — create and authenticate one.
   setup_claudebox_slot
 fi
 
