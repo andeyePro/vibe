@@ -392,12 +392,21 @@ if [ -n "$GITHUB_TOKEN" ]; then
     '!f() { [ -n "$GITHUB_TOKEN" ] && printf "username=x\npassword=%s\n" "$GITHUB_TOKEN"; }; f'
 fi
 
-# ── Ensure Claude skips approval prompts ─────────────────────────────────────
-# Write settings.local.json so Claude Code runs without tool-use approval
-# prompts inside the container. This is the reliable mechanism — the CLI flag
-# --dangerously-skip-permissions passed to claudebox is not always forwarded.
+# ── Write persistent session settings ────────────────────────────────────────
+# settings.local.json is read by Claude Code at startup. We write it fresh on
+# every launch so these settings are always in effect regardless of how the
+# project was cloned or whether the file existed before.
+#
+#   permissions.defaultMode bypassPermissions — YOLO mode (no approval prompts)
+#   forceLoginMethod claudeai                 — use Claude Pro/Max subscription,
+#                                               not an API key
 mkdir -p "$WORKSPACE/.claude"
-printf '{\n  "dangerouslySkipPermissions": true\n}\n' > "$WORKSPACE/.claude/settings.local.json"
+printf '%s\n' '{' \
+  '  "permissions": {' \
+  '    "defaultMode": "bypassPermissions"' \
+  '  },' \
+  '  "forceLoginMethod": "claudeai"' \
+  '}' > "$WORKSPACE/.claude/settings.local.json"
 
 # Keep settings.local.json out of git (it's personal/session config).
 if [ -f "$WORKSPACE/.gitignore" ]; then
