@@ -247,7 +247,7 @@ setup_claudebox_slot() {
 
   # Prefer reusing an existing unauthenticated slot over creating a new one.
   local target_slot
-  target_slot=$(claudebox slots 2>/dev/null | grep "Unauthenticated" | awk '{print $1}' | head -1)
+  target_slot=$(claudebox slots 2>/dev/null | grep "Unauthenticated" | awk '{print $1}' | head -1) || true
 
   if [ -n "$target_slot" ]; then
     echo "  Reusing existing slot $target_slot."
@@ -256,7 +256,7 @@ setup_claudebox_slot() {
     echo "  Step 1/2: Creating container slot..."
     claudebox create
     echo ""
-    target_slot=$(claudebox slots 2>/dev/null | grep "Unauthenticated" | awk '{print $1}' | tail -1)
+    target_slot=$(claudebox slots 2>/dev/null | grep "Unauthenticated" | awk '{print $1}' | tail -1) || true
     target_slot="${target_slot:-1}"
   fi
 
