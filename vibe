@@ -38,7 +38,7 @@ require() {
 
 # Portable lowercase — avoids ${var,,} which requires bash 4+ (macOS ships bash 3.2)
 lowercase() {
-  echo "$1" | tr '[:upper:]' '[:lower:]'
+  tr '[:upper:]' '[:lower:]' <<< "$1"
 }
 
 # Detect paths that would generate an invalid Docker image tag via claudebox.
@@ -183,21 +183,24 @@ save_token() {
 
 setup_token() {
   local repo="$1"
-  echo ""
-  echo "  No GitHub token found for $repo."
-  echo ""
-  echo "  I'll open GitHub so you can create a fine-grained token."
-  echo "  On that page:"
-  echo "    1. Give it a name, e.g.: vibe-$(echo "$repo" | cut -d/ -f2)"
-  echo "    2. Set an expiry (90 days is a good default)"
-  echo "    3. Under 'Repository access' → 'Only select repositories'"
-  echo "       → choose $(echo "$repo" | cut -d/ -f2)"
-  echo "    4. Under 'Permissions' enable:"
-  echo "         Contents        → Read and write"
-  echo "         Metadata        → Read-only  (auto-selected)"
-  echo "         Pull requests   → Read and write"
-  echo "    5. Click 'Generate token' and copy it"
-  echo ""
+  local repo_short="${repo#*/}"
+  cat << MSG
+
+  No GitHub token found for $repo.
+
+  I'll open GitHub so you can create a fine-grained token.
+  On that page:
+    1. Give it a name, e.g.: vibe-$repo_short
+    2. Set an expiry (90 days is a good default)
+    3. Under 'Repository access' → 'Only select repositories'
+       → choose $repo_short
+    4. Under 'Permissions' enable:
+         Contents        → Read and write
+         Metadata        → Read-only  (auto-selected)
+         Pull requests   → Read and write
+    5. Click 'Generate token' and copy it
+
+MSG
   read -rp "  Press Enter to open GitHub in your browser (or Ctrl+C to skip)..."
   open "https://github.com/settings/personal-access-tokens/new"
   echo ""
@@ -217,42 +220,47 @@ setup_token() {
 
 # ── ClaudeBox slot helpers ────────────────────────────────────────────────────
 
+# Cache claudebox slots output to avoid repeated subprocess calls.
+# Each `claudebox slots` invocation spawns a Docker query; caching lets the
+# three helpers below grep an in-memory string instead.
+SLOT_CACHE=""
+refresh_slot_cache() {
+  SLOT_CACHE=$(claudebox slots 2>/dev/null) || true
+}
+
 # Returns true if there's at least one authenticated (but not unauthenticated) slot.
 # "Authenticated" has capital A; "Unauthenticated" has lowercase a — case-sensitive
 # grep correctly distinguishes them.
 has_authenticated_slot() {
-  claudebox slots 2>/dev/null | grep -q "Authenticated"
+  grep -q "Authenticated" <<< "$SLOT_CACHE"
 }
 
 # Returns true if any slot has an actively running container.
 # "Active" has capital A; "Inactive" has lowercase a — same trick applies.
 has_active_session() {
-  claudebox slots 2>/dev/null | grep -q "Active"
+  grep -q "Active" <<< "$SLOT_CACHE"
 }
 
 # Returns true if there's an authenticated slot that isn't currently running.
 # This means claudebox can start a new session without creating a new slot.
 has_idle_authenticated_slot() {
-  claudebox slots 2>/dev/null | grep "Authenticated" | grep -q "Inactive"
+  grep "Authenticated" <<< "$SLOT_CACHE" | grep -q "Inactive"
 }
 
 # Authenticates a slot, reusing an existing unauthenticated one if available
 # rather than always creating a new one.
 setup_claudebox_slot() {
-  # Guard: if an idle authenticated slot already exists, nothing to do.
-  if has_idle_authenticated_slot; then
-    return 0
-  fi
+  cat <<'  MSG'
 
-  echo ""
-  echo "  ────────────────────────────────────────────────────────────────"
-  echo "  Setting up a Claude container slot."
-  echo "  ────────────────────────────────────────────────────────────────"
-  echo ""
+  ────────────────────────────────────────────────────────────────
+  Setting up a Claude container slot.
+  ────────────────────────────────────────────────────────────────
+
+  MSG
 
   # Prefer reusing an existing unauthenticated slot over creating a new one.
   local target_slot
-  target_slot=$(claudebox slots 2>/dev/null | grep "Unauthenticated" | awk '{print $1}' | head -1) || true
+  target_slot=$(awk '/Unauthenticated/ {print $1; exit}' <<< "$SLOT_CACHE") || true
 
   if [ -n "$target_slot" ]; then
     echo "  Reusing existing slot $target_slot."
@@ -261,28 +269,34 @@ setup_claudebox_slot() {
     echo "  Step 1/2: Creating container slot..."
     claudebox create
     echo ""
-    target_slot=$(claudebox slots 2>/dev/null | grep "Unauthenticated" | awk '{print $1}' | tail -1) || true
+    refresh_slot_cache
+    target_slot=$(awk '/Unauthenticated/ {print $1; exit}' <<< "$SLOT_CACHE") || true
     target_slot="${target_slot:-1}"
   fi
 
-  echo "  Authenticate with your Claude Pro/Max account."
-  echo ""
-  echo "  ⚠  The browser won't open automatically from inside Docker."
-  echo "     When you see the login URL, copy it and paste it into"
-  echo "     your browser. After logging in, type 'exit' to return here."
-  echo ""
+  cat << MSG
+  Authenticate with your Claude Pro/Max account.
+
+  ⚠  The browser won't open automatically from inside Docker.
+     When you see the login URL, copy it and paste it into
+     your browser. After logging in, type 'exit' to return here.
+
+MSG
   read -rp "  Press Enter to open slot $target_slot for authentication..."
   echo ""
   claudebox slot "$target_slot" || true   # user authenticates then types exit
 
   echo ""
+  refresh_slot_cache
   if has_authenticated_slot; then
     echo "  ✓ Authenticated — launching your vibe session now."
     echo ""
   else
-    echo "  ⚠  No authenticated slot found."
-    echo "     If you didn't finish, run:  claudebox slot $target_slot"
-    echo "     Then run vibe again."
+    cat << MSG
+  ⚠  No authenticated slot found.
+     If you didn't finish, run:  claudebox slot $target_slot
+     Then run vibe again.
+MSG
     exit 1
   fi
 }
@@ -370,6 +384,7 @@ else
 fi
 
 # ── ClaudeBox slot check ──────────────────────────────────────────────────────
+refresh_slot_cache
 if has_idle_authenticated_slot; then
   : # An idle authenticated slot is available — claudebox will use it.
 elif has_authenticated_slot; then
@@ -406,12 +421,14 @@ fi
 #   forceLoginMethod claudeai                 — use Claude Pro/Max subscription,
 #                                               not an API key
 mkdir -p "$WORKSPACE/.claude"
-printf '%s\n' '{' \
-  '  "permissions": {' \
-  '    "defaultMode": "bypassPermissions"' \
-  '  },' \
-  '  "forceLoginMethod": "claudeai"' \
-  '}' > "$WORKSPACE/.claude/settings.local.json"
+cat > "$WORKSPACE/.claude/settings.local.json" << 'EOF'
+{
+  "permissions": {
+    "defaultMode": "bypassPermissions"
+  },
+  "forceLoginMethod": "claudeai"
+}
+EOF
 
 # Keep settings.local.json out of git (it's personal/session config).
 if [ -f "$WORKSPACE/.gitignore" ]; then
