@@ -1,11 +1,11 @@
 #!/bin/bash
-# vibe — a thin wrapper around ClaudeBox for per-project YOLO vibe coding sessions
+# vibe — single-command containerised YOLO Claude Code sessions
 # https://github.com/Aqueum/vibe
 #
 # Usage:
 #   vibe                  # cd to your project folder, then just run this
 #   vibe <project-name>   # launch by name from anywhere (uses VIBE_PROJECTS_DIR)
-#   vibe --rebuild        # force rebuild of ClaudeBox image
+#   vibe --rebuild        # force rebuild of the vibe container image
 #   vibe --list           # list available projects
 #   vibe --help           # show this help
 
@@ -15,6 +15,8 @@ set -euo pipefail
 CONFIG_FILE="${VIBE_CONFIG:-$HOME/.vibe/config}"
 TOKENS_FILE="$HOME/.vibe/tokens"
 SKIPPED_FILE="$HOME/.vibe/skipped"
+DEVCONTAINER_DIR="$HOME/.vibe/devcontainer"
+IMAGE_TAG="vibe-dev:latest"
 
 if [ -f "$CONFIG_FILE" ]; then
   # shellcheck source=/dev/null
@@ -39,20 +41,6 @@ require() {
 # Portable lowercase — avoids ${var,,} which requires bash 4+ (macOS ships bash 3.2)
 lowercase() {
   tr '[:upper:]' '[:lower:]' <<< "$1"
-}
-
-# Detect paths that would generate an invalid Docker image tag via claudebox.
-# Docker allows _ and __ as separators but rejects ___ or longer runs.
-# A path like "my - project" sanitises to "my___project" (space-hyphen-space → ___),
-# which Docker's reference parser rejects as an invalid tag format.
-validate_docker_tag_from_path() {
-  local path="$1"
-  local sanitized
-  # Mirror claudebox: lowercase then replace every non-alphanumeric char with _
-  sanitized=$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '_')
-  # Three or more consecutive underscores are rejected by Docker's reference parser
-  printf '%s' "$sanitized" | grep -q '___' && return 1
-  return 0
 }
 
 # Three-way prompt: prints "yes", "no", or "never"
@@ -218,89 +206,6 @@ MSG
   GITHUB_TOKEN="$input_token"
 }
 
-# ── ClaudeBox slot helpers ────────────────────────────────────────────────────
-
-# Cache claudebox slots output to avoid repeated subprocess calls.
-# Each `claudebox slots` invocation spawns a Docker query; caching lets the
-# three helpers below grep an in-memory string instead.
-SLOT_CACHE=""
-refresh_slot_cache() {
-  SLOT_CACHE=$(claudebox slots 2>/dev/null) || true
-}
-
-# Returns true if there's at least one authenticated (but not unauthenticated) slot.
-# "Authenticated" has capital A; "Unauthenticated" has lowercase a — case-sensitive
-# grep correctly distinguishes them.
-has_authenticated_slot() {
-  grep -q "Authenticated" <<< "$SLOT_CACHE"
-}
-
-# Returns true if any slot has an actively running container.
-# "Active" has capital A; "Inactive" has lowercase a — same trick applies.
-has_active_session() {
-  grep -q "Active" <<< "$SLOT_CACHE"
-}
-
-# Returns true if there's an authenticated slot that isn't currently running.
-# This means claudebox can start a new session without creating a new slot.
-has_idle_authenticated_slot() {
-  grep "Authenticated" <<< "$SLOT_CACHE" | grep -q "Inactive"
-}
-
-# Authenticates a slot, reusing an existing unauthenticated one if available
-# rather than always creating a new one.
-setup_claudebox_slot() {
-  cat <<'  MSG'
-
-  ────────────────────────────────────────────────────────────────
-  Setting up a Claude container slot.
-  ────────────────────────────────────────────────────────────────
-
-  MSG
-
-  # Prefer reusing an existing unauthenticated slot over creating a new one.
-  local target_slot
-  target_slot=$(awk '/Unauthenticated/ {print $1; exit}' <<< "$SLOT_CACHE") || true
-
-  if [ -n "$target_slot" ]; then
-    echo "  Reusing existing slot $target_slot."
-    echo ""
-  else
-    echo "  Step 1/2: Creating container slot..."
-    claudebox create
-    echo ""
-    refresh_slot_cache
-    target_slot=$(awk '/Unauthenticated/ {print $1; exit}' <<< "$SLOT_CACHE") || true
-    target_slot="${target_slot:-1}"
-  fi
-
-  cat << MSG
-  Authenticate with your Claude Pro/Max account.
-
-  ⚠  The browser won't open automatically from inside Docker.
-     When you see the login URL, copy it and paste it into
-     your browser. After logging in, type 'exit' to return here.
-
-MSG
-  read -rp "  Press Enter to open slot $target_slot for authentication..."
-  echo ""
-  claudebox slot "$target_slot" || true   # user authenticates then types exit
-
-  echo ""
-  refresh_slot_cache
-  if has_authenticated_slot; then
-    echo "  ✓ Authenticated — launching your vibe session now."
-    echo ""
-  else
-    cat << MSG
-  ⚠  No authenticated slot found.
-     If you didn't finish, run:  claudebox slot $target_slot
-     Then run vibe again.
-MSG
-    exit 1
-  fi
-}
-
 # ── Flags ─────────────────────────────────────────────────────────────────────
 REBUILD=false
 while [[ "${1:-}" == --* ]]; do
@@ -337,30 +242,23 @@ else
   fi
 fi
 
-# ── Checks ────────────────────────────────────────────────────────────────────
-require claudebox "Install from: https://github.com/RchGrav/claudebox"
+# ── Preflight ─────────────────────────────────────────────────────────────────
+require docker       "Install OrbStack (https://orbstack.dev) or Docker Desktop."
+require devcontainer "Install with: npm install -g @devcontainers/cli"
+require gh           "Install from: https://cli.github.com"
 
 if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-  echo "  ⚠  ANTHROPIC_API_KEY is set — Claude Code will bill against your API credits."
-  echo "     Unset it to use your Pro/Max subscription instead."
+  echo "  ⚠  ANTHROPIC_API_KEY is set — Claude Code inside the container would bill"
+  echo "     against API credits if it honoured it. vibe forces subscription auth via"
+  echo "     settings.local.json (forceLoginMethod=claudeai), so this should be"
+  echo "     ignored — but unset it in your host env for good measure."
   echo ""
 fi
 
-# ── Pre-flight: validate workspace path ───────────────────────────────────────
-if ! validate_docker_tag_from_path "$WORKSPACE"; then
-  # Suggest a cleaner folder name: replace spaces with hyphens, squeeze runs of hyphens
-  suggested=$(basename "$WORKSPACE" | tr ' ' '-' | tr -s '-')
-  echo ""
-  echo "  ✗ Your project path would generate an invalid Docker image name."
-  echo ""
-  echo "     $WORKSPACE"
-  echo ""
-  echo "  Docker rejects names with three or more consecutive underscores (___), which"
-  echo "  occur when a folder name contains sequences like \" - \" (space-hyphen-space)."
-  echo ""
-  echo "  Rename the folder to fix this — for example:"
-  echo "    $(basename "$WORKSPACE")  →  $suggested"
-  echo ""
+if [ ! -f "$DEVCONTAINER_DIR/devcontainer.json" ]; then
+  echo "  ✗ vibe devcontainer not installed at $DEVCONTAINER_DIR"
+  echo "    Run the installer:"
+  echo "      bash <(curl -fsSL https://raw.githubusercontent.com/Aqueum/vibe/main/install.sh)"
   exit 1
 fi
 
@@ -383,39 +281,16 @@ else
   fi
 fi
 
-# ── ClaudeBox slot check ──────────────────────────────────────────────────────
-refresh_slot_cache
-if has_idle_authenticated_slot; then
-  : # An idle authenticated slot is available — claudebox will use it.
-elif has_authenticated_slot; then
-  # Every authenticated slot is currently active (busy).
-  echo "  ℹ  All Claude slots are busy for this project."
-  echo ""
-  if ask_yes_no "Open a new parallel slot?" y; then
-    setup_claudebox_slot
-  else
-    echo "  Exiting — existing sessions are still running."
-    exit 0
-  fi
-else
-  # No authenticated slots exist — create and authenticate one.
-  setup_claudebox_slot
-fi
-
-# ── Configure git credentials for the container ──────────────────────────────
-# git doesn't read GITHUB_TOKEN automatically. Install a per-repo credential
-# helper that reads it from the environment, so git push/pull work inside the
-# container without a separate auth step. The helper is a no-op when
-# GITHUB_TOKEN is unset, so normal git usage outside vibe is unaffected.
-if [ -n "$GITHUB_TOKEN" ]; then
-  git -C "$WORKSPACE" config --local credential.helper \
-    '!f() { [ -n "$GITHUB_TOKEN" ] && printf "username=x\npassword=%s\n" "$GITHUB_TOKEN"; }; f'
+# ── Build the image if missing or --rebuild ──────────────────────────────────
+if [ "$REBUILD" = true ] || ! docker image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
+  echo "  Building vibe container image ($IMAGE_TAG)..."
+  docker build -t "$IMAGE_TAG" "$DEVCONTAINER_DIR"
 fi
 
 # ── Write persistent session settings ────────────────────────────────────────
-# settings.local.json is read by Claude Code at startup. We write it fresh on
-# every launch so these settings are always in effect regardless of how the
-# project was cloned or whether the file existed before.
+# settings.local.json is read by Claude Code at startup. Written fresh on every
+# launch so these settings are always in effect regardless of how the project
+# was cloned or whether the file existed before.
 #
 #   permissions.defaultMode bypassPermissions — YOLO mode (no approval prompts)
 #   forceLoginMethod claudeai                 — use Claude Pro/Max subscription,
@@ -437,7 +312,10 @@ if [ -f "$WORKSPACE/.gitignore" ]; then
   fi
 fi
 
-# ── Launch ────────────────────────────────────────────────────────────────────
+# ── Launch via devcontainer CLI ──────────────────────────────────────────────
+# export so ${localEnv:GITHUB_TOKEN} in devcontainer.json resolves in this env.
+export GITHUB_TOKEN
+
 echo ""
 echo "  🚀 vibe session starting"
 echo "     project : $PROJECT_NAME"
@@ -445,11 +323,16 @@ echo "     path    : $WORKSPACE"
 [ -n "$GITHUB_REPO" ] && echo "     github  : $GITHUB_REPO"
 echo ""
 
-CLAUDEBOX_ARGS=(--dangerously-skip-permissions)
-[ "$REBUILD" = true ] && CLAUDEBOX_ARGS+=(--rebuild)
+UP_ARGS=(
+  up
+  --workspace-folder "$WORKSPACE"
+  --override-config "$DEVCONTAINER_DIR/devcontainer.json"
+)
+[ "$REBUILD" = true ] && UP_ARGS+=(--remove-existing-container)
 
-if [ -n "$GITHUB_TOKEN" ]; then
-  GITHUB_TOKEN="$GITHUB_TOKEN" claudebox "${CLAUDEBOX_ARGS[@]}"
-else
-  claudebox "${CLAUDEBOX_ARGS[@]}"
-fi
+devcontainer "${UP_ARGS[@]}"
+
+devcontainer exec \
+  --workspace-folder "$WORKSPACE" \
+  --override-config "$DEVCONTAINER_DIR/devcontainer.json" \
+  claude --dangerously-skip-permissions
