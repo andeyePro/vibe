@@ -1,54 +1,30 @@
 # vibe
 
-A thin wrapper around [ClaudeBox](https://github.com/RchGrav/claudebox) that makes per-project YOLO vibe coding sessions as simple as `cd my-project && vibe`.
+A single-command containerised Claude Code environment. `cd my-project && vibe` and you're in.
 
-- **Detects your GitHub remote automatically** — no arguments needed
-- **Walks you through fine-grained PAT setup** on first use per repo, then remembers
-- **Offers to create a GitHub repo** if none exists, including for empty folders
-- **Works with Dropbox** (or any directory) — mount your project folder directly
-- **Never nags** — answer `never` once and a project is quietly skipped forever
+## What you get
 
-## How it works
-
-```
-cd my-project
-vibe
-```
-
-That's it. On first run for a repo, `vibe` walks you through any setup it needs. Every subsequent run goes straight in.
+- Claude Code running in Anthropic's official devcontainer, with its firewall whitelist in place.
+- Claude Pro/Max subscription auth (no API key / no metered billing).
+- A per-repo fine-grained GitHub PAT injected as `$GITHUB_TOKEN` and wired into git — `git push` just works.
+- SSH out to remote dev machines using your host `~/.ssh` keys (mounted read-only).
+- One-time approvals: log in to Claude once, add a PAT once per repo, never asked again.
 
 ## Prerequisites
 
-- macOS (testing) / Linux (should work, if macOS does)
-- [ClaudeBox](https://github.com/RchGrav/claudebox) — `wget https://github.com/RchGrav/claudebox/releases/latest/download/claudebox.run && chmod +x claudebox.run && ./claudebox.run`
-- A Docker backend — [OrbStack](https://orbstack.dev) (recommended, lighter) or [Docker Desktop](https://www.docker.com/products/docker-desktop/)
-- [GitHub CLI](https://cli.github.com) (`gh`) — for repo creation and auth
-- A Claude **Pro or Max subscription** (no API key needed — see Authentication below)
+- macOS 13+ or Linux
+- [OrbStack](https://orbstack.dev) (recommended, lighter) or [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+- Node.js, then `npm install -g @devcontainers/cli`
+- [GitHub CLI](https://cli.github.com) — `gh auth login`
+- A Claude **Pro or Max** subscription
 
-## Installation
+## Install
 
 ```bash
-# 1. Clone or download vibe
-git clone https://github.com/Aqueum/vibe.git ~/.vibe-src
-
-# 2. Symlink the script onto your PATH
-ln -sf ~/.vibe-src/vibe ~/bin/vibe   # or /usr/local/bin/vibe
-
-# 3. Create your config (sets your projects directory)
-mkdir -p ~/.vibe
-cat > ~/.vibe/config <<'EOF'
-VIBE_PROJECTS_DIR="$HOME/Projects"   # adjust to your projects folder
-EOF
-
+bash <(curl -fsSL https://raw.githubusercontent.com/Aqueum/vibe/main/install.sh)
 ```
 
-## Authentication
-
-`vibe` uses your **Claude Pro/Max subscription** — no API key required, no per-token billing.
-
-On the first run for each project, Claude Code will print a URL in the terminal. Visit it in your browser to log in with your Claude account. Credentials are stored inside the container and reused for all future sessions on that project.
-
-> **Note:** If `ANTHROPIC_API_KEY` is set in your environment, Claude Code will use API billing instead of your subscription. `vibe` will warn you if it detects this — unset the variable to switch back to subscription mode.
+The installer clones vibe to `~/.vibe-src`, symlinks `~/bin/vibe`, copies the devcontainer definition to `~/.vibe/devcontainer/`, and prompts for your projects directory.
 
 ## Usage
 
@@ -60,17 +36,25 @@ vibe
 # By project name from anywhere (uses VIBE_PROJECTS_DIR)
 vibe my-app
 
-# Force rebuild of the ClaudeBox image
+# Force rebuild of the container image
 vibe --rebuild
 
 # List available projects
 vibe --list
 ```
 
+## Authentication
+
+vibe uses your **Claude Pro/Max subscription** — no API key required, no per-token billing.
+
+On the first run Claude Code will print a URL in the terminal; open it in your browser and log in. Credentials are stored in a named Docker volume (`vibe-claude-config`) that is shared across all projects, so you log in **once**, not once per project.
+
+> **Note:** if `ANTHROPIC_API_KEY` is set in your environment, vibe prints a warning. The container still forces subscription auth via `forceLoginMethod: "claudeai"`, but you should unset the variable on the host for good measure.
+
 ## First-run flows
 
 ### Project with an existing GitHub repo
-`vibe` detects the remote, checks `~/.vibe/tokens` for a saved PAT, and if none is found walks you through creating a [fine-grained Personal Access Token](https://github.com/settings/personal-access-tokens/new) scoped to just that repo. The token is saved and never asked for again.
+vibe detects the remote, checks `~/.vibe/tokens` for a saved PAT, and if none is found walks you through creating a [fine-grained Personal Access Token](https://github.com/settings/personal-access-tokens/new) scoped to just that repo. The token is saved and never asked for again.
 
 ### Project with no GitHub repo
 ```
@@ -82,22 +66,11 @@ Create a GitHub repo for it? [Y/n/never]
 - **never** — remembers permanently (stored in `~/.vibe/skipped`), never asks again
 
 ### Empty folder / new project
-`vibe` handles `git init` and an initial commit automatically before pushing to GitHub.
-
-## File layout
-
-| Path | Purpose | Synced? |
-|---|---|---|
-| `~/bin/vibe` | Symlink to the script | Up to you |
-| `~/.vibe/config` | Your `VIBE_PROJECTS_DIR` | ❌ keep local |
-| `~/.vibe/tokens` | GitHub PATs (`owner/repo=ghp_...`) | ❌ keep local |
-| `~/.vibe/skipped` | Projects opted out of GitHub | ❌ keep local |
-
-> **Security:** `~/.vibe/tokens` is `chmod 600` and should never be committed or synced to the cloud.
+vibe handles `git init` and an initial commit automatically before pushing to GitHub.
 
 ## GitHub token permissions
 
-When creating a fine-grained PAT, `vibe` needs:
+When creating a fine-grained PAT, vibe needs:
 
 | Permission | Level |
 |---|---|
@@ -107,9 +80,41 @@ When creating a fine-grained PAT, `vibe` needs:
 
 Set **Repository access** to *Only select repositories* and choose just the repo you're working on.
 
-## Why fine-grained PATs?
+## File layout
 
-Inside a ClaudeBox YOLO session Claude has full execution permissions. A fine-grained PAT scoped to a single repo limits the blast radius — if something goes wrong, Claude can only affect that one repo, not your entire GitHub account.
+| Path | Purpose | Synced? |
+|---|---|---|
+| `~/bin/vibe` | Symlink to the launcher | Up to you |
+| `~/.vibe-src/` | Clone of this repo | git-managed |
+| `~/.vibe/config` | `VIBE_PROJECTS_DIR` | ❌ keep local |
+| `~/.vibe/tokens` | GitHub PATs (`owner/repo=ghp_...`) | ❌ keep local |
+| `~/.vibe/skipped` | Projects opted out of GitHub | ❌ keep local |
+| `~/.vibe/devcontainer/` | Vendored devcontainer def used by `--override-config` | ❌ keep local |
+
+Docker-side state lives in two named volumes:
+
+| Volume | Contents |
+|---|---|
+| `vibe-claude-config` | `/home/node/.claude` — Claude Pro auth (shared across all vibe projects) |
+| `vibe-bash-history`  | `/commandhistory` — shell history |
+
+> **Security:** `~/.vibe/tokens` is `chmod 600`. Never commit or sync it to the cloud.
+
+## How it's built
+
+vibe wraps Anthropic's [reference devcontainer for Claude Code](https://github.com/anthropics/claude-code/tree/main/.devcontainer), lightly patched to:
+- share Claude auth across projects (one login, not one-per-project)
+- mount your host `~/.ssh` and `~/.gitconfig` read-only
+- inject a per-repo GitHub PAT via a git credential helper
+
+Launch uses [`@devcontainers/cli`](https://github.com/devcontainers/cli) with `--override-config` so you never have to commit `.devcontainer/` into each project.
+
+## Security model
+
+- **Network:** iptables firewall allows only npm, GitHub, Claude API, DNS, SSH. No other outbound traffic.
+- **GitHub:** fine-grained PAT scoped to one repo — if Claude goes rogue, blast radius is one repo.
+- **Host FS:** only the project folder, `~/.ssh` (ro), and `~/.gitconfig` (ro) are mounted in.
+- **Claude Pro credentials:** sit in a named Docker volume, not bind-mounted from the host — a compromised container can't leak host credentials unless the firewall is breached.
 
 ## License
 
