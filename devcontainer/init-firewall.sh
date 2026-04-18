@@ -86,8 +86,8 @@ for domain in \
             exit 1
         fi
         echo "Adding $ip for $domain"
-        ipset add --exist allowed-domains "$ip"
-    done < <(echo "$ips")
+        ipset -exist add allowed-domains "$ip"
+    done < <(echo "$ips" | sort -u)
 done
 
 # Get host IP from default route
