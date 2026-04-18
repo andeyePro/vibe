@@ -33,7 +33,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   nano \
   openssh-client \
   vim \
+  avahi-daemon \
+  avahi-utils \
+  libnss-mdns \
   && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Enable mDNS (.local resolution) — insert mdns4_minimal before dns
+RUN sed -i 's/^\(hosts:.*\)dns/\1mdns4_minimal [NOTFOUND=return] dns/' /etc/nsswitch.conf
 
 # Ensure default node user has access to /usr/local/share
 RUN mkdir -p /usr/local/share/npm-global && \
@@ -90,11 +96,13 @@ RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
 
 
-# Copy and set up firewall script
+# Copy and set up firewall script, SSH setup, and credential helper
 COPY init-firewall.sh /usr/local/bin/
+COPY setup-ssh.sh /usr/local/bin/
 COPY credential-helper.sh /usr/local/bin/vibe-credential-helper
 USER root
-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/vibe-credential-helper && \
+RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/vibe-credential-helper && \
   echo "node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/node-firewall && \
+  echo "node ALL=(root) NOPASSWD: /usr/sbin/avahi-daemon" >> /etc/sudoers.d/node-firewall && \
   chmod 0440 /etc/sudoers.d/node-firewall
 USER node
