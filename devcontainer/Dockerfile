@@ -31,6 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   aggregate \
   jq \
   nano \
+  openssh-client \
   vim \
   && apt-get clean && rm -rf /var/lib/apt/lists/*
 
@@ -91,8 +92,9 @@ RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
 
 # Copy and set up firewall script
 COPY init-firewall.sh /usr/local/bin/
+COPY credential-helper.sh /usr/local/bin/vibe-credential-helper
 USER root
-RUN chmod +x /usr/local/bin/init-firewall.sh && \
+RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/vibe-credential-helper && \
   echo "node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/node-firewall && \
   chmod 0440 /etc/sudoers.d/node-firewall
 USER node
