@@ -98,6 +98,11 @@ RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/
   -a "export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhistory/.bash_history" \
   -x
 
+# zsh-in-docker hardcodes en_US.UTF-8 at the top of .zshrc, which isn't
+# generated in this image and clobbers the C.UTF-8 ENV above. Rewrite it so
+# zsh sessions inherit the same locale as everything else.
+RUN sed -i 's/en_US\.UTF-8/C.UTF-8/g; s/en_US:en/C/g' /home/node/.zshrc
+
 # Install Claude
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
 
