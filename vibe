@@ -251,6 +251,9 @@ require docker       "Install OrbStack (https://orbstack.dev) or Docker Desktop.
 require devcontainer "Install with: npm install -g @devcontainers/cli"
 require gh           "Install from: https://cli.github.com"
 
+# Suppress Docker Desktop CLI hints ("Try Docker Debug...") at session end.
+export DOCKER_CLI_HINTS=false
+
 if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
   echo "  ⚠  ANTHROPIC_API_KEY is set — Claude Code inside the container would bill"
   echo "     against API credits if it honoured it. vibe forces subscription auth via"
