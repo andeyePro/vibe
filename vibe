@@ -353,14 +353,32 @@ echo "     path    : $WORKSPACE"
 [ -n "$GITHUB_REPO" ] && echo "     github  : $GITHUB_REPO"
 echo ""
 
-UP_ARGS=(
+UP_BASE_ARGS=(
   up
   --workspace-folder "$WORKSPACE"
   --override-config "$DEVCONTAINER_DIR/devcontainer.json"
 )
+UP_ARGS=("${UP_BASE_ARGS[@]}")
 [ "$REBUILD" = true ] && UP_ARGS+=(--remove-existing-container)
 
-devcontainer "${UP_ARGS[@]}"
+# If `devcontainer up` fails, the postStartCommand likely died mid-way (e.g.
+# init-firewall.sh bombed out), leaving a container that's running but only
+# partially configured — dangerous, because the next `vibe` invocation would
+# skip postStart entirely and silently use a half-locked-down firewall.
+# Retry once with --remove-existing-container to get a clean state. If that
+# still fails, surface the error rather than hide it.
+if ! devcontainer "${UP_ARGS[@]}"; then
+  echo ""
+  echo "  ⚠  postStartCommand failed — container is in a partial state."
+  echo "     Removing it and retrying once with a fresh container."
+  echo ""
+  if ! devcontainer "${UP_BASE_ARGS[@]}" --remove-existing-container; then
+    echo ""
+    echo "  ✗ Retry also failed. Fix the underlying error above and re-run."
+    echo "    If the image itself is suspect: vibe --rebuild"
+    exit 1
+  fi
+fi
 
 devcontainer exec \
   --workspace-folder "$WORKSPACE" \
