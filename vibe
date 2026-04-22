@@ -444,6 +444,7 @@ echo "  🚀 vibe session starting"
 echo "     project : $PROJECT_NAME"
 echo "     path    : $WORKSPACE"
 [ -n "$GITHUB_REPO" ] && echo "     github  : $GITHUB_REPO"
+echo "     hooks   : tool-call guards + idle bell"
 echo ""
 
 UP_BASE_ARGS=(
@@ -489,4 +490,4 @@ fi
 devcontainer exec \
   --workspace-folder "$WORKSPACE" \
   --override-config "$DEVCONTAINER_DIR/devcontainer.json" \
-  /bin/bash --noprofile --norc -c 'exec env SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 claude --dangerously-skip-permissions'
+  /bin/bash --noprofile --norc -c 'exec env SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 claude --permission-mode bypassPermissions'

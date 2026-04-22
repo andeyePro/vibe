@@ -29,6 +29,7 @@ vibe
 **Expected:**
 - [ ] Displays: "🚀 vibe session starting"
 - [ ] Project path shown correctly
+- [ ] Banner includes `hooks : tool-call guards + idle bell`
 - [ ] Container builds (first run only)
 - [ ] Claude Code launches in the container
 - [ ] Can interact with Claude Code
@@ -337,6 +338,39 @@ git push --force origin main
 - [ ] `git push origin main` (no force) is NOT blocked
 
 Bonus: exit Claude and ring the bell check — after Claude stops responding, the outer terminal tab should badge (Terminal.app dot, iTerm2 bell indicator).
+
+---
+
+### Test 22: Remote-branch-delete guardrail
+Inside a vibe session, ask Claude to run each of:
+
+```bash
+git push --delete origin foo
+git push origin :foo
+```
+
+**Expected:**
+- [ ] Both blocked with: `vibe: 'git push' deleting a remote branch is irreversible for other clones. Confirm intent or delete via the GitHub UI.`
+- [ ] `git push origin main:main` (refspec, NOT a delete) is NOT blocked
+- [ ] `git push origin HEAD:refs/heads/foo` is NOT blocked
+
+---
+
+### Test 23: Hook audit log
+After triggering any blocked command (Test 21 or 22), on the host:
+
+```bash
+docker volume inspect vibe-claude-config --format '{{ .Mountpoint }}'
+# Or from inside the container:
+cat /home/node/.claude/vibe-blocks.log
+```
+
+**Expected:**
+- [ ] File exists at `/home/node/.claude/vibe-blocks.log`
+- [ ] One tab-separated line per block: `<ISO8601-UTC>\t<rule>\t<command>`
+- [ ] `rule` is `force-push` or `branch-delete`
+- [ ] Multi-line commands are flattened (newlines shown as `\n`)
+- [ ] Log persists across vibe sessions (survives container recreate — lives on `vibe-claude-config` volume)
 
 ---
 
