@@ -206,6 +206,10 @@ MSG
   GITHUB_TOKEN="$input_token"
 }
 
+# Allow smoke-test.py to source this file for pure unit-testing of helpers
+# without running the main launch logic below.
+[ "${VIBE_SOURCE_ONLY:-}" = "1" ] && return 0 2>/dev/null
+
 # ── Flags ─────────────────────────────────────────────────────────────────────
 REBUILD=false
 while [[ "${1:-}" == --* ]]; do
