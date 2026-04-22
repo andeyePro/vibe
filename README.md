@@ -26,6 +26,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/Aqueum/vibe/main/install.sh)
 
 The installer clones vibe to `~/.vibe-src`, symlinks `~/bin/vibe`, and prompts for your projects directory. `vibe` reads the devcontainer definition straight from the clone, so `git -C ~/.vibe-src pull` (or re-running the installer) is all you need to update.
 
+**Hacking on vibe itself?** Clone the repo anywhere you like and run `./install.sh` from inside the clone — the installer detects the in-place checkout and points `~/bin/vibe` at it directly, so your edits take effect with no separate pull step.
+
 ## Usage
 
 ```bash

@@ -25,6 +25,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent
 VIBE = REPO / "vibe"
+INSTALL = REPO / "install.sh"
 WRITE_ENV_HINT = REPO / "devcontainer" / "write-env-hint.sh"
 
 FAILURES: list[tuple[str, str]] = []
@@ -190,6 +191,50 @@ def test_docker_hints_non_dict_features() -> None:
               data.get("features") == {"hints": "false"}, cfg.read_text())
 
 
+def test_install_detects_local_clone() -> None:
+    """install.sh run from a real clone should use it in-place, not touch ~/.vibe-src."""
+    print("\n[install.sh: detects local clone]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        env = {**os.environ, "HOME": str(tmp)}
+        # Pre-seed config so the installer doesn't prompt for a projects dir.
+        (tmp / ".vibe").mkdir()
+        (tmp / ".vibe" / "config").write_text(f'VIBE_PROJECTS_DIR="{tmp}/Projects"\n')
+        r = run(["bash", str(INSTALL)], env=env, cwd=REPO)
+        check("exit 0", r.returncode == 0, r.stderr)
+        check("announces in-place use", "Using existing clone" in r.stdout, r.stdout)
+        check("did NOT create ~/.vibe-src", not (tmp / ".vibe-src").exists())
+        link = tmp / "bin" / "vibe"
+        check("bin/vibe symlink created", link.is_symlink())
+        if link.is_symlink():
+            check("symlink points at repo checkout",
+                  Path(os.readlink(link)) == VIBE,
+                  f"readlink={os.readlink(link)}")
+
+
+def test_install_falls_back_to_vibe_src() -> None:
+    """install.sh run as a standalone script (not inside a clone) should clone ~/.vibe-src.
+
+    We can't exercise the real clone path without network, so just assert the
+    detection correctly rejects a non-clone directory by checking the script
+    tries to run `git clone` (which will fail fast with no network / bad URL).
+    """
+    print("\n[install.sh: non-clone falls through to ~/.vibe-src path]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        standalone = tmp / "install.sh"
+        standalone.write_text(INSTALL.read_text())
+        env = {**os.environ, "HOME": str(tmp)}
+        (tmp / ".vibe").mkdir()
+        (tmp / ".vibe" / "config").write_text(f'VIBE_PROJECTS_DIR="{tmp}/Projects"\n')
+        r = run(["bash", str(standalone)], env=env, cwd=tmp)
+        combined = r.stdout + r.stderr
+        check("took clone/pull path (not in-place)",
+              "Using existing clone" not in r.stdout, r.stdout)
+        check("attempted to clone to ~/.vibe-src",
+              "Cloning vibe to" in combined, combined[-400:])
+
+
 def test_token_helpers() -> None:
     """save_token / lookup_token round-trip against a tmp $HOME."""
     print("\n[vibe token helpers]")
@@ -236,6 +281,8 @@ def main() -> int:
     test_docker_hints_respects_user_string()
     test_docker_hints_malformed_json()
     test_docker_hints_non_dict_features()
+    test_install_detects_local_clone()
+    test_install_falls_back_to_vibe_src()
     test_token_helpers()
 
     print()
