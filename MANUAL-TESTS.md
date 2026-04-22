@@ -30,6 +30,7 @@ vibe
 - [ ] Displays: "🚀 vibe session starting"
 - [ ] Project path shown correctly
 - [ ] Banner includes `hooks : tool-call guards + idle bell`
+- [ ] Banner includes `extras : /diet · /feast · shellcheck-fixer · security-review`
 - [ ] Container builds (first run only)
 - [ ] Claude Code launches in the container
 - [ ] Can interact with Claude Code
@@ -392,6 +393,40 @@ git config --global --get credential.helper  # should print /usr/local/bin/vibe-
 - [ ] `git config --global` writes succeed
 - [ ] `credential.helper` points to vibe's helper
 - [ ] Host `~/.gitconfig` is unchanged after the container exits
+
+---
+
+### Test 24: Curated agents + lean-mode commands
+
+Canonical copies live at `/usr/local/share/vibe/{agents,commands}/` in the image
+and are synced into the persistent volume at `~/.claude/{agents,commands}/` by
+`install-claude-extras.sh` on every postStart.
+
+```bash
+vibe
+# inside the container:
+ls ~/.claude/agents/
+ls ~/.claude/commands/
+```
+
+**Expected:**
+- [ ] `~/.claude/agents/shellcheck-fixer.md` exists
+- [ ] `~/.claude/agents/security-review.md` exists
+- [ ] `~/.claude/commands/diet.md` exists
+- [ ] `~/.claude/commands/feast.md` exists
+
+Inside Claude Code:
+- [ ] Typing `/diet` lists the command with its description in the picker
+- [ ] `/feast` likewise
+- [ ] Ask Claude to "run shellcheck-fixer" — subagent launches, runs `python3 code-check.py`, exits with `clean` if repo is clean
+- [ ] Ask Claude to "run security-review" with no staged diff — subagent replies `no diff — nothing to review`
+- [ ] Invoking `/diet` causes Claude to acknowledge lean mode; subsequent requests that would normally spawn subagents are handled inline
+- [ ] Invoking `/feast` restores default behavior
+
+**Image rebuild propagation:**
+- [ ] Edit `devcontainer/agents/shellcheck-fixer.md` on the host, rebuild (Test 4), relaunch
+- [ ] `~/.claude/agents/shellcheck-fixer.md` inside the container reflects the edit
+- [ ] Any user-created agents in `~/.claude/agents/` (not shipped by vibe) are left untouched
 
 ---
 
