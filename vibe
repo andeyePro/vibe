@@ -16,6 +16,7 @@ CONFIG_FILE="${VIBE_CONFIG:-$HOME/.vibe/config}"
 TOKENS_FILE="$HOME/.vibe/tokens"
 SKIPPED_FILE="$HOME/.vibe/skipped"
 DEVCONTAINER_DIR="$HOME/.vibe/devcontainer"
+IMAGE_MARKER="$HOME/.vibe/.image-built"
 IMAGE_TAG="vibe-dev:latest"
 
 if [ -f "$CONFIG_FILE" ]; then
@@ -297,10 +298,23 @@ else
   fi
 fi
 
-# ── Build the image if missing or --rebuild ──────────────────────────────────
+# ── Build the image if missing, stale, or --rebuild ──────────────────────────
+# Auto-rebuild when any file in $DEVCONTAINER_DIR is newer than $IMAGE_MARKER
+# (touched after each successful build). Catches updated Dockerfile, firewall
+# script, etc. after `install.sh` or manual edits without needing --rebuild.
+if [ "$REBUILD" != true ] && docker image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
+  if [ ! -f "$IMAGE_MARKER" ] \
+     || [ -n "$(find "$DEVCONTAINER_DIR" -type f -newer "$IMAGE_MARKER" -print 2>/dev/null | head -n 1)" ]; then
+    echo "  devcontainer/ changed since last build — rebuilding image."
+    REBUILD=true
+  fi
+fi
+
 if [ "$REBUILD" = true ] || ! docker image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
   echo "  Building vibe container image ($IMAGE_TAG)..."
   docker build -t "$IMAGE_TAG" "$DEVCONTAINER_DIR"
+  mkdir -p "$(dirname "$IMAGE_MARKER")"
+  touch "$IMAGE_MARKER"
 fi
 
 # ── Write persistent session settings ────────────────────────────────────────
