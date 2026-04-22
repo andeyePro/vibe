@@ -386,13 +386,45 @@ fi
 #   permissions.defaultMode bypassPermissions — YOLO mode (no approval prompts)
 #   forceLoginMethod claudeai                 — use Claude Pro/Max subscription,
 #                                               not an API key
+#   hooks                                     — tool-call backstop: PreToolUse
+#                                               blocks history-overwriting
+#                                               force-push; Stop/Notification
+#                                               ring the terminal bell so the
+#                                               outer terminal tab badges when
+#                                               Claude goes idle or needs input
 mkdir -p "$WORKSPACE/.claude"
 cat > "$WORKSPACE/.claude/settings.local.json" << 'EOF'
 {
   "permissions": {
     "defaultMode": "bypassPermissions"
   },
-  "forceLoginMethod": "claudeai"
+  "forceLoginMethod": "claudeai",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "/usr/local/bin/guard-bash.sh" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "printf '\\a' >&2" }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "printf '\\a' >&2" }
+        ]
+      }
+    ]
+  }
 }
 EOF
 

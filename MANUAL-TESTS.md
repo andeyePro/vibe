@@ -109,15 +109,11 @@ git status
 ```
 
 **Expected:**
-- [ ] `.claude/settings.local.json` exists with:
-  ```json
-  {
-    "permissions": {
-      "defaultMode": "bypassPermissions"
-    },
-    "forceLoginMethod": "claudeai"
-  }
-  ```
+- [ ] `.claude/settings.local.json` exists and contains:
+  - `permissions.defaultMode: "bypassPermissions"`
+  - `forceLoginMethod: "claudeai"`
+  - `hooks.PreToolUse` matcher `Bash` → `/usr/local/bin/guard-bash.sh`
+  - `hooks.Stop` and `hooks.Notification` each → `printf '\a' >&2`
 - [ ] File not shown in `git status` (in .gitignore)
 - [ ] `.claude/settings.local.json` appears in `.gitignore`
 
@@ -325,6 +321,22 @@ ls -la ~/.ssh ~/.gitconfig        # should now exist
 - [ ] vibe creates `~/.ssh` (0700) and `~/.gitconfig` (empty file) before launching
 - [ ] Bind mounts don't fail
 - [ ] Container launches normally
+
+---
+
+### Test 21: Force-push guardrail
+Inside a vibe session, ask Claude to run:
+
+```bash
+git push --force origin main
+```
+
+**Expected:**
+- [ ] Hook blocks the call with: `vibe: 'git push --force' overwrites remote history. Use --force-with-lease.`
+- [ ] `git push --force-with-lease origin main` is NOT blocked
+- [ ] `git push origin main` (no force) is NOT blocked
+
+Bonus: exit Claude and ring the bell check — after Claude stops responding, the outer terminal tab should badge (Terminal.app dot, iTerm2 bell indicator).
 
 ---
 

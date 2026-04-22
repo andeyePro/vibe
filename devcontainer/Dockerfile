@@ -112,9 +112,10 @@ COPY init-firewall.sh /usr/local/bin/
 COPY setup-ssh.sh /usr/local/bin/
 COPY setup-git.sh /usr/local/bin/
 COPY write-env-hint.sh /usr/local/bin/
+COPY guard-bash.sh /usr/local/bin/
 COPY credential-helper.sh /usr/local/bin/vibe-credential-helper
 USER root
-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/vibe-credential-helper && \
+RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/guard-bash.sh /usr/local/bin/vibe-credential-helper && \
   echo "node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/node-firewall && \
   echo "node ALL=(root) NOPASSWD: /usr/sbin/avahi-daemon" >> /etc/sudoers.d/node-firewall && \
   chmod 0440 /etc/sudoers.d/node-firewall
