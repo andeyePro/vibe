@@ -269,6 +269,15 @@ if [ ! -f "$DEVCONTAINER_DIR/devcontainer.json" ]; then
   exit 1
 fi
 
+# devcontainer.json bind-mounts ~/.ssh and ~/.gitconfig into the container.
+# On a fresh Mac neither may exist yet, which makes the bind mount fail hard.
+# Create them eagerly with the permissions SSH tools would set anyway.
+if [ ! -d "$HOME/.ssh" ]; then
+  mkdir -p "$HOME/.ssh"
+  chmod 700 "$HOME/.ssh"
+fi
+[ -f "$HOME/.gitconfig" ] || touch "$HOME/.gitconfig"
+
 # ── GitHub setup ──────────────────────────────────────────────────────────────
 GITHUB_TOKEN=""
 GITHUB_REPO=""
