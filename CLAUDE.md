@@ -9,6 +9,12 @@ A single-command, containerised YOLO coding environment for Claude Code. `cd pro
 - Target users: macOS primary (tested on Darwin), Linux secondary. Uses OrbStack or Docker Desktop.
 - Auth model: Claude Pro/Max subscription (never API key); GitHub fine-grained PAT per repo (blast-radius argument — each container can only touch one repo).
 
+## Testing
+
+- `python3 code-check.py` — shellcheck over `vibe` + all `.sh` files. Fast. Run on every change.
+- `python3 smoke-test.py` — host-side black-box tests (no docker, no network). Fast. Covers `--help`, write-env-hint block management, token helpers.
+- `MANUAL-TESTS.md` — end-to-end checklist for container lifecycle behaviour (auto-rebuild, partial-fail retry, SSH, bind mounts). Run before shipping changes that touch the Dockerfile, devcontainer.json, postStartCommand, or the vibe launcher.
+
 ## Invariants (don't break these)
 
 - `vibe` must work from any project folder with a single command, no arguments needed.
