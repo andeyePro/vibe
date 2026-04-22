@@ -328,6 +328,27 @@ ls -la ~/.ssh ~/.gitconfig        # should now exist
 
 ---
 
+### Test 20: `git config --global` works inside the container
+Regression test for the `.gitconfig` bind-mount EBUSY failure: host `~/.gitconfig`
+is mounted read-only at `~/.gitconfig-host`, and `setup-git.sh` copies it to a
+writable `~/.gitconfig` so `git config --global` can rename-over-tempfile.
+
+```bash
+vibe
+# inside the container:
+git config --global user.email "test@example.com"
+git config --global --get user.email      # should print test@example.com
+git config --global --get credential.helper  # should print /usr/local/bin/vibe-credential-helper
+```
+
+**Expected:**
+- [ ] No `Device or resource busy` error on postStartCommand
+- [ ] `git config --global` writes succeed
+- [ ] `credential.helper` points to vibe's helper
+- [ ] Host `~/.gitconfig` is unchanged after the container exits
+
+---
+
 ## Troubleshooting
 
 ### Docker not found
