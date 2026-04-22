@@ -5,13 +5,9 @@ A single-command, containerised YOLO coding environment for Claude Code. `cd pro
 ## Project context
 
 - Script: `./vibe` (bash) — the entrypoint users invoke as `vibe`.
-- Current status: the repo is mid-modernisation. The old implementation wrapped `claudebox` (now stale; last commit Aug 2025). The rewrite drops `claudebox` and switches to Anthropic's official Claude Code devcontainer as the base.
+- Container: Anthropic's official Claude Code devcontainer, vendored under `devcontainer/` with vibe-specific patches (openssh-client, credential helper, firewall tweaks, mDNS, env hint).
 - Target users: macOS primary (tested on Darwin), Linux secondary. Uses OrbStack or Docker Desktop.
 - Auth model: Claude Pro/Max subscription (never API key); GitHub fine-grained PAT per repo (blast-radius argument — each container can only touch one repo).
-
-## Current work
-
-See **[PLAN.md](PLAN.md)** for the full implementation plan for the claudebox-removal rewrite. PLAN.md is the authoritative work list — it's structured in phases with exact file paths, contents, commands, and a test matrix. Work through it phase by phase; do not skip phases.
 
 ## Invariants (don't break these)
 
