@@ -4,7 +4,7 @@
 # To resync: re-fetch from
 #   https://raw.githubusercontent.com/anthropics/claude-code/<sha>/.devcontainer/Dockerfile
 # then re-apply the vibe-specific patches (openssh-client, shellcheck,
-# credential-helper, commands/).
+# credential-helper, agents/, commands/).
 
 FROM node:20
 
@@ -117,10 +117,11 @@ COPY write-env-hint.sh /usr/local/bin/
 COPY guard-bash.sh /usr/local/bin/
 COPY install-claude-extras.sh /usr/local/bin/
 COPY credential-helper.sh /usr/local/bin/vibe-credential-helper
-# Curated Claude Code slash commands. Staged under /usr/local/share
+# Curated Claude Code agents + slash commands. Staged under /usr/local/share
 # because /home/node/.claude is a persistent Docker volume at runtime — files
 # COPY'd there at build time would be shadowed. install-claude-extras.sh syncs
 # them into the volume on each container start.
+COPY agents/ /usr/local/share/vibe/agents/
 COPY commands/ /usr/local/share/vibe/commands/
 USER root
 RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/guard-bash.sh /usr/local/bin/install-claude-extras.sh /usr/local/bin/vibe-credential-helper && \
