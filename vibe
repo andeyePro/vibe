@@ -210,10 +210,11 @@ MSG
 # ── Docker config helpers ─────────────────────────────────────────────────────
 
 # Disable Docker CLI's "What's next?" hints by setting features.hints="false"
-# in ~/.docker/config.json. Idempotent. Respects an explicit user choice
-# (string "true"/"false"), but overwrites legacy bool values written by
-# earlier vibe versions — Docker now requires a string and warns otherwise.
-# Bails on malformed JSON rather than trampling the user's config.
+# in ~/.docker/config.json. Idempotent. Respects an explicit user string
+# choice, but coerces bool values (written by earlier vibe versions or older
+# Docker releases) — current Docker CLI rejects non-string feature values
+# and prints a WARNING on every invocation until fixed. Bails on malformed
+# JSON rather than trampling the user's config.
 ensure_docker_hints_off() {
   local cfg="$HOME/.docker/config.json"
   mkdir -p "$(dirname "$cfg")"
@@ -226,16 +227,27 @@ import json, sys
 path = sys.argv[1]
 try:
     with open(path) as f:
-        cfg = json.load(f)
-except (json.JSONDecodeError, OSError):
+        original = f.read()
+    cfg = json.loads(original)
+except (json.JSONDecodeError, OSError, ValueError):
     sys.exit(0)
-features = cfg.setdefault("features", {})
-if isinstance(features.get("hints"), str):
-    sys.exit(0)
-features["hints"] = "false"
-with open(path, "w") as f:
-    json.dump(cfg, f, indent=2)
-    f.write("\n")
+
+features = cfg.get("features")
+if not isinstance(features, dict):
+    features = {}
+    cfg["features"] = features
+
+for k, v in list(features.items()):
+    if isinstance(v, bool):
+        features[k] = "true" if v else "false"
+
+if not isinstance(features.get("hints"), str):
+    features["hints"] = "false"
+
+new = json.dumps(cfg, indent=2) + "\n"
+if new != original:
+    with open(path, "w") as f:
+        f.write(new)
 PY
 }
 

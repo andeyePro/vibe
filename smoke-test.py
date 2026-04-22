@@ -15,6 +15,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import subprocess
@@ -105,6 +106,90 @@ def test_env_hint_preserves_user_content() -> None:
         check("vibe block present", "BEGIN vibe env (managed)" in content)
 
 
+def _run_ensure_docker_hints_off(home: Path):
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "VIBE_CONFIG": f"{home}/no-config",
+        "VIBE_SOURCE_ONLY": "1",
+    }
+    script = f"source {shlex.quote(str(VIBE))}; ensure_docker_hints_off"
+    return run(["bash", "-c", script], env=env)
+
+
+def test_docker_hints_fresh() -> None:
+    print("\n[ensure_docker_hints_off: no config]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        r = _run_ensure_docker_hints_off(home)
+        check("exit 0", r.returncode == 0, r.stderr)
+        cfg = home / ".docker" / "config.json"
+        check("config created", cfg.exists())
+        if cfg.exists():
+            data = json.loads(cfg.read_text())
+            check("hints is string 'false'", data.get("features", {}).get("hints") == "false",
+                  cfg.read_text())
+
+
+def test_docker_hints_heals_bool() -> None:
+    print("\n[ensure_docker_hints_off: heals legacy bool]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        cfg = home / ".docker" / "config.json"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(json.dumps({"features": {"hints": False, "other": True},
+                                   "credsStore": "osxkeychain"}))
+        r = _run_ensure_docker_hints_off(home)
+        check("exit 0", r.returncode == 0, r.stderr)
+        data = json.loads(cfg.read_text())
+        check("hints coerced to string", data["features"]["hints"] == "false", cfg.read_text())
+        check("other bool coerced", data["features"]["other"] == "true", cfg.read_text())
+        check("unrelated field preserved", data.get("credsStore") == "osxkeychain",
+              cfg.read_text())
+
+
+def test_docker_hints_respects_user_string() -> None:
+    print("\n[ensure_docker_hints_off: respects user choice]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        cfg = home / ".docker" / "config.json"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(json.dumps({"features": {"hints": "true"}}, indent=2) + "\n")
+        mtime_before = cfg.stat().st_mtime_ns
+        r = _run_ensure_docker_hints_off(home)
+        check("exit 0", r.returncode == 0, r.stderr)
+        data = json.loads(cfg.read_text())
+        check("hints='true' preserved", data["features"]["hints"] == "true", cfg.read_text())
+        check("file not rewritten", cfg.stat().st_mtime_ns == mtime_before,
+              "mtime changed — should have been a no-op")
+
+
+def test_docker_hints_malformed_json() -> None:
+    print("\n[ensure_docker_hints_off: malformed JSON is left alone]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        cfg = home / ".docker" / "config.json"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text("{not valid json")
+        r = _run_ensure_docker_hints_off(home)
+        check("exit 0", r.returncode == 0, r.stderr)
+        check("malformed file untouched", cfg.read_text() == "{not valid json")
+
+
+def test_docker_hints_non_dict_features() -> None:
+    print("\n[ensure_docker_hints_off: features field is not a dict]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        cfg = home / ".docker" / "config.json"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(json.dumps({"features": True}))
+        r = _run_ensure_docker_hints_off(home)
+        check("exit 0", r.returncode == 0, r.stderr)
+        data = json.loads(cfg.read_text())
+        check("features reset to dict with hints='false'",
+              data.get("features") == {"hints": "false"}, cfg.read_text())
+
+
 def test_token_helpers() -> None:
     """save_token / lookup_token round-trip against a tmp $HOME."""
     print("\n[vibe token helpers]")
@@ -146,6 +231,11 @@ def main() -> int:
     test_env_hint_fresh()
     test_env_hint_idempotent()
     test_env_hint_preserves_user_content()
+    test_docker_hints_fresh()
+    test_docker_hints_heals_bool()
+    test_docker_hints_respects_user_string()
+    test_docker_hints_malformed_json()
+    test_docker_hints_non_dict_features()
     test_token_helpers()
 
     print()
