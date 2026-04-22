@@ -24,7 +24,7 @@ A single-command containerised Claude Code environment. `cd my-project && vibe` 
 bash <(curl -fsSL https://raw.githubusercontent.com/Aqueum/vibe/main/install.sh)
 ```
 
-The installer clones vibe to `~/.vibe-src`, symlinks `~/bin/vibe`, copies the devcontainer definition to `~/.vibe/devcontainer/`, and prompts for your projects directory.
+The installer clones vibe to `~/.vibe-src`, symlinks `~/bin/vibe`, and prompts for your projects directory. `vibe` reads the devcontainer definition straight from the clone, so `git -C ~/.vibe-src pull` (or re-running the installer) is all you need to update.
 
 ## Usage
 
@@ -89,7 +89,6 @@ Set **Repository access** to *Only select repositories* and choose just the repo
 | `~/.vibe/config` | `VIBE_PROJECTS_DIR` | ❌ keep local |
 | `~/.vibe/tokens` | GitHub PATs (`owner/repo=ghp_...`) | ❌ keep local |
 | `~/.vibe/skipped` | Projects opted out of GitHub | ❌ keep local |
-| `~/.vibe/devcontainer/` | Vendored devcontainer def used by `--override-config` | ❌ keep local |
 
 Docker-side state lives in two named volumes:
 

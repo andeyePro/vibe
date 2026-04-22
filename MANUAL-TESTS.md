@@ -266,7 +266,7 @@ cd ~/Projects/vibe-test && vibe
 ### Test 16: Auto-rebuild on devcontainer/ changes
 ```bash
 # After a successful vibe run (image marker exists):
-touch ~/.vibe/devcontainer/Dockerfile
+touch ~/.vibe-src/devcontainer/Dockerfile
 cd ~/Projects/vibe-test && vibe
 ```
 
@@ -282,12 +282,12 @@ cd ~/Projects/vibe-test && vibe
 ### Test 17: Partial-fail recovery
 ```bash
 # Simulate postStart failure. Easiest way:
-# 1. Edit ~/.vibe/devcontainer/init-firewall.sh to `exit 1` on line 4
+# 1. Edit ~/.vibe-src/devcontainer/init-firewall.sh to `exit 1` on line 4
 # 2. vibe --rebuild    # builds image with broken script
 # 3. vibe              # first run fails
 
-# Now restore the script:
-cp devcontainer/init-firewall.sh ~/.vibe/devcontainer/
+# Now restore the script (from the same clone):
+git -C ~/.vibe-src checkout devcontainer/init-firewall.sh
 cd ~/Projects/vibe-test && vibe
 ```
 

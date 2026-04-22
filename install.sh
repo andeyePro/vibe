@@ -25,10 +25,14 @@ mkdir -p "$BIN_DIR"
 ln -sf "$SRC_DIR/vibe" "$BIN_DIR/vibe"
 echo "  ✓ Linked $BIN_DIR/vibe → $SRC_DIR/vibe"
 
-# 3. Install devcontainer files
-mkdir -p "$CONFIG_DIR/devcontainer"
-cp -R "$SRC_DIR/devcontainer/." "$CONFIG_DIR/devcontainer/"
-echo "  ✓ Installed devcontainer to $CONFIG_DIR/devcontainer"
+# 3. Remove legacy devcontainer copy (vibe now reads from $SRC_DIR directly).
+#    Prior installs cp -R'd devcontainer/ into $CONFIG_DIR, which went stale the
+#    moment anyone edited the repo. Clean up so nothing drifts from the clone.
+if [ -d "$CONFIG_DIR/devcontainer" ] && [ ! -L "$CONFIG_DIR/devcontainer" ]; then
+  rm -rf "$CONFIG_DIR/devcontainer"
+  echo "  ✓ Removed legacy $CONFIG_DIR/devcontainer (now read from $SRC_DIR/devcontainer)"
+fi
+mkdir -p "$CONFIG_DIR"
 
 # 4. Write default config if absent
 if [ ! -f "$CONFIG_DIR/config" ]; then

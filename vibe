@@ -15,7 +15,7 @@ set -euo pipefail
 CONFIG_FILE="${VIBE_CONFIG:-$HOME/.vibe/config}"
 TOKENS_FILE="$HOME/.vibe/tokens"
 SKIPPED_FILE="$HOME/.vibe/skipped"
-DEVCONTAINER_DIR="$HOME/.vibe/devcontainer"
+DEVCONTAINER_DIR="$HOME/.vibe-src/devcontainer"
 IMAGE_MARKER="$HOME/.vibe/.image-built"
 IMAGE_TAG="vibe-dev:latest"
 
@@ -299,7 +299,7 @@ if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
 fi
 
 if [ ! -f "$DEVCONTAINER_DIR/devcontainer.json" ]; then
-  echo "  ✗ vibe devcontainer not installed at $DEVCONTAINER_DIR"
+  echo "  ✗ vibe source not found at $DEVCONTAINER_DIR"
   echo "    Run the installer:"
   echo "      bash <(curl -fsSL https://raw.githubusercontent.com/Aqueum/vibe/main/install.sh)"
   exit 1
