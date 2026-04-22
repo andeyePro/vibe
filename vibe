@@ -15,9 +15,22 @@ set -euo pipefail
 CONFIG_FILE="${VIBE_CONFIG:-$HOME/.vibe/config}"
 TOKENS_FILE="$HOME/.vibe/tokens"
 SKIPPED_FILE="$HOME/.vibe/skipped"
-DEVCONTAINER_DIR="$HOME/.vibe-src/devcontainer"
 IMAGE_MARKER="$HOME/.vibe/.image-built"
 IMAGE_TAG="vibe-dev:latest"
+
+# Resolve DEVCONTAINER_DIR from this script's real location, following symlinks.
+# ~/bin/vibe is a symlink that install.sh points at either ~/.vibe-src (curl
+# installs) or a developer's in-place clone. Reading devcontainer/ from next to
+# the resolved script means both modes work and `rm -rf ~/.vibe-src` is safe
+# once a dev clone is in use.
+_vibe_src="${BASH_SOURCE[0]:-$0}"
+while [ -L "$_vibe_src" ]; do
+  _vibe_dir="$(cd "$(dirname "$_vibe_src")" && pwd -P)"
+  _vibe_src="$(readlink "$_vibe_src")"
+  [[ "$_vibe_src" != /* ]] && _vibe_src="$_vibe_dir/$_vibe_src"
+done
+DEVCONTAINER_DIR="$(cd "$(dirname "$_vibe_src")" && pwd -P)/devcontainer"
+unset _vibe_src _vibe_dir
 
 if [ -f "$CONFIG_FILE" ]; then
   # shellcheck source=/dev/null
@@ -428,7 +441,20 @@ if ! devcontainer "${UP_ARGS[@]}"; then
   fi
 fi
 
+# Start claude with a clean, deterministic shell env:
+#   - `bash --noprofile --norc` — launcher shell sources no rc files
+#   - `env SHELL=/bin/bash` — Claude Code's env-snapshot subprocess spawns
+#     non-interactive bash (reads no rc), not the image's default zsh
+#   - `LC_ALL=C.UTF-8 LANG=C.UTF-8` — silences the bash "locale not supported"
+#     warning when the host inherits en_US.UTF-8 (and neutralises any older
+#     image whose zsh-in-docker .zshrc re-exports it before the Dockerfile sed)
+#
+# Note: a stray "p" sometimes seen before the banner is NOT a shell-rc leak —
+# it's Apple Terminal.app's VT parser mishandling claude's `\e[?2026$p` DECRQM
+# (synchronized-output) probe and echoing the `p` terminator. Outer-terminal
+# bug; switch to iTerm2 / Ghostty / Kitty / Alacritty to avoid it.
+# `exec` replaces bash with claude so signals go straight to claude.
 devcontainer exec \
   --workspace-folder "$WORKSPACE" \
   --override-config "$DEVCONTAINER_DIR/devcontainer.json" \
-  claude --dangerously-skip-permissions
+  /bin/bash --noprofile --norc -c 'exec env SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 claude --dangerously-skip-permissions'
