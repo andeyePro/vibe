@@ -56,6 +56,12 @@ RUN SNIPPET="export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhisto
 # Set `DEVCONTAINER` environment variable to help with orientation
 ENV DEVCONTAINER=true
 
+# UTF-8 locale so terminal UIs (Claude Code spinner glyphs, box-drawing) render
+# correctly. node:20 inherits glibc's `C` default, which strips non-ASCII.
+# C.UTF-8 is provided by glibc — no locale-gen required.
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
+
 # Create workspace and config directories and set permissions
 RUN mkdir -p /workspace /home/node/.claude && \
   chown -R node:node /workspace /home/node/.claude
