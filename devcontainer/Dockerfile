@@ -3,7 +3,8 @@
 # Fetched: 2026-04-18
 # To resync: re-fetch from
 #   https://raw.githubusercontent.com/anthropics/claude-code/<sha>/.devcontainer/Dockerfile
-# then re-apply the vibe-specific patches (openssh-client, credential-helper).
+# then re-apply the vibe-specific patches (openssh-client, shellcheck,
+# credential-helper).
 
 FROM node:20
 
@@ -36,6 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   avahi-daemon \
   avahi-utils \
   libnss-mdns \
+  shellcheck \
   && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Enable mDNS (.local resolution) — insert mdns4_minimal before dns
