@@ -15,6 +15,15 @@ A single-command, containerised YOLO coding environment for Claude Code. `cd pro
 - `python3 smoke-test.py` — host-side black-box tests (no docker, no network). Fast. Covers `--help`, write-env-hint block management, token helpers.
 - `MANUAL-TESTS.md` — end-to-end checklist for container lifecycle behaviour (auto-rebuild, partial-fail retry, SSH, bind mounts). Run before shipping changes that touch the Dockerfile, devcontainer.json, postStartCommand, or the vibe launcher.
 
+## TODO.md
+
+`TODO.md` is this project's canonical backlog and audit log. Keep it honest — don't quietly drop items.
+
+- **Plan step:** when the user approves a plan or you break work into discrete tasks, append them under `## Open` in `TODO.md` with a one-line description. Markers: `[ ]` open · `[x]` done · `[!]` failed/abandoned.
+- **Review step:** when closing a task, move it to `## Done` with a one-line note on what was done (or the final commit SHA). If a task failed or was abandoned, mark it `[!]` with a one-line note on what was tried and why it didn't work — that failure memory is the point.
+- Keep entries bullet-sized. Commit TODO.md updates alongside the code change that resolves (or creates) the task, so history stays paired.
+- TODO.md is for persistent, cross-session work tracking — distinct from in-session `TaskCreate` todos, which are ephemeral scratchpad.
+
 ## Invariants (don't break these)
 
 - `vibe` must work from any project folder with a single command, no arguments needed.
