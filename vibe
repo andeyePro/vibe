@@ -207,6 +207,37 @@ MSG
   GITHUB_TOKEN="$input_token"
 }
 
+# ── Docker config helpers ─────────────────────────────────────────────────────
+
+# Disable Docker CLI's "What's next?" hints by setting features.hints=false
+# in ~/.docker/config.json. Idempotent. Respects an explicit user choice
+# (won't overwrite hints if already set, true or false). Bails on malformed
+# JSON rather than trampling the user's config.
+ensure_docker_hints_off() {
+  local cfg="$HOME/.docker/config.json"
+  mkdir -p "$(dirname "$cfg")"
+  if [ ! -f "$cfg" ] || [ ! -s "$cfg" ]; then
+    printf '{\n  "features": {\n    "hints": false\n  }\n}\n' > "$cfg"
+    return
+  fi
+  python3 - "$cfg" << 'PY'
+import json, sys
+path = sys.argv[1]
+try:
+    with open(path) as f:
+        cfg = json.load(f)
+except (json.JSONDecodeError, OSError):
+    sys.exit(0)
+features = cfg.setdefault("features", {})
+if "hints" in features:
+    sys.exit(0)
+features["hints"] = False
+with open(path, "w") as f:
+    json.dump(cfg, f, indent=2)
+    f.write("\n")
+PY
+}
+
 # Allow smoke-test.py to source this file for pure unit-testing of helpers
 # without running the main launch logic below.
 [ "${VIBE_SOURCE_ONLY:-}" = "1" ] && return 0 2>/dev/null
@@ -252,8 +283,12 @@ require docker       "Install OrbStack (https://orbstack.dev) or Docker Desktop.
 require devcontainer "Install with: npm install -g @devcontainers/cli"
 require gh           "Install from: https://cli.github.com"
 
-# Suppress Docker Desktop CLI hints ("Try Docker Debug...") at session end.
+# Suppress Docker Desktop's "What's next? Try Docker Debug..." hint.
+# DOCKER_CLI_HINTS=false is the documented mechanism but doesn't always
+# propagate through the devcontainer CLI to its docker subprocesses, so we
+# also persist the setting in ~/.docker/config.json.
 export DOCKER_CLI_HINTS=false
+ensure_docker_hints_off
 
 if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
   echo "  ⚠  ANTHROPIC_API_KEY is set — Claude Code inside the container would bill"
