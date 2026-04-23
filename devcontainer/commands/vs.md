@@ -49,6 +49,13 @@ Created at repo root.
   - `cycle-N/diff.patch` — what Generator changed this cycle
   - **Rigorous mode:** `cycle-N/test-output.log` (full Tester output) + `cycle-N/summary.md` (3-line pass/fail summary).
   - **Fuzzy mode:** `cycle-N/reviewer-verdict.md` (Reviewer's written verdict with rationale) + `cycle-N/summary.md` (3-line summary: verdict line + concerns count + key concern).
+  - `cycle-N/cost.json` — token-spend log. JSON array, one record per subagent dispatch, schema:
+    ```json
+    {"role": "spec_critic|generator|tester|reviewer", "model": "sonnet|haiku|opus",
+     "iteration": 1, "total_tokens": 0, "tool_uses": 0, "duration_ms": 0,
+     "timestamp": "<ISO8601>"}
+    ```
+- `.vs/cost-summary.json` — per-task rollup, written by Evaluator on Step-7 pass. Aggregates across all cycles. Schema: `{"task_id", "cycles", "subagent_calls", "total_tokens", "by_role": {"spec_critic": N, "generator": N, ...}, "by_model": {"sonnet": N, "haiku": N, "opus": N}, "wall_time_ms"}`. **Committed.**
 
 ## Step 1 — Simplicity gate (Planner)
 
@@ -176,6 +183,16 @@ Default-fail on ambiguity. Adversarial by design.
 - **Fail, cycles remaining:** append specifics to `.vs/progress.md`. Re-dispatch Generator as a *fresh* Sonnet subagent. Hand it: the spec, the failure list, and either the test-output.log (rigorous) or the reviewer-verdict.md (fuzzy). Do **not** hand rigorous-mode Tester's test code to Generator. Increment cycle counter, continue from Step 4.
 - **Fail, ceiling hit:** compare summaries across cycles. Failure count trending down? New failures appearing? Report trajectory to user; ask whether to continue, abandon, or switch strategy.
 - **Plateau detection:** if three consecutive cycles show the same failure / concern set, flag proactively before the ceiling. Plateaus usually mean spec or approach is wrong, not effort.
+
+## Token-spend logging
+
+Every subagent dispatch (Spec Critic, Generator, Tester, Reviewer) returns a `<usage>` block with `total_tokens`, `tool_uses`, and `duration_ms`. After each `Agent(...)` call, **Planner / Evaluator parses the usage block from the result and appends a record to `/workspace/.vs/cycle-<N>/cost.json`** before doing anything else with the result. Use the `role`, `model`, `iteration` (1 for first Spec-Critic pass, 2 for re-spawn; otherwise omit), and current ISO8601 `timestamp`. If the file doesn't exist, create it with an empty array first.
+
+On Step-7 pass, **Evaluator computes `/workspace/.vs/cost-summary.json`** by reading every `cycle-N/cost.json` file for this task, summing tokens by role and model, counting subagent calls, summing wall-time. Commit the summary file alongside the pass commit. The pass-verdict report to the user includes one line: `cost: <X> cycles, <Y> subagent calls, <Z> total tokens (<a> opus, <b> sonnet, <c> haiku)`.
+
+No dollar estimates. Pro/Max is flat-rate; tokens are a proxy for rate-limit pressure, not money. If a future Anthropic billing model makes per-token cost meaningful for subscribers, revisit.
+
+If a subagent result lacks a parseable `<usage>` block (older format, network issue, manual run), log a record with `total_tokens: null` and a `note` field explaining why. Don't fail the cycle for missing usage data — token logging is observability, not a gate.
 
 ## Rules
 
