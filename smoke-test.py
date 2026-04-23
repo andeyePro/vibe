@@ -1312,6 +1312,101 @@ def test_learning_code_check_clean() -> None:
           f"exit={r.returncode} output={r.stdout[-300:]}")
 
 
+def _learning_optin_config(home: Path, lib: Path, visibility: str = "private") -> None:
+    cfg = home / ".vibe" / "learning.config"
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(
+        f'VIBE_LEARNING_ENABLED="true"\n'
+        f'VIBE_LEARNING_PATH="{lib}"\n'
+        f'VIBE_LEARNING_VISIBILITY="{visibility}"\n'
+        f'VIBE_LEARNING_GIT_REMOTE=""\n'
+    )
+
+
+def test_learning_short_marker_blocks() -> None:
+    """New short .no-learn marker blocks capture (same semantics as legacy)."""
+    print("\n[learning rename: .no-learn blocks capture]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        lib = home / "lib"; lib.mkdir()
+        _learning_optin_config(home, lib)
+        proj = home / "project"; proj.mkdir()
+        (proj / ".no-learn").write_text("")
+        env = {**os.environ, "HOME": str(home)}
+        r = run(["bash", str(VIBE), "learn", "pattern"], env=env, input="y\n", cwd=proj)
+        check("[learn] short .no-learn marker blocks capture",
+              r.returncode == 1, f"exit={r.returncode} stderr={r.stderr}")
+
+
+def test_learning_exclude_creates_marker() -> None:
+    """vibe learn --exclude creates .no-learn in cwd; idempotent."""
+    print("\n[learning --exclude]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        lib = home / "lib"; lib.mkdir()
+        _learning_optin_config(home, lib)
+        proj = home / "project"; proj.mkdir()
+        env = {**os.environ, "HOME": str(home)}
+        r = run(["bash", str(VIBE), "learn", "--exclude"], env=env, cwd=proj)
+        check("[learn] --exclude exits 0", r.returncode == 0, r.stderr)
+        check("[learn] --exclude creates .no-learn", (proj / ".no-learn").exists())
+        # Idempotent: second call still exits 0
+        r2 = run(["bash", str(VIBE), "learn", "--exclude"], env=env, cwd=proj)
+        check("[learn] --exclude idempotent", r2.returncode == 0, r2.stderr)
+        check("[learn] --exclude says already excluded",
+              "already excluded" in r2.stdout, r2.stdout)
+
+
+def test_learning_include_removes_marker() -> None:
+    """vibe learn --include removes .no-learn (and legacy .vibe-no-learn)."""
+    print("\n[learning --include]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        lib = home / "lib"; lib.mkdir()
+        _learning_optin_config(home, lib)
+        proj = home / "project"; proj.mkdir()
+        (proj / ".no-learn").write_text("")
+        (proj / ".vibe-no-learn").write_text("")  # legacy marker too
+        env = {**os.environ, "HOME": str(home)}
+        r = run(["bash", str(VIBE), "learn", "--include"], env=env, cwd=proj)
+        check("[learn] --include exits 0", r.returncode == 0, r.stderr)
+        check("[learn] --include removes .no-learn", not (proj / ".no-learn").exists())
+        check("[learn] --include removes legacy .vibe-no-learn",
+              not (proj / ".vibe-no-learn").exists())
+        # Idempotent: second call exits 0 with no-marker message
+        r2 = run(["bash", str(VIBE), "learn", "--include"], env=env, cwd=proj)
+        check("[learn] --include idempotent", r2.returncode == 0, r2.stderr)
+        check("[learn] --include says was not excluded",
+              "was not excluded" in r2.stdout, r2.stdout)
+
+
+def test_learning_exclude_refuses_in_home() -> None:
+    """vibe learn --exclude refuses when cwd is $HOME."""
+    print("\n[learning --exclude refuses $HOME]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        lib = home / "lib"; lib.mkdir()
+        _learning_optin_config(home, lib)
+        env = {**os.environ, "HOME": str(home)}
+        r = run(["bash", str(VIBE), "learn", "--exclude"], env=env, cwd=home)
+        check("[learn] --exclude refuses in $HOME", r.returncode == 1,
+              f"exit={r.returncode} stderr={r.stderr}")
+        check("[learn] --exclude $HOME error mentions refusing",
+              "refusing" in r.stderr, r.stderr)
+        check("[learn] --exclude $HOME left no marker",
+              not (home / ".no-learn").exists())
+
+
+def test_learning_help_mentions_exclude_include() -> None:
+    """vibe --help mentions --exclude and --include."""
+    print("\n[learning --help mentions exclude/include]")
+    with tempfile.TemporaryDirectory() as td:
+        env = {**os.environ, "HOME": td, "VIBE_CONFIG": f"{td}/no-config"}
+        r = run(["bash", str(VIBE), "--help"], env=env)
+    check("[learn] --help mentions --exclude", "--exclude" in r.stdout, r.stdout[:600])
+    check("[learn] --help mentions --include", "--include" in r.stdout, r.stdout[:600])
+
+
 def main() -> int:
     test_help()
     test_env_hint_fresh()
@@ -1368,6 +1463,11 @@ def main() -> int:
     test_learning_commit_message()
     test_learning_config_path_helper()
     test_learning_code_check_clean()
+    test_learning_short_marker_blocks()
+    test_learning_exclude_creates_marker()
+    test_learning_include_removes_marker()
+    test_learning_exclude_refuses_in_home()
+    test_learning_help_mentions_exclude_include()
 
     print()
     if FAILURES:

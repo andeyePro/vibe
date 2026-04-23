@@ -13,6 +13,8 @@
 #   vibe --help              # show this help
 #   vibe learn "<pattern>"   # save a cross-project pattern to your learning library
 #   vibe learn --init        # set up the learning library (one-time opt-in)
+#   vibe learn --exclude     # opt this project out of learning (creates .no-learn)
+#   vibe learn --include     # opt this project back in (removes .no-learn)
 #
 # Note: --continue and --resume are opt-in. Default is fresh — the durable
 # handover lives in TODO.md, CLAUDE.md, and Claude's auto-memory, not in
@@ -371,8 +373,9 @@ learning_is_enabled() {
 
 # learning_project_opted_out <walk_start_abs_path> — walks from the given
 # absolute path upward toward /, stopping at $HOME (inclusive) or the first
-# dir containing .vibe-no-learn. Exits 0 if opted out (marker found, or $HOME
-# unset/empty as fail-safe). Exits 1 if not opted out. Silent.
+# dir containing .no-learn (or legacy .vibe-no-learn). Exits 0 if opted out
+# (marker found, or $HOME unset/empty as fail-safe). Exits 1 if not opted
+# out. Silent.
 learning_project_opted_out() {
   local start="${1:-}"
 
@@ -388,8 +391,8 @@ learning_project_opted_out() {
 
   local dir="$start"
   while true; do
-    # Check for marker at this level.
-    if [ -e "$dir/.vibe-no-learn" ]; then
+    # Check for marker at this level. Accept new short name and legacy.
+    if [ -e "$dir/.no-learn" ] || [ -e "$dir/.vibe-no-learn" ]; then
       return 0
     fi
     # Stop after checking $HOME itself — do not walk above it.
@@ -592,7 +595,7 @@ _learning_capture() {
   local cwd
   cwd="$(pwd)"
   if learning_project_opted_out "$cwd"; then
-    echo "vibe learn: this project has opted out of learning capture (.vibe-no-learn found)" >&2
+    echo "vibe learn: this project has opted out of learning capture (.no-learn found)" >&2
     exit 1
   fi
 
@@ -683,9 +686,17 @@ learning_handle_subcommand() {
     --reinit)
       _learning_init "--reinit"
       ;;
+    --exclude)
+      _learning_exclude_project
+      ;;
+    --include)
+      _learning_include_project
+      ;;
     "")
       echo "Usage: vibe learn \"<pattern>\"  — save a cross-project pattern" >&2
       echo "       vibe learn --init       — set up the learning library" >&2
+      echo "       vibe learn --exclude    — opt this project out (creates .no-learn)" >&2
+      echo "       vibe learn --include    — opt this project back in (removes .no-learn)" >&2
       exit 1
       ;;
     --*)
@@ -696,6 +707,47 @@ learning_handle_subcommand() {
       _learning_capture "$subcmd"
       ;;
   esac
+}
+
+# _learning_exclude_project — create a .no-learn marker in the current
+# directory so vibe learn capture and the /learnings mount skip this project.
+# Idempotent. Refuses to write if cwd is $HOME (would block all projects).
+_learning_exclude_project() {
+  local cwd
+  cwd="$(pwd)"
+  if [ -n "${HOME:-}" ] && [ "$cwd" = "$HOME" ]; then
+    echo "vibe learn --exclude: refusing to mark \$HOME — that would opt out of every project" >&2
+    exit 1
+  fi
+  local marker="$cwd/.no-learn"
+  if [ -e "$marker" ]; then
+    echo "vibe learn: already excluded ($marker exists)"
+  else
+    : > "$marker"
+    echo "vibe learn: this project is now excluded (created $marker)"
+  fi
+  exit 0
+}
+
+# _learning_include_project — remove .no-learn marker(s) from the current
+# directory (also removes legacy .vibe-no-learn). Idempotent.
+_learning_include_project() {
+  local cwd removed=0
+  cwd="$(pwd)"
+  for marker_name in .no-learn .vibe-no-learn; do
+    local marker="$cwd/$marker_name"
+    if [ -e "$marker" ]; then
+      rm -f "$marker"
+      echo "vibe learn: removed $marker"
+      removed=1
+    fi
+  done
+  if [ "$removed" -eq 0 ]; then
+    echo "vibe learn: this project was not excluded (no marker found)"
+  else
+    echo "vibe learn: this project is now included again"
+  fi
+  exit 0
 }
 
 # ── Learning mount helper ─────────────────────────────────────────────────────
