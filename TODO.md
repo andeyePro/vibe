@@ -6,6 +6,7 @@ Markers: `[ ]` open · `[x]` done · `[!]` failed/abandoned (note what was tried
 
 ## Open
 
+- [ ] **vibe: language-profile presets (à la ClaudeBox)** — one concrete gap surfaced by the 2026-04-23 class-leading audit. ClaudeBox ships per-project profiles (Python venv, Node deps, Rust toolchain, etc.) so the container comes pre-tooled; vibe currently assumes tooling exists on the host or in the base image. Proposed shape: `vibe --profile python` (explicit) or auto-detect from project files (`pyproject.toml` → python, `package.json` → node, `Cargo.toml` → rust); profile applies a small overlay — either an extra Dockerfile layer cached per-profile or a postStart install. Open design questions: where do profile definitions live (`devcontainer/profiles/<name>/`?), how do users author custom profiles, opt-in flag vs auto-detect default, image-rebuild cost vs runtime install trade-off, how does it interact with `--rebuild` / image marker. Likely a `/vs` task.
 - [ ] **vibe: cross-repo + cross-org learning library** — two-tier persistence under `~/.vibe/learnings/`: (a) per-org subdirs `<org>/` mounted into the container only when current repo's `git remote get-url origin` matches that org (prevents cross-org leak); (b) anonymized pattern library at `_patterns/` mounted into every container, holds spec-writing heuristics and test-design gotchas with no project-specific content. Org detection via remote-URL regex; needs schema for what counts as "anonymized."
 
 ## Done
