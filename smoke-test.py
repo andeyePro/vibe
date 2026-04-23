@@ -611,6 +611,83 @@ def test_code_check_json_same_target_list() -> None:
           f"json_paths={sorted(json_paths)} human_paths={sorted(human_paths)}")
 
 
+# ── vibe --continue / --resume flag tests ──────────────────────────────────────
+
+
+def _source_vibe_call(env_vars: dict[str, str], call: str) -> subprocess.CompletedProcess:
+    """Source vibe with VIBE_SOURCE_ONLY=1, set env, run a single call. Returns CompletedProcess."""
+    env = {
+        **os.environ,
+        "VIBE_CONFIG": "/tmp/vibe-no-config-for-tests",
+        "VIBE_SOURCE_ONLY": "1",
+        **env_vars,
+    }
+    script = f"set -e; source {shlex.quote(str(VIBE))}; {call}"
+    return run(["bash", "-c", script], env=env)
+
+
+def test_vibe_resume_args_fresh() -> None:
+    print("\n[vibe build_claude_resume_args: fresh]")
+    r = _source_vibe_call({}, 'echo "OUT=[$(build_claude_resume_args)]"')
+    check("fresh exits 0", r.returncode == 0, r.stderr)
+    check("fresh emits empty arg fragment", "OUT=[]" in r.stdout, r.stdout)
+
+
+def test_vibe_resume_args_continue() -> None:
+    print("\n[vibe build_claude_resume_args: --continue]")
+    r = _source_vibe_call({"CONTINUE": "true"},
+                          'echo "OUT=[$(build_claude_resume_args)]"')
+    check("--continue exits 0", r.returncode == 0, r.stderr)
+    check("--continue emits '--continue'", "OUT=[--continue]" in r.stdout, r.stdout)
+
+
+def test_vibe_resume_args_resume_picker() -> None:
+    print("\n[vibe build_claude_resume_args: --resume (picker)]")
+    r = _source_vibe_call({"RESUME": "true"},
+                          'echo "OUT=[$(build_claude_resume_args)]"')
+    check("--resume exits 0", r.returncode == 0, r.stderr)
+    check("--resume emits '--resume'", "OUT=[--resume]" in r.stdout, r.stdout)
+
+
+def test_vibe_resume_args_resume_uid() -> None:
+    print("\n[vibe build_claude_resume_args: --resume <uuid>]")
+    uid = "12345678-1234-1234-1234-123456789abc"
+    r = _source_vibe_call({"RESUME": "true", "RESUME_UID": uid},
+                          'echo "OUT=[$(build_claude_resume_args)]"')
+    check("--resume <uid> exits 0", r.returncode == 0, r.stderr)
+    check("--resume <uid> emits '--resume <uid>'",
+          f"OUT=[--resume {uid}]" in r.stdout, r.stdout)
+
+
+def test_vibe_is_uuid() -> None:
+    print("\n[vibe is_uuid]")
+    cases = [
+        ("12345678-1234-1234-1234-123456789abc", True, "valid lowercase"),
+        ("ABCDEF12-3456-7890-ABCD-EF1234567890", True, "valid uppercase"),
+        ("not-a-uuid", False, "obvious non-uuid"),
+        ("", False, "empty string"),
+        ("12345678-1234-1234-1234-123456789ab", False, "too short"),
+        ("12345678-1234-1234-1234-123456789abcd", False, "too long"),
+        ("--continue", False, "looks like a flag"),
+        ("my-project", False, "project name"),
+    ]
+    for value, expected, label in cases:
+        r = _source_vibe_call({}, f'is_uuid {shlex.quote(value)} && echo Y || echo N')
+        observed = "Y" in r.stdout
+        check(f"is_uuid '{value}' → {expected} ({label})",
+              observed == expected, r.stdout + r.stderr)
+
+
+def test_vibe_help_mentions_continue_and_resume() -> None:
+    print("\n[vibe --help mentions --continue and --resume]")
+    with tempfile.TemporaryDirectory() as td:
+        env = {**os.environ, "HOME": td, "VIBE_CONFIG": f"{td}/no-config"}
+        r = run(["bash", str(VIBE), "--help"], env=env)
+    check("--help exits 0", r.returncode == 0, r.stderr)
+    check("help mentions --continue", "--continue" in r.stdout, r.stdout[:400])
+    check("help mentions --resume", "--resume" in r.stdout, r.stdout[:400])
+
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 
@@ -637,6 +714,12 @@ def main() -> int:
     test_code_check_json_help_mentions_flag()
     test_code_check_json_summary_counts()
     test_code_check_json_same_target_list()
+    test_vibe_resume_args_fresh()
+    test_vibe_resume_args_continue()
+    test_vibe_resume_args_resume_picker()
+    test_vibe_resume_args_resume_uid()
+    test_vibe_is_uuid()
+    test_vibe_help_mentions_continue_and_resume()
 
     print()
     if FAILURES:

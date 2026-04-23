@@ -6,8 +6,15 @@
 #   vibe                  # cd to your project folder, then just run this
 #   vibe <project-name>   # launch by name from anywhere (uses VIBE_PROJECTS_DIR)
 #   vibe --rebuild        # force rebuild of the vibe container image
+#   vibe --continue       # resume the most recent Claude conversation in this dir
+#   vibe --resume         # interactively pick a Claude conversation to resume
+#   vibe --resume <uuid>  # resume a specific Claude conversation by id
 #   vibe --list           # list available projects
 #   vibe --help           # show this help
+#
+# Note: --continue and --resume are opt-in. Default is fresh — the durable
+# handover lives in TODO.md, CLAUDE.md, and Claude's auto-memory, not in
+# resumed conversations (which accumulate compaction debt over weeks).
 
 set -euo pipefail
 
@@ -264,15 +271,48 @@ if new != original:
 PY
 }
 
+# ── Claude-invocation builder ─────────────────────────────────────────────────
+# Echoes the resume-related arg fragment to prepend to claude's argv based on
+# CONTINUE / RESUME / RESUME_UID. Empty string for fresh launch. Defined here
+# (above the VIBE_SOURCE_ONLY guard) so smoke-test.py can exercise it.
+build_claude_resume_args() {
+  if [ "${CONTINUE:-false}" = "true" ]; then
+    echo "--continue"
+  elif [ "${RESUME:-false}" = "true" ]; then
+    if [ -n "${RESUME_UID:-}" ]; then
+      echo "--resume $RESUME_UID"
+    else
+      echo "--resume"
+    fi
+  fi
+}
+
+# Returns 0 if the argument is a UUID (8-4-4-4-12 hex), 1 otherwise. Used by
+# the flag parser to decide whether the token after --resume is a session id
+# (consume it) or the next flag / project name (leave it for later parsing).
+is_uuid() {
+  [[ "${1:-}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]
+}
+
 # Allow smoke-test.py to source this file for pure unit-testing of helpers
 # without running the main launch logic below.
 [ "${VIBE_SOURCE_ONLY:-}" = "1" ] && return 0 2>/dev/null
 
 # ── Flags ─────────────────────────────────────────────────────────────────────
 REBUILD=false
+CONTINUE=false
+RESUME=false
+RESUME_UID=""
 while [[ "${1:-}" == --* ]]; do
   case "$1" in
     --rebuild) REBUILD=true; shift ;;
+    --continue) CONTINUE=true; shift ;;
+    --resume)
+      RESUME=true; shift
+      if is_uuid "${1:-}"; then
+        RESUME_UID="$1"; shift
+      fi
+      ;;
     --list)
       echo "Projects in $PROJECTS_DIR:"
       ls "$PROJECTS_DIR"
@@ -282,6 +322,11 @@ while [[ "${1:-}" == --* ]]; do
     *) echo "Unknown flag: $1"; exit 1 ;;
   esac
 done
+
+if [ "$CONTINUE" = true ] && [ "$RESUME" = true ]; then
+  echo "  ✗ --continue and --resume are mutually exclusive."
+  exit 1
+fi
 
 # ── Resolve workspace ─────────────────────────────────────────────────────────
 if [ "$#" -eq 0 ]; then
@@ -440,7 +485,15 @@ fi
 export GITHUB_TOKEN
 
 echo ""
-echo "  🚀 vibe session starting"
+if [ "$CONTINUE" = true ]; then
+  echo "  ↻ vibe session continuing (most recent Claude conversation)"
+elif [ "$RESUME" = true ] && [ -n "$RESUME_UID" ]; then
+  echo "  ↻ vibe session resuming (Claude session ${RESUME_UID:0:8}…)"
+elif [ "$RESUME" = true ]; then
+  echo "  ↻ vibe session resuming (Claude conversation picker)"
+else
+  echo "  🚀 vibe session starting"
+fi
 echo "     project : $PROJECT_NAME"
 echo "     path    : $WORKSPACE"
 [ -n "$GITHUB_REPO" ] && echo "     github  : $GITHUB_REPO"
@@ -488,7 +541,11 @@ fi
 # (synchronized-output) probe and echoing the `p` terminator. Outer-terminal
 # bug; switch to iTerm2 / Ghostty / Kitty / Alacritty to avoid it.
 # `exec` replaces bash with claude so signals go straight to claude.
+# build_claude_resume_args echoes "" / "--continue" / "--resume" / "--resume <uuid>".
+# RESUME_UID is restricted to UUID format by is_uuid in the parser, so embedding
+# it in the command string is injection-safe.
+CLAUDE_RESUME_ARGS=$(build_claude_resume_args)
 devcontainer exec \
   --workspace-folder "$WORKSPACE" \
   --override-config "$DEVCONTAINER_DIR/devcontainer.json" \
-  /bin/bash --noprofile --norc -c 'exec env SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 claude --permission-mode bypassPermissions'
+  /bin/bash --noprofile --norc -c "exec env SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 claude ${CLAUDE_RESUME_ARGS:+$CLAUDE_RESUME_ARGS }--permission-mode bypassPermissions"
