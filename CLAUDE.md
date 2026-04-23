@@ -38,3 +38,4 @@ A single-command, containerised YOLO coding environment for Claude Code. `cd pro
 - Windows support (WSL is fine if Docker is installed, but no native Windows).
 - Running containers on remote hosts (local container; Claude SSHes out if needed).
 - Managing multiple parallel Claude sessions per project (dropped with claudebox).
+- **Anything that bills against API rates or extended credits separately from the user's Pro/Max subscription.** If a feature requires the Anthropic API (e.g. Claude Agent SDK, cloud/async agent runners as they exist today), it stays out of vibe core — the project is for Pro/Max subscribers who do not want to pay extra. Defer such features until Anthropic ships a path that runs against subscription quota. See `TODO.md` Done block for the cloud-runner dismissal record.
