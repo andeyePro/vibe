@@ -9,7 +9,13 @@ A single-command containerised Claude Code environment. `cd my-project && vibe` 
 - A per-repo fine-grained GitHub PAT injected as `$GITHUB_TOKEN` and wired into git — `git push` just works.
 - SSH out to remote dev machines using your host `~/.ssh` keys (mounted read-only).
 - One-time approvals: log in to Claude once, add a PAT once per repo, never asked again.
-- Curated slash commands (`/diet`, `/feast`, `/vs`) and subagents (`shellcheck-fixer`, `security-review`) pre-installed under `~/.claude/`, synced on every container start so image rebuilds propagate without clobbering anything you've added yourself.
+- Slash commands include `/diet` (lean token-frugal mode — no subagents, no optional verifications, terse output), `/feast` to exit `/diet`, and `/vs` (see [Adversarial coding mode](#adversarial-coding-mode-vs) below). Subagents include `shellcheck-fixer` and `security-review`. All pre-installed under `~/.claude/`, synced on every container start so image rebuilds propagate without clobbering anything you've added yourself.
+
+## Adversarial coding mode `/vs`
+
+To maximise Pro/Max plan usage efficiency and minimise user input on complex tasks, `/vs <prompt>` runs the request through an adversarial harness. An Opus director plays Planner and Evaluator, dispatching independent subagents — a Sonnet Spec Critic that audits the spec before any code is written, a Sonnet Generator that writes the feature, and a Haiku Tester that writes immutable tests (or a Sonnet Reviewer with `/vs --fuzzy` for tasks without mechanical acceptance criteria). Generator never sees Tester's output and vice versa — that separation is the point.
+
+Flags: `--max N` (limits number of iterations), `--fuzzy` (Reviewer instead of Tester), `--cost` (opt-in token-spend logging). See full protocol in [`devcontainer/commands/vs.md`](devcontainer/commands/vs.md).
 
 ## Prerequisites
 
