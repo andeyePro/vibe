@@ -1080,10 +1080,18 @@ fi
 #     warning when the host inherits en_US.UTF-8 (and neutralises any older
 #     image whose zsh-in-docker .zshrc re-exports it before the Dockerfile sed)
 #
-# Note: a stray "p" sometimes seen before the banner is NOT a shell-rc leak —
-# it's Apple Terminal.app's VT parser mishandling claude's `\e[?2026$p` DECRQM
-# (synchronized-output) probe and echoing the `p` terminator. Outer-terminal
-# bug; switch to iTerm2 / Ghostty / Kitty / Alacritty to avoid it.
+# Note: two issues recommend switching away from Apple's Terminal.app
+# (and similar stock/restricted terminals):
+# (1) a stray "p" sometimes seen before the banner is NOT a shell-rc leak —
+#     it's Terminal.app's VT parser mishandling claude's `\e[?2026$p` DECRQM
+#     (synchronized-output) probe and echoing the `p` terminator.
+# (2) Terminal.app lacks OSC 52 clipboard support, so exact-byte copy from
+#     inside the container to the Mac clipboard isn't possible without
+#     file-mount workarounds. Any future `vibe-copy` / `/copy` feature
+#     requires OSC 52 on the outer terminal.
+# Recommended replacement: Ghostty (MIT, cross-platform, Zig+Swift, native
+# Mac polish, OSC 52 out of the box). Alternatives that also work:
+# iTerm2 / Kitty / Alacritty / WezTerm.
 # `exec` replaces bash with claude so signals go straight to claude.
 # build_claude_resume_args echoes "" / "--continue" / "--resume" / "--resume <uuid>".
 # RESUME_UID is restricted to UUID format by is_uuid in the parser, so embedding
