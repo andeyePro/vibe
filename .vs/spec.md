@@ -1,38 +1,41 @@
-# spec — task_001: `--json` output for `code-check.py`
+# spec — task_003: prize-worthy haiku about vibe (FUZZY MODE)
 
 ## Task summary
 
-Add a `--json` flag to `code-check.py` so machine consumers (CI, editor integrations, downstream tooling) can ingest shellcheck findings as structured data instead of parsing human-readable lines. The default invocation must remain byte-for-byte unchanged so existing users and the `MANUAL-TESTS.md` flow are unaffected. When `--json` is set, the script runs shellcheck with `-f json` over the same target list, aggregates the per-file findings into one JSON object on stdout, prints nothing else to stdout, and preserves the existing exit-code semantics (0 clean, 1 issues, 2 missing shellcheck).
+Produce one English haiku (5/7/5 syllable form) about vibe — a single-command containerised YOLO Claude Code environment — that could plausibly win an English-language haiku prize. The haiku will land at repo root as `HAIKU.md` so it's a committed, visible artifact, but it must read as a haiku to anyone, not as a project tagline. Mode: `--fuzzy` (no mechanical tests; Sonnet Reviewer judges).
 
 ## Acceptance criteria
 
-1. `python3 code-check.py --json` exits 0 when there are no findings and writes valid JSON to stdout (parseable by `json.loads`).
-2. The emitted JSON is a single top-level object with keys: `tool` (string, equals `"shellcheck"`), `shellcheck_version` (string, e.g. `"0.9.0"`), `files_checked` (list of strings, repo-relative POSIX paths), `findings` (list of objects), and `summary` (object with int keys `files`, `files_with_issues`, `total_findings`).
-3. Each entry in `findings` is an object with at least these keys: `file` (string, repo-relative POSIX path), `line` (int), `column` (int), `level` (string: `"error" | "warning" | "info" | "style"`), `code` (int, the shellcheck SC code as integer), `message` (string).
-4. When at least one target script has shellcheck warnings/errors, `python3 code-check.py --json` exits 1 and the JSON's `summary.total_findings` is > 0 and equals `len(findings)`.
-5. With `--json`, **nothing** is printed to stdout other than the single JSON object (no `→ shellcheck …` progress lines, no trailing newline beyond what `print` adds, no human summary). Diagnostic prose may go to stderr.
-6. Without `--json`, stdout output is byte-identical to the current `code-check.py` behavior (the existing progress + summary format).
-7. When `shellcheck` is not installed and `--json` is set, stdout is a single JSON object `{"error": "shellcheck-not-installed", "tool": "shellcheck"}` and exit code is 2. (Without `--json`, the existing human error message and exit 2 are preserved.)
-8. `python3 code-check.py --help` exits 0 and the help text mentions `--json`.
-9. `summary.files` equals `len(files_checked)`; `summary.files_with_issues` equals the count of distinct `file` values appearing in `findings`.
-10. The list of target scripts scanned with `--json` is identical to the list scanned without `--json` (same `scripts()` helper, no divergence).
+1. Three lines, **5 / 7 / 5 syllables** in standard English count. Reviewer counts carefully (with attention to edge cases like "fire" vs "fi-er", "every" vs "ev-ry").
+2. Contains a recognizable **kireji-style pivot** — a cut or turn between the first section (line 1 or 1+2) and the last section. Not a continuous descriptive sentence.
+3. Has **concrete sensory imagery** — at least one observable detail (sound, sight, motion, texture). No purely abstract nouns like "code", "container", or "session" used naked.
+4. **Evokes vibe's essence by image, not by explicit naming.** Vibe's essence has four elements: (a) isolation / a small bounded space, (b) the presence of a non-human collaborator, (c) one-gesture summoning / single-command launch, (d) safety / sandboxing / what's outside cannot enter. The haiku must evoke **at least two of the four** for AC4 to pass; Reviewer states which two (or more) and why.
+
+   **Banned words** (case-insensitive, including stems and hyphenated forms): `vibe`, `Claude`, `container`, `docker`, `AI`, `LLM`, `model`, `agent`, `sandbox`, `isolate` (and `isolation`, `isolated`), `deploy`, `launch`, `build`, `fork`, `repo`, `commit`, `runtime`, `daemon`, `shell`, `terminal`. The poem must work without any of these. Acceptable poetic vocabulary includes (but is not limited to) `door`, `room`, `key`, `garden`, `wall`, `lantern`, `whisper`, `voice`.
+5. Has an **"ah" moment** — a turn or juxtaposition that creates resonance, not just clever wordplay or punning.
+6. **Stands alone** — readable as a poem to a haiku-prize judge who has never heard of vibe, Claude Code, or coding agents. The poem should not require footnotes.
+7. **Original** — not a substantively-known haiku (Bashō, Issa, etc.) with software words swapped in.
+8. **Exactly one haiku, file-byte-strict.** `HAIKU.md` contains exactly three non-empty lines of text, each terminated by a single `\n`, plus an optional final trailing `\n`. **No** YAML front matter (`---` block), **no** HTML comments (`<!-- ... -->`), **no** title, **no** author, **no** dedication, **no** code fences, **no** blank lines between the three lines, **no** explanatory text before or after. The file's total non-whitespace content is the three haiku lines and nothing else.
 
 ## Out of scope
 
-- Changing the default human output format, color, or wording.
-- Adding any flag other than `--json` (no `--severity`, no `--format=…`, no `--output FILE`, no `--quiet`).
-- Writing to files; output goes to stdout only.
-- Caching, parallelism, or performance work.
-- Refactoring `scripts()` or its target list.
-- Touching `smoke-test.py` (Tester's territory), `vibe`, or any shell script under audit.
-- Adding new dependencies beyond the Python standard library and the already-required `shellcheck` binary.
-- Extending `MANUAL-TESTS.md` (Tester appends to `smoke-test.py`; manual checklist is unrelated).
-- Modifying any pre-existing test in `smoke-test.py` (Tester only appends).
+- Tanka (5/7/5/7/7), senryū framing, free verse.
+- Multiple candidates ("here are three options").
+- Author name, title, dedication, or any framing text in `HAIKU.md` beyond the three lines themselves.
+- Commentary or "what this means" notes inside `HAIKU.md`.
+- Image / ASCII art.
+- Any other repo file changes (no README edit, no TODO entry, no CLAUDE.md note — Planner / Evaluator handle TODO and progress.md outside Generator's diff).
 
-## Test location
+## Review focus
 
-`smoke-test.py` at repo root (existing file). Tester **appends** new test functions (e.g. `test_code_check_json_*`) and registers them in `main()`. The pre-existing tests in `smoke-test.py` are out of scope for this run; only the test code Tester adds for this task is subject to the immutability rule on cycle ≥2. Generator must not edit `smoke-test.py` at all (whole file is off-limits, not just appended sections).
+- **Syllable count exactness** — count each line separately. Flag anything that requires elision tricks.
+- **Concrete vs smuggled-abstract imagery** — does line 1 actually show something, or is it dressed-up jargon?
+- **Pivot integrity** — does the turn earn its keep or feel grafted on?
+- **Non-vibe-reader test** — read it as if you've never heard of vibe. Does it still work as a poem? If it only works for an insider, it fails AC6.
+- **Banned-word audit** — confirm none of the AC4 banned words appear (case-insensitive, stem-aware). Flag any near-miss that smuggles the same meaning by synonym.
+
+- **File-byte audit** — open `HAIKU.md` and confirm exactly three non-empty lines, no front matter, no HTML comments, no surrounding text. AC8 is mechanical — easy fail to catch.
 
 ## Proposed budget
 
-**2 cycles.** Single file, well-scoped surface, but: JSON-schema fidelity, exit-code preservation, byte-identical default output, and graceful handling of missing-shellcheck are four easy-to-miss invariants. One cycle for the build, one for any shellcheck-version or schema corrections caught by Tester.
+**2 cycles.** Generator writes one candidate; Reviewer judges. If the candidate falls short on 1–2 criteria, cycle 2 revises. A haiku doesn't deserve 3 cycles — if it can't land in two it probably can't land in this harness.
