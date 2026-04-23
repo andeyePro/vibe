@@ -445,7 +445,7 @@ echo "     project : $PROJECT_NAME"
 echo "     path    : $WORKSPACE"
 [ -n "$GITHUB_REPO" ] && echo "     github  : $GITHUB_REPO"
 echo "     hooks   : tool-call guards + idle bell"
-echo "     extras  : /diet · /feast · shellcheck-fixer · security-review"
+echo "     extras  : /diet · /feast · /vs · shellcheck-fixer · security-review"
 echo ""
 
 UP_BASE_ARGS=(

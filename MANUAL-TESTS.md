@@ -414,14 +414,18 @@ ls ~/.claude/commands/
 - [ ] `~/.claude/agents/security-review.md` exists
 - [ ] `~/.claude/commands/diet.md` exists
 - [ ] `~/.claude/commands/feast.md` exists
+- [ ] `~/.claude/commands/vs.md` exists
 
 Inside Claude Code:
 - [ ] Typing `/diet` lists the command with its description in the picker
 - [ ] `/feast` likewise
+- [ ] `/vs` likewise
 - [ ] Ask Claude to "run shellcheck-fixer" — subagent launches, runs `python3 code-check.py`, exits with `clean` if repo is clean
 - [ ] Ask Claude to "run security-review" with no staged diff — subagent replies `no diff — nothing to review`
 - [ ] Invoking `/diet` causes Claude to acknowledge lean mode; subsequent requests that would normally spawn subagents are handled inline
 - [ ] Invoking `/feast` restores default behavior
+- [ ] Invoking `/vs` with a trivial prompt triggers the simplicity gate (Step 1) and refuses, recommending inline instead
+- [ ] Invoking `/vs` with a non-trivial prompt produces `.vs/spec.md` with task summary, acceptance criteria, out-of-scope, test location, proposed budget — and waits for approval before dispatching Generator
 
 **Image rebuild propagation:**
 - [ ] Edit `devcontainer/agents/shellcheck-fixer.md` on the host, rebuild (Test 4), relaunch
