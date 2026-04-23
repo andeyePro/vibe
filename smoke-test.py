@@ -1407,6 +1407,115 @@ def test_learning_help_mentions_exclude_include() -> None:
     check("[learn] --help mentions --include", "--include" in r.stdout, r.stdout[:600])
 
 
+def test_learning_help_says_host_only() -> None:
+    """vibe --help makes clear `vibe learn` subcommands run on the host."""
+    print("\n[learning --help says host-only]")
+    with tempfile.TemporaryDirectory() as td:
+        env = {**os.environ, "HOME": td, "VIBE_CONFIG": f"{td}/no-config"}
+        r = run(["bash", str(VIBE), "--help"], env=env)
+    check("[learn] --help mentions 'on the HOST shell'",
+          "HOST shell" in r.stdout or "host shell" in r.stdout, r.stdout[:900])
+    check("[learn] --help warns 'not available inside the container'",
+          "not available inside the container" in r.stdout
+          or "not inside the container" in r.stdout, r.stdout[:900])
+
+
+def test_learning_bare_learn_usage_says_host_only() -> None:
+    """`vibe learn` (no args) emits usage that tells users to run on the host."""
+    print("\n[learning bare-learn usage says host-only]")
+    with tempfile.TemporaryDirectory() as td:
+        env = {**os.environ, "HOME": td}
+        r = run(["bash", str(VIBE), "learn"], env=env)
+    check("[learn] bare-learn exits 1", r.returncode == 1,
+          f"exit={r.returncode} stderr={r.stderr[:400]}")
+    check("[learn] bare-learn usage mentions host shell",
+          "host shell" in r.stderr or "on the host" in r.stderr,
+          r.stderr[:600])
+
+
+def test_learning_banner_state_three_way() -> None:
+    """learning_banner_state → silent / excluded / enabled per documented rules."""
+    print("\n[learning banner_state: silent / excluded / enabled]")
+
+    def call_state(home: Path, workspace: Path) -> str:
+        env = {**os.environ, "HOME": str(home), "VIBE_SOURCE_ONLY": "1"}
+        script = (
+            f"source {shlex.quote(str(VIBE))}; "
+            f"learning_load; "
+            f"learning_banner_state {shlex.quote(str(workspace))}"
+        )
+        r = run(["bash", "-c", script], env=env)
+        return r.stdout.strip()
+
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        ws = home / "proj"
+        ws.mkdir()
+
+        # State 1: no config at all → silent
+        check("[learn] banner_state silent when no config",
+              call_state(home, ws) == "silent", call_state(home, ws))
+
+        # State 2: config present + opted in → enabled
+        lib = home / "lib"; lib.mkdir()
+        cfg = home / ".vibe" / "learning.config"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(
+            f'VIBE_LEARNING_ENABLED="true"\n'
+            f'VIBE_LEARNING_PATH="{lib}"\n'
+            f'VIBE_LEARNING_VISIBILITY="private"\n'
+            f'VIBE_LEARNING_GIT_REMOTE=""\n'
+        )
+        check("[learn] banner_state enabled when opted in",
+              call_state(home, ws) == "enabled", call_state(home, ws))
+
+        # State 3: .no-learn marker → excluded
+        (ws / ".no-learn").touch()
+        check("[learn] banner_state excluded when .no-learn present",
+              call_state(home, ws) == "excluded", call_state(home, ws))
+
+        # Also legacy marker should read as excluded.
+        (ws / ".no-learn").unlink()
+        (ws / ".vibe-no-learn").touch()
+        check("[learn] banner_state excluded when legacy .vibe-no-learn present",
+              call_state(home, ws) == "excluded", call_state(home, ws))
+
+
+def test_learning_banner_parent_shell_load() -> None:
+    """Regression: main-block banner must load learning config in the parent
+    shell, not rely on exports from the $( _learning_build_override_config )
+    subshell — exports don't cross subshell boundaries, so without a parent-
+    shell learning_load the banner line silently disappears even when
+    /learnings is correctly mounted."""
+    print("\n[learning banner: parent-shell load before override-config subshell]")
+    src = Path(VIBE).read_text()
+    # The banner block uses the learning_banner_state case dispatch.
+    banner_marker = 'case "$(learning_banner_state'
+    subshell_marker = "OVERRIDE_CONFIG=$(_learning_build_override_config"
+    parent_load_marker = "learning_load"
+    banner_idx = src.find(banner_marker)
+    subshell_idx = src.find(subshell_marker)
+    check("[learn] banner marker present in source",
+          banner_idx != -1, banner_marker)
+    check("[learn] override-config subshell present in source",
+          subshell_idx != -1, subshell_marker)
+    if banner_idx == -1 or subshell_idx == -1:
+        return
+    # learning_load must appear between the end of the helper definitions and
+    # the override-config subshell, in the parent shell's main block.
+    # The helpers end at the VIBE_SOURCE_ONLY return; search AFTER that.
+    source_guard = src.find('[ "${VIBE_SOURCE_ONLY:-}" = "1" ]')
+    check("[learn] VIBE_SOURCE_ONLY guard present", source_guard != -1)
+    if source_guard == -1:
+        return
+    # Find the first parent-shell learning_load call after the guard and
+    # before the override-config subshell.
+    parent_load_idx = src.find(parent_load_marker, source_guard)
+    check("[learn] parent-shell learning_load call exists",
+          parent_load_idx != -1 and parent_load_idx < subshell_idx,
+          f"parent_load_idx={parent_load_idx} subshell_idx={subshell_idx}")
+
+
 def main() -> int:
     test_help()
     test_env_hint_fresh()
@@ -1468,6 +1577,10 @@ def main() -> int:
     test_learning_include_removes_marker()
     test_learning_exclude_refuses_in_home()
     test_learning_help_mentions_exclude_include()
+    test_learning_help_says_host_only()
+    test_learning_bare_learn_usage_says_host_only()
+    test_learning_banner_state_three_way()
+    test_learning_banner_parent_shell_load()
 
     print()
     if FAILURES:
