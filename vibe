@@ -3,14 +3,16 @@
 # https://github.com/Aqueum/vibe
 #
 # Usage:
-#   vibe                  # cd to your project folder, then just run this
-#   vibe <project-name>   # launch by name from anywhere (uses VIBE_PROJECTS_DIR)
-#   vibe --rebuild        # force rebuild of the vibe container image
-#   vibe --continue       # resume the most recent Claude conversation in this dir
-#   vibe --resume         # interactively pick a Claude conversation to resume
-#   vibe --resume <uuid>  # resume a specific Claude conversation by id
-#   vibe --list           # list available projects
-#   vibe --help           # show this help
+#   vibe                     # cd to your project folder, then just run this
+#   vibe <project-name>      # launch by name from anywhere (uses VIBE_PROJECTS_DIR)
+#   vibe --rebuild           # force rebuild of the vibe container image
+#   vibe --continue          # resume the most recent Claude conversation in this dir
+#   vibe --resume            # interactively pick a Claude conversation to resume
+#   vibe --resume <uuid>     # resume a specific Claude conversation by id
+#   vibe --list              # list available projects
+#   vibe --help              # show this help
+#   vibe learn "<pattern>"   # save a cross-project pattern to your learning library
+#   vibe learn --init        # set up the learning library (one-time opt-in)
 #
 # Note: --continue and --resume are opt-in. Default is fresh — the durable
 # handover lives in TODO.md, CLAUDE.md, and Claude's auto-memory, not in
@@ -294,9 +296,450 @@ is_uuid() {
   [[ "${1:-}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]
 }
 
+# ── Learning library helpers ──────────────────────────────────────────────────
+# All helpers are defined here, BEFORE the VIBE_SOURCE_ONLY guard, so that
+# smoke-test.py can unit-test them via VIBE_SOURCE_ONLY=1.
+
+# learning_config_path — echoes the path to the learning config file.
+learning_config_path() {
+  echo "$HOME/.vibe/learning.config"
+}
+
+# learning_load — strict-parses learning.config; exports the four recognised
+# vars. Never uses source or eval. Returns 0 always (silent on missing config).
+learning_load() {
+  # Unset/clear the four vars first so a missing key isn't inherited from env.
+  VIBE_LEARNING_ENABLED=""
+  VIBE_LEARNING_PATH=""
+  VIBE_LEARNING_VISIBILITY=""
+  VIBE_LEARNING_GIT_REMOTE=""
+
+  local cfg
+  cfg=$(learning_config_path)
+  [ -f "$cfg" ] || return 0
+
+  # Use python3 for the strict parse: accepted keys + regex ^[A-Z_]+="[^"\\$`]*"$
+  # Never source or eval — python opens the file and emits only safe KEY=VALUE lines.
+  local parsed
+  parsed=$(python3 - "$cfg" << 'PY'
+import re, sys
+path = sys.argv[1]
+ALLOWED = {"VIBE_LEARNING_ENABLED", "VIBE_LEARNING_PATH",
+           "VIBE_LEARNING_VISIBILITY", "VIBE_LEARNING_GIT_REMOTE"}
+pattern = re.compile(r'^([A-Z_]+)="([^"\\$`]*)"$')
+try:
+    with open(path) as f:
+        for line in f:
+            line = line.rstrip('\n')
+            m = pattern.match(line)
+            if m and m.group(1) in ALLOWED:
+                # Output as KEY=VALUE with value shell-quoted via repr-like escaping.
+                # Values are already guaranteed to contain no shell-special chars
+                # (no quotes, backslashes, dollar signs, backticks) by the regex.
+                print(m.group(1) + '=' + m.group(2))
+except OSError:
+    pass
+PY
+  ) || return 0
+
+  # Consume the parsed KEY=VALUE lines (values have no shell metacharacters).
+  local line key value
+  while IFS= read -r line; do
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "$key" in
+      VIBE_LEARNING_ENABLED)    VIBE_LEARNING_ENABLED="$value" ;;
+      VIBE_LEARNING_PATH)       VIBE_LEARNING_PATH="$value" ;;
+      VIBE_LEARNING_VISIBILITY) VIBE_LEARNING_VISIBILITY="$value" ;;
+      VIBE_LEARNING_GIT_REMOTE) VIBE_LEARNING_GIT_REMOTE="$value" ;;
+    esac
+  done <<< "$parsed"
+
+  export VIBE_LEARNING_ENABLED VIBE_LEARNING_PATH \
+         VIBE_LEARNING_VISIBILITY VIBE_LEARNING_GIT_REMOTE
+  return 0
+}
+
+# learning_is_enabled — exits 0 iff config has ENABLED=true, non-empty PATH
+# pointing at an existing directory. Silent.
+learning_is_enabled() {
+  [ "${VIBE_LEARNING_ENABLED:-}" = "true" ] || return 1
+  [ -n "${VIBE_LEARNING_PATH:-}" ] || return 1
+  [ -d "${VIBE_LEARNING_PATH:-}" ] || return 1
+  return 0
+}
+
+# learning_project_opted_out <walk_start_abs_path> — walks from the given
+# absolute path upward toward /, stopping at $HOME (inclusive) or the first
+# dir containing .vibe-no-learn. Exits 0 if opted out (marker found, or $HOME
+# unset/empty as fail-safe). Exits 1 if not opted out. Silent.
+learning_project_opted_out() {
+  local start="${1:-}"
+
+  # Fail-safe: if $HOME is unset or empty, treat as opted-out.
+  if [ -z "${HOME:-}" ]; then
+    return 0
+  fi
+
+  # If start path is empty, treat as opted-out.
+  if [ -z "$start" ]; then
+    return 0
+  fi
+
+  local dir="$start"
+  while true; do
+    # Check for marker at this level.
+    if [ -e "$dir/.vibe-no-learn" ]; then
+      return 0
+    fi
+    # Stop after checking $HOME itself — do not walk above it.
+    if [ "$dir" = "$HOME" ]; then
+      return 1
+    fi
+    # Walk up.
+    local parent
+    parent="$(dirname "$dir")"
+    # Stop if we've hit filesystem root (dirname of / is /).
+    if [ "$parent" = "$dir" ]; then
+      return 1
+    fi
+    dir="$parent"
+  done
+}
+
+# learning_should_mount <workspace_abs_path> — exits 0 iff learning is enabled
+# AND the project is not opted out. Silent.
+learning_should_mount() {
+  local workspace="${1:-}"
+  learning_is_enabled || return 1
+  learning_project_opted_out "$workspace" && return 1
+  return 0
+}
+
+# learning_entry_path <library_abs_path> <iso8601> <rand6_hex> — pure string
+# composition; echoes the full file path. No filesystem access.
+learning_entry_path() {
+  local lib="$1" ts="$2" rand="$3"
+  echo "${lib}/${ts}-${rand}.md"
+}
+
+# learning_format_entry <iso8601> <pattern> — pure: echoes the markdown entry
+# body. No I/O side effects.
+learning_format_entry() {
+  local ts="$1" pattern="$2"
+  printf '# %s\n\n%s\n' "$ts" "$pattern"
+}
+
+# learning_commit_message <pattern> — pure: echoes a git commit message
+# (first 60 chars of pattern, newlines → spaces, whitespace collapsed).
+# Delivered via --file=<tempfile> so no shell-metachar escaping is needed.
+learning_commit_message() {
+  local pattern="$1"
+  # Replace newlines with spaces, collapse runs of whitespace, truncate to 60 chars.
+  local collapsed
+  collapsed=$(printf '%s' "$pattern" | tr '\n' ' ' | tr -s ' ')
+  printf 'learn: %s\n' "${collapsed:0:60}"
+}
+
+# learning_render_devcontainer_config <src_json_path> <dst_json_path>
+# <library_abs_path> — reads src JSON, adds learning mount entry to mounts
+# array (creating it if absent), writes dst. Uses python3 for JSON safety.
+learning_render_devcontainer_config() {
+  local src="$1" dst="$2" lib="$3"
+  python3 - "$src" "$dst" "$lib" << 'PY'
+import json, sys
+src, dst, lib = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(src) as f:
+    cfg = json.load(f)
+mount_entry = {
+    "source": lib,
+    "target": "/learnings",
+    "type": "bind",
+    "readonly": True
+}
+if "mounts" not in cfg or not isinstance(cfg["mounts"], list):
+    cfg["mounts"] = []
+cfg["mounts"].append(mount_entry)
+with open(dst, "w") as f:
+    json.dump(cfg, f, indent=2)
+    f.write("\n")
+PY
+}
+
+# ── Learning subcommand internals ─────────────────────────────────────────────
+
+_learning_init() {
+  local reinit="${1:-}"
+  local cfg
+  cfg=$(learning_config_path)
+
+  # Check for existing enabled config (refuse unless --reinit).
+  if [ -f "$cfg" ] && [ "$reinit" != "--reinit" ]; then
+    # Load existing to check if enabled.
+    learning_load
+    if [ "${VIBE_LEARNING_ENABLED:-}" = "true" ]; then
+      echo "vibe learn: already initialized. Use 'vibe learn --reinit' to reconfigure." >&2
+      exit 1
+    fi
+  fi
+
+  # Prompt for library path.
+  local lib_path
+  while true; do
+    read -rp "  Learning library path (absolute): " lib_path
+    if [ -z "$lib_path" ]; then
+      echo "  Path is required." >&2
+      continue
+    fi
+    # Must be absolute.
+    if [[ "$lib_path" != /* ]]; then
+      echo "  Path must be absolute (start with /)." >&2
+      continue
+    fi
+    # Parent must exist.
+    local parent_dir
+    parent_dir="$(dirname "$lib_path")"
+    if [ ! -d "$parent_dir" ]; then
+      echo "  Parent directory '$parent_dir' does not exist." >&2
+      continue
+    fi
+    # If path doesn't exist, offer mkdir -p.
+    if [ ! -d "$lib_path" ]; then
+      read -rp "  '$lib_path' does not exist. Create it? [y/N]: " mkans
+      mkans="${mkans:-n}"
+      local mkans_lc
+      mkans_lc=$(lowercase "$mkans")
+      if [ "$mkans_lc" = "y" ]; then
+        if ! mkdir -p "$lib_path"; then
+          echo "  Failed to create directory '$lib_path'." >&2
+          continue
+        fi
+      else
+        continue
+      fi
+    fi
+    break
+  done
+
+  # Prompt for visibility.
+  local visibility
+  read -rp "  Visibility [private/public] (default: private): " visibility
+  visibility="${visibility:-private}"
+  local vis_lc
+  vis_lc=$(lowercase "$visibility")
+  if [ "$vis_lc" != "private" ] && [ "$vis_lc" != "public" ]; then
+    echo "  Invalid visibility '$visibility'. Must be 'private' or 'public'." >&2
+    exit 1
+  fi
+  visibility="$vis_lc"
+
+  local git_remote=""
+  if [ "$visibility" = "public" ]; then
+    # Validate git repo.
+    if ! git -C "$lib_path" rev-parse --git-dir &>/dev/null 2>&1; then
+      echo "vibe learn: $lib_path is not a git repo. Run 'git init' there and add a remote, then re-run vibe learn --init" >&2
+      exit 1
+    fi
+    # Prompt for remote name and validate.
+    while true; do
+      read -rp "  Git remote name (e.g. origin): " git_remote
+      if [ -z "$git_remote" ]; then
+        echo "  Remote name is required for public visibility." >&2
+        continue
+      fi
+      local remotes
+      remotes=$(git -C "$lib_path" remote 2>/dev/null) || {
+        echo "  Failed to list git remotes in '$lib_path'." >&2
+        exit 1
+      }
+      if echo "$remotes" | grep -qxF "$git_remote"; then
+        break
+      else
+        echo "  Remote '$git_remote' not found. Available remotes:" >&2
+        echo "$remotes" >&2
+      fi
+    done
+  fi
+
+  # Write config.
+  mkdir -p "$(dirname "$cfg")"
+  {
+    printf 'VIBE_LEARNING_ENABLED="true"\n'
+    printf 'VIBE_LEARNING_PATH="%s"\n' "$lib_path"
+    printf 'VIBE_LEARNING_VISIBILITY="%s"\n' "$visibility"
+    printf 'VIBE_LEARNING_GIT_REMOTE="%s"\n' "$git_remote"
+  } > "$cfg"
+  chmod 600 "$cfg"
+
+  echo "  ✓ Learning library configured."
+  echo "    path       : $lib_path"
+  echo "    visibility : $visibility"
+  [ -n "$git_remote" ] && echo "    remote     : $git_remote"
+  exit 0
+}
+
+_learning_capture() {
+  local pattern="$1"
+
+  # Require opt-in.
+  learning_load
+  if ! learning_is_enabled; then
+    echo "vibe learn: not initialized — run 'vibe learn --init' first" >&2
+    exit 1
+  fi
+
+  # Check per-project opt-out: walk from cwd toward /, stop at $HOME.
+  local cwd
+  cwd="$(pwd)"
+  if learning_project_opted_out "$cwd"; then
+    echo "vibe learn: this project has opted out of learning capture (.vibe-no-learn found)" >&2
+    exit 1
+  fi
+
+  # Compute filename components.
+  local ts rand entry_path
+  ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  # Portable 6-char lowercase hex: use python3 (already a vibe dependency).
+  rand=$(python3 -c "import os,binascii; print(binascii.hexlify(os.urandom(3)).decode())")
+  entry_path=$(learning_entry_path "$VIBE_LEARNING_PATH" "$ts" "$rand")
+
+  # Compose entry body.
+  local entry_body
+  entry_body=$(learning_format_entry "$ts" "$pattern")
+
+  # Show preview and confirm.
+  printf '\nWill save to %s:\n----\n%s\n----\nConfirm? [y/N]: ' "$entry_path" "$entry_body" >&2
+
+  local confirm
+  # Read one line; if stdin is closed (EOF) we get empty string.
+  if ! IFS= read -r confirm; then
+    # EOF
+    echo "vibe learn: cancelled, nothing written" >&2
+    exit 0
+  fi
+  # Trim whitespace.
+  confirm="$(printf '%s' "$confirm" | tr -d '[:space:]')"
+  local confirm_lc
+  confirm_lc=$(lowercase "$confirm")
+  if [ "$confirm_lc" != "y" ]; then
+    echo "vibe learn: cancelled, nothing written" >&2
+    exit 0
+  fi
+
+  # Write the file.
+  printf '%s' "$entry_body" > "$entry_path"
+  echo "  ✓ Saved: $entry_path" >&2
+
+  # Public-mode push prompt.
+  if [ "${VIBE_LEARNING_VISIBILITY:-}" = "public" ]; then
+    local remote="${VIBE_LEARNING_GIT_REMOTE:-origin}"
+    printf 'Push to '\''%s'\''? [y/N]: ' "$remote" >&2
+    local push_ans
+    if ! IFS= read -r push_ans; then
+      push_ans=""
+    fi
+    local push_lc
+    push_lc=$(lowercase "$(printf '%s' "$push_ans" | tr -d '[:space:]')")
+    if [ "$push_lc" = "y" ]; then
+      # Create tempfile for commit message; register cleanup trap.
+      local msg_tmp
+      msg_tmp=$(mktemp)
+      # shellcheck disable=SC2064
+      trap "rm -f '$msg_tmp'" EXIT INT TERM
+      learning_commit_message "$pattern" > "$msg_tmp"
+
+      # Add the new file.
+      if ! git -C "$VIBE_LEARNING_PATH" add "$entry_path" 2>&1; then
+        echo "vibe learn: git add failed; entry saved locally." >&2
+        exit 0
+      fi
+      # Commit using --file to avoid shell-arg injection.
+      if ! git -C "$VIBE_LEARNING_PATH" commit --file="$msg_tmp" 2>&1; then
+        echo "vibe learn: git commit failed; entry saved locally." >&2
+        exit 0
+      fi
+      # Push.
+      if ! git -C "$VIBE_LEARNING_PATH" push "$remote" 2>&1; then
+        echo "vibe learn: git push failed; entry saved locally." >&2
+        exit 0
+      fi
+      echo "  ✓ Pushed to '$remote'." >&2
+    fi
+  fi
+
+  exit 0
+}
+
+# learning_handle_subcommand <args...> — top-level dispatcher for vibe learn.
+# Routes --init / --reinit / <pattern> to internal sub-functions. Exits.
+learning_handle_subcommand() {
+  shift  # consume the "learn" argument
+  local subcmd="${1:-}"
+
+  case "$subcmd" in
+    --init)
+      _learning_init ""
+      ;;
+    --reinit)
+      _learning_init "--reinit"
+      ;;
+    "")
+      echo "Usage: vibe learn \"<pattern>\"  — save a cross-project pattern" >&2
+      echo "       vibe learn --init       — set up the learning library" >&2
+      exit 1
+      ;;
+    --*)
+      echo "vibe learn: unknown option '$subcmd'" >&2
+      exit 1
+      ;;
+    *)
+      _learning_capture "$subcmd"
+      ;;
+  esac
+}
+
+# ── Learning mount helper ─────────────────────────────────────────────────────
+
+# _learning_build_override_config <workspace_abs_path> — if learning should
+# mount for this workspace, generates the per-session override JSON under
+# $HOME/.vibe/run/ and echoes its path. If not, echoes the default
+# $DEVCONTAINER_DIR/devcontainer.json path. Always exits 0.
+_learning_build_override_config() {
+  local workspace="$1"
+  local default_cfg="$DEVCONTAINER_DIR/devcontainer.json"
+
+  learning_load
+  if ! learning_should_mount "$workspace"; then
+    echo "$default_cfg"
+    return 0
+  fi
+
+  # Compute a sha1 of the workspace path for a stable per-workspace filename.
+  local sha1
+  sha1=$(printf '%s' "$workspace" | sha1sum | cut -c1-40 2>/dev/null \
+         || printf '%s' "$workspace" | shasum | cut -c1-40 2>/dev/null \
+         || printf '%s' "$workspace" | cksum | awk '{print $1}')
+
+  local run_dir="$HOME/.vibe/run"
+  mkdir -p "$run_dir"
+  local dst="$run_dir/devcontainer-${sha1}.json"
+
+  learning_render_devcontainer_config "$default_cfg" "$dst" "$VIBE_LEARNING_PATH"
+  echo "$dst"
+}
+
 # Allow smoke-test.py to source this file for pure unit-testing of helpers
 # without running the main launch logic below.
 [ "${VIBE_SOURCE_ONLY:-}" = "1" ] && return 0 2>/dev/null
+
+# ── Learn subcommand dispatch ─────────────────────────────────────────────────
+# Must be BEFORE the --* flag-parser loop. Dispatches and exits; does NOT enter
+# workspace resolution, preflight, image build, GitHub setup, or container launch.
+if [ "${1:-}" = "learn" ]; then
+  learning_handle_subcommand "$@"
+  # learning_handle_subcommand always exits; this is a safety net.
+  exit $?
+fi
 
 # ── Flags ─────────────────────────────────────────────────────────────────────
 REBUILD=false
@@ -484,6 +927,10 @@ fi
 # export so ${localEnv:GITHUB_TOKEN} in devcontainer.json resolves in this env.
 export GITHUB_TOKEN
 
+# Resolve the override config: use the generated per-session JSON if learning
+# is opted in and the project is not opted out; fall back to the source config.
+OVERRIDE_CONFIG=$(_learning_build_override_config "$WORKSPACE")
+
 echo ""
 if [ "$CONTINUE" = true ]; then
   echo "  ↻ vibe session continuing (most recent Claude conversation)"
@@ -499,12 +946,16 @@ echo "     path    : $WORKSPACE"
 [ -n "$GITHUB_REPO" ] && echo "     github  : $GITHUB_REPO"
 echo "     hooks   : tool-call guards + idle bell"
 echo "     extras  : /diet · /feast · /vs · shellcheck-fixer · security-review"
+# Show learning banner line only when opted in and project not opted out.
+if learning_should_mount "$WORKSPACE"; then
+  echo "     learn   : ${VIBE_LEARNING_VISIBILITY:-private} @ ${VIBE_LEARNING_PATH}"
+fi
 echo ""
 
 UP_BASE_ARGS=(
   up
   --workspace-folder "$WORKSPACE"
-  --override-config "$DEVCONTAINER_DIR/devcontainer.json"
+  --override-config "$OVERRIDE_CONFIG"
 )
 UP_ARGS=("${UP_BASE_ARGS[@]}")
 [ "$REBUILD" = true ] && UP_ARGS+=(--remove-existing-container)
@@ -547,5 +998,5 @@ fi
 CLAUDE_RESUME_ARGS=$(build_claude_resume_args)
 devcontainer exec \
   --workspace-folder "$WORKSPACE" \
-  --override-config "$DEVCONTAINER_DIR/devcontainer.json" \
+  --override-config "$OVERRIDE_CONFIG" \
   /bin/bash --noprofile --norc -c "exec env SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 claude ${CLAUDE_RESUME_ARGS:+$CLAUDE_RESUME_ARGS }--permission-mode bypassPermissions"

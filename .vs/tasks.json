@@ -10,11 +10,20 @@
   },
   {
     "id": "task_003",
-    "description": "Prize-worthy haiku about vibe → HAIKU.md (fuzzy mode)",
+    "description": "Prize-worthy haiku about vibe \u2192 HAIKU.md (fuzzy mode)",
     "implementation_status": "complete",
     "test_status": "passing",
     "assigned_to": "evaluator",
     "mode": "fuzzy",
     "last_modified": "2026-04-23T05:00:00Z"
+  },
+  {
+    "id": "task_004",
+    "description": "Cross-org learning library (opt-in, host-only capture, public/private)",
+    "implementation_status": "complete",
+    "test_status": "passing",
+    "assigned_to": "evaluator",
+    "mode": "rigorous",
+    "last_modified": "2026-04-23T09:15:00Z"
   }
 ]

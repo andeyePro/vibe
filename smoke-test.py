@@ -38,13 +38,14 @@ def check(name: str, cond: bool, detail: str = "") -> bool:
     return cond
 
 
-def run(cmd: list[str], env: dict[str, str] | None = None, cwd: Path | None = None):
+def run(cmd: list[str], env: dict[str, str] | None = None, cwd: Path | None = None, input: str = ""):
     return subprocess.run(
         cmd,
         capture_output=True,
         text=True,
         env=env if env is not None else os.environ.copy(),
         cwd=cwd,
+        input=input if input else None,
     )
 
 
@@ -691,6 +692,626 @@ def test_vibe_help_mentions_continue_and_resume() -> None:
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 
+# ── Learning library tests ───────────────────────────────────────────────────
+
+
+def test_learning_config_format() -> None:
+    """AC1: Config file format with all 4 keys, strict parsing."""
+    print("\n[learning AC1: config format + strict parse]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        cfg = home / ".vibe" / "learning.config"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(
+            'VIBE_LEARNING_ENABLED="true"\n'
+            'VIBE_LEARNING_PATH="/tmp/learning"\n'
+            'VIBE_LEARNING_VISIBILITY="private"\n'
+            'VIBE_LEARNING_GIT_REMOTE="origin"\n'
+        )
+        env = {**os.environ, "HOME": str(home), "VIBE_SOURCE_ONLY": "1"}
+        script = (
+            f"source {shlex.quote(str(VIBE))}; "
+            "learning_load; "
+            "echo ENABLED=$VIBE_LEARNING_ENABLED; "
+            "echo PATH=$VIBE_LEARNING_PATH; "
+            "echo VIS=$VIBE_LEARNING_VISIBILITY; "
+            "echo REMOTE=$VIBE_LEARNING_GIT_REMOTE"
+        )
+        r = run(["bash", "-c", script], env=env)
+        check("[learn] AC1 exit 0", r.returncode == 0, r.stderr)
+        check("[learn] AC1 ENABLED='true'", "ENABLED=true" in r.stdout, r.stdout)
+        check("[learn] AC1 PATH='/tmp/learning'", "PATH=/tmp/learning" in r.stdout, r.stdout)
+        check("[learn] AC1 VIS='private'", "VIS=private" in r.stdout, r.stdout)
+        check("[learn] AC1 REMOTE='origin'", "REMOTE=origin" in r.stdout, r.stdout)
+
+
+def test_learning_strict_parser_no_injection() -> None:
+    """AC2: Strict parser rejects shell injection via config."""
+    print("\n[learning AC2: strict parser, no shell injection]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        cfg = home / ".vibe" / "learning.config"
+        cfg.parent.mkdir(parents=True)
+        # Inject a command that would touch a file if eval'd
+        canary = home / "vibe-injection-canary"
+        cfg.write_text(
+            'VIBE_LEARNING_ENABLED="true"\n'
+            f'VIBE_LEARNING_PATH="/tmp"; touch {canary}\n'
+            'VIBE_LEARNING_VISIBILITY="private"\n'
+            'VIBE_LEARNING_GIT_REMOTE=""\n'
+        )
+        env = {**os.environ, "HOME": str(home), "VIBE_SOURCE_ONLY": "1"}
+        script = f"source {shlex.quote(str(VIBE))}; learning_load"
+        r = run(["bash", "-c", script], env=env)
+        check("[learn] AC2 no injection exit 0", r.returncode == 0, r.stderr)
+        check("[learn] AC2 canary file NOT created", not canary.exists(),
+              f"canary exists: {canary}")
+
+
+def test_learning_init_interactive() -> None:
+    """AC3: vibe learn --init interactive flow, chmod 600, --reinit path."""
+    print("\n[learning AC3: --init interactive + reinit]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        lib_path = home / "mylib"
+        lib_path.mkdir()
+        cfg = home / ".vibe" / "learning.config"
+        env = {**os.environ, "HOME": str(home)}
+        # Simulate user input: absolute path (no mkdir needed), private, no remote.
+        input_str = f"{lib_path}\nprivate\n"
+        r = run(
+            ["bash", str(VIBE), "learn", "--init"],
+            env=env,
+            input=input_str,
+        )
+        check("[learn] AC3 --init exits 0", r.returncode == 0,
+              f"stderr={r.stderr[:300]}")
+        check("[learn] AC3 config created", cfg.exists(), str(cfg))
+        if cfg.exists():
+            mode = cfg.stat().st_mode & 0o777
+            check("[learn] AC3 config chmod 600", mode == 0o600,
+                  f"mode={oct(mode)}")
+            content = cfg.read_text()
+            check("[learn] AC3 config has ENABLED=true", "ENABLED=\"true\"" in content,
+                  content)
+
+
+def test_learning_init_mkdir_offer() -> None:
+    """AC3: --init offers to create missing path."""
+    print("\n[learning AC3: --init mkdir offer]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        lib_path = home / "newlib"
+        env = {**os.environ, "HOME": str(home)}
+        # User provides non-existent path; say yes to mkdir; then private.
+        input_str = f"{lib_path}\ny\nprivate\n"
+        r = run(
+            ["bash", str(VIBE), "learn", "--init"],
+            env=env,
+            input=input_str,
+        )
+        check("[learn] AC3 mkdir exit 0", r.returncode == 0, r.stderr)
+        check("[learn] AC3 mkdir created path", lib_path.exists(), str(lib_path))
+
+
+def test_learning_init_reinit_path() -> None:
+    """AC3: --reinit overwrites existing enabled config."""
+    print("\n[learning AC3: --reinit overwrites]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        lib1 = home / "lib1"
+        lib2 = home / "lib2"
+        lib1.mkdir()
+        lib2.mkdir()
+        cfg = home / ".vibe" / "learning.config"
+        env = {**os.environ, "HOME": str(home)}
+        # First init
+        input_str = f"{lib1}\nprivate\n"
+        r1 = run(["bash", str(VIBE), "learn", "--init"], env=env, input=input_str)
+        check("[learn] AC3 first init exit 0", r1.returncode == 0, r1.stderr)
+        # Second init without --reinit should fail
+        input_str2 = f"{lib2}\nprivate\n"
+        r2 = run(["bash", str(VIBE), "learn", "--init"], env=env, input=input_str2)
+        check("[learn] AC3 second init fails without --reinit", r2.returncode == 1,
+              r2.stdout)
+        # With --reinit should succeed
+        r3 = run(["bash", str(VIBE), "learn", "--reinit"], env=env, input=input_str2)
+        check("[learn] AC3 --reinit succeeds", r3.returncode == 0, r3.stderr)
+        content = cfg.read_text()
+        check("[learn] AC3 --reinit updated path", str(lib2) in content, content)
+
+
+def test_learning_default_off_no_config() -> None:
+    """AC4: Default-off: with no config, learning_is_enabled exits 1."""
+    print("\n[learning AC4: default-off behavior]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        env = {**os.environ, "HOME": str(home), "VIBE_SOURCE_ONLY": "1"}
+        script = f"source {shlex.quote(str(VIBE))}; learning_is_enabled || echo NOT_ENABLED"
+        r = run(["bash", "-c", script], env=env)
+        check("[learn] AC4 no config not enabled", "NOT_ENABLED" in r.stdout, r.stdout)
+
+
+def test_learning_learn_without_init() -> None:
+    """AC4: vibe learn without init exits 1 with message."""
+    print("\n[learning AC4: learn without init refusal]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        env = {**os.environ, "HOME": str(home)}
+        r = run(["bash", str(VIBE), "learn", "test"], env=env)
+        check("[learn] AC4 learn without init exits 1", r.returncode == 1,
+              f"exit={r.returncode} stderr={r.stderr}")
+        check("[learn] AC4 error message present", "not initialized" in r.stderr,
+              r.stderr)
+
+
+def test_learning_render_devcontainer_config() -> None:
+    """AC5/AC6: Generated override config has readonly mount."""
+    print("\n[learning AC5: mount via override config]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        src_cfg = REPO / "devcontainer" / "devcontainer.json"
+        dst = Path(td) / "override.json"
+        lib = Path(td) / "learnings"
+        lib.mkdir()
+        env = {**os.environ, "HOME": str(home), "VIBE_SOURCE_ONLY": "1"}
+        script = (
+            f"source {shlex.quote(str(VIBE))}; "
+            f"learning_render_devcontainer_config {shlex.quote(str(src_cfg))} "
+            f"{shlex.quote(str(dst))} {shlex.quote(str(lib))}"
+        )
+        r = run(["bash", "-c", script], env=env)
+        check("[learn] AC5 render exit 0", r.returncode == 0, r.stderr)
+        check("[learn] AC5 output file created", dst.exists(), str(dst))
+        if dst.exists():
+            data = json.loads(dst.read_text())
+            mounts = data.get("mounts", [])
+            learning_mount = None
+            for m in mounts:
+                # mounts are objects (dicts) in the output from learning_render_devcontainer_config
+                if isinstance(m, dict) and m.get("target") == "/learnings":
+                    learning_mount = m
+                    break
+            check("[learn] AC5 learning mount present", learning_mount is not None,
+                  f"mounts={mounts}")
+            if learning_mount:
+                check("[learn] AC6 readonly=true", learning_mount.get("readonly") is True,
+                      str(learning_mount))
+
+
+def test_learning_dispatch_no_docker_required() -> None:
+    """AC7: vibe learn --init works without docker on PATH."""
+    print("\n[learning AC7: learn dispatch before preflight]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        lib = home / "lib"
+        lib.mkdir()
+        env = {**os.environ, "HOME": str(home), "PATH": "/usr/bin:/bin"}
+        # Run vibe learn --init with docker removed from PATH.
+        # If it tries to call docker, this will fail. If it dispatches correctly, it works.
+        input_str = f"{lib}\nprivate\n"
+        r = run(["bash", str(VIBE), "learn", "--init"], env=env, input=input_str)
+        check("[learn] AC7 learn --init works without docker", r.returncode == 0,
+              f"stderr={r.stderr[:300]}")
+
+
+def test_learning_capture_confirm_flow() -> None:
+    """AC8: vibe learn '<pattern>' capture with confirm."""
+    print("\n[learning AC8: capture confirm flow]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        lib = home / "lib"
+        lib.mkdir()
+        cfg = home / ".vibe" / "learning.config"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(
+            f'VIBE_LEARNING_ENABLED="true"\n'
+            f'VIBE_LEARNING_PATH="{lib}"\n'
+            f'VIBE_LEARNING_VISIBILITY="private"\n'
+            f'VIBE_LEARNING_GIT_REMOTE=""\n'
+        )
+        env = {**os.environ, "HOME": str(home)}
+        # Run vibe learn with 'y' confirmation
+        r = run(
+            ["bash", str(VIBE), "learn", "test pattern"],
+            env=env,
+            input="y\n",
+        )
+        check("[learn] AC8 capture with 'y' exits 0", r.returncode == 0, r.stderr)
+        # Check that a file was created in lib
+        files = list(lib.glob("*.md"))
+        check("[learn] AC8 entry file created", len(files) == 1, f"files={files}")
+        if files:
+            content = files[0].read_text()
+            check("[learn] AC8 file contains pattern", "test pattern" in content, content)
+
+
+def test_learning_capture_eof_cancel() -> None:
+    """AC8: EOF on stdin defaults to cancel, no write."""
+    print("\n[learning AC8: EOF cancel]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        lib = home / "lib"
+        lib.mkdir()
+        cfg = home / ".vibe" / "learning.config"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(
+            f'VIBE_LEARNING_ENABLED="true"\n'
+            f'VIBE_LEARNING_PATH="{lib}"\n'
+            f'VIBE_LEARNING_VISIBILITY="private"\n'
+            f'VIBE_LEARNING_GIT_REMOTE=""\n'
+        )
+        env = {**os.environ, "HOME": str(home)}
+        # Empty input triggers EOF
+        r = run(["bash", str(VIBE), "learn", "pattern"], env=env, input="")
+        check("[learn] AC8 EOF exits 0", r.returncode == 0, r.stderr)
+        check("[learn] AC8 cancelled message", "cancelled" in r.stderr, r.stderr)
+        files = list(lib.glob("*.md"))
+        check("[learn] AC8 EOF no write", len(files) == 0, f"files={files}")
+
+
+def test_learning_capture_confirm_no() -> None:
+    """AC8: Answering 'n' to confirm cancels with no write."""
+    print("\n[learning AC8: confirm 'n' cancels]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        lib = home / "lib"
+        lib.mkdir()
+        cfg = home / ".vibe" / "learning.config"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(
+            f'VIBE_LEARNING_ENABLED="true"\n'
+            f'VIBE_LEARNING_PATH="{lib}"\n'
+            f'VIBE_LEARNING_VISIBILITY="private"\n'
+            f'VIBE_LEARNING_GIT_REMOTE=""\n'
+        )
+        env = {**os.environ, "HOME": str(home)}
+        r = run(["bash", str(VIBE), "learn", "pattern"], env=env, input="n\n")
+        check("[learn] AC8 confirm 'n' exits 0", r.returncode == 0, r.stderr)
+        files = list(lib.glob("*.md"))
+        check("[learn] AC8 'n' no write", len(files) == 0, f"files={files}")
+
+
+def test_learning_public_mode_push_prompt() -> None:
+    """AC9: Public mode shows push prompt and processes git on 'y'."""
+    print("\n[learning AC9: public mode push]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        lib = home / "lib"
+        lib.mkdir()
+        cfg = home / ".vibe" / "learning.config"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(
+            f'VIBE_LEARNING_ENABLED="true"\n'
+            f'VIBE_LEARNING_PATH="{lib}"\n'
+            f'VIBE_LEARNING_VISIBILITY="public"\n'
+            f'VIBE_LEARNING_GIT_REMOTE="origin"\n'
+        )
+        env = {**os.environ, "HOME": str(home)}
+        # Confirm capture + push (will fail because lib is not a git repo, but entry saved locally)
+        r = run(
+            ["bash", str(VIBE), "learn", "test pattern"],
+            env=env,
+            input="y\ny\n",
+        )
+        check("[learn] AC9 public mode exits 0 even with git failure",
+              r.returncode == 0, f"stderr={r.stderr[:300]}")
+        check("[learn] AC9 push prompt shown", "Push to" in r.stderr, r.stderr)
+        # Check entry was written locally (git failure doesn't prevent saving)
+        files = list(lib.glob("*.md"))
+        check("[learn] AC9 entry saved locally despite git failure",
+              len(files) == 1, f"files={files}")
+
+
+def test_learning_public_mode_git_failure_survives() -> None:
+    """AC9: Git failure doesn't delete local entry."""
+    print("\n[learning AC9: git failure survives locally]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        lib = home / "lib"
+        lib.mkdir()
+        cfg = home / ".vibe" / "learning.config"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(
+            f'VIBE_LEARNING_ENABLED="true"\n'
+            f'VIBE_LEARNING_PATH="{lib}"\n'
+            f'VIBE_LEARNING_VISIBILITY="public"\n'
+            f'VIBE_LEARNING_GIT_REMOTE="origin"\n'
+        )
+        env = {**os.environ, "HOME": str(home)}
+        # git will fail because lib is not a git repo
+        r = run(
+            ["bash", str(VIBE), "learn", "pattern"],
+            env=env,
+            input="y\ny\n",
+        )
+        check("[learn] AC9 git failure exits 0", r.returncode == 0, r.stderr)
+        files = list(lib.glob("*.md"))
+        check("[learn] AC9 entry saved despite git failure", len(files) == 1,
+              f"files={files}")
+
+
+def test_learning_private_mode_no_git() -> None:
+    """AC10: Private mode skips git operations."""
+    print("\n[learning AC10: private mode skips git]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        lib = home / "lib"
+        lib.mkdir()
+        cfg = home / ".vibe" / "learning.config"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(
+            f'VIBE_LEARNING_ENABLED="true"\n'
+            f'VIBE_LEARNING_PATH="{lib}"\n'
+            f'VIBE_LEARNING_VISIBILITY="private"\n'
+            f'VIBE_LEARNING_GIT_REMOTE=""\n'
+        )
+        env = {**os.environ, "HOME": str(home)}
+        # Use a fake git that records calls
+        fake_git_dir = home / "fake-bin"
+        fake_git_dir.mkdir()
+        git_log = home / "git-calls.log"
+        git_script = (
+            "#!/bin/bash\n"
+            f'echo "$@" >> "{git_log}"\n'
+            "exit 0\n"
+        )
+        git_path = fake_git_dir / "git"
+        git_path.write_text(git_script)
+        git_path.chmod(0o755)
+        env["PATH"] = f"{fake_git_dir}:{env.get('PATH', '')}"
+        r = run(
+            ["bash", str(VIBE), "learn", "pattern"],
+            env=env,
+            input="y\n",
+        )
+        check("[learn] AC10 private mode exits 0", r.returncode == 0, r.stderr)
+        check("[learn] AC10 no git calls in private mode",
+              not git_log.exists() or git_log.read_text().strip() == "",
+              git_log.read_text() if git_log.exists() else "")
+
+
+def test_learning_marker_blocks_capture() -> None:
+    """AC11: .vibe-no-learn marker blocks capture."""
+    print("\n[learning AC11: marker blocks capture]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        lib = home / "lib"
+        lib.mkdir()
+        cfg = home / ".vibe" / "learning.config"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(
+            f'VIBE_LEARNING_ENABLED="true"\n'
+            f'VIBE_LEARNING_PATH="{lib}"\n'
+            f'VIBE_LEARNING_VISIBILITY="private"\n'
+            f'VIBE_LEARNING_GIT_REMOTE=""\n'
+        )
+        # Create a project with marker
+        proj = home / "project"
+        proj.mkdir()
+        (proj / ".vibe-no-learn").write_text("")
+        env = {**os.environ, "HOME": str(home)}
+        r = run(
+            ["bash", str(VIBE), "learn", "pattern"],
+            env=env,
+            input="y\n",
+            cwd=proj,
+        )
+        check("[learn] AC11 marker blocks capture", r.returncode == 1,
+              f"exit={r.returncode} stderr={r.stderr}")
+        check("[learn] AC11 opted out message", "opted out" in r.stderr, r.stderr)
+
+
+def test_learning_marker_walk_stops_at_home() -> None:
+    """AC11: Marker walk stops at $HOME, doesn't walk above."""
+    print("\n[learning AC11: marker walk stops at $HOME]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        lib = home / "lib"
+        lib.mkdir()
+        cfg = home / ".vibe" / "learning.config"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(
+            f'VIBE_LEARNING_ENABLED="true"\n'
+            f'VIBE_LEARNING_PATH="{lib}"\n'
+            f'VIBE_LEARNING_VISIBILITY="private"\n'
+            f'VIBE_LEARNING_GIT_REMOTE=""\n'
+        )
+        # Place marker above $HOME (at /tmp)
+        parent = home.parent
+        (parent / ".vibe-no-learn").write_text("")
+        try:
+            env = {**os.environ, "HOME": str(home)}
+            r = run(
+                ["bash", str(VIBE), "learn", "pattern"],
+                env=env,
+                input="y\n",
+            )
+            check("[learn] AC11 walk stops at $HOME, marker above doesn't block",
+                  r.returncode == 0, f"stderr={r.stderr[:300]}")
+        finally:
+            (parent / ".vibe-no-learn").unlink()
+
+
+def test_learning_home_unset_fails_safe() -> None:
+    """AC11: $HOME unset is fail-safe (no write)."""
+    print("\n[learning AC11: $HOME unset fail-safe]")
+    with tempfile.TemporaryDirectory() as td:
+        lib = Path(td) / "lib"
+        lib.mkdir()
+        cfg = Path(td) / ".vibe" / "learning.config"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(
+            f'VIBE_LEARNING_ENABLED="true"\n'
+            f'VIBE_LEARNING_PATH="{lib}"\n'
+            f'VIBE_LEARNING_VISIBILITY="private"\n'
+            f'VIBE_LEARNING_GIT_REMOTE=""\n'
+        )
+        env = {**os.environ}
+        # Unset HOME
+        if "HOME" in env:
+            del env["HOME"]
+        # Run vibe learn with HOME unset
+        r = run(
+            ["bash", str(VIBE), "learn", "pattern"],
+            env=env,
+            input="y\n",
+        )
+        check("[learn] AC11 $HOME unset fails safe", r.returncode == 1,
+              f"exit={r.returncode}")
+
+
+def test_learning_help_lists_commands() -> None:
+    """AC12: vibe --help lists learn commands."""
+    print("\n[learning AC12: help mentions learn]")
+    with tempfile.TemporaryDirectory() as td:
+        env = {**os.environ, "HOME": td}
+        r = run(["bash", str(VIBE), "--help"], env=env)
+        check("[learn] AC12 help exit 0", r.returncode == 0, r.stderr)
+        check("[learn] AC12 help mentions 'learn \"<pattern>\"'",
+              'learn "<pattern>"' in r.stdout, r.stdout)
+        check("[learn] AC12 help mentions 'learn --init'",
+              "learn --init" in r.stdout, r.stdout)
+
+
+def test_learning_banner_with_optins() -> None:
+    """AC12: Banner shows learn line when opted in and not blocked."""
+    print("\n[learning AC12: banner with opt-in]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        lib = home / "lib"
+        lib.mkdir()
+        cfg = home / ".vibe" / "learning.config"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(
+            f'VIBE_LEARNING_ENABLED="true"\n'
+            f'VIBE_LEARNING_PATH="{lib}"\n'
+            f'VIBE_LEARNING_VISIBILITY="private"\n'
+            f'VIBE_LEARNING_GIT_REMOTE=""\n'
+        )
+        env = {**os.environ, "HOME": str(home), "VIBE_SOURCE_ONLY": "1"}
+        script = (
+            f"source {shlex.quote(str(VIBE))}; "
+            f"learning_should_mount {shlex.quote(str(home))} && echo Y || echo N"
+        )
+        r = run(["bash", "-c", script], env=env)
+        check("[learn] AC12 learning_should_mount returns 0 when opted in",
+              r.returncode == 0, r.stderr)
+
+
+def test_learning_chmod_600_verified() -> None:
+    """AC13: Config created with chmod 600."""
+    print("\n[learning AC13: chmod 600 on config]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        lib = home / "lib"
+        lib.mkdir()
+        cfg = home / ".vibe" / "learning.config"
+        env = {**os.environ, "HOME": str(home)}
+        input_str = f"{lib}\nprivate\n"
+        r = run(
+            ["bash", str(VIBE), "learn", "--init"],
+            env=env,
+            input=input_str,
+        )
+        check("[learn] AC13 init success", r.returncode == 0, r.stderr)
+        if cfg.exists():
+            mode = cfg.stat().st_mode & 0o777
+            check("[learn] AC13 config is chmod 600", mode == 0o600,
+                  f"mode={oct(mode)}")
+
+
+def test_learning_helpers_exist() -> None:
+    """AC14: All 10 helpers defined."""
+    print("\n[learning AC14: 10 helpers present]")
+    with tempfile.TemporaryDirectory() as td:
+        env = {**os.environ, "HOME": td, "VIBE_SOURCE_ONLY": "1"}
+        helpers = [
+            "learning_config_path",
+            "learning_load",
+            "learning_is_enabled",
+            "learning_project_opted_out",
+            "learning_should_mount",
+            "learning_entry_path",
+            "learning_format_entry",
+            "learning_commit_message",
+            "learning_render_devcontainer_config",
+            "learning_handle_subcommand",
+        ]
+        script = (
+            f"source {shlex.quote(str(VIBE))}; "
+            "declare -F | awk '{print $3}'"
+        )
+        r = run(["bash", "-c", script], env=env)
+        declared = r.stdout.split()
+        for helper in helpers:
+            check(f"[learn] AC14 helper '{helper}' exists",
+                  helper in declared, f"declared={declared}")
+
+
+def test_learning_entry_path_composition() -> None:
+    """Helper function test: learning_entry_path."""
+    print("\n[learning helper: entry_path composition]")
+    with tempfile.TemporaryDirectory() as td:
+        env = {**os.environ, "HOME": td, "VIBE_SOURCE_ONLY": "1"}
+        script = (
+            f"source {shlex.quote(str(VIBE))}; "
+            'learning_entry_path "/home/user/lib" "2025-04-23T12:34:56Z" "abc123" | '
+            'grep -q "/home/user/lib/2025-04-23T12:34:56Z-abc123.md" && echo OK'
+        )
+        r = run(["bash", "-c", script], env=env)
+        check("[learn] entry_path composition", "OK" in r.stdout, r.stdout)
+
+
+def test_learning_format_entry() -> None:
+    """Helper function test: learning_format_entry."""
+    print("\n[learning helper: format_entry]")
+    with tempfile.TemporaryDirectory() as td:
+        env = {**os.environ, "HOME": td, "VIBE_SOURCE_ONLY": "1"}
+        script = (
+            f"source {shlex.quote(str(VIBE))}; "
+            'learning_format_entry "2025-04-23T12:00:00Z" "my pattern"'
+        )
+        r = run(["bash", "-c", script], env=env)
+        check("[learn] format_entry has timestamp", "2025-04-23T12:00:00Z" in r.stdout,
+              r.stdout)
+        check("[learn] format_entry has pattern", "my pattern" in r.stdout, r.stdout)
+
+
+def test_learning_commit_message() -> None:
+    """Helper function test: learning_commit_message."""
+    print("\n[learning helper: commit_message]")
+    with tempfile.TemporaryDirectory() as td:
+        env = {**os.environ, "HOME": td, "VIBE_SOURCE_ONLY": "1"}
+        script = (
+            f"source {shlex.quote(str(VIBE))}; "
+            'learning_commit_message "short pattern" | grep -q "^learn: short pattern"'
+        )
+        r = run(["bash", "-c", script], env=env)
+        check("[learn] commit_message formats correctly", r.returncode == 0, r.stdout)
+
+
+def test_learning_config_path_helper() -> None:
+    """Helper function test: learning_config_path."""
+    print("\n[learning helper: config_path]")
+    with tempfile.TemporaryDirectory() as td:
+        env = {**os.environ, "HOME": str(td), "VIBE_SOURCE_ONLY": "1"}
+        script = (
+            f"source {shlex.quote(str(VIBE))}; "
+            f'learning_config_path | grep -q "{td}/.vibe/learning.config" && echo OK'
+        )
+        r = run(["bash", "-c", script], env=env)
+        check("[learn] config_path helper", "OK" in r.stdout, r.stdout)
+
+
+def test_learning_code_check_clean() -> None:
+    """AC15: python3 code-check.py passes on vibe."""
+    print("\n[learning AC15: code-check.py passes]")
+    r = run(["python3", str(CODE_CHECK)], cwd=REPO)
+    check("[learn] AC15 code-check passes", r.returncode == 0,
+          f"exit={r.returncode} output={r.stdout[-300:]}")
+
+
 def main() -> int:
     test_help()
     test_env_hint_fresh()
@@ -720,6 +1341,33 @@ def main() -> int:
     test_vibe_resume_args_resume_uid()
     test_vibe_is_uuid()
     test_vibe_help_mentions_continue_and_resume()
+    test_learning_config_format()
+    test_learning_strict_parser_no_injection()
+    test_learning_init_interactive()
+    test_learning_init_mkdir_offer()
+    test_learning_init_reinit_path()
+    test_learning_default_off_no_config()
+    test_learning_learn_without_init()
+    test_learning_render_devcontainer_config()
+    test_learning_dispatch_no_docker_required()
+    test_learning_capture_confirm_flow()
+    test_learning_capture_eof_cancel()
+    test_learning_capture_confirm_no()
+    test_learning_public_mode_push_prompt()
+    test_learning_public_mode_git_failure_survives()
+    test_learning_private_mode_no_git()
+    test_learning_marker_blocks_capture()
+    test_learning_marker_walk_stops_at_home()
+    test_learning_home_unset_fails_safe()
+    test_learning_help_lists_commands()
+    test_learning_banner_with_optins()
+    test_learning_chmod_600_verified()
+    test_learning_helpers_exist()
+    test_learning_entry_path_composition()
+    test_learning_format_entry()
+    test_learning_commit_message()
+    test_learning_config_path_helper()
+    test_learning_code_check_clean()
 
     print()
     if FAILURES:

@@ -16,6 +16,26 @@ Spec critic iteration 1: revise (3 concerns — AC8 markdown loophole, AC4 banne
 
 Spec critic iteration 2: revise (1 new concern introduced by iteration-1 fix — `shell` was whitelisted as an acceptable poetic word but is itself a project-tagline term). Cap reached; one-word fix applied (added `shell` and `terminal` to banned list, dropped from whitelist). Showing spec to user for approval.
 
+## 2026-04-23 — task_004 Planner
+
+User invoked `/vs develop a cross-org learning library ensure everything is fully anonymised, secure, 100% opt-in and people get to determine where the learning library lives and whether it is public or private.` Step-1 simplicity gate passed (multi-file, security-sensitive, verifiable criteria).
+
+Spec drafted: opt-in via `vibe learn --init`; host-only capture via `vibe learn "<pattern>"` with confirm-before-write; user-chosen library path; private/public visibility (public = user's git repo, push prompt per capture); per-project `.vibe-no-learn` marker; library bind-mounted RO into containers at `/learnings`.
+
+Spec critic iteration 1: revise. **Four blockers** (AC4/AC9 readonly-vs-write contradiction; `--mount` doesn't exist on `devcontainer up`; `install-claude-extras.sh` can't see opt-in state; `vibe learn` dispatch undefined) plus **three security concerns** (commit-message injection; `source` of user-writable config = arbitrary code execution; missing EOF-bypass test). Major revision: dropped in-container slash command for v1 (eliminates 3 of 4 blockers); switched mount mechanism to generated `--override-config` per-session JSON; pinned strict regex parser (no source/eval); pinned `git commit --file=<tempfile>` (no shell-arg injection); added EOF-defaults-to-cancel.
+
+Spec critic iteration 2: **pass**. Five residual Builder-awareness notes; folded the 3 load-bearing ones (override-config used by both `up` + `exec`; `$HOME` unset = fail-safe opted-out; tempfile cleanup via `trap EXIT INT TERM`).
+
+Cap reached cleanly with pass verdict. Showing spec to user.
+
+## 2026-04-23 — task_004 Cycle 1: PASS
+
+- Generator (Sonnet) added 10 AC14 helpers + dispatch + override-config plumbing to `vibe`. +471 lines, single source-tree file.
+- Tester (Haiku 4.5, independent) appended 27 test functions / 57 `[learn]`-prefixed checks to `smoke-test.py`, one+ per AC. All pass; no regression in pre-existing tests.
+- Evaluator independently verified: shellcheck clean, smoke-test green, security spot-checks pass (config-injection canary not created, $HOME unset returns fail-safe opted-out exit 0), diff scope clean (only `vibe` from Generator + `smoke-test.py` from Tester; `.vs/` and `TODO.md` are Planner's). No project-invariant violations.
+- Tester process slip: `summary.md` not written (data was in test-output.log; Evaluator wrote summary.md retroactively).
+- cost: 1 cycle, 4 subagent calls, 218,672 tokens (0 opus, 119,821 sonnet, 98,851 haiku), wall 822s.
+
 ## 2026-04-23 — task_003 Cycle 1: PASS (FUZZY MODE)
 
 - Generator (Sonnet) wrote `HAIKU.md`:
