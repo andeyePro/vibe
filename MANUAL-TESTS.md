@@ -447,6 +447,8 @@ Inside Claude Code:
 - [ ] Invoking `/feast` restores default behavior
 - [ ] Invoking `/vs` with a trivial prompt triggers the simplicity gate (Step 1) and refuses, recommending inline instead
 - [ ] Invoking `/vs` with a non-trivial prompt produces `.vs/spec.md` with task summary, acceptance criteria, out-of-scope, test location, proposed budget; then runs the Spec Critic (Sonnet) before showing the spec to the user — the user sees the polished spec plus a `spec critic: pass after N iteration(s)` line, and `.vs/cycle-1/spec-critique.md` is written; only then does it wait for approval before dispatching Generator (Sonnet) and Tester (Haiku)
+- [ ] Invoking `/vs` with a fuzzy prompt (e.g. "make this nicer") triggers Step 1 to offer two options instead of refusing: (a) tighten the brief with sketched deterministic criteria, or (b) reply `--fuzzy` to proceed in review mode
+- [ ] Invoking `/vs --fuzzy <prompt>` proceeds without offering a choice, drafts a spec where the test-location field is replaced by a "Review focus" bulleted list, and after Generator finishes spawns a Sonnet Reviewer (not a Haiku Tester) that writes `.vs/cycle-N/reviewer-verdict.md` containing per-AC assessment, concerns, and a `pass`/`revise`/`fail` verdict
 
 **Image rebuild propagation:**
 - [ ] Edit `devcontainer/agents/shellcheck-fixer.md` on the host, rebuild (Test 4), relaunch
