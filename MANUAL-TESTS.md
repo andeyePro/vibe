@@ -256,8 +256,29 @@ cd ~/Projects/vibe-test && vibe
 **Expected:**
 - [ ] Exit cleanly
 - [ ] Can re-enter container
-- [ ] Previous session state lost (expected)
+- [ ] Previous session state lost (expected — default is fresh)
 - [ ] New Claude Code session starts
+
+**Then test conversation resume flags:**
+```bash
+# Most recent conversation in this project:
+cd ~/Projects/vibe-test && vibe --continue
+```
+- [ ] Banner shows `↻ vibe session continuing`
+- [ ] Claude starts with prior conversation context loaded
+
+```bash
+# Interactive picker:
+cd ~/Projects/vibe-test && vibe --resume
+```
+- [ ] Banner shows `↻ vibe session resuming (Claude conversation picker)`
+- [ ] Claude shows its conversation picker TUI
+
+```bash
+# Mutually exclusive — should error:
+vibe --continue --resume
+```
+- [ ] Exits non-zero with `--continue and --resume are mutually exclusive`
 
 ---
 

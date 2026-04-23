@@ -42,9 +42,24 @@ vibe my-app
 # Force rebuild of the container image
 vibe --rebuild
 
+# Resume the most recent Claude conversation in this project
+vibe --continue
+
+# Interactively pick a past Claude conversation to resume
+vibe --resume
+
+# Resume a specific Claude conversation by session id
+vibe --resume 12345678-1234-1234-1234-123456789abc
+
 # List available projects
 vibe --list
 ```
+
+`vibe` starts a fresh Claude conversation by default — durable
+cross-session memory lives in `TODO.md`, `CLAUDE.md`, and Claude's
+auto-memory, not in resumed conversations (which accumulate
+compaction debt). `--continue`/`--resume` are opt-in for short-horizon
+pickup (mid-task resumption, debugging a prior session).
 
 ## Authentication
 
