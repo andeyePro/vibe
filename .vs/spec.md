@@ -1,113 +1,208 @@
-# spec — task_005: OSC 52 clipboard bridge (`vibe-copy` + `/copy`)
+# Spec: task_006 — /c host-watched clipboard bridge
 
-**Revised after cycle-1 Spec Critic (iteration 2).**
+**Revised after cycle-1 Spec Critic (iteration 1). 13 concerns resolved in this revision.**
 
 ## Task summary
 
-Add an inside-container OSC 52 clipboard bridge so exact-byte copy of Claude-produced content reaches the Mac clipboard without the terminal-selection padding mangling that affects rendered-code-block mouse-copy. Two surfaces: (a) a shell helper `vibe-copy` installed on `$PATH` inside the container — reads stdin or a file path, emits a well-formed OSC 52 escape sequence to the controlling terminal, and also writes a bind-mounted scratch file so users on OSC-52-less terminals (Apple Terminal.app) retain a path; (b) a `/copy` slash command synced into `~/.claude/commands/copy.md` that instructs Claude to identify the most recent fenced code block in its prior turn, write the block's raw bytes to a temp file, and invoke `vibe-copy` on it.
+Rewire the in-container `/copy` slash command to `/c` with zero-keystroke delivery to the Mac clipboard. The prior design (task_005) assumed `vibe-copy` — invoked from a Claude Code Bash tool call — could reach the user's terminal via OSC 52. Empirical test on 2026-04-23 proved this false: inside a Bash tool call, stdout redirects to a file, stderr to `/dev/null`, and `/dev/tty` resolves but isn't connected to Ghostty. OSC 52 embedded in assistant text is also sanitised by Claude Code. The only surviving leg today is the scratch-file fallback.
 
-**Design decisions fixed here (previously open questions in TODO.md):**
+The new design moves the Mac-clipboard leg OUT of the container entirely: `/c` inside the container writes the code block to `$WORKSPACE/.vibe/copy-latest.txt` (visible on the host via the `workspaceMount` bind), and a **host-side watcher** spawned by the `vibe` launcher detects the change and runs `pbcopy` on the host. No Bash tool call from the skill, no OSC 52 dependency, no terminal plumbing inside the container.
 
-1. **How does `/copy` identify "the last code block"?** The most recent fenced code block in Claude's immediately-prior assistant turn. `/copy <hint>` disambiguates when the prior turn contains several blocks; Claude selects the one whose language tag or first-line content best matches the hint. If no prior assistant turn exists, OR the prior turn contains no fenced code block, `/copy` refuses with a one-line message and stops.
-2. **Payload size thresholds.** **8192 bytes** warn threshold (stderr note; still emits and writes scratch), **1048576 bytes (1 MiB)** hard refuse (stderr error; does NOT emit OSC 52 but STILL writes scratch).
-3. **Test strategy for OSC 52.** `vibe-copy` respects `VIBE_COPY_TTY` (redirects escape sequence) and `VIBE_COPY_SCRATCH_DIR` (redirects scratch dir) env vars — set both for tests. `install-claude-extras.sh` gains an analogous `VIBE_EXTRAS_SRC_ROOT` env override so the extras-sync test can stage fixtures without hardcoded paths.
+Scope: host is macOS (`pbcopy`). Linux hosts are a no-op — the watcher self-disables on non-Darwin.
 
-**Installation mechanism.** `vibe-copy.sh` ships via Dockerfile `COPY` + `chmod +x` (the same image-bake pattern as `guard-bash.sh`, `init-firewall.sh`, `setup-ssh.sh` at `devcontainer/Dockerfile:113-130`). This requires an image rebuild on landing, which the existing marker-based auto-rebuild triggers on `devcontainer/` changes — no user action required. The `/copy` slash command markdown ships through the existing `install-claude-extras.sh` sync path (like `/vs`, `/diet`, `/feast`).
+## Canonical process identity
 
-**Note on "extras-sync-only" framing.** The Planner's original pointer to "ship via the extras-sync path like /diet and /vs" is inaccurate for shell binaries: extras-sync operates on `.md` files under `/usr/local/share/vibe/{agents,commands}/`, not on `$PATH` executables. Binaries must be image-baked. The rebuild cost is one-time on landing, same as when /diet and /vs were introduced.
+To avoid ambiguity across the normative and test criteria, the watcher's process identity is defined ONCE here and referenced by number below:
 
-## Exit-code and stderr-message table (normative)
-
-This table is the authoritative reference; individual ACs cross-reference it.
-
-| Exit | Condition | stderr message template |
-|---|---|---|
-| 0 | Input ≤ 1 MiB; scratch file written; sequence emitted (or skipped because TTY absent) | (none normally) |
-| 0 | Input > 8192 bytes and ≤ 1 MiB; warn issued; sequence emitted; scratch written | `vibe-copy: warning: input is <N> bytes; some terminals truncate OSC 52 payloads larger than 8192 bytes` |
-| 0 | `VIBE_COPY_TTY` unset/empty AND `/dev/tty` not writable; scratch written; no sequence emitted | `vibe-copy: note: no terminal available for OSC 52 write; scratch file written to <path>` |
-| 1 | Input > 1 MiB; scratch file written; no OSC 52 emit | `vibe-copy: error: input is <N> bytes; refusing to emit OSC 52 for payloads larger than 1048576 bytes (1 MiB); scratch file written to <path>` |
-| 1 | Scratch directory creation failed OR scratch file write failed | `vibe-copy: error: cannot write scratch file at <path>: <reason>` |
-| 2 | Argument validation: more than one positional argument | `vibe-copy: usage: vibe-copy [FILE]; accepts stdin or a single file path` |
-| 2 | Argument validation: positional argument is a path that does not exist or is not readable | `vibe-copy: error: cannot read file: <path>` |
-
-`<N>` is the literal byte count as a decimal integer. `<path>` is the fully-resolved absolute path actually used at runtime. `<reason>` is a short human-readable cause (e.g. "permission denied"); tests only assert it is non-empty and the line starts with the fixed prefix.
+> **[P]** The watcher is launched by `vibe` as a background job executing the script `vibe-copy-watcher.sh` with exactly one positional argument: the absolute `$WORKSPACE` path. Therefore every watcher process's `ps`/argv string contains, verbatim, the substring `vibe-copy-watcher.sh <WORKSPACE_PATH>` where the separator between the two tokens is a single space. The canonical match pattern used by both orphan-reap (`pkill -f`) and tests (`pgrep -f`) is:
+>
+> `pkill -f "vibe-copy-watcher\.sh ${WORKSPACE}\$"` (regex: `.sh`, literal space, workspace path escaped for regex, `$` end-of-line anchor)
+>
+> The end-of-line anchor prevents path-prefix collisions (e.g. `/proj` matching a running watcher for `/proj-extra`). Tests assert both the argv form and collision-freedom.
 
 ## Acceptance criteria
 
-1. **AC1 — vibe-copy.sh tracked in repo.** A shell helper exists at `devcontainer/vibe-copy.sh` with `#!/usr/bin/env bash` shebang and `set -euo pipefail`.
+1. **File presence after rename.** `devcontainer/commands/c.md` exists in the repo; `devcontainer/commands/copy.md` does not exist in the repo. Both conditions must hold — AC17g explicitly tests absence of `copy.md`.
 
-2. **AC2 — argument validation.** `vibe-copy` reads from stdin when no positional argument is supplied and from the file path given as `$1` when one positional argument is supplied. More than one positional argument, or a non-existent / unreadable file path, exits 2 with the exact stderr prefix given in the exit-code table. Long options (`--help`, `--version`, etc.) are not supported in v1.
+2. **Skill body drops `vibe-copy` invocation.** The happy path of `c.md` (code-block-found path) instructs the model to perform exactly ONE tool call: a `Write` to the scratch file. No `Bash` tool call is permitted in the happy path. Mentioning `!vibe-copy` in the UTF-8 note (AC5) as a user-typed fallback is allowed — that's prose, not a model instruction.
 
-3. **AC3 — OSC 52 sequence format.** For non-empty input ≤ 1 MiB, `vibe-copy` emits exactly the byte sequence `ESC ] 5 2 ; c ; <BASE64> BEL` (hex: `1b 5d 35 32 3b 63 3b <b64-bytes> 07`) to its target stream. No preceding or trailing bytes on that stream, no newline, no whitespace. The target stream is:
-   - `$VIBE_COPY_TTY` if set and non-empty (treated as a filesystem path);
-   - else `/dev/tty` if writable;
-   - else no emission (see AC16).
-   Implementation MUST use `printf '\033]52;c;%s\007' "$b64"` (or an equivalent that appends no trailing newline — `echo -e` is forbidden because it trails a newline by default). The BASE64 value MUST use standard RFC 4648 encoding (`+/=` alphabet) with all linefeeds stripped (portable: `base64 | tr -d '\n'`; or `openssl base64 -A`). URL-safe base64 is forbidden.
+3. **Skill writes to the canonical scratch path.** `c.md` instructs the model to write the extracted code-block bytes directly to `/workspace/.vibe/copy-latest.txt` (hardcoded path; no `$VIBE_COPY_SCRATCH_DIR` indirection for the `/c` path — AC11 clarifies the relationship with the `vibe-copy` helper's env var). No `/tmp/copy-<ISO>.txt` intermediate step.
 
-4. **AC4 — base64 round-trip.** The base64 portion of the emitted sequence, when decoded with standard RFC 4648, yields exactly the input bytes — same length, same byte values, including any trailing newlines in the input. Tests capture the full byte stream written to `$VIBE_COPY_TTY` and assert `captured == b'\x1b]52;c;' + b64payload + b'\x07'` byte-for-byte.
+4. **Refusal message preserved.** `c.md` still emits the exact string `no prior code block to copy` when there is no prior assistant turn or no fenced block in it, and performs zero tool calls in that case.
 
-5. **AC5 — scratch file write.** On every invocation that passes argument validation (AC2) and reaches the size-gate logic, `vibe-copy` writes the raw input bytes verbatim to `<SCRATCH_DIR>/copy-latest.txt`, where `<SCRATCH_DIR>` is `$VIBE_COPY_SCRATCH_DIR` if set and non-empty, else `/workspace/.vibe`. The directory is created via `mkdir -p` if absent. Scratch write occurs even on the 1-MiB-refuse path (AC7) and the TTY-absent path (AC16); the only exit paths that do NOT write scratch are the exit-2 argument-validation failures (AC2). If `mkdir -p` fails OR the file write fails, `vibe-copy` exits 1 with the stderr message from the exit-code table. Atomicity is not required (non-atomic truncating overwrite is acceptable; no `mktemp+mv` pattern).
+5. **UTF-8 note preserved.** `c.md` retains a note explaining that the Write-tool hop is UTF-8-safe but not byte-safe for binary, and directs users to `!vibe-copy <file>` for binary-safe copy via the host shell.
 
-6. **AC6 — 8 KiB warn.** For input strictly greater than 8192 bytes and ≤ 1048576 bytes, `vibe-copy` writes the exact `vibe-copy: warning:` line from the exit-code table to stderr (substituting the real byte count). The OSC 52 sequence is still emitted (per AC3); the scratch file is still written (per AC5); exit code is 0.
+6. **No Dockerfile change.** The rename propagates via the existing `COPY commands/ /usr/local/share/vibe/commands/` line — no Dockerfile edit is permitted or needed for the rename or the watcher. The watcher runs on the **host** only; it must NOT be `COPY`'d into the image. AC17h tests that the watcher script is not present at any path under `/usr/local/` in the built image (skipped on non-Docker CI).
 
-7. **AC7 — 1 MiB refuse.** For input strictly greater than 1048576 bytes, `vibe-copy` writes the exact `vibe-copy: error: input is <N> bytes; refusing...` line from the exit-code table to stderr, does NOT emit the OSC 52 sequence to any stream, DOES write the scratch file (AC5), and exits 1.
+7. **Stale `copy.md` in the persistent claude-config volume is deleted on container start.** `install-claude-extras.sh` removes retired vibe-shipped filenames from `$DEST_ROOT/commands/` before its copy loop. The retirement list is a static allowlist: `RETIRED_COMMANDS=("copy.md")`. The cleanup applies **exclusively to the `commands` destination directory** — the `agents` directory is untouched by the retirement mechanism. User-authored `*.md` files in `$DEST_ROOT/commands/` that were never on the vibe-shipped retirement list must NOT be deleted.
 
-8. **AC8 — exit code 0 happy path.** For input ≤ 1 MiB with no I/O errors, `vibe-copy` exits 0. The scratch-write and sequence-emit are obligations under AC3/AC5 and are enforced by their own tests; AC8 is purely the exit-code contract for the happy path.
+8. **Watcher spawns on vibe start on macOS.** When `vibe` runs on Darwin with `pbcopy` available, it:
+   - **Defines `VIBE_REPO_DIR` explicitly** as `VIBE_REPO_DIR="$(dirname "$DEVCONTAINER_DIR")"`, placed after the existing `DEVCONTAINER_DIR` resolution block (lines 42–48 of current `vibe`)
+   - `mkdir -p "$WORKSPACE/.vibe"` before spawning (watcher polls a file in this dir; path must exist)
+   - Reaps any orphan watcher for this **exact** `$WORKSPACE` from a prior crashed session using the canonical pattern [P]: `pkill -f "vibe-copy-watcher\.sh ${WORKSPACE}\$" 2>/dev/null || true`. The end-of-line anchor (`$`) prevents path-prefix collisions on sibling workspaces
+   - Launches `"$VIBE_REPO_DIR/vibe-copy-watcher.sh" "$WORKSPACE"` as a background job (`&`)
+   - Captures the watcher PID into a shell variable (e.g. `WATCHER_PID=$!`) for PID-based cleanup
 
-9. **AC9 — empty input.** For zero-byte input (immediate stdin EOF, or a zero-byte file), `vibe-copy` emits the exact bytes `1b 5d 35 32 3b 63 3b 07` (the valid "clear clipboard" OSC 52 form with empty base64 payload) to the target stream, writes a zero-byte scratch file to `<SCRATCH_DIR>/copy-latest.txt`, issues no warning, and exits 0.
+9. **Watcher pbcopies on change.** When `$WORKSPACE/.vibe/copy-latest.txt` is created or its mtime changes, the watcher reads it (via a tempfile copy — see implementation notes) and pipes the contents to the copy command within **≤ 1 second** of the write. Watcher tolerates the file not existing at spawn time (baseline mtime = 0; first write triggers copy). Watcher MUST NOT re-copy a file whose mtime has not changed since the last copy.
 
-10. **AC10 — /copy slash command file.** `devcontainer/commands/copy.md` exists with YAML frontmatter (at minimum `description:` field) and a body that instructs the executing Claude to:
-    - (a) Identify the target code block: the most recent fenced code block in Claude's immediately-prior assistant turn, OR — if `$ARGUMENTS` is non-empty — the one whose language tag or first non-blank line best matches the `$ARGUMENTS` hint.
-    - (b) Refuse cleanly in BOTH these cases: no prior assistant turn exists, OR the prior assistant turn contains no fenced code block. Refusal message: `no prior code block to copy`.
-    - (c) Write the block's raw bytes (between the fences, excluding both fence lines and the language tag line) to a temp file at `/tmp/copy-<ISO8601>.txt` using the Write tool.
-    - (d) Invoke `vibe-copy /tmp/copy-<ISO8601>.txt` via the Bash tool.
-    - (e) Report success to the user with the byte count and the actual scratch file path (`/workspace/.vibe/copy-latest.txt` when `VIBE_COPY_SCRATCH_DIR` is unset; otherwise `<$VIBE_COPY_SCRATCH_DIR>/copy-latest.txt`).
-    - (f) Note that `/copy` targets UTF-8 text code blocks; the Write tool round-trips UTF-8, so non-UTF-8 byte sequences in code blocks are NOT supported via `/copy`. Binary-safe copy is via `vibe-copy <file>` directly.
+10. **`VIBE_COPY_CMD` override is normative.** The watcher MUST read `VIBE_COPY_CMD` from its environment and use its value as the copy command, defaulting to `pbcopy` when unset or empty. This hook enables Linux-CI testability (AC17d). The watcher must tolerate the override command failing without dying — a failed copy is logged to `/dev/null` and the loop continues.
 
-11. **AC11 — Dockerfile COPY + chmod.** `devcontainer/Dockerfile` has a new `COPY vibe-copy.sh /usr/local/bin/` line inserted into the helper-COPY block between lines 113 and 119 (the block preceding the agents/ and commands/ COPYs). The existing `RUN chmod +x ...` command includes `/usr/local/bin/vibe-copy` in its argument list. The insertion is placed BEFORE any `USER root` directive that precedes the chmod (same position as `guard-bash.sh` etc.) so ownership matches the existing helper set. No other Dockerfile changes.
+11. **Polling fallback is the default.** The watcher uses `fswatch` only if `command -v fswatch` succeeds; otherwise it falls back to a `stat`-based polling loop with interval ≤ 1 second. No dependency on any non-base-macOS tool. The loop MUST be robust against a file disappearing between the `stat` check and the subsequent read (e.g. user deletes the scratch file mid-loop) — achieved via `|| true` / explicit conditional guards, not by relying on `set -e` to skip iterations.
 
-12. **AC12 — install-claude-extras.sh env override + /copy sync.** `install-claude-extras.sh` is updated so `SRC_ROOT` accepts an env override: `SRC_ROOT="${VIBE_EXTRAS_SRC_ROOT:-/usr/local/share/vibe}"` (single-line change). `DEST_ROOT` continues to use the existing `CLAUDE_CONFIG_DIR` override. The markdown sync loop is unchanged; `copy.md` is picked up automatically by the existing `*.md` glob. The script remains shellcheck-clean (AC13).
+12. **Watcher dies on vibe exit.** After `vibe` returns (normal exit, Ctrl+C / SIGINT, SIGTERM, or `claude` exiting non-zero), `pgrep -f "vibe-copy-watcher\.sh ${WORKSPACE}\$"` returns no matching PID. Cleanup is via a **mandatory EXIT trap** wired around the `devcontainer exec ...` call, with **PID-based** `kill "$WATCHER_PID"` (not `pkill -f`, to eliminate residual collision risk). INT and TERM traps are optional reinforcement — bash's `set -e` termination already triggers EXIT. The final line's `exec` keyword MUST be removed so the trap fires.
 
-13. **AC13 — shellcheck clean.** `python3 code-check.py` exits 0 after the changes. `devcontainer/vibe-copy.sh` is included automatically via the existing `devcontainer/*.sh` glob in `code-check.py`. The `install-claude-extras.sh` env-override edit is also shellcheck-clean.
+13. **Trap body must preserve vibe's exit code.** All commands in the EXIT trap body MUST be guarded with `|| true` (or equivalent non-failure suppression) so a failed `kill` (e.g. watcher already dead) does not alter `vibe`'s exit status. Example: `trap 'kill "$WATCHER_PID" 2>/dev/null || true' EXIT`.
 
-14. **AC14 — smoke test coverage.** `python3 smoke-test.py` passes all pre-existing checks (no regressions) and adds the following new test functions. Every test uses `VIBE_COPY = REPO / "devcontainer" / "vibe-copy.sh"` and invokes via `["bash", str(VIBE_COPY), ...]` with `VIBE_COPY_TTY` and `VIBE_COPY_SCRATCH_DIR` set to paths inside a `tempfile.TemporaryDirectory()`. Each test resets state and sets env vars explicitly (no reliance on inherited state).
-    - `test_vibe_copy_stdin_roundtrip` — pipe `b"hello world\n"` to vibe-copy; read captured TTY bytes; assert exactly `b"\x1b]52;c;" + b64(b"hello world\n") + b"\x07"`; decode payload; assert equal to input.
-    - `test_vibe_copy_file_arg_roundtrip` — write `b"hello world\n"` to a temp file; call `vibe-copy <file>`; assert the same byte-for-byte equality.
-    - `test_vibe_copy_scratch_file_written` — assert `<SCRATCH_DIR>/copy-latest.txt` contains exact input bytes after a successful invocation.
-    - `test_vibe_copy_empty_input_stdin` — pipe nothing; assert captured TTY bytes are exactly `b"\x1b]52;c;\x07"`; assert `copy-latest.txt` exists and is zero bytes; assert exit 0; assert stderr is empty.
-    - `test_vibe_copy_warn_at_8kib_plus_one` — 8193-byte input; assert stderr contains the literal substring `vibe-copy: warning: input is 8193 bytes` AND the literal substring `8192 bytes`; assert TTY bytes contain a valid OSC 52 sequence whose decoded base64 equals input; assert scratch contains input; assert exit 0.
-    - `test_vibe_copy_refuse_at_1mib_plus_one` — 1048577-byte input; assert stderr contains the literal substrings `vibe-copy: error: input is 1048577 bytes` AND `1048576`; assert the captured TTY output contains NO `\x1b]52;c;` sequence anywhere; assert scratch file contains input (all 1048577 bytes); assert exit 1.
-    - `test_vibe_copy_refuses_two_args` — invoke `vibe-copy a b`; assert exit 2; assert stderr starts with `vibe-copy: usage:`.
-    - `test_vibe_copy_refuses_missing_file` — invoke `vibe-copy /nonexistent-<uuid>`; assert exit 2; assert stderr starts with `vibe-copy: error: cannot read file:`.
-    - `test_vibe_copy_tty_absent_note` — `VIBE_COPY_TTY=/does/not/exist/<uuid>`; pipe `b"text\n"`; assert exit 0; assert stderr contains the literal prefix `vibe-copy: note: no terminal available`; assert scratch file written with exact bytes; assert NO OSC 52 sequence was written to `/dev/tty` or anywhere else reachable by the test.
-    - `test_vibe_copy_scratch_failure_exits_1` — set `VIBE_COPY_SCRATCH_DIR` to a path inside a read-only directory created in the test fixture; pipe `b"text\n"`; assert exit 1; assert stderr starts with `vibe-copy: error: cannot write scratch file`.
-    - `test_copy_slash_command_synced` — stage a fixture dir with `commands/copy.md` (containing a sentinel string like `SENTINEL_COPY_FIXTURE`); set `VIBE_EXTRAS_SRC_ROOT=<fixture>` and `CLAUDE_CONFIG_DIR=<tmp-dest>`; run `install-claude-extras.sh`; assert `<tmp-dest>/commands/copy.md` exists and contains the sentinel. Then re-run the script (idempotency check) and assert destination still matches source byte-for-byte.
-    - `test_copy_slash_command_body_matches_spec` — open `devcontainer/commands/copy.md`; assert the body contains all of: `vibe-copy`, `/workspace/.vibe/copy-latest.txt`, `no prior code block to copy`, and `UTF-8` (or `UTF8`) — proves AC10(a–f) are actually described.
+14. **Exit code propagation preserved.** If `claude` exits with code N, `vibe` exits with code N. `set -euo pipefail` (already at the top of `vibe`) propagates non-zero; the trap body (AC13) does not clobber the code.
 
-15. **AC15 — Dockerfile assertion test.** `smoke-test.py` gains `test_dockerfile_installs_vibe_copy` which reads `devcontainer/Dockerfile` and asserts: (a) it contains exactly one line matching the regex `^COPY vibe-copy\.sh /usr/local/bin/vibe-copy$` (the canonical form — NOT a trailing-slash form, which would install the binary at `/usr/local/bin/vibe-copy.sh` and leave `vibe-copy` not-on-$PATH as a bare command); (b) the chmod RUN command includes the literal substring `/usr/local/bin/vibe-copy`. This is a static assertion — does not require building the image. Path reachability inside a built image is out of scope for smoke tests (validated by the existing MANUAL-TESTS.md container-lifecycle checklist).
+15. **Multi-session isolation.** Two `vibe` sessions on different `$WORKSPACE` paths run independent watchers distinguished by the canonical pattern [P]. `/c` in one session does NOT pbcopy the other session's scratch file. Per-session watcher termination in one session does NOT kill the watcher in the other (verified by AC17i — path-prefix collision test). Acceptable semantics: last `/c` across all sessions wins the Mac clipboard (user has accepted this).
 
-16. **AC16 — /dev/tty absent fallback.** When `VIBE_COPY_TTY` is unset or empty AND `/dev/tty` cannot be opened for writing (non-interactive subprocess, CI, piped execution), `vibe-copy` writes the exact `vibe-copy: note: no terminal available` line from the exit-code table to stderr, does NOT emit any OSC 52 sequence, DOES write the scratch file (AC5), and exits 0. Rationale: the scratch file is the designed fallback for non-OSC-52-capable environments; failing the invocation would make CI pipelines and piped usage unusable.
+16. **Non-Darwin hosts are no-ops for the watcher.** On Linux (including smoke-test.py CI runs), `vibe` does NOT spawn a watcher and does not error. The watcher script itself exits 0 immediately when `uname` is not `Darwin` — this is its first guard, before argument validation. The `/c` skill still writes the scratch file (which sits harmlessly on the host).
+
+17. **`code-check.py` passes.** No new shellcheck warnings introduced in `vibe`, the new `vibe-copy-watcher.sh`, or any modified `.sh` file. Run with `python3 code-check.py`.
+
+18. **Existing `smoke-test.py` tests pass.** All pre-existing checks that don't reference `copy.md` stay green. Tests that reference `copy.md` (the `COPY_MD` constant, `test_copy_slash_command_synced`, `test_copy_slash_command_body_matches_spec`, and the `copy.md`-mention assertions inside `test_dockerfile_installs_vibe_copy`) are updated in place to the new filename and new body. Content assertions updated to match the rewritten skill: the "mentions `vibe-copy`" assertion is removed or weakened (the body may mention `vibe-copy` in the UTF-8 note but no longer as a Bash-tool-call instruction); the scratch-path assertion stays; the refusal-message assertion stays.
+
+19. **New smoke tests.** Tester adds at minimum the following checks. All must be runnable on a Linux CI host (no `pbcopy`, no macOS):
+
+    a. **Extras-sync deletes retired `copy.md`.** Seed `dest/commands/copy.md` with sentinel content. Run `install-claude-extras.sh` with a fixture `VIBE_EXTRAS_SRC_ROOT` whose `commands/` dir contains only `c.md`. Assert: after sync, `dest/commands/copy.md` does NOT exist, and `dest/commands/c.md` exists with fixture content.
+    b. **Extras-sync preserves user-authored commands.** Seed `dest/commands/my-custom.md` with user content. Run sync with fixture SRC containing only `c.md`. Assert: `my-custom.md` still exists with original content; `c.md` synced.
+    c. **Extras-sync does NOT touch `agents/` via retirement logic.** Seed `dest/agents/some-retired-agent.md` with sentinel content. Run sync with fixture SRC containing only `commands/c.md` and `agents/other.md`. Assert: `dest/agents/some-retired-agent.md` still exists (retirement list applies to commands only, as per AC7).
+    d. **Watcher is a no-op on non-Darwin.** Invoke `vibe-copy-watcher.sh <tempdir>` directly on the Linux test host. Assert: exit code 0 AND immediately after exit, `pgrep -f "vibe-copy-watcher\.sh <tempdir>\$"` returns empty (no lingering process). Use a 1-second pgrep delay to give the shell time to exit fully.
+    e. **Watcher polling detects a scratch-file change (Linux-runnable via `VIBE_COPY_CMD`).** Strategy: patch/override the watcher's platform guard for the test (simplest: set env var `VIBE_COPY_WATCHER_FORCE=1` that bypasses the Darwin check, ONLY for testing — this is an additional normative requirement below, AC20). Then: create tempdir `td/.vibe/`, set `VIBE_COPY_CMD='tee td/sentinel.txt >/dev/null'`, launch watcher in background with workspace=`td`, wait 0.5s, write `hello-c\n` to `td/.vibe/copy-latest.txt`, wait 1.5s (at least 3 polling intervals at 0.5s), assert `td/sentinel.txt` contents == `hello-c\n`. THEN: send SIGTERM to watcher PID, wait 1s, assert `pgrep -f` returns empty.
+    f. **`c.md` body matches new spec.** `c.md` file exists; body contains the exact string `/workspace/.vibe/copy-latest.txt`; body contains the exact string `no prior code block to copy`; body mentions UTF-8; body does NOT contain a Bash-tool instruction to invoke `vibe-copy` (i.e. no line that says "Use the Bash tool to run: `vibe-copy`" or equivalent).
+    g. **`copy.md` is absent from the repo.** Assert `not (REPO / "devcontainer" / "commands" / "copy.md").exists()`.
+    h. **`vibe` final-line `exec` dropped.** Grep `vibe`: assert no line matches the regex `^exec devcontainer exec` AND assert at least one line matches the regex `^devcontainer exec ` (with leading anchor, no `exec` prefix, space after command).
+    i. **Multi-session path-prefix collision test.** Spawn two watchers with workspaces `$TMP/proj` and `$TMP/proj-extra`. Use `VIBE_COPY_WATCHER_FORCE=1` to bypass Darwin guard. Run the orphan-reap command for `$TMP/proj`: `pkill -f "vibe-copy-watcher\.sh $TMP/proj\$"`. Assert: the `$TMP/proj` watcher is killed; the `$TMP/proj-extra` watcher is still alive. Then tear down.
+    j. **`vibe` exits with the inner command's exit code (regression guard for dropping `exec`).** Shim `devcontainer` in a tempdir prepended to PATH to emit exit code 7. Run `vibe` in that env with all other checks stubbed enough to reach the launch line. Assert `vibe` returns 7. (If fully shimming `vibe`'s full preflight is infeasible, split the assertion into a narrow unit test of the exec-drop property: e.g. source-test the final launch block in isolation — Tester's choice of approach.)
+
+20. **`VIBE_COPY_WATCHER_FORCE` test hook.** The watcher script MUST honor an environment variable `VIBE_COPY_WATCHER_FORCE`: when set to `1`, it skips the `uname` Darwin check (but NOT the `pbcopy` / `VIBE_COPY_CMD` availability check). This enables AC19e and AC19i to run on Linux CI. This hook is documented in `vibe-copy-watcher.sh` as a test-only override with a one-line comment.
+
+21. **TODO.md is updated.** Before Generator's implementation completes: a new `## Open` entry tracks task_006. On `/vs` pass: the entry is moved to `## Done` with a one-line summary. The existing task_005 Done entry gets a one-line amendment noting its OSC-52-from-tool-call design was superseded by the host-watcher approach on 2026-04-23 after the stdio-sandbox finding. No other rewrite of history.
 
 ## Out of scope
 
-- OSC 52 *read* (pasting the Mac clipboard into the container). Security-sensitive; most terminals gate read off by default; not needed for the stated pain point.
-- Detecting whether the outer terminal supports OSC 52. There is no reliable universal probe. `vibe-copy` always emits the sequence (when it has a TTY) AND always writes the scratch file.
-- Chunking oversize payloads across multiple OSC 52 sequences. 1 MiB refuse is simpler and covers realistic code-block sizes.
-- Auto-mirroring to host `pbcopy` / `xclip`. Out of scope — host-side clipboard is the user's shell.
-- Atomic scratch writes (`mktemp+mv`). Non-atomic truncating overwrite is acceptable; concurrent `vibe-copy` invocations may race on `copy-latest.txt` — the "latest-wins" semantics of a scratch file tolerate this.
-- SIGPIPE handling on stdin. If upstream closes prematurely, the default bash behaviour (fail) is acceptable; no custom trap required.
-- Binary-safe `/copy` (non-UTF-8 byte sequences in code blocks). Users with binary payloads use `vibe-copy <file>` directly. The shell helper is byte-safe; only the Write-tool hop inside `/copy` is UTF-8-only.
-- URL-safe base64 variant. Standard RFC 4648 only.
-- Any changes to `vibe` (the host launcher). The Terminal.app advisory comment at `vibe:1083` already references OSC 52 / `vibe-copy`; no further launcher edits.
-- Any changes to README.md. If the feature lands and is worth surfacing, that's a follow-up doc PR.
-- Any tests that require building the Docker image. Smoke tests remain host-only, no-docker, no-network.
+- Linux / Windows clipboard targets (`xclip`, `xsel`, Windows `clip.exe`). Darwin-only for the clipboard leg. Linux hosts get the scratch file and nothing else.
+- Binary-safe copy via `/c`. UTF-8 text only. Users wanting exact bytes use `!vibe-copy <file>` via the host shell.
+- In-container `/c` for non-vibe Claude Code installs — no watcher means the scratch file is a dead drop (acceptable, documented).
+- Removing `devcontainer/vibe-copy.sh` or `/usr/local/bin/vibe-copy` from the image. The shell helper stays.
+- Changing `vibe-copy.sh`'s `$VIBE_COPY_SCRATCH_DIR` env var behaviour. `/c` hardcodes its scratch path to `/workspace/.vibe/copy-latest.txt` (AC3) and does NOT read `$VIBE_COPY_SCRATCH_DIR`. The two paths (skill path and helper path) are independent; if a user has `VIBE_COPY_SCRATCH_DIR` set, `!vibe-copy <file>` will write somewhere the watcher doesn't look — user is responsible for not setting this var in a vibe session if they want the watcher to pick it up.
+- User notification of `/c` completion (toast, bell). Mac clipboard simply gets the content.
+- CLI flag to disable the watcher (`vibe --no-copy-watcher`). Not needed; watcher is cheap and silent.
+- Auto-starting the watcher when running Claude Code outside vibe.
+- Changing task_005's Done entry beyond a single appended amendment line.
+- Backward-compat shim that keeps `/copy` alive alongside `/c`. Clean break.
+- Adding the watcher to the container image (`COPY` line). Watcher is host-only (AC6).
 
-## Test location
+## Review focus / Test location
 
-`smoke-test.py` (existing host-side test file). All new tests are added there as top-level `test_*` functions and invoked from `main()`. `devcontainer/vibe-copy.sh` must be directly invokable by `bash` on the host (macOS or Linux) — no container dependencies beyond the `VIBE_COPY_TTY` / `VIBE_COPY_SCRATCH_DIR` env escape hatches. `install-claude-extras.sh` becomes similarly host-testable via `VIBE_EXTRAS_SRC_ROOT` + `CLAUDE_CONFIG_DIR`.
+Test location: `smoke-test.py` at repo root. New tests follow the existing `test_<area>_<behavior>` naming convention.
 
-**Immutability rule:** once Tester writes these tests in cycle 1, they are frozen. Generator may not edit them on subsequent cycles; revisions require a fresh spec and a restart at cycle 1.
+**Tester MUST NOT edit any file outside `smoke-test.py`** plus tempdir fixtures it creates at runtime.
+
+Additional scrutiny Tester should apply:
+- shellcheck cleanliness of `vibe-copy-watcher.sh` and the watcher-launch block in `vibe`
+- Quoting of `$WORKSPACE` (paths with spaces, regex metacharacters)
+- The canonical `pgrep`/`pkill` pattern [P] from the header — escape special regex chars in the workspace path when building the pattern in tests (`re.escape` in Python when building the expected argv string for assertions)
+- Atomicity of read vs concurrent rewrite: the watcher uses an intermediate tempfile copy before piping to the copy command
+- AC19d must verify actual process exit (pgrep empty after 1s), not just the watcher's exit code 0
+- AC19e timing: at least 1.5s between writing the scratch file and sending SIGTERM, to give three polling cycles at 0.5s
 
 ## Proposed budget
 
-**2 cycles.** Rationale: moderately scoped — one new shell helper (~60 lines after the exit-code/stderr discipline), one new markdown slash-command file (~30 lines), one env-override single-line edit to `install-claude-extras.sh`, two small edits to `devcontainer/Dockerfile`, and ~12 new test functions. Main risks are OSC 52 byte-sequence quoting (caught by AC4's byte-for-byte round-trip) and the exit-code discipline (every exit path has a test). If anything slips through cycle 1, one fix-up cycle should finish it.
+**2 cycles.** Rationale: multi-file but bounded. Cycle 1: rename + skill rewrite + extras-sync cleanup + watcher script + vibe-launcher integration + exec-drop + all 10 new smoke tests (AC19a–j). Cycle 2 reserved for the likely failure mode — shell edge cases in the watcher, macOS-ism / Linux-CI drift, or a missed out-of-scope creep. Cycle 3 would signal a spec defect.
+
+## Implementation notes (non-normative)
+
+Suggestions; Generator may deviate if ACs can still be met.
+
+- Watcher lives at repo root as `vibe-copy-watcher.sh` (peer to `vibe`). The `vibe` launcher derives `VIBE_REPO_DIR="$(dirname "$DEVCONTAINER_DIR")"` after the existing symlink-resolution block.
+
+- Watcher skeleton:
+  ```
+  #!/usr/bin/env bash
+  # vibe-copy-watcher.sh — host-side polling watcher that pbcopies the /c scratch
+  # file on change. Runs on the Mac; no-op on Linux.
+  # VIBE_COPY_WATCHER_FORCE=1 bypasses the Darwin check for testing only.
+  set -euo pipefail
+
+  if [ "${VIBE_COPY_WATCHER_FORCE:-0}" != "1" ]; then
+    [[ "$(uname)" == "Darwin" ]] || exit 0
+  fi
+
+  COPY_CMD="${VIBE_COPY_CMD:-pbcopy}"
+
+  [ $# -eq 1 ] || { echo "usage: vibe-copy-watcher.sh WORKSPACE_ABS_PATH" >&2; exit 2; }
+  WORKSPACE="$1"
+  CLIP="$WORKSPACE/.vibe/copy-latest.txt"
+  mkdir -p "$(dirname "$CLIP")"
+
+  TMP=$(mktemp)
+  trap 'rm -f "$TMP"' EXIT
+
+  last=0
+  if command -v fswatch >/dev/null 2>&1; then
+    fswatch -0 "$(dirname "$CLIP")" | while IFS= read -r -d '' _; do
+      [ -s "$CLIP" ] || continue
+      cur=$(stat -f %m "$CLIP" 2>/dev/null || stat -c %Y "$CLIP" 2>/dev/null || echo 0)
+      if [ "$cur" != "$last" ]; then
+        last="$cur"
+        cp "$CLIP" "$TMP" 2>/dev/null && $COPY_CMD < "$TMP" 2>/dev/null || true
+      fi
+    done
+  else
+    while sleep 0.5; do
+      [ -s "$CLIP" ] || continue
+      cur=$(stat -f %m "$CLIP" 2>/dev/null || stat -c %Y "$CLIP" 2>/dev/null || echo 0)
+      if [ "$cur" != "$last" ]; then
+        last="$cur"
+        cp "$CLIP" "$TMP" 2>/dev/null && $COPY_CMD < "$TMP" 2>/dev/null || true
+      fi
+    done
+  fi
+  ```
+  Note the `|| true` on the cp/copy compound — prevents `set -e` killing the watcher on transient file-disappearance races. Uses both BSD `stat -f` and GNU `stat -c` for portability between macOS and Linux test hosts.
+
+- `vibe` integration block (placed immediately before the current `exec devcontainer exec ...` line):
+  ```
+  VIBE_REPO_DIR="$(dirname "$DEVCONTAINER_DIR")"
+  WATCHER_PID=""
+  if [[ "$(uname)" == "Darwin" ]] && command -v pbcopy >/dev/null 2>&1; then
+    mkdir -p "$WORKSPACE/.vibe"
+    pkill -f "vibe-copy-watcher\.sh ${WORKSPACE}\$" 2>/dev/null || true
+    "$VIBE_REPO_DIR/vibe-copy-watcher.sh" "$WORKSPACE" &
+    WATCHER_PID=$!
+    trap 'kill "$WATCHER_PID" 2>/dev/null || true' EXIT
+  fi
+  ```
+  Note: `VIBE_REPO_DIR` derivation happens inside the Darwin branch if preferred, but defining it globally is fine and future-proofs other host-side helpers.
+
+- Change final `exec devcontainer exec ...` to `devcontainer exec ...` (drop the `exec` keyword, keep all arguments identical).
+
+- `install-claude-extras.sh` retired-list cleanup:
+  ```
+  install_dir() {
+    local kind="$1"
+    local src="$SRC_ROOT/$kind"
+    local dest="$DEST_ROOT/$kind"
+
+    [ -d "$src" ] || return 0
+    mkdir -p "$dest"
+
+    # Commands-only retirement: remove files that vibe used to ship but no
+    # longer does. Allow-listed; user-authored files in dest are untouched.
+    if [ "$kind" = "commands" ]; then
+      local retired
+      for retired in copy.md; do
+        rm -f "$dest/$retired"
+      done
+    fi
+
+    local file name
+    for file in "$src"/*.md; do
+      [ -e "$file" ] || continue
+      name=$(basename "$file")
+      cp -f "$file" "$dest/$name"
+    done
+  }
+  ```

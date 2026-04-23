@@ -16,6 +16,16 @@ install_dir() {
   [ -d "$src" ] || return 0
   mkdir -p "$dest"
 
+  # Commands-only retirement: remove files that vibe used to ship but no
+  # longer does. Allow-listed; user-authored files in dest are untouched.
+  if [ "$kind" = "commands" ]; then
+    local RETIRED_COMMANDS=("copy.md")
+    local retired
+    for retired in "${RETIRED_COMMANDS[@]}"; do
+      rm -f "$dest/$retired"
+    done
+  fi
+
   # Overwrite only vibe-shipped files; leave user-created ones untouched.
   local file name
   for file in "$src"/*.md; do

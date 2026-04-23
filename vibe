@@ -47,6 +47,7 @@ while [ -L "$_vibe_src" ]; do
 done
 DEVCONTAINER_DIR="$(cd "$(dirname "$_vibe_src")" && pwd -P)/devcontainer"
 unset _vibe_src _vibe_dir
+VIBE_REPO_DIR="$(dirname "$DEVCONTAINER_DIR")"
 
 if [ -f "$CONFIG_FILE" ]; then
   # shellcheck source=/dev/null
@@ -1096,6 +1097,15 @@ fi
 # build_claude_resume_args echoes "" / "--continue" / "--resume" / "--resume <uuid>".
 # RESUME_UID is restricted to UUID format by is_uuid in the parser, so embedding
 # it in the command string is injection-safe.
+WATCHER_PID=""
+if [[ "$(uname)" == "Darwin" ]] && command -v pbcopy >/dev/null 2>&1; then
+  mkdir -p "$WORKSPACE/.vibe"
+  pkill -f "vibe-copy-watcher\.sh ${WORKSPACE}\$" 2>/dev/null || true
+  "$VIBE_REPO_DIR/vibe-copy-watcher.sh" "$WORKSPACE" &
+  WATCHER_PID=$!
+  trap 'kill "$WATCHER_PID" 2>/dev/null || true' EXIT
+fi
+
 CLAUDE_RESUME_ARGS=$(build_claude_resume_args)
 devcontainer exec \
   --workspace-folder "$WORKSPACE" \
