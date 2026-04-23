@@ -24,6 +24,7 @@ Spec Critic runs **once at task start**, before user approval. It does not re-ru
 
 - `/vs --max N <prompt>` — override the cycle ceiling. Default is whatever Planner proposes.
 - `/vs --fuzzy <prompt>` — run in fuzzy mode (Reviewer replaces Tester). Combinable with `--max`.
+- `/vs --cost <prompt>` — opt in to token-spend logging for this run only. Off by default. See Token-spend logging section for the trade-off (subagent tokens auto-captured; Opus Director/Evaluator tokens are NOT trackable from inside a session and require manual entry via `/cost`).
 
 ## State directory: `.vs/`
 
@@ -184,15 +185,63 @@ Default-fail on ambiguity. Adversarial by design.
 - **Fail, ceiling hit:** compare summaries across cycles. Failure count trending down? New failures appearing? Report trajectory to user; ask whether to continue, abandon, or switch strategy.
 - **Plateau detection:** if three consecutive cycles show the same failure / concern set, flag proactively before the ceiling. Plateaus usually mean spec or approach is wrong, not effort.
 
-## Token-spend logging
+## Token-spend logging (opt-in via `--cost` only)
 
-Every subagent dispatch (Spec Critic, Generator, Tester, Reviewer) returns a `<usage>` block with `total_tokens`, `tool_uses`, and `duration_ms`. After each `Agent(...)` call, **Planner / Evaluator parses the usage block from the result and appends a record to `/workspace/.vs/cycle-<N>/cost.json`** before doing anything else with the result. Use the `role`, `model`, `iteration` (1 for first Spec-Critic pass, 2 for re-spawn; otherwise omit), and current ISO8601 `timestamp`. If the file doesn't exist, create it with an empty array first.
+**Default: OFF.** Without `--cost`, no `cost.json` is written, no `cost-summary.json` is computed, no cost line appears in the pass verdict — `/vs` runs identically to today's behavior with no observability overhead.
 
-On Step-7 pass, **Evaluator computes `/workspace/.vs/cost-summary.json`** by reading every `cycle-N/cost.json` file for this task, summing tokens by role and model, counting subagent calls, summing wall-time. Commit the summary file alongside the pass commit. The pass-verdict report to the user includes one line: `cost: <X> cycles, <Y> subagent calls, <Z> total tokens (<a> opus, <b> sonnet, <c> haiku)`.
+**Why opt-in:** the token-spend tracker is structurally limited. Subagent dispatches (Spec Critic, Generator, Tester, Reviewer) each return a `<usage>` block with `total_tokens`, `tool_uses`, `duration_ms` — those Planner / Evaluator can capture mechanically. **The top-level Opus session (Planner + Evaluator — me) has no programmatic way to read its own token usage** (verified 2026-04-23 via Claude Code docs: no hook field, no env var, no CLI flag, no documented JSONL schema). So a "free" cost report would silently undercount the Opus contribution and give a misleading total. Opt-in keeps the harness honest about what it can and can't measure.
 
-No dollar estimates. Pro/Max is flat-rate; tokens are a proxy for rate-limit pressure, not money. If a future Anthropic billing model makes per-token cost meaningful for subscribers, revisit.
+### When `--cost` IS passed
 
-If a subagent result lacks a parseable `<usage>` block (older format, network issue, manual run), log a record with `total_tokens: null` and a `note` field explaining why. Don't fail the cycle for missing usage data — token logging is observability, not a gate.
+At cycle 1 start, before launching Spec Critic, Planner prints to the user:
+
+```
+cost logging enabled for this /vs run.
+  • Subagent tokens (Sonnet, Haiku) — auto-captured per dispatch.
+  • Opus tokens (Director + Evaluator) — NOT auto-trackable from inside a session.
+    To include them in the final report: run /cost in your terminal at any
+    point and tell me the number — I'll fold it in. Otherwise the report
+    will list Opus tokens as 'unknown'.
+```
+
+Then for every `Agent(...)` call, parse the `<usage>` block and append to `/workspace/.vs/cycle-<N>/cost.json`. Schema:
+```json
+{"role": "spec_critic|generator|tester|reviewer", "model": "sonnet|haiku|opus",
+ "iteration": 1, "total_tokens": 0, "tool_uses": 0, "duration_ms": 0,
+ "timestamp": "<ISO8601>"}
+```
+If the file doesn't exist, create it with an empty array first. If a result lacks a parseable `<usage>` block, log `total_tokens: null` + a `note` field; don't fail the cycle.
+
+If at any point the user volunteers an Opus token count (e.g. "I just ran /cost, it's 14823 tokens"), Evaluator records it in `/workspace/.vs/cycle-<N>/cost.json` with `role: "director_evaluator"`, `model: "opus"`, `total_tokens: <user-provided>`, `note: "user-provided via /cost"`.
+
+On Step-7 pass, Evaluator computes `/workspace/.vs/cost-summary.json` by reading every `cycle-N/cost.json` for this task. Schema:
+```json
+{
+  "task_id": "...",
+  "cycles": <N>,
+  "subagent_calls": <count>,
+  "subagent_tokens_sonnet": <int>,
+  "subagent_tokens_haiku": <int>,
+  "subagent_tokens_total": <int>,
+  "opus_tokens": <int or null>,
+  "opus_tokens_source": "user-provided" | "unknown",
+  "wall_time_ms": <int>
+}
+```
+Commit alongside the pass commit. The pass-verdict report to the user includes:
+```
+cost: <N> cycles, <M> subagent calls, wall <Ts>
+  Sonnet (subagent): <S> tokens
+  Haiku  (subagent): <H> tokens
+  Opus   (director + evaluator): <O> tokens   OR   unknown — run /cost to include
+```
+Sonnet and Haiku are kept on separate lines because their real per-token costs differ; aggregating them hides that.
+
+No dollar estimates — Pro/Max is flat-rate; tokens are a rate-limit-pressure proxy, not money. If a future Anthropic billing model makes per-token cost meaningful for subscribers, revisit.
+
+### When `--cost` is NOT passed
+
+Skip everything in this section. No file writes under `.vs/cycle-N/cost.json` or `.vs/cost-summary.json`. No cost line in the pass verdict. The token-spend logging is purely opt-in observability.
 
 ## Rules
 
