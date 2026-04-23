@@ -268,6 +268,349 @@ def test_token_helpers() -> None:
               "PERMS=600" in r.stdout, r.stdout)
 
 
+# ── code-check.py --json tests ─────────────────────────────────────────────────
+
+CODE_CHECK = REPO / "code-check.py"
+
+
+def _make_bad_script(path: Path, varname: str = "unused_var") -> None:
+    """Write a shell script with a shellcheck warning (unused variable)."""
+    path.write_text(f'#!/bin/bash\n{varname}=value\necho "hello"\n')
+    path.chmod(0o755)
+
+
+def _make_good_script(path: Path) -> None:
+    """Write a minimal shell script with no shellcheck warnings."""
+    path.write_text('#!/bin/bash\necho "hello"\n')
+    path.chmod(0o755)
+
+
+def _patched_code_check(tmp: Path, target_paths: list[Path]) -> Path:
+    """Copy code-check.py into tmp, rewrite scripts() to return target_paths.
+
+    Returns the path to the patched copy so callers can invoke it with
+    `python3 <returned path> --json`.  The patched copy's REPO constant is
+    pinned to the real repo root so relative-path logic works, and scripts()
+    returns an explicit list of target_paths — all of which must live inside
+    REPO so that relative_to(REPO) succeeds.
+    """
+    original = CODE_CHECK.read_text()
+    # Pin REPO to the real repo root (the copy lives in a temp dir, so
+    # Path(__file__).resolve().parent would be wrong).
+    patched = original.replace(
+        "REPO = Path(__file__).resolve().parent",
+        f"REPO = Path({str(REPO)!r})",
+    )
+    # Build a literal Python list expression for the paths.
+    paths_repr = "[" + ", ".join(f"Path({str(p)!r})" for p in target_paths) + "]"
+    # Replace the scripts() body with a hardcoded return.
+    patched = patched.replace(
+        "def scripts() -> list[Path]:\n"
+        "    candidates = [REPO / \"vibe\", REPO / \"install.sh\"]\n"
+        "    candidates += sorted((REPO / \"devcontainer\").glob(\"*.sh\"))\n"
+        "    return [p for p in candidates if p.exists()]",
+        f"def scripts() -> list[Path]:\n    return {paths_repr}",
+    )
+    out = tmp / "code-check-patched.py"
+    out.write_text(patched)
+    return out
+
+
+# AC1 ─────────────────────────────────────────────────────────────────────────
+
+def test_code_check_json_clean_exit_and_valid_json() -> None:
+    """AC1: --json exits 0 on clean repo, stdout is valid JSON."""
+    print("\n[json AC1: clean exit + valid JSON]")
+    r = run(["python3", str(CODE_CHECK), "--json"], cwd=REPO)
+    check("[json] AC1 exit-0 on clean repo", r.returncode == 0,
+          f"exit={r.returncode} stderr={r.stderr[:200]}")
+    try:
+        data = json.loads(r.stdout)
+        check("[json] AC1 stdout is valid JSON", True)
+    except json.JSONDecodeError as exc:
+        check("[json] AC1 stdout is valid JSON", False, str(exc))
+        data = {}
+    check("[json] AC1 no findings on clean repo",
+          isinstance(data.get("findings"), list) and len(data.get("findings", [])) == 0,
+          str(data))
+
+
+# AC2 ─────────────────────────────────────────────────────────────────────────
+
+def test_code_check_json_top_level_keys() -> None:
+    """AC2: top-level keys present with correct types."""
+    print("\n[json AC2: top-level keys + types]")
+    r = run(["python3", str(CODE_CHECK), "--json"], cwd=REPO)
+    try:
+        data = json.loads(r.stdout)
+    except json.JSONDecodeError:
+        check("[json] AC2 parse for schema check", False, r.stdout[:200])
+        return
+    check("[json] AC2 key 'tool' == 'shellcheck'", data.get("tool") == "shellcheck",
+          str(data.get("tool")))
+    check("[json] AC2 key 'shellcheck_version' is str",
+          isinstance(data.get("shellcheck_version"), str) and data.get("shellcheck_version", "") != "",
+          str(data.get("shellcheck_version")))
+    check("[json] AC2 key 'files_checked' is list",
+          isinstance(data.get("files_checked"), list), str(type(data.get("files_checked"))))
+    check("[json] AC2 key 'findings' is list",
+          isinstance(data.get("findings"), list), str(type(data.get("findings"))))
+    summary = data.get("summary", {})
+    check("[json] AC2 key 'summary' is dict", isinstance(summary, dict), str(type(summary)))
+    check("[json] AC2 summary.files is int", isinstance(summary.get("files"), int),
+          str(type(summary.get("files"))))
+    check("[json] AC2 summary.files_with_issues is int",
+          isinstance(summary.get("files_with_issues"), int),
+          str(type(summary.get("files_with_issues"))))
+    check("[json] AC2 summary.total_findings is int",
+          isinstance(summary.get("total_findings"), int),
+          str(type(summary.get("total_findings"))))
+
+
+# AC3 ─────────────────────────────────────────────────────────────────────────
+
+def test_code_check_json_finding_schema() -> None:
+    """AC3: each finding has required keys with correct types; code is int."""
+    print("\n[json AC3: finding schema]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        bad = REPO / "_smoke_test_bad_script.sh"
+        try:
+            _make_bad_script(bad)
+            patched = _patched_code_check(tmp, [bad])
+            r = run(["python3", str(patched), "--json"], cwd=REPO)
+            # Exit 1 expected (findings present)
+            try:
+                data = json.loads(r.stdout)
+            except json.JSONDecodeError:
+                check("[json] AC3 parse findings JSON", False, r.stdout[:200])
+                return
+            findings = data.get("findings", [])
+            check("[json] AC3 at least one finding present", len(findings) > 0,
+                  f"findings={findings}")
+            if findings:
+                f = findings[0]
+                check("[json] AC3 finding has 'file' str", isinstance(f.get("file"), str),
+                      str(f))
+                check("[json] AC3 finding has 'line' int", isinstance(f.get("line"), int),
+                      str(f))
+                check("[json] AC3 finding has 'column' int", isinstance(f.get("column"), int),
+                      str(f))
+                check("[json] AC3 finding has 'level' str", isinstance(f.get("level"), str),
+                      str(f))
+                check("[json] AC3 finding 'code' is int (not str)",
+                      isinstance(f.get("code"), int) and not isinstance(f.get("code"), bool),
+                      f"code={f.get('code')!r} type={type(f.get('code'))}")
+                check("[json] AC3 finding has 'message' str",
+                      isinstance(f.get("message"), str), str(f))
+                check("[json] AC3 finding 'level' value in allowed set",
+                      f.get("level") in {"error", "warning", "info", "style"}, str(f))
+        finally:
+            if bad.exists():
+                bad.unlink()
+
+
+# AC4 ─────────────────────────────────────────────────────────────────────────
+
+def test_code_check_json_findings_exit1_and_count() -> None:
+    """AC4: with findings, exit 1 and total_findings == len(findings) > 0."""
+    print("\n[json AC4: findings → exit 1 + count matches]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        bad = REPO / "_smoke_test_bad_ac4.sh"
+        try:
+            _make_bad_script(bad, varname="myunused")
+            patched = _patched_code_check(tmp, [bad])
+            r = run(["python3", str(patched), "--json"], cwd=REPO)
+            check("[json] AC4 exit 1 when findings present", r.returncode == 1,
+                  f"exit={r.returncode} stderr={r.stderr[:200]}")
+            try:
+                data = json.loads(r.stdout)
+            except json.JSONDecodeError:
+                check("[json] AC4 parse JSON on exit-1", False, r.stdout[:200])
+                return
+            findings = data.get("findings", [])
+            total = data.get("summary", {}).get("total_findings", -1)
+            check("[json] AC4 total_findings > 0", total > 0, f"total_findings={total}")
+            check("[json] AC4 total_findings == len(findings)",
+                  total == len(findings), f"total_findings={total} len={len(findings)}")
+        finally:
+            if bad.exists():
+                bad.unlink()
+
+
+# AC5 ─────────────────────────────────────────────────────────────────────────
+
+def test_code_check_json_stdout_only_json() -> None:
+    """AC5: --json stdout is exactly one JSON object, no progress lines."""
+    print("\n[json AC5: stdout is exactly one JSON object]")
+    r = run(["python3", str(CODE_CHECK), "--json"], cwd=REPO)
+    stdout = r.stdout
+    # Must parse as a single JSON object from the whole stdout
+    try:
+        data = json.loads(stdout)
+        check("[json] AC5 stdout parses as single JSON object", isinstance(data, dict),
+              f"type={type(data)}")
+    except json.JSONDecodeError as exc:
+        check("[json] AC5 stdout parses as single JSON object", False, str(exc))
+        return
+    # Must not contain progress arrows (→ shellcheck) in stdout
+    check("[json] AC5 no '→ shellcheck' progress lines in stdout",
+          "→ shellcheck" not in stdout, stdout[:300])
+    # Must not contain human summary line
+    check("[json] AC5 no '✓ shellcheck clean' human line in stdout",
+          "✓ shellcheck clean" not in stdout, stdout[:300])
+    check("[json] AC5 no '✗ shellcheck' human line in stdout",
+          "✗ shellcheck" not in stdout, stdout[:300])
+    # Stdout should decode to exactly one object (no trailing text after the JSON)
+    stripped = stdout.strip()
+    # Verify that after the JSON object there is no extra content
+    try:
+        decoder = json.JSONDecoder()
+        obj, idx = decoder.raw_decode(stripped)
+        check("[json] AC5 no extra text after JSON object",
+              idx == len(stripped), f"extra text: {stripped[idx:idx+80]!r}")
+    except json.JSONDecodeError as exc:
+        check("[json] AC5 no extra text after JSON object", False, str(exc))
+
+
+# AC6 ─────────────────────────────────────────────────────────────────────────
+
+def test_code_check_json_human_mode_unchanged() -> None:
+    """AC6: without --json, human-readable output is preserved (arrows + summary)."""
+    print("\n[json AC6: human mode output unchanged]")
+    r = run(["python3", str(CODE_CHECK)], cwd=REPO)
+    check("[json] AC6 human mode exits 0 on clean repo", r.returncode == 0,
+          f"exit={r.returncode}")
+    check("[json] AC6 human mode has '→ shellcheck' progress lines",
+          "→ shellcheck" in r.stdout, r.stdout[:300])
+    check("[json] AC6 human mode has '✓ shellcheck clean' summary",
+          "✓ shellcheck clean" in r.stdout, r.stdout[:300])
+    # Confirm --json mode does NOT have these
+    rj = run(["python3", str(CODE_CHECK), "--json"], cwd=REPO)
+    check("[json] AC6 --json mode has NO '→ shellcheck' lines",
+          "→ shellcheck" not in rj.stdout, rj.stdout[:300])
+    check("[json] AC6 --json mode has NO '✓ shellcheck clean' line",
+          "✓ shellcheck clean" not in rj.stdout, rj.stdout[:300])
+
+
+# AC7 ─────────────────────────────────────────────────────────────────────────
+
+def test_code_check_json_missing_shellcheck() -> None:
+    """AC7: missing shellcheck + --json → JSON error object on stdout, exit 2."""
+    print("\n[json AC7: missing shellcheck → JSON error object]")
+    with tempfile.TemporaryDirectory() as td:
+        fake_bin = Path(td) / "bin"
+        fake_bin.mkdir()
+        # Symlink python3 into fake_bin but do NOT include shellcheck.
+        python3_src = Path("/usr/bin/python3")
+        (fake_bin / "python3").symlink_to(python3_src)
+        env = {**os.environ, "PATH": str(fake_bin)}
+        # Run code-check.py via absolute python3 path to avoid PATH lookup for python3.
+        r = subprocess.run(
+            [str(python3_src), str(CODE_CHECK), "--json"],
+            capture_output=True, text=True, env=env, cwd=str(REPO),
+        )
+        check("[json] AC7 exit 2 when shellcheck missing", r.returncode == 2,
+              f"exit={r.returncode}")
+        try:
+            data = json.loads(r.stdout)
+            check("[json] AC7 stdout is valid JSON error object", isinstance(data, dict),
+                  f"type={type(data)}")
+        except json.JSONDecodeError as exc:
+            check("[json] AC7 stdout is valid JSON error object", False,
+                  f"{exc} stdout={r.stdout[:200]}")
+            return
+        check("[json] AC7 error object has 'error' key == 'shellcheck-not-installed'",
+              data.get("error") == "shellcheck-not-installed", str(data))
+        check("[json] AC7 error object has 'tool' key == 'shellcheck'",
+              data.get("tool") == "shellcheck", str(data))
+
+
+# AC8 ─────────────────────────────────────────────────────────────────────────
+
+def test_code_check_json_help_mentions_flag() -> None:
+    """AC8: --help exits 0 and help text mentions --json."""
+    print("\n[json AC8: --help mentions --json]")
+    r = run(["python3", str(CODE_CHECK), "--help"], cwd=REPO)
+    check("[json] AC8 --help exits 0", r.returncode == 0,
+          f"exit={r.returncode} stderr={r.stderr[:200]}")
+    combined = r.stdout + r.stderr  # argparse may write to stderr on some versions
+    check("[json] AC8 help text mentions '--json'", "--json" in combined, combined[:500])
+
+
+# AC9 ─────────────────────────────────────────────────────────────────────────
+
+def test_code_check_json_summary_counts() -> None:
+    """AC9: summary.files == len(files_checked); summary.files_with_issues matches."""
+    print("\n[json AC9: summary counts accuracy]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        # 3 files: 2 bad, 1 good — all must live inside REPO for relative_to to work
+        bad1 = REPO / "_smoke_ac9_bad1.sh"
+        bad2 = REPO / "_smoke_ac9_bad2.sh"
+        good = REPO / "_smoke_ac9_good.sh"
+        try:
+            _make_bad_script(bad1, varname="unused_one")
+            _make_bad_script(bad2, varname="unused_two")
+            _make_good_script(good)
+            patched = _patched_code_check(tmp, [bad1, bad2, good])
+            r = run(["python3", str(patched), "--json"], cwd=REPO)
+            try:
+                data = json.loads(r.stdout)
+            except json.JSONDecodeError:
+                check("[json] AC9 parse JSON", False, r.stdout[:200])
+                return
+            files_checked = data.get("files_checked", [])
+            findings = data.get("findings", [])
+            summary = data.get("summary", {})
+            check("[json] AC9 summary.files == len(files_checked)",
+                  summary.get("files") == len(files_checked),
+                  f"summary.files={summary.get('files')} len(files_checked)={len(files_checked)}")
+            check("[json] AC9 files_checked has 3 entries", len(files_checked) == 3,
+                  str(files_checked))
+            distinct_files_with_issues = len({f["file"] for f in findings})
+            check("[json] AC9 summary.files_with_issues matches distinct finding files",
+                  summary.get("files_with_issues") == distinct_files_with_issues,
+                  f"summary.files_with_issues={summary.get('files_with_issues')} "
+                  f"distinct={distinct_files_with_issues}")
+            check("[json] AC9 files_with_issues == 2 (two bad scripts)",
+                  summary.get("files_with_issues") == 2,
+                  f"files_with_issues={summary.get('files_with_issues')}")
+        finally:
+            for p in [bad1, bad2, good]:
+                if p.exists():
+                    p.unlink()
+
+
+# AC10 ────────────────────────────────────────────────────────────────────────
+
+def test_code_check_json_same_target_list() -> None:
+    """AC10: --json and human mode scan identical target lists."""
+    print("\n[json AC10: same target list with/without --json]")
+    # Human mode: extract file paths from '→ shellcheck <path>' lines
+    r_human = run(["python3", str(CODE_CHECK)], cwd=REPO)
+    human_paths = set()
+    for line in r_human.stdout.splitlines():
+        line = line.strip()
+        if line.startswith("→ shellcheck "):
+            path_part = line[len("→ shellcheck "):].strip()
+            human_paths.add(path_part)
+    check("[json] AC10 human mode produced at least one path", len(human_paths) > 0,
+          r_human.stdout[:300])
+    # JSON mode: extract files_checked
+    r_json = run(["python3", str(CODE_CHECK), "--json"], cwd=REPO)
+    try:
+        data = json.loads(r_json.stdout)
+    except json.JSONDecodeError:
+        check("[json] AC10 parse --json output", False, r_json.stdout[:200])
+        return
+    json_paths = set(data.get("files_checked", []))
+    check("[json] AC10 --json files_checked == human mode paths",
+          json_paths == human_paths,
+          f"json_paths={sorted(json_paths)} human_paths={sorted(human_paths)}")
+
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 
@@ -284,6 +627,16 @@ def main() -> int:
     test_install_detects_local_clone()
     test_install_falls_back_to_vibe_src()
     test_token_helpers()
+    test_code_check_json_clean_exit_and_valid_json()
+    test_code_check_json_top_level_keys()
+    test_code_check_json_finding_schema()
+    test_code_check_json_findings_exit1_and_count()
+    test_code_check_json_stdout_only_json()
+    test_code_check_json_human_mode_unchanged()
+    test_code_check_json_missing_shellcheck()
+    test_code_check_json_help_mentions_flag()
+    test_code_check_json_summary_counts()
+    test_code_check_json_same_target_list()
 
     print()
     if FAILURES:

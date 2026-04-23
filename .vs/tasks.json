@@ -1,0 +1,10 @@
+[
+  {
+    "id": "task_001",
+    "description": "Add --json output to code-check.py emitting machine-readable shellcheck findings",
+    "implementation_status": "complete",
+    "test_status": "passing",
+    "assigned_to": "evaluator",
+    "last_modified": "2026-04-23T01:00:00Z"
+  }
+]
