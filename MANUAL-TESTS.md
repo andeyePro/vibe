@@ -425,7 +425,7 @@ Inside Claude Code:
 - [ ] Invoking `/diet` causes Claude to acknowledge lean mode; subsequent requests that would normally spawn subagents are handled inline
 - [ ] Invoking `/feast` restores default behavior
 - [ ] Invoking `/vs` with a trivial prompt triggers the simplicity gate (Step 1) and refuses, recommending inline instead
-- [ ] Invoking `/vs` with a non-trivial prompt produces `.vs/spec.md` with task summary, acceptance criteria, out-of-scope, test location, proposed budget — and waits for approval before dispatching Generator
+- [ ] Invoking `/vs` with a non-trivial prompt produces `.vs/spec.md` with task summary, acceptance criteria, out-of-scope, test location, proposed budget; then runs the Spec Critic (Sonnet) before showing the spec to the user — the user sees the polished spec plus a `spec critic: pass after N iteration(s)` line, and `.vs/cycle-1/spec-critique.md` is written; only then does it wait for approval before dispatching Generator (Sonnet) and Tester (Haiku)
 
 **Image rebuild propagation:**
 - [ ] Edit `devcontainer/agents/shellcheck-fixer.md` on the host, rebuild (Test 4), relaunch

@@ -12,7 +12,7 @@ A single-command, containerised YOLO coding environment for Claude Code. `cd pro
 
 ## Testing
 
-- `python3 code-check.py` — shellcheck over `vibe` + all `.sh` files. Fast. Run on every change.
+- `python3 code-check.py` — shellcheck over `vibe` + all `.sh` files. Fast. Run on every change. Add `--json` for machine-readable output (single JSON object on stdout: `tool`, `shellcheck_version`, `files_checked`, `findings`, `summary`).
 - `python3 smoke-test.py` — host-side black-box tests (no docker, no network). Fast. Covers `--help`, write-env-hint block management, token helpers.
 - `MANUAL-TESTS.md` — end-to-end checklist for container lifecycle behaviour (auto-rebuild, partial-fail retry, SSH, bind mounts). Run before shipping changes that touch the Dockerfile, devcontainer.json, postStartCommand, or the vibe launcher.
 
