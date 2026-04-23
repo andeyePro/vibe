@@ -5,7 +5,8 @@ A single-command, containerised YOLO coding environment for Claude Code. `cd pro
 ## Project context
 
 - Script: `./vibe` (bash) — the entrypoint users invoke as `vibe`.
-- Container: Anthropic's official Claude Code devcontainer, vendored under `devcontainer/` with vibe-specific patches (openssh-client, credential helper, firewall tweaks, mDNS, env hint).
+- Container: Anthropic's official Claude Code devcontainer, vendored under `devcontainer/` with vibe-specific patches (openssh-client, shellcheck, credential helper, firewall tweaks, mDNS, env hint, PreToolUse/Stop hooks, curated agents/commands sync).
+- Shipped extras: `devcontainer/commands/` (/diet, /feast, /vs) and `devcontainer/agents/` (shellcheck-fixer, security-review). Synced into the persistent `~/.claude/` volume by `install-claude-extras.sh` on every container start; user-authored files in the same dirs are left alone.
 - Target users: macOS primary (tested on Darwin), Linux secondary. Uses OrbStack or Docker Desktop.
 - Auth model: Claude Pro/Max subscription (never API key); GitHub fine-grained PAT per repo (blast-radius argument — each container can only touch one repo).
 

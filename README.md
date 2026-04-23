@@ -9,6 +9,7 @@ A single-command containerised Claude Code environment. `cd my-project && vibe` 
 - A per-repo fine-grained GitHub PAT injected as `$GITHUB_TOKEN` and wired into git — `git push` just works.
 - SSH out to remote dev machines using your host `~/.ssh` keys (mounted read-only).
 - One-time approvals: log in to Claude once, add a PAT once per repo, never asked again.
+- Curated slash commands (`/diet`, `/feast`, `/vs`) and subagents (`shellcheck-fixer`, `security-review`) pre-installed under `~/.claude/`, synced on every container start so image rebuilds propagate without clobbering anything you've added yourself.
 
 ## Prerequisites
 
