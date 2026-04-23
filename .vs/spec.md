@@ -1,132 +1,113 @@
-# spec — task_004: cross-org learning library for vibe
+# spec — task_005: OSC 52 clipboard bridge (`vibe-copy` + `/copy`)
+
+**Revised after cycle-1 Spec Critic (iteration 2).**
 
 ## Task summary
 
-Add an **opt-in, host-only-capture** cross-org learning library so `vibe` users can record and reference abstract patterns / lessons across all their repos without leaking project content. Capture is **host-only** for v1 (in-container slash command deferred to a follow-up): user runs `vibe learn "<pattern>"` from a host shell; vibe shows the exact bytes that will be saved and requires explicit `y` confirmation; nothing is read from session state. The library lives at a **user-chosen absolute path** (private local dir, or a user-controlled git repo for "public" sharing). When opted in, the library is bind-mounted **read-only** into every vibe container at `/learnings` so Claude can `ls` / `grep` it while working. Per-project opt-out via marker file. Default: completely off — until `vibe learn --init` is run, no config, no mount, no behavior change.
+Add an inside-container OSC 52 clipboard bridge so exact-byte copy of Claude-produced content reaches the Mac clipboard without the terminal-selection padding mangling that affects rendered-code-block mouse-copy. Two surfaces: (a) a shell helper `vibe-copy` installed on `$PATH` inside the container — reads stdin or a file path, emits a well-formed OSC 52 escape sequence to the controlling terminal, and also writes a bind-mounted scratch file so users on OSC-52-less terminals (Apple Terminal.app) retain a path; (b) a `/copy` slash command synced into `~/.claude/commands/copy.md` that instructs Claude to identify the most recent fenced code block in its prior turn, write the block's raw bytes to a temp file, and invoke `vibe-copy` on it.
 
-**Opt-in is per-user, universal-by-default once enabled.** A single `vibe learn --init` opts the user in; every vibe invocation thereafter — existing projects, brand-new projects — automatically participates (mounts `/learnings`, capture works from any cwd). To exclude a specific project, the user places a `.vibe-no-learn` marker in its root. There is **no per-project opt-in step**; that would be hostile UX and is explicitly out of scope.
+**Design decisions fixed here (previously open questions in TODO.md):**
 
-Anonymization is the **user's responsibility**: vibe captures only what the user explicitly types, presents it back verbatim, asks confirm. No regex scrubbing, no LLM pass, no auto-extraction from sessions — those would be leakier than user-controlled text.
+1. **How does `/copy` identify "the last code block"?** The most recent fenced code block in Claude's immediately-prior assistant turn. `/copy <hint>` disambiguates when the prior turn contains several blocks; Claude selects the one whose language tag or first-line content best matches the hint. If no prior assistant turn exists, OR the prior turn contains no fenced code block, `/copy` refuses with a one-line message and stops.
+2. **Payload size thresholds.** **8192 bytes** warn threshold (stderr note; still emits and writes scratch), **1048576 bytes (1 MiB)** hard refuse (stderr error; does NOT emit OSC 52 but STILL writes scratch).
+3. **Test strategy for OSC 52.** `vibe-copy` respects `VIBE_COPY_TTY` (redirects escape sequence) and `VIBE_COPY_SCRATCH_DIR` (redirects scratch dir) env vars — set both for tests. `install-claude-extras.sh` gains an analogous `VIBE_EXTRAS_SRC_ROOT` env override so the extras-sync test can stage fixtures without hardcoded paths.
+
+**Installation mechanism.** `vibe-copy.sh` ships via Dockerfile `COPY` + `chmod +x` (the same image-bake pattern as `guard-bash.sh`, `init-firewall.sh`, `setup-ssh.sh` at `devcontainer/Dockerfile:113-130`). This requires an image rebuild on landing, which the existing marker-based auto-rebuild triggers on `devcontainer/` changes — no user action required. The `/copy` slash command markdown ships through the existing `install-claude-extras.sh` sync path (like `/vs`, `/diet`, `/feast`).
+
+**Note on "extras-sync-only" framing.** The Planner's original pointer to "ship via the extras-sync path like /diet and /vs" is inaccurate for shell binaries: extras-sync operates on `.md` files under `/usr/local/share/vibe/{agents,commands}/`, not on `$PATH` executables. Binaries must be image-baked. The rebuild cost is one-time on landing, same as when /diet and /vs were introduced.
+
+## Exit-code and stderr-message table (normative)
+
+This table is the authoritative reference; individual ACs cross-reference it.
+
+| Exit | Condition | stderr message template |
+|---|---|---|
+| 0 | Input ≤ 1 MiB; scratch file written; sequence emitted (or skipped because TTY absent) | (none normally) |
+| 0 | Input > 8192 bytes and ≤ 1 MiB; warn issued; sequence emitted; scratch written | `vibe-copy: warning: input is <N> bytes; some terminals truncate OSC 52 payloads larger than 8192 bytes` |
+| 0 | `VIBE_COPY_TTY` unset/empty AND `/dev/tty` not writable; scratch written; no sequence emitted | `vibe-copy: note: no terminal available for OSC 52 write; scratch file written to <path>` |
+| 1 | Input > 1 MiB; scratch file written; no OSC 52 emit | `vibe-copy: error: input is <N> bytes; refusing to emit OSC 52 for payloads larger than 1048576 bytes (1 MiB); scratch file written to <path>` |
+| 1 | Scratch directory creation failed OR scratch file write failed | `vibe-copy: error: cannot write scratch file at <path>: <reason>` |
+| 2 | Argument validation: more than one positional argument | `vibe-copy: usage: vibe-copy [FILE]; accepts stdin or a single file path` |
+| 2 | Argument validation: positional argument is a path that does not exist or is not readable | `vibe-copy: error: cannot read file: <path>` |
+
+`<N>` is the literal byte count as a decimal integer. `<path>` is the fully-resolved absolute path actually used at runtime. `<reason>` is a short human-readable cause (e.g. "permission denied"); tests only assert it is non-empty and the line starts with the fixed prefix.
 
 ## Acceptance criteria
 
-### Config & init
+1. **AC1 — vibe-copy.sh tracked in repo.** A shell helper exists at `devcontainer/vibe-copy.sh` with `#!/usr/bin/env bash` shebang and `set -euo pipefail`.
 
-1. **Config file** at `$HOME/.vibe/learning.config`. Format: one `KEY="VALUE"` per line, no other content. Recognized keys (exactly these four, case-sensitive): `VIBE_LEARNING_ENABLED` (`true` or `false`), `VIBE_LEARNING_PATH` (absolute host path), `VIBE_LEARNING_VISIBILITY` (`private` or `public`), `VIBE_LEARNING_GIT_REMOTE` (string; only meaningful when visibility is `public`).
+2. **AC2 — argument validation.** `vibe-copy` reads from stdin when no positional argument is supplied and from the file path given as `$1` when one positional argument is supplied. More than one positional argument, or a non-existent / unreadable file path, exits 2 with the exact stderr prefix given in the exit-code table. Long options (`--help`, `--version`, etc.) are not supported in v1.
 
-2. **Strict parser** (no `source`/eval): `learning_load` reads the config line-by-line and accepts only lines matching the regex `^[A-Z_]+="[^"\\$\`]*"$` AND whose key is in the recognized set above. Any other line is silently ignored. Implemented via a `python3 -c "..."` one-shot or pure-bash parsing — never `source` and never `eval`. After parsing, vibe exports the four vars (or leaves them empty if not present). Verifiable: a config file containing `VIBE_LEARNING_ENABLED="true"; rm -rf /tmp/x"` does NOT execute the rm.
+3. **AC3 — OSC 52 sequence format.** For non-empty input ≤ 1 MiB, `vibe-copy` emits exactly the byte sequence `ESC ] 5 2 ; c ; <BASE64> BEL` (hex: `1b 5d 35 32 3b 63 3b <b64-bytes> 07`) to its target stream. No preceding or trailing bytes on that stream, no newline, no whitespace. The target stream is:
+   - `$VIBE_COPY_TTY` if set and non-empty (treated as a filesystem path);
+   - else `/dev/tty` if writable;
+   - else no emission (see AC16).
+   Implementation MUST use `printf '\033]52;c;%s\007' "$b64"` (or an equivalent that appends no trailing newline — `echo -e` is forbidden because it trails a newline by default). The BASE64 value MUST use standard RFC 4648 encoding (`+/=` alphabet) with all linefeeds stripped (portable: `base64 | tr -d '\n'`; or `openssl base64 -A`). URL-safe base64 is forbidden.
 
-3. **`vibe learn --init`** is interactive:
-   - Prompts for absolute library path (rejects relative paths or paths whose parent doesn't exist; if the path itself doesn't exist, offers `mkdir -p`).
-   - Prompts for visibility: `private` (default on Enter) or `public`.
-   - If `public`: prompts for git remote name; validates by running `git -C <path> remote` and checking the entered name appears in the output. If the path is not a git repo, refuses with: `vibe learn: <path> is not a git repo. Run 'git init' there and add a remote, then re-run vibe learn --init`.
-   - Writes `$HOME/.vibe/learning.config` with `chmod 600`, contents: the four `KEY="VALUE"` lines including `VIBE_LEARNING_ENABLED="true"`.
-   - Refuses to overwrite an existing config that has `VIBE_LEARNING_ENABLED="true"` unless `--reinit` is passed.
+4. **AC4 — base64 round-trip.** The base64 portion of the emitted sequence, when decoded with standard RFC 4648, yields exactly the input bytes — same length, same byte values, including any trailing newlines in the input. Tests capture the full byte stream written to `$VIBE_COPY_TTY` and assert `captured == b'\x1b]52;c;' + b64payload + b'\x07'` byte-for-byte.
 
-4. **Default-off behavior:** with no config file, OR config present but `VIBE_LEARNING_ENABLED!="true"`:
-   - No mount logic runs (vibe behaves byte-identically to the pre-task `vibe` for non-learn invocations).
-   - `vibe learn "<text>"` (without `--init` first) exits 1 with stderr message `vibe learn: not initialized — run 'vibe learn --init' first` and writes nothing.
-   - No new file in `~/.claude/commands/` is added by the install-claude-extras flow (this task ships **no** new in-container slash command).
+5. **AC5 — scratch file write.** On every invocation that passes argument validation (AC2) and reaches the size-gate logic, `vibe-copy` writes the raw input bytes verbatim to `<SCRATCH_DIR>/copy-latest.txt`, where `<SCRATCH_DIR>` is `$VIBE_COPY_SCRATCH_DIR` if set and non-empty, else `/workspace/.vibe`. The directory is created via `mkdir -p` if absent. Scratch write occurs even on the 1-MiB-refuse path (AC7) and the TTY-absent path (AC16); the only exit paths that do NOT write scratch are the exit-2 argument-validation failures (AC2). If `mkdir -p` fails OR the file write fails, `vibe-copy` exits 1 with the stderr message from the exit-code table. Atomicity is not required (non-atomic truncating overwrite is acceptable; no `mktemp+mv` pattern).
 
-### Mount mechanism
+6. **AC6 — 8 KiB warn.** For input strictly greater than 8192 bytes and ≤ 1048576 bytes, `vibe-copy` writes the exact `vibe-copy: warning:` line from the exit-code table to stderr (substituting the real byte count). The OSC 52 sequence is still emitted (per AC3); the scratch file is still written (per AC5); exit code is 0.
 
-5. **Mount via generated override config:** when opt-in is active AND the project is not opted out (per AC10), vibe materializes a per-invocation devcontainer config at `$HOME/.vibe/run/devcontainer-<sha1-of-workspace>.json` (the run dir is created `mkdir -p`). The generated file is the contents of `$DEVCONTAINER_DIR/devcontainer.json` with the `mounts` array extended by `{"source": "<VIBE_LEARNING_PATH>", "target": "/learnings", "type": "bind", "readonly": true}`. Vibe passes `--override-config $HOME/.vibe/run/devcontainer-<sha1>.json` to **both** the `devcontainer up` AND the subsequent `devcontainer exec` invocations (replacing the existing `--override-config` arg in each). JSON manipulation uses `python3` (already a vibe dep — see `ensure_docker_hints_off`) to avoid string-edit fragility.
+7. **AC7 — 1 MiB refuse.** For input strictly greater than 1048576 bytes, `vibe-copy` writes the exact `vibe-copy: error: input is <N> bytes; refusing...` line from the exit-code table to stderr, does NOT emit the OSC 52 sequence to any stream, DOES write the scratch file (AC5), and exits 1.
 
-6. **Read-only mount enforced at container layer:** `readonly: true` in the generated mounts entry means the container sees `/learnings` as read-only regardless of host permissions. AC test (mechanical, no real docker): inspect the generated JSON file and assert the new mount entry has `"readonly": true`.
+8. **AC8 — exit code 0 happy path.** For input ≤ 1 MiB with no I/O errors, `vibe-copy` exits 0. The scratch-write and sequence-emit are obligations under AC3/AC5 and are enforced by their own tests; AC8 is purely the exit-code contract for the happy path.
 
-### `vibe learn` dispatch & capture
+9. **AC9 — empty input.** For zero-byte input (immediate stdin EOF, or a zero-byte file), `vibe-copy` emits the exact bytes `1b 5d 35 32 3b 63 3b 07` (the valid "clear clipboard" OSC 52 form with empty base64 payload) to the target stream, writes a zero-byte scratch file to `<SCRATCH_DIR>/copy-latest.txt`, issues no warning, and exits 0.
 
-7. **Dispatch point:** in the launcher, immediately after the `VIBE_SOURCE_ONLY=1` early-return guard and BEFORE the existing `--*` flag-parser loop, vibe checks `if [ "${1:-}" = "learn" ]`. If so, it dispatches to the `learning_handle_subcommand "$@"` function (which consumes `$@`, runs the appropriate sub-flow, and exits the script). The `--*` flag loop, workspace resolution, preflight, image build, GitHub setup, and container launch are NOT entered when the first arg is `learn`.
+10. **AC10 — /copy slash command file.** `devcontainer/commands/copy.md` exists with YAML frontmatter (at minimum `description:` field) and a body that instructs the executing Claude to:
+    - (a) Identify the target code block: the most recent fenced code block in Claude's immediately-prior assistant turn, OR — if `$ARGUMENTS` is non-empty — the one whose language tag or first non-blank line best matches the `$ARGUMENTS` hint.
+    - (b) Refuse cleanly in BOTH these cases: no prior assistant turn exists, OR the prior assistant turn contains no fenced code block. Refusal message: `no prior code block to copy`.
+    - (c) Write the block's raw bytes (between the fences, excluding both fence lines and the language tag line) to a temp file at `/tmp/copy-<ISO8601>.txt` using the Write tool.
+    - (d) Invoke `vibe-copy /tmp/copy-<ISO8601>.txt` via the Bash tool.
+    - (e) Report success to the user with the byte count and the actual scratch file path (`/workspace/.vibe/copy-latest.txt` when `VIBE_COPY_SCRATCH_DIR` is unset; otherwise `<$VIBE_COPY_SCRATCH_DIR>/copy-latest.txt`).
+    - (f) Note that `/copy` targets UTF-8 text code blocks; the Write tool round-trips UTF-8, so non-UTF-8 byte sequences in code blocks are NOT supported via `/copy`. Binary-safe copy is via `vibe-copy <file>` directly.
 
-8. **`vibe learn "<pattern>"`** capture flow (host-side, requires opt-in per AC1–4):
-   - If invoked from a cwd inside a project containing `.vibe-no-learn` in any ancestor up to the cwd's filesystem-root walk OR matching `$WORKSPACE/.vibe-no-learn` if `$WORKSPACE` is somehow set, refuse per AC10. (Practical implementation: walk from cwd toward `/`, stop at first dir containing `.vibe-no-learn`; if found, refuse. Stop the walk at `$HOME` to avoid false positives from a `.vibe-no-learn` placed maliciously high.)
-   - Compute filename: `<VIBE_LEARNING_PATH>/<UTC ISO8601 timestamp>-<6-char lowercase hex>.md`. Timestamp from `date -u +%Y-%m-%dT%H:%M:%SZ`. Random suffix from `head -c 3 /dev/urandom | xxd -p` (or equivalent portable form pinned in the helper contract).
-   - Compose entry body via `learning_format_entry` (see AC12).
-   - Print to stderr: `Will save to <full_path>:` then `----` then the entry body then `----` then `Confirm? [y/N]: ` and read one line from stdin.
-   - On exact `y` (case-insensitive, trimmed): write the file, then proceed to AC9 (push prompt) only if visibility is `public`.
-   - On any other input INCLUDING EOF (stdin closed before any input): exit 0 with stderr `vibe learn: cancelled, nothing written`. **EOF must default to cancel.** Verifiable test: `printf '' | vibe learn "x"` writes nothing and exits 0.
+11. **AC11 — Dockerfile COPY + chmod.** `devcontainer/Dockerfile` has a new `COPY vibe-copy.sh /usr/local/bin/` line inserted into the helper-COPY block between lines 113 and 119 (the block preceding the agents/ and commands/ COPYs). The existing `RUN chmod +x ...` command includes `/usr/local/bin/vibe-copy` in its argument list. The insertion is placed BEFORE any `USER root` directive that precedes the chmod (same position as `guard-bash.sh` etc.) so ownership matches the existing helper set. No other Dockerfile changes.
 
-9. **Public-mode push prompt** (only when AC8 wrote a file AND `VIBE_LEARNING_VISIBILITY="public"`):
-   - Print to stderr `Push to '<remote>'? [y/N]: ` and read from stdin.
-   - On exact `y`: in order, run `git -C "$VIBE_LEARNING_PATH" add "<new_file>"`, then `git -C "$VIBE_LEARNING_PATH" commit --file=<tempfile>` where `<tempfile>` contains the output of `learning_commit_message <pattern>` (see AC12), then `git -C "$VIBE_LEARNING_PATH" push <remote>`. The `--file` form (NOT `-m`) is mandatory: it eliminates shell-arg injection through the pattern. Tempfile is created with `mktemp` and **registered for cleanup via `trap '<rm cmd>' EXIT INT TERM`** before any git command runs, so an interrupt during `git push` does not leak the message to disk.
-   - On any other input including EOF: no git ops; exit 0 (entry is saved locally; user can commit manually later).
-   - On any git failure (non-zero exit): print the failing command's stderr and exit 0 (the entry is saved locally; we don't lose data on push failure).
+12. **AC12 — install-claude-extras.sh env override + /copy sync.** `install-claude-extras.sh` is updated so `SRC_ROOT` accepts an env override: `SRC_ROOT="${VIBE_EXTRAS_SRC_ROOT:-/usr/local/share/vibe}"` (single-line change). `DEST_ROOT` continues to use the existing `CLAUDE_CONFIG_DIR` override. The markdown sync loop is unchanged; `copy.md` is picked up automatically by the existing `*.md` glob. The script remains shellcheck-clean (AC13).
 
-10. **`VIBE_LEARNING_VISIBILITY="private"`**: AC9 is fully skipped — no push prompt, no git invocation, `VIBE_LEARNING_GIT_REMOTE` not read.
+13. **AC13 — shellcheck clean.** `python3 code-check.py` exits 0 after the changes. `devcontainer/vibe-copy.sh` is included automatically via the existing `devcontainer/*.sh` glob in `code-check.py`. The `install-claude-extras.sh` env-override edit is also shellcheck-clean.
 
-### Per-project opt-out
+14. **AC14 — smoke test coverage.** `python3 smoke-test.py` passes all pre-existing checks (no regressions) and adds the following new test functions. Every test uses `VIBE_COPY = REPO / "devcontainer" / "vibe-copy.sh"` and invokes via `["bash", str(VIBE_COPY), ...]` with `VIBE_COPY_TTY` and `VIBE_COPY_SCRATCH_DIR` set to paths inside a `tempfile.TemporaryDirectory()`. Each test resets state and sets env vars explicitly (no reliance on inherited state).
+    - `test_vibe_copy_stdin_roundtrip` — pipe `b"hello world\n"` to vibe-copy; read captured TTY bytes; assert exactly `b"\x1b]52;c;" + b64(b"hello world\n") + b"\x07"`; decode payload; assert equal to input.
+    - `test_vibe_copy_file_arg_roundtrip` — write `b"hello world\n"` to a temp file; call `vibe-copy <file>`; assert the same byte-for-byte equality.
+    - `test_vibe_copy_scratch_file_written` — assert `<SCRATCH_DIR>/copy-latest.txt` contains exact input bytes after a successful invocation.
+    - `test_vibe_copy_empty_input_stdin` — pipe nothing; assert captured TTY bytes are exactly `b"\x1b]52;c;\x07"`; assert `copy-latest.txt` exists and is zero bytes; assert exit 0; assert stderr is empty.
+    - `test_vibe_copy_warn_at_8kib_plus_one` — 8193-byte input; assert stderr contains the literal substring `vibe-copy: warning: input is 8193 bytes` AND the literal substring `8192 bytes`; assert TTY bytes contain a valid OSC 52 sequence whose decoded base64 equals input; assert scratch contains input; assert exit 0.
+    - `test_vibe_copy_refuse_at_1mib_plus_one` — 1048577-byte input; assert stderr contains the literal substrings `vibe-copy: error: input is 1048577 bytes` AND `1048576`; assert the captured TTY output contains NO `\x1b]52;c;` sequence anywhere; assert scratch file contains input (all 1048577 bytes); assert exit 1.
+    - `test_vibe_copy_refuses_two_args` — invoke `vibe-copy a b`; assert exit 2; assert stderr starts with `vibe-copy: usage:`.
+    - `test_vibe_copy_refuses_missing_file` — invoke `vibe-copy /nonexistent-<uuid>`; assert exit 2; assert stderr starts with `vibe-copy: error: cannot read file:`.
+    - `test_vibe_copy_tty_absent_note` — `VIBE_COPY_TTY=/does/not/exist/<uuid>`; pipe `b"text\n"`; assert exit 0; assert stderr contains the literal prefix `vibe-copy: note: no terminal available`; assert scratch file written with exact bytes; assert NO OSC 52 sequence was written to `/dev/tty` or anywhere else reachable by the test.
+    - `test_vibe_copy_scratch_failure_exits_1` — set `VIBE_COPY_SCRATCH_DIR` to a path inside a read-only directory created in the test fixture; pipe `b"text\n"`; assert exit 1; assert stderr starts with `vibe-copy: error: cannot write scratch file`.
+    - `test_copy_slash_command_synced` — stage a fixture dir with `commands/copy.md` (containing a sentinel string like `SENTINEL_COPY_FIXTURE`); set `VIBE_EXTRAS_SRC_ROOT=<fixture>` and `CLAUDE_CONFIG_DIR=<tmp-dest>`; run `install-claude-extras.sh`; assert `<tmp-dest>/commands/copy.md` exists and contains the sentinel. Then re-run the script (idempotency check) and assert destination still matches source byte-for-byte.
+    - `test_copy_slash_command_body_matches_spec` — open `devcontainer/commands/copy.md`; assert the body contains all of: `vibe-copy`, `/workspace/.vibe/copy-latest.txt`, `no prior code block to copy`, and `UTF-8` (or `UTF8`) — proves AC10(a–f) are actually described.
 
-11. **Marker file `.vibe-no-learn`** at `$WORKSPACE` root suppresses the `/learnings` mount for that project's vibe session (AC5 mount logic checks for the marker and skips generating the override config OR generates it without the learning mount). Empty file is sufficient — content is ignored. AC8 capture refusal (above) implements the marker-walk for the host-side `vibe learn` invocation.
+15. **AC15 — Dockerfile assertion test.** `smoke-test.py` gains `test_dockerfile_installs_vibe_copy` which reads `devcontainer/Dockerfile` and asserts: (a) it contains exactly one line matching the regex `^COPY vibe-copy\.sh /usr/local/bin/vibe-copy$` (the canonical form — NOT a trailing-slash form, which would install the binary at `/usr/local/bin/vibe-copy.sh` and leave `vibe-copy` not-on-$PATH as a bare command); (b) the chmod RUN command includes the literal substring `/usr/local/bin/vibe-copy`. This is a static assertion — does not require building the image. Path reachability inside a built image is out of scope for smoke tests (validated by the existing MANUAL-TESTS.md container-lifecycle checklist).
 
-### Help & banner
-
-12. **Help and banner**:
-   - `vibe --help` lists `vibe learn "<pattern>"` and `vibe learn --init` with one-line descriptions each.
-   - When opt-in active AND project not opted out, vibe's launch banner includes a line `learn   : <visibility> @ <path>` (alongside `project`, `path`, `github`, `hooks`, `extras`).
-   - When NOT opted in OR project opted out, banner does not include the `learn` line and behaves identically to the pre-task banner (banner-text regression check).
-
-### Security invariants (every one is a hard fail if violated)
-
-13. **Hard invariants** — Tester writes one assertion per:
-   - Generated mount entry always has `"readonly": true`.
-   - No `vibe learn` write occurs without literal `y` from confirm prompt (EOF, empty, `n`, anything else → no write).
-   - No `git` command runs in private mode (verifiable via fake-`git` PATH stub that records invocations).
-   - No `git` command runs in public mode without an explicit `y` from the push prompt.
-   - vibe NEVER reads `~/.claude/projects/`, `*.jsonl`, or any session state during `learn` (verifiable: tester runs `vibe learn` with `~/.claude/` containing fixture files; assertion that none of those file paths appear in any subprocess stdin/stdout/log produced by the run).
-   - `~/.vibe/learning.config` is created with `chmod 600`; AC test inspects mode bits.
-   - `learning_load` does NOT execute shell injected via the config (test: write a config file with `VIBE_LEARNING_ENABLED="true"\nVIBE_LEARNING_PATH="/tmp"; touch /tmp/vibe-injection-canary"` and assert the canary is NOT created after `learning_load` runs).
-   - Marker-walk stops at `$HOME` (test: place `.vibe-no-learn` at `/tmp/foo/.vibe-no-learn` with `$HOME=/tmp/foo/bar/baz`; assert capture from `/tmp/foo/bar/baz` is NOT blocked).
-   - **`$HOME` unset is fail-safe:** if `$HOME` is unset or empty, `learning_project_opted_out` exits 0 (i.e. treat as "opted out") rather than walking to `/`. Test: invoke with `env -i HOME= vibe learn "x"` style and assert no write occurs.
-
-### Helper-function exposure (testable via `VIBE_SOURCE_ONLY=1`)
-
-14. **Helpers defined BEFORE the `VIBE_SOURCE_ONLY=1` early-return guard**, with these contracts:
-   - `learning_config_path` — echoes `$HOME/.vibe/learning.config`. No args.
-   - `learning_load` — strict-parses the config file, exports the four vars (or unsets them if missing/invalid). Never `source`, never `eval`. No prompts. Returns 0 always (silent on missing config).
-   - `learning_is_enabled` — exits 0 iff loaded config has `VIBE_LEARNING_ENABLED="true"` AND `VIBE_LEARNING_PATH` is non-empty AND points at an existing directory. Silent.
-   - `learning_project_opted_out <walk_start_abs_path>` — walks from `<walk_start_abs_path>` upward toward `/`, stopping at `$HOME` or the first dir containing `.vibe-no-learn`; exits 0 if marker found (and walk did not exceed `$HOME`) OR if `$HOME` is unset/empty (fail-safe: treat as opted-out); exits 1 otherwise. Silent.
-   - `learning_should_mount <workspace_abs_path>` — exits 0 iff `learning_is_enabled` AND NOT `learning_project_opted_out <workspace_abs_path>`. Silent.
-   - `learning_entry_path <library_abs_path> <iso8601> <rand6_hex>` — pure string composition: echoes `<library_abs_path>/<iso8601>-<rand6_hex>.md`. No filesystem, no docker.
-   - `learning_format_entry <iso8601> <pattern>` — pure: echoes `# <iso8601>\n\n<pattern>\n` (literal `\n` are real newlines). No I/O.
-   - `learning_commit_message <pattern>` — pure: echoes `learn: ` + the first 60 chars of `<pattern>` after replacing newlines with single spaces and collapsing runs of whitespace to one space. No shell-metachar escaping needed because the message is delivered to git via `--file=<tempfile>` not `-m`.
-   - `learning_render_devcontainer_config <src_json_path> <dst_json_path> <library_abs_path>` — reads `<src>`, adds the learning mount entry to its `mounts` array, writes `<dst>`. Uses `python3 -c "..."` for JSON safety. No prompts.
-   - `learning_handle_subcommand <args...>` — the dispatcher for `vibe learn ...`. Top-level handler called by AC7. Routes `--init` / `--reinit` / `<pattern>` to internal sub-functions. Returns the script's exit code via `exit` (not `return`).
-
-### Build & regression
-
-15. **`python3 code-check.py`** passes (shellcheck clean) on the modified `vibe`.
-
-16. **`python3 smoke-test.py`** — every pre-existing test (count from `main()` in current `smoke-test.py`) continues to pass with no modifications. Regression gate.
+16. **AC16 — /dev/tty absent fallback.** When `VIBE_COPY_TTY` is unset or empty AND `/dev/tty` cannot be opened for writing (non-interactive subprocess, CI, piped execution), `vibe-copy` writes the exact `vibe-copy: note: no terminal available` line from the exit-code table to stderr, does NOT emit any OSC 52 sequence, DOES write the scratch file (AC5), and exits 0. Rationale: the scratch file is the designed fallback for non-OSC-52-capable environments; failing the invocation would make CI pipelines and piped usage unusable.
 
 ## Out of scope
 
-- **In-container `/learn` slash command** — deferred to follow-up TODO (host-only capture this iteration; eliminates the readonly-mount-vs-write contradiction and the install-claude-extras-can't-see-opt-in problem).
-- Any auto-extraction or scraping from sessions, `.jsonl` files, conversation history, env vars, or vibe internal state.
-- LLM-based or regex-based "auto-anonymization" of user input.
-- Multi-library support — exactly one library per user.
-- Editing or deleting existing entries via `vibe learn` (append-only; user can manually edit files in a private library; for public use the normal git workflow).
-- Search / browse UX inside the container — `/learnings` is a flat dir.
-- Cross-user library merging or peer-to-peer sync.
-- A daemon, watcher, or hook that triggers capture automatically.
-- Modifying `init-firewall.sh`, the Dockerfile, the existing postStart sequence, or `install-claude-extras.sh`.
-- Modifying `code-check.py`, `README.md` text beyond a single Usage-section line, or `MANUAL-TESTS.md` (Planner / Evaluator handle docs after pass).
-- Modifying `devcontainer.json` (the source-of-truth file). Mount injection happens via the generated per-session override config under `$HOME/.vibe/run/`.
-- Touching `smoke-test.py` (Tester's territory).
-- Per-org subdirectories (the original TODO mentioned this; the new framing is one anonymized library, simpler and safer — anonymization is what protects against cross-org leak, not directory segregation).
-- A `--public` / `--private` global flag separate from the per-init choice.
-- Encryption-at-rest of library entries.
-- Symlink / hardlink tricks to bypass the `readonly` mount (we trust Docker's `readonly` flag).
-- Cleaning up the `$HOME/.vibe/run/` dir (it accumulates per-workspace JSONs; cleanup is a follow-up).
+- OSC 52 *read* (pasting the Mac clipboard into the container). Security-sensitive; most terminals gate read off by default; not needed for the stated pain point.
+- Detecting whether the outer terminal supports OSC 52. There is no reliable universal probe. `vibe-copy` always emits the sequence (when it has a TTY) AND always writes the scratch file.
+- Chunking oversize payloads across multiple OSC 52 sequences. 1 MiB refuse is simpler and covers realistic code-block sizes.
+- Auto-mirroring to host `pbcopy` / `xclip`. Out of scope — host-side clipboard is the user's shell.
+- Atomic scratch writes (`mktemp+mv`). Non-atomic truncating overwrite is acceptable; concurrent `vibe-copy` invocations may race on `copy-latest.txt` — the "latest-wins" semantics of a scratch file tolerate this.
+- SIGPIPE handling on stdin. If upstream closes prematurely, the default bash behaviour (fail) is acceptable; no custom trap required.
+- Binary-safe `/copy` (non-UTF-8 byte sequences in code blocks). Users with binary payloads use `vibe-copy <file>` directly. The shell helper is byte-safe; only the Write-tool hop inside `/copy` is UTF-8-only.
+- URL-safe base64 variant. Standard RFC 4648 only.
+- Any changes to `vibe` (the host launcher). The Terminal.app advisory comment at `vibe:1083` already references OSC 52 / `vibe-copy`; no further launcher edits.
+- Any changes to README.md. If the feature lands and is worth surfacing, that's a follow-up doc PR.
+- Any tests that require building the Docker image. Smoke tests remain host-only, no-docker, no-network.
 
 ## Test location
 
-`smoke-test.py` at repo root. Tester **appends** new test functions and registers them in `main()`. Generator must not edit `smoke-test.py` at all. Tests use:
-- The existing `_source_vibe_call` helper pattern (env + `VIBE_SOURCE_ONLY=1`) for unit-testing helpers.
-- `tempfile.TemporaryDirectory()` for fake `$HOME` and library paths.
-- `subprocess.run(..., input="y\n")` for stdin-piping the confirm prompt.
-- For the public-mode push test: a temp git repo as the library + a sibling temp dir initialized as a bare repo set as `origin`, so push is local and offline.
-- For the fake-git stub on injection-resistance tests: a temp dir on `PATH` containing a `git` script that records argv and exits 0.
+`smoke-test.py` (existing host-side test file). All new tests are added there as top-level `test_*` functions and invoked from `main()`. `devcontainer/vibe-copy.sh` must be directly invokable by `bash` on the host (macOS or Linux) — no container dependencies beyond the `VIBE_COPY_TTY` / `VIBE_COPY_SCRATCH_DIR` env escape hatches. `install-claude-extras.sh` becomes similarly host-testable via `VIBE_EXTRAS_SRC_ROOT` + `CLAUDE_CONFIG_DIR`.
+
+**Immutability rule:** once Tester writes these tests in cycle 1, they are frozen. Generator may not edit them on subsequent cycles; revisions require a fresh spec and a restart at cycle 1.
 
 ## Proposed budget
 
-**3 cycles.** Multi-file (vibe launcher with ~10 new helpers + dispatch + flag handling, `$HOME/.vibe/run/` materialization, override-config plumbing), security-sensitive (8 hard invariants in AC13 each requiring a dedicated test), real regression risk on flag parsing and the existing `--override-config` plumbing. Three cycles gives Generator one revision after Tester surfaces a corner case (re-init flow, push failure, marker-walk edge cases, EOF default).
+**2 cycles.** Rationale: moderately scoped — one new shell helper (~60 lines after the exit-code/stderr discipline), one new markdown slash-command file (~30 lines), one env-override single-line edit to `install-claude-extras.sh`, two small edits to `devcontainer/Dockerfile`, and ~12 new test functions. Main risks are OSC 52 byte-sequence quoting (caught by AC4's byte-for-byte round-trip) and the exit-code discipline (every exit path has a test). If anything slips through cycle 1, one fix-up cycle should finish it.

@@ -25,5 +25,14 @@
     "assigned_to": "evaluator",
     "mode": "rigorous",
     "last_modified": "2026-04-23T09:15:00Z"
+  },
+  {
+    "id": "task_005",
+    "description": "OSC 52 clipboard bridge: vibe-copy shell helper + /copy slash command",
+    "implementation_status": "complete",
+    "test_status": "passing",
+    "assigned_to": "generator",
+    "mode": "rigorous",
+    "last_modified": "2026-04-23T19:57:00Z"
   }
 ]

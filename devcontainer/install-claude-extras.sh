@@ -5,7 +5,7 @@
 # alone.
 set -euo pipefail
 
-SRC_ROOT="/usr/local/share/vibe"
+SRC_ROOT="${VIBE_EXTRAS_SRC_ROOT:-/usr/local/share/vibe}"
 DEST_ROOT="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 
 install_dir() {

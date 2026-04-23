@@ -117,6 +117,7 @@ COPY write-env-hint.sh /usr/local/bin/
 COPY guard-bash.sh /usr/local/bin/
 COPY install-claude-extras.sh /usr/local/bin/
 COPY credential-helper.sh /usr/local/bin/vibe-credential-helper
+COPY vibe-copy.sh /usr/local/bin/vibe-copy
 # Curated Claude Code agents + slash commands. Staged under /usr/local/share
 # because /home/node/.claude is a persistent Docker volume at runtime — files
 # COPY'd there at build time would be shadowed. install-claude-extras.sh syncs
@@ -124,7 +125,7 @@ COPY credential-helper.sh /usr/local/bin/vibe-credential-helper
 COPY agents/ /usr/local/share/vibe/agents/
 COPY commands/ /usr/local/share/vibe/commands/
 USER root
-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/guard-bash.sh /usr/local/bin/install-claude-extras.sh /usr/local/bin/vibe-credential-helper && \
+RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/guard-bash.sh /usr/local/bin/install-claude-extras.sh /usr/local/bin/vibe-credential-helper /usr/local/bin/vibe-copy && \
   echo "node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/node-firewall && \
   echo "node ALL=(root) NOPASSWD: /usr/sbin/avahi-daemon" >> /etc/sudoers.d/node-firewall && \
   chmod 0440 /etc/sudoers.d/node-firewall

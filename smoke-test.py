@@ -15,6 +15,7 @@ Usage:
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shlex
@@ -27,6 +28,10 @@ REPO = Path(__file__).resolve().parent
 VIBE = REPO / "vibe"
 INSTALL = REPO / "install.sh"
 WRITE_ENV_HINT = REPO / "devcontainer" / "write-env-hint.sh"
+VIBE_COPY = REPO / "devcontainer" / "vibe-copy.sh"
+DOCKERFILE = REPO / "devcontainer" / "Dockerfile"
+INSTALL_EXTRAS = REPO / "devcontainer" / "install-claude-extras.sh"
+COPY_MD = REPO / "devcontainer" / "commands" / "copy.md"
 
 FAILURES: list[tuple[str, str]] = []
 
@@ -46,6 +51,17 @@ def run(cmd: list[str], env: dict[str, str] | None = None, cwd: Path | None = No
         env=env if env is not None else os.environ.copy(),
         cwd=cwd,
         input=input if input else None,
+    )
+
+
+def run_bytes(cmd: list[str], env: dict[str, str] | None = None, cwd: Path | None = None, input_bytes: bytes = b""):
+    """Run a subprocess and return stdout/stderr/returncode as bytes."""
+    return subprocess.run(
+        cmd,
+        capture_output=True,
+        env=env if env is not None else os.environ.copy(),
+        cwd=cwd,
+        input=input_bytes if input_bytes else None,
     )
 
 
@@ -1516,6 +1532,394 @@ def test_learning_banner_parent_shell_load() -> None:
           f"parent_load_idx={parent_load_idx} subshell_idx={subshell_idx}")
 
 
+# ── vibe-copy tests ───────────────────────────────────────────────────────────
+
+def test_vibe_copy_stdin_roundtrip() -> None:
+    """AC4: stdin input round-trip — base64 payload decodes to input bytes."""
+    print("\n[vibe-copy AC4: stdin roundtrip]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        tty = tmp / "tty"
+        scratch = tmp / "scratch"
+        scratch.mkdir()
+        tty.touch()
+
+        input_bytes = b"hello world\n"
+        env = {**os.environ, "VIBE_COPY_TTY": str(tty), "VIBE_COPY_SCRATCH_DIR": str(scratch)}
+        r = run_bytes(["bash", str(VIBE_COPY)], env=env, input_bytes=input_bytes)
+
+        check("[copy] stdin roundtrip exit 0", r.returncode == 0, f"exit={r.returncode} stderr={r.stderr}")
+
+        tty_output = tty.read_bytes()
+        expected_prefix = b"\x1b]52;c;"
+        expected_suffix = b"\x07"
+        check("[copy] stdin OSC 52 prefix", tty_output.startswith(expected_prefix),
+              repr(tty_output[:20]))
+        check("[copy] stdin OSC 52 suffix", tty_output.endswith(expected_suffix),
+              repr(tty_output[-10:]))
+
+        if tty_output.startswith(expected_prefix) and tty_output.endswith(expected_suffix):
+            payload = tty_output[len(expected_prefix):-len(expected_suffix)]
+            decoded = base64.b64decode(payload)
+            check("[copy] stdin base64 decodes to input", decoded == input_bytes,
+                  f"decoded={decoded!r} input={input_bytes!r}")
+
+
+def test_vibe_copy_file_arg_roundtrip() -> None:
+    """AC4: file argument round-trip — base64 payload decodes to file bytes."""
+    print("\n[vibe-copy AC4: file arg roundtrip]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        tty = tmp / "tty"
+        scratch = tmp / "scratch"
+        scratch.mkdir()
+        tty.touch()
+
+        input_bytes = b"hello world\n"
+        input_file = tmp / "input.txt"
+        input_file.write_bytes(input_bytes)
+
+        env = {**os.environ, "VIBE_COPY_TTY": str(tty), "VIBE_COPY_SCRATCH_DIR": str(scratch)}
+        r = run_bytes(["bash", str(VIBE_COPY), str(input_file)], env=env)
+
+        check("[copy] file arg exit 0", r.returncode == 0, f"exit={r.returncode} stderr={r.stderr}")
+
+        tty_output = tty.read_bytes()
+        expected_prefix = b"\x1b]52;c;"
+        expected_suffix = b"\x07"
+        check("[copy] file arg OSC 52 prefix", tty_output.startswith(expected_prefix),
+              repr(tty_output[:20]))
+        check("[copy] file arg OSC 52 suffix", tty_output.endswith(expected_suffix),
+              repr(tty_output[-10:]))
+
+        if tty_output.startswith(expected_prefix) and tty_output.endswith(expected_suffix):
+            payload = tty_output[len(expected_prefix):-len(expected_suffix)]
+            decoded = base64.b64decode(payload)
+            check("[copy] file arg base64 decodes to input", decoded == input_bytes,
+                  f"decoded={decoded!r} input={input_bytes!r}")
+
+
+def test_vibe_copy_scratch_file_written() -> None:
+    """AC5: scratch file write — copy-latest.txt contains exact input bytes."""
+    print("\n[vibe-copy AC5: scratch file write]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        tty = tmp / "tty"
+        scratch = tmp / "scratch"
+        scratch.mkdir()
+        tty.touch()
+
+        input_bytes = b"test content\n"
+        input_file = tmp / "input.txt"
+        input_file.write_bytes(input_bytes)
+
+        env = {**os.environ, "VIBE_COPY_TTY": str(tty), "VIBE_COPY_SCRATCH_DIR": str(scratch)}
+        r = run_bytes(["bash", str(VIBE_COPY), str(input_file)], env=env)
+
+        check("[copy] scratch write exit 0", r.returncode == 0, f"exit={r.returncode}")
+
+        scratch_file = scratch / "copy-latest.txt"
+        check("[copy] scratch file exists", scratch_file.exists(), str(scratch_file))
+        if scratch_file.exists():
+            content = scratch_file.read_bytes()
+            check("[copy] scratch file matches input", content == input_bytes,
+                  f"got {len(content)} bytes, expected {len(input_bytes)}")
+
+
+def test_vibe_copy_empty_input_stdin() -> None:
+    """AC9: empty input — emits valid empty OSC 52, writes zero-byte scratch, exit 0."""
+    print("\n[vibe-copy AC9: empty input]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        tty = tmp / "tty"
+        scratch = tmp / "scratch"
+        scratch.mkdir()
+        tty.touch()
+
+        env = {**os.environ, "VIBE_COPY_TTY": str(tty), "VIBE_COPY_SCRATCH_DIR": str(scratch)}
+        r = run_bytes(["bash", str(VIBE_COPY)], env=env, input_bytes=b"")
+
+        check("[copy] empty input exit 0", r.returncode == 0, f"exit={r.returncode}")
+
+        tty_output = tty.read_bytes()
+        expected = b"\x1b]52;c;\x07"
+        check("[copy] empty input emits correct OSC 52", tty_output == expected,
+              f"got {tty_output!r} expected {expected!r}")
+
+        scratch_file = scratch / "copy-latest.txt"
+        check("[copy] empty input scratch exists", scratch_file.exists())
+        if scratch_file.exists():
+            content = scratch_file.read_bytes()
+            check("[copy] empty input scratch is zero bytes", len(content) == 0,
+                  f"got {len(content)} bytes")
+
+        check("[copy] empty input stderr empty", r.stderr == b"",
+              f"stderr: {r.stderr!r}")
+
+
+def test_vibe_copy_warn_at_8kib_plus_one() -> None:
+    """AC6: 8 KiB warn — input > 8192 bytes emits warning but still emits OSC 52."""
+    print("\n[vibe-copy AC6: 8 KiB warn]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        tty = tmp / "tty"
+        scratch = tmp / "scratch"
+        scratch.mkdir()
+        tty.touch()
+
+        input_bytes = b"x" * 8193
+        input_file = tmp / "input.txt"
+        input_file.write_bytes(input_bytes)
+
+        env = {**os.environ, "VIBE_COPY_TTY": str(tty), "VIBE_COPY_SCRATCH_DIR": str(scratch)}
+        r = run_bytes(["bash", str(VIBE_COPY), str(input_file)], env=env)
+
+        check("[copy] 8k+1 exit 0", r.returncode == 0, f"exit={r.returncode}")
+
+        stderr_str = r.stderr.decode('utf-8', errors='replace')
+        check("[copy] 8k+1 warns 8193 bytes", "vibe-copy: warning: input is 8193 bytes" in stderr_str,
+              f"stderr: {stderr_str}")
+        check("[copy] 8k+1 mentions 8192 threshold", "8192 bytes" in stderr_str,
+              f"stderr: {stderr_str}")
+
+        tty_output = tty.read_bytes()
+        check("[copy] 8k+1 still emits OSC 52", tty_output.startswith(b"\x1b]52;c;") and tty_output.endswith(b"\x07"),
+              f"tty output: {tty_output[:30]!r}...{tty_output[-10:]!r}")
+
+        if tty_output.startswith(b"\x1b]52;c;") and tty_output.endswith(b"\x07"):
+            payload = tty_output[len(b"\x1b]52;c;"):-len(b"\x07")]
+            decoded = base64.b64decode(payload)
+            check("[copy] 8k+1 payload matches input", decoded == input_bytes,
+                  f"decoded size {len(decoded)} vs input size {len(input_bytes)}")
+
+        scratch_file = scratch / "copy-latest.txt"
+        if scratch_file.exists():
+            content = scratch_file.read_bytes()
+            check("[copy] 8k+1 scratch written", content == input_bytes,
+                  f"got {len(content)} bytes")
+
+
+def test_vibe_copy_refuse_at_1mib_plus_one() -> None:
+    """AC7: 1 MiB refuse — input > 1048576 bytes exits 1, no OSC 52, scratch written."""
+    print("\n[vibe-copy AC7: 1 MiB refuse]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        tty = tmp / "tty"
+        scratch = tmp / "scratch"
+        scratch.mkdir()
+        tty.touch()
+
+        input_bytes = b"x" * 1048577
+        input_file = tmp / "input.txt"
+        input_file.write_bytes(input_bytes)
+
+        env = {**os.environ, "VIBE_COPY_TTY": str(tty), "VIBE_COPY_SCRATCH_DIR": str(scratch)}
+        r = run_bytes(["bash", str(VIBE_COPY), str(input_file)], env=env)
+
+        check("[copy] 1m+1 exit 1", r.returncode == 1, f"exit={r.returncode}")
+
+        stderr_str = r.stderr.decode('utf-8', errors='replace')
+        check("[copy] 1m+1 error mentions 1048577 bytes", "vibe-copy: error: input is 1048577 bytes" in stderr_str,
+              f"stderr: {stderr_str}")
+        check("[copy] 1m+1 error mentions 1048576 threshold", "1048576" in stderr_str,
+              f"stderr: {stderr_str}")
+
+        tty_output = tty.read_bytes()
+        check("[copy] 1m+1 no OSC 52 emitted", b"\x1b]52;c;" not in tty_output,
+              f"found OSC 52 in tty output")
+
+        scratch_file = scratch / "copy-latest.txt"
+        check("[copy] 1m+1 scratch still written", scratch_file.exists(), str(scratch_file))
+        if scratch_file.exists():
+            content = scratch_file.read_bytes()
+            check("[copy] 1m+1 scratch contains all input", content == input_bytes,
+                  f"got {len(content)} bytes, expected {len(input_bytes)}")
+
+
+def test_vibe_copy_refuses_two_args() -> None:
+    """AC2: arg validation — two positional arguments exits 2 with usage message."""
+    print("\n[vibe-copy AC2: refuses two args]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        tty = tmp / "tty"
+        scratch = tmp / "scratch"
+        scratch.mkdir()
+        tty.touch()
+
+        env = {**os.environ, "VIBE_COPY_TTY": str(tty), "VIBE_COPY_SCRATCH_DIR": str(scratch)}
+        r = run_bytes(["bash", str(VIBE_COPY), "arg1", "arg2"], env=env)
+
+        check("[copy] two args exit 2", r.returncode == 2, f"exit={r.returncode}")
+
+        stderr_str = r.stderr.decode('utf-8', errors='replace')
+        check("[copy] two args stderr starts with usage", stderr_str.startswith("vibe-copy: usage:"),
+              f"stderr: {stderr_str}")
+
+
+def test_vibe_copy_refuses_missing_file() -> None:
+    """AC2: arg validation — missing file exits 2 with error message."""
+    print("\n[vibe-copy AC2: refuses missing file]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        tty = tmp / "tty"
+        scratch = tmp / "scratch"
+        scratch.mkdir()
+        tty.touch()
+
+        env = {**os.environ, "VIBE_COPY_TTY": str(tty), "VIBE_COPY_SCRATCH_DIR": str(scratch)}
+        r = run_bytes(["bash", str(VIBE_COPY), "/nonexistent-abc123def456"], env=env)
+
+        check("[copy] missing file exit 2", r.returncode == 2, f"exit={r.returncode}")
+
+        stderr_str = r.stderr.decode('utf-8', errors='replace')
+        check("[copy] missing file stderr starts with error prefix",
+              stderr_str.startswith("vibe-copy: error: cannot read file:"),
+              f"stderr: {stderr_str}")
+
+
+def test_vibe_copy_tty_absent_note() -> None:
+    """AC16: TTY absent — writes scratch, no OSC 52, note stderr, exit 0."""
+    print("\n[vibe-copy AC16: TTY absent fallback]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        # Create a read-only directory so any attempt to write there fails
+        readonly = tmp / "readonly"
+        readonly.mkdir()
+        readonly.chmod(0o555)
+        tty = readonly / "tty"
+        scratch = tmp / "scratch"
+        scratch.mkdir()
+
+        input_bytes = b"text\n"
+
+        env = {**os.environ, "VIBE_COPY_TTY": str(tty), "VIBE_COPY_SCRATCH_DIR": str(scratch)}
+        r = run_bytes(["bash", str(VIBE_COPY)], env=env, input_bytes=input_bytes)
+
+        check("[copy] TTY absent exit 0", r.returncode == 0, f"exit={r.returncode}")
+
+        stderr_str = r.stderr.decode('utf-8', errors='replace')
+        check("[copy] TTY absent note present", "vibe-copy: note: no terminal available" in stderr_str,
+              f"stderr: {stderr_str}")
+
+        scratch_file = scratch / "copy-latest.txt"
+        check("[copy] TTY absent scratch written", scratch_file.exists())
+        if scratch_file.exists():
+            content = scratch_file.read_bytes()
+            check("[copy] TTY absent scratch matches input", content == input_bytes)
+
+        # Clean up
+        readonly.chmod(0o755)
+
+
+def test_vibe_copy_scratch_failure_exits_1() -> None:
+    """AC5: scratch write failure — exits 1 with error message."""
+    print("\n[vibe-copy AC5: scratch write failure]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        tty = tmp / "tty"
+        tty.touch()
+
+        # Create a read-only directory and try to write scratch inside
+        readonly = tmp / "readonly"
+        readonly.mkdir()
+        readonly.chmod(0o555)
+        scratch = readonly / "scratch"
+
+        input_bytes = b"text\n"
+
+        env = {**os.environ, "VIBE_COPY_TTY": str(tty), "VIBE_COPY_SCRATCH_DIR": str(scratch)}
+        r = run_bytes(["bash", str(VIBE_COPY)], env=env, input_bytes=input_bytes)
+
+        check("[copy] scratch failure exit 1", r.returncode == 1, f"exit={r.returncode}")
+
+        stderr_str = r.stderr.decode('utf-8', errors='replace')
+        check("[copy] scratch failure error prefix",
+              stderr_str.startswith("vibe-copy: error: cannot write scratch file"),
+              f"stderr: {stderr_str}")
+
+        # Clean up
+        readonly.chmod(0o755)
+
+
+def test_copy_slash_command_synced() -> None:
+    """AC12: install-claude-extras.sh syncs copy.md with VIBE_EXTRAS_SRC_ROOT override."""
+    print("\n[copy.md AC12: extras sync]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+
+        # Create a fixture source directory with copy.md
+        fixture_src = tmp / "fixture_src" / "commands"
+        fixture_src.mkdir(parents=True)
+        fixture_copy = fixture_src / "copy.md"
+        fixture_copy.write_text("# /copy\nSENTINEL_COPY_FIXTURE\n")
+
+        # Create destination config dir
+        dest_dir = tmp / "dest_config"
+        dest_dir.mkdir()
+
+        env = {
+            **os.environ,
+            "VIBE_EXTRAS_SRC_ROOT": str(tmp / "fixture_src"),
+            "CLAUDE_CONFIG_DIR": str(dest_dir),
+        }
+
+        r = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        check("[copy] extras sync exit 0 (first)", r.returncode == 0,
+              f"exit={r.returncode} stderr={r.stderr}")
+
+        synced = dest_dir / "commands" / "copy.md"
+        check("[copy] extras sync copies file", synced.exists(), str(synced))
+        if synced.exists():
+            content = synced.read_text()
+            check("[copy] extras sync preserves content", "SENTINEL_COPY_FIXTURE" in content,
+                  content)
+            first_content = content
+
+        # Idempotency check: re-run
+        r2 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        check("[copy] extras sync exit 0 (second)", r2.returncode == 0, r2.stderr)
+        if synced.exists():
+            second_content = synced.read_text()
+            check("[copy] extras sync idempotent", first_content == second_content,
+                  f"first: {len(first_content)} bytes, second: {len(second_content)} bytes")
+
+
+def test_copy_slash_command_body_matches_spec() -> None:
+    """AC10: copy.md body contains all required elements."""
+    print("\n[copy.md AC10: body matches spec]")
+
+    check("[copy] copy.md file exists", COPY_MD.exists(), str(COPY_MD))
+    if not COPY_MD.exists():
+        return
+
+    content = COPY_MD.read_text()
+    check("[copy] copy.md mentions vibe-copy", "vibe-copy" in content, "content snippet")
+    check("[copy] copy.md mentions scratch path", "/workspace/.vibe/copy-latest.txt" in content, "content snippet")
+    check("[copy] copy.md mentions refusal message", "no prior code block to copy" in content, "content snippet")
+    check("[copy] copy.md mentions UTF-8", "UTF-8" in content or "UTF8" in content, "content snippet")
+
+
+def test_dockerfile_installs_vibe_copy() -> None:
+    """AC15: Dockerfile COPY + chmod includes vibe-copy.sh."""
+    print("\n[Dockerfile AC15: vibe-copy installation]")
+
+    check("[copy] Dockerfile exists", DOCKERFILE.exists(), str(DOCKERFILE))
+    if not DOCKERFILE.exists():
+        return
+
+    content = DOCKERFILE.read_text()
+
+    # Check for COPY line
+    copy_lines = [line for line in content.split('\n') if line.strip().startswith('COPY vibe-copy.sh')]
+    copy_canonical = [line for line in copy_lines if line.strip() == 'COPY vibe-copy.sh /usr/local/bin/vibe-copy']
+    check("[copy] Dockerfile has canonical COPY line", len(copy_canonical) == 1,
+          f"found {len(copy_canonical)} canonical COPY lines, {len(copy_lines)} total COPY vibe-copy lines")
+
+    # Check chmod includes /usr/local/bin/vibe-copy
+    check("[copy] Dockerfile chmod includes vibe-copy", "/usr/local/bin/vibe-copy" in content,
+          "content snippet")
+
+
 def main() -> int:
     test_help()
     test_env_hint_fresh()
@@ -1581,6 +1985,19 @@ def main() -> int:
     test_learning_bare_learn_usage_says_host_only()
     test_learning_banner_state_three_way()
     test_learning_banner_parent_shell_load()
+    test_vibe_copy_stdin_roundtrip()
+    test_vibe_copy_file_arg_roundtrip()
+    test_vibe_copy_scratch_file_written()
+    test_vibe_copy_empty_input_stdin()
+    test_vibe_copy_warn_at_8kib_plus_one()
+    test_vibe_copy_refuse_at_1mib_plus_one()
+    test_vibe_copy_refuses_two_args()
+    test_vibe_copy_refuses_missing_file()
+    test_vibe_copy_tty_absent_note()
+    test_vibe_copy_scratch_failure_exits_1()
+    test_copy_slash_command_synced()
+    test_copy_slash_command_body_matches_spec()
+    test_dockerfile_installs_vibe_copy()
 
     print()
     if FAILURES:
