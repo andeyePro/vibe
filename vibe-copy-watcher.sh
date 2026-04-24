@@ -18,7 +18,9 @@ mkdir -p "$(dirname "$CLIP")"
 TMP=$(mktemp)
 trap 'rm -f "$TMP"' EXIT
 
-last=0
+# Seed `last` with the current mtime so a pre-existing copy-latest.txt from a
+# prior vibe session doesn't clobber the Mac clipboard on startup.
+last=$(stat -f %m "$CLIP" 2>/dev/null || stat -c %Y "$CLIP" 2>/dev/null || echo 0)
 if command -v fswatch >/dev/null 2>&1; then
   fswatch -0 "$(dirname "$CLIP")" | while IFS= read -r -d '' _; do
     [ -s "$CLIP" ] || continue
