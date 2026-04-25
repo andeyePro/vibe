@@ -2985,6 +2985,175 @@ def test_task007_t14_ssh_discipline_md_exists_and_complete() -> None:
           f"found {len(non_blank_lines)} non-blank lines")
 
 
+def test_task008_ac3_block_scoping() -> None:
+    """task_008: AC3 — CLIP and WATCHER_SEED_MTIME only declared in Darwin block."""
+    print("\n[task_008: AC3 block scoping]")
+    src = Path(VIBE).read_text()
+    lines = src.splitlines()
+
+    # Find the Darwin block boundaries
+    darwin_start = None
+    darwin_end = None
+    for i, ln in enumerate(lines):
+        if 'if [[ "$(uname)" == "Darwin" ]]' in ln and 'pbcopy' in ln:
+            darwin_start = i
+        if darwin_start is not None and darwin_end is None and ln.strip() == 'fi':
+            darwin_end = i
+            break
+
+    check("[task008/AC3] Darwin block found", darwin_start is not None and darwin_end is not None,
+          f"darwin_start={darwin_start} darwin_end={darwin_end}")
+
+    if darwin_start is not None and darwin_end is not None:
+        # Check that CLIP and WATCHER_SEED_MTIME appear exactly once, only within block
+        clip_count = 0
+        seed_count = 0
+        clip_in_block = False
+        seed_in_block = False
+
+        for i in range(darwin_start, darwin_end + 1):
+            if 'CLIP=' in lines[i]:
+                clip_count += 1
+                clip_in_block = True
+            if 'WATCHER_SEED_MTIME=' in lines[i]:
+                seed_count += 1
+                seed_in_block = True
+
+        # Check for assignments outside block
+        for i in range(0, darwin_start):
+            if 'CLIP=' in lines[i] and 'pbcopy' not in lines[i]:
+                clip_count += 1
+        for i in range(darwin_end + 1, len(lines)):
+            if 'CLIP=' in lines[i]:
+                clip_count += 1
+            if 'WATCHER_SEED_MTIME=' in lines[i]:
+                seed_count += 1
+
+        check("[task008/AC3] CLIP only declared once (in block)", clip_count == 1,
+              f"CLIP appears {clip_count} times")
+        check("[task008/AC3] WATCHER_SEED_MTIME only declared once (in block)", seed_count == 1,
+              f"WATCHER_SEED_MTIME appears {seed_count} times")
+
+
+def test_task008_ac11_direct_read() -> None:
+    """task_008: AC11 — drain uses pbcopy < CLIP, not cat pipe or cp through tmp."""
+    print("\n[task_008: AC11 direct read]")
+    src = Path(VIBE).read_text()
+
+    # Find the trap body region (after Darwin block start, before fi)
+    trap_start = src.find('trap \'')
+    trap_end = src.find('EXIT', trap_start) + 4 if trap_start != -1 else -1
+    trap_body = src[trap_start:trap_end] if trap_start != -1 else ""
+
+    check("[task008/AC11] trap contains pbcopy < \"$CLIP\"", 'pbcopy < "$CLIP"' in src,
+          "substring not found")
+
+    # Negative tests: should NOT use cat pipe
+    cat_pipe = 'cat "$CLIP" | pbcopy' in src or 'cat "$CLIP"|pbcopy' in src
+    check("[task008/AC11] trap does NOT use cat pipe", not cat_pipe,
+          "found forbidden cat pipe")
+
+    # Negative test: should NOT use cp through tmp
+    cp_tmp = 'cp "$CLIP" "$TMP"' in src and 'pbcopy < "$TMP"' in src
+    check("[task008/AC11] trap does NOT use cp through TMP", not cp_tmp,
+          "found forbidden cp-through-tmp pattern")
+
+
+def test_task008_ac15_no_scope_drift() -> None:
+    """task_008: AC15 — no modifications to watcher, /c, /expaste, or config files."""
+    print("\n[task_008: AC15 no scope drift]")
+
+    # Run git diff to see what files changed
+    result = subprocess.run(
+        ["git", "diff", "--name-only", "HEAD"],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO)
+    )
+
+    changed_files = set(result.stdout.strip().split("\n")) if result.stdout.strip() else set()
+    changed_files.discard("")  # Remove empty strings
+
+    # Allowed files: vibe, smoke-test.py, .vs/ artifacts, TODO.md
+    allowed = {"vibe", "smoke-test.py", "TODO.md"}
+    allowed_dirs = {".vs"}
+
+    prohibited = {
+        "vibe-copy-watcher.sh",
+        "devcontainer/commands/c.md",
+        "devcontainer/commands/expaste.md",
+        "Dockerfile",
+        "devcontainer/devcontainer.json",
+        "devcontainer/init-firewall.sh",
+        "devcontainer/guard-bash.sh",
+        "devcontainer/settings.local.json",
+        "devcontainer/credential-helper.sh",
+        "devcontainer/setup-ssh.sh"
+    }
+
+    violations = []
+    for f in changed_files:
+        is_allowed_file = f in allowed
+        is_allowed_dir = any(f.startswith(d + "/") for d in allowed_dirs)
+        is_prohibited = f in prohibited
+
+        if not (is_allowed_file or is_allowed_dir) and is_prohibited:
+            violations.append(f)
+
+    check("[task008/AC15] no prohibited files modified", len(violations) == 0,
+          f"prohibited files changed: {violations}")
+
+
+def test_clipboard_drain_on_exit() -> None:
+    """task_008: drain clipboard scratch on exit — AC18 source-level assertions."""
+    print("\n[task_008: clipboard drain on exit — source checks]")
+    src = Path(VIBE).read_text()
+    lines = src.splitlines()
+
+    # (a) Exactly one line matches CLIP="$WORKSPACE/.vibe/copy-latest.txt"
+    clip_pattern = re.compile(r'^\s*CLIP="\$WORKSPACE/\.vibe/copy-latest\.txt"\s*$')
+    clip_matches = [ln for ln in lines if clip_pattern.match(ln)]
+    check("[task008] exactly one CLIP=... line", len(clip_matches) == 1,
+          f"found {len(clip_matches)} matches")
+
+    # (b) Exactly one line matches WATCHER_SEED_MTIME=$(stat -f %m "$CLIP"
+    seed_pattern = re.compile(r'^\s*WATCHER_SEED_MTIME=\$\(stat -f %m "\$CLIP"')
+    seed_matches = [ln for ln in lines if seed_pattern.match(ln)]
+    check("[task008] exactly one WATCHER_SEED_MTIME=$(stat...) line", len(seed_matches) == 1,
+          f"found {len(seed_matches)} matches")
+
+    # (c) Source contains pbcopy < "$CLIP"
+    drain_substr = 'pbcopy < "$CLIP"'
+    check("[task008] source contains pbcopy < \"$CLIP\"", drain_substr in src,
+          "substring not found")
+
+    # (d) Source contains kill "$WATCHER_PID" 2>/dev/null || true
+    kill_substr = 'kill "$WATCHER_PID" 2>/dev/null || true'
+    check("[task008] source contains kill \"$WATCHER_PID\" 2>/dev/null || true", kill_substr in src,
+          "substring not found")
+
+    # (e) seed match offset < drain offset
+    seed_offset = src.index(seed_matches[0]) if seed_matches else -1
+    drain_offset = src.index(drain_substr) if drain_substr in src else -1
+    check("[task008] seed line precedes drain (offset order)", seed_offset < drain_offset,
+          f"seed_offset={seed_offset} drain_offset={drain_offset}")
+
+    # (f) drain offset < kill offset
+    kill_offset = src.index(kill_substr) if kill_substr in src else -1
+    check("[task008] drain precedes kill (offset order)", drain_offset < kill_offset,
+          f"drain_offset={drain_offset} kill_offset={kill_offset}")
+
+    # (g) No arithmetic comparison [ "$cur" -gt "$WATCHER_SEED_MTIME" ]
+    bad_arith = '[ "$cur" -gt "$WATCHER_SEED_MTIME" ]'
+    check("[task008] no arithmetic -gt comparison for mtime", bad_arith not in src,
+          "found forbidden arithmetic comparison")
+
+    # (h) No standalone WATCHER_SEED_MTIME=0 literal assignment
+    seed_literal_pattern = re.compile(r'^\s*WATCHER_SEED_MTIME=0\s*$', re.MULTILINE)
+    check("[task008] no standalone WATCHER_SEED_MTIME=0 literal", not seed_literal_pattern.search(src),
+          "found forbidden literal seed assignment")
+
+
 def main() -> int:
     test_help()
     test_env_hint_fresh()
@@ -3089,6 +3258,10 @@ def main() -> int:
     test_learning_capture_confirm_uppercase_y()
     test_learning_capture_confirm_uppercase_yes()
     test_learnings_md_fragment_present()
+    test_task008_ac3_block_scoping()
+    test_task008_ac11_direct_read()
+    test_task008_ac15_no_scope_drift()
+    test_clipboard_drain_on_exit()
 
     print()
     if FAILURES:

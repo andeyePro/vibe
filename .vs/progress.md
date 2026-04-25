@@ -141,3 +141,32 @@ Proceeding to dispatch Generator + Tester.
 - Cycle-2 not needed. Single fragment-mechanism task delivered in 1 cycle as specced.
 - Notable: this task ships TWO operational rules at once via the same machinery — a deliberate stress-test of the multi-fragment path. t9 (POSIX byte-order sort) and t12 (single-blank-line separator + N→N-1 removal) both green prove the mechanism is multi-fragment-correct, not just single-fragment-correct.
 
+
+## 2026-04-25 — task_008 Planner
+
+User reported: ran `/expaste`, then `/exit`, found Mac clipboard unchanged from before the session. Diagnosis: race in `/workspace/vibe`'s EXIT trap — the trap kills the host-side `vibe-copy-watcher.sh` before its 0.5s polling loop sees the just-written `/workspace/.vibe/copy-latest.txt` (or before the in-flight `cp + pbcopy` chain completes). Commit d38fdcc fixed the symmetric startup-clobber bug; this is the corresponding shutdown-drop bug that fix exposed.
+
+Spec drafted: 19 ACs covering seed capture (variable name `WATCHER_SEED_MTIME`, scratch-path variable `CLIP`, `stat -f %m || stat -c %Y || echo 0` triple-fallback), block scoping (Darwin+pbcopy `if` block only — set -euo pipefail forbids out-of-block references), trap shape (single-quoted body — must expand at fire time, not registration time — replaces existing trap, drains before kill), string `!=` not arithmetic `-gt` (avoids float-mtime trap-abort), drain failure-safety (`|| true`), kill invocation locked exactly. Test gate: 8 source-level grep / negative-grep / byte-offset assertions in `smoke-test.py`. Budget: 1 cycle. User unattended (left during this turn) — auto-approved per his standing directive.
+
+Spec critic iteration 1: revise — 3 BLOCKING + 4 MEDIUM concerns. BLOCKING #1: float mtime + `[ -gt ]` aborts trap under `set -euo pipefail`, defeating AC5. BLOCKING #2: AC5 prescribed no error-isolation mechanism for the drain step. BLOCKING #4: nounset risk if Generator pre-declares `WATCHER_SEED_MTIME` outside the Darwin block. All addressed: switched to string `!=`, mandated `|| true` on drain branch, prohibited out-of-block pre-declaration. MEDIUM concerns: locked variable name `CLIP`, mandated `stat`-derived seed (not literal), tightened AC18 to require byte-offset ordering of seed/drain/kill, locked kill invocation exactly, called out concurrent-vibe-instances as out-of-scope.
+
+Spec critic iteration 2: pass — 2 LOW residuals (single-quoting requirement + "replaces existing trap not appends" both folded inline as a single AC6 clarification).
+
+Generator (Sonnet): produced a 6-line edit to `/workspace/vibe` matching AC6's prescribed body exactly + `test_clipboard_drain_on_exit()` in `smoke-test.py` (8 checks per AC18 a–h). Self-validation: code-check.py clean, smoke-test 353/353.
+
+Tester (Haiku): added 3 hardening tests beyond AC18 — `test_task008_ac3_block_scoping` (CLIP and WATCHER_SEED_MTIME each declared exactly once and only inside the Darwin block — forecloses Generator regressions where defensive pre-declaration would re-introduce the nounset risk), `test_task008_ac11_direct_read` (negative grep for `cat "$CLIP" |` and `cp "$CLIP" "$TMP"` — forecloses watcher-style rewrites that re-introduce concurrency safety the spec says is unnecessary at exit time), `test_task008_ac15_no_scope_drift` (git-diff-based scope gate — runs at smoke-test time, fails if anything outside the allowed file list is touched). All green; final count 360/360.
+
+Evaluator (Opus) verified by direct read of `cycle-1/diff.patch`:
+- AC1–AC5: seed capture variables present, correctly named, in correct location, using exact triple-fallback `stat` form.
+- AC6: trap body is single-quoted, replaces (not appends to) the existing trap on the prior `vibe:1116`, contains the exact prescribed conditional + drain + kill sequence.
+- AC7: comparison is `!=` (string), not `-gt` (arithmetic). Confirmed by AC18g passing.
+- AC8–AC11: drain branch ends with `2>/dev/null || true`; gated on `[ -s "$CLIP" ]`; mtime-change guard present; `pbcopy < "$CLIP"` used directly (no pipe, no TMP).
+- AC12: kill invocation is byte-identical to the prior trap form — `kill "$WATCHER_PID" 2>/dev/null || true`.
+- AC13/AC15: `git diff --name-only HEAD` shows only `vibe`, `smoke-test.py`, `TODO.md`, and `.vs/` artifacts touched. None of the prohibited paths (watcher.sh, /c, /expaste, Dockerfile, devcontainer.json, init-firewall.sh, guard-bash.sh, settings.local.json, credential-helper.sh, setup-ssh.sh) are modified.
+- AC14: shellcheck clean.
+- AC16/AC17: code-check.py exit 0; smoke-test.py 360/360 (was 345 — pre-existing tests untouched, 8 from Generator + 7 from Tester).
+- AC19: idempotent — drain only runs when current mtime != seed mtime; a re-launch with no `/c` or `/expaste` produces a no-op.
+
+Invariant check vs `CLAUDE.md § Invariants`: subscription auth path untouched. Firewall + hooks untouched. PAT scope unchanged. Single-command launch unchanged.
+
+Cycle-1 pass. Single-cycle delivery as specced.
