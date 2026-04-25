@@ -83,6 +83,27 @@ Replacement work (`vibe --continue` / `--resume` / `--resume <uid>` flags) is sm
 - Evaluator (Opus) verdict: FAIL per rigorous-mode regression gate. Cycle 2 dispatch: revert `code-check.py` to exact original; watcher doesn't need routine shellcheck coverage (AC15 satisfies as "code-check passes", not "code-check scans watcher"). Everything else in cycle 1 is correct.
 - Spec defect noted (non-blocking): AC11/AC19h assumed the final `devcontainer exec` line had an `exec` prefix. It never did; only the inner `bash -c` string has an internal `exec` for claude (which is benign). AC19h test passes trivially on the baseline. No spec change required.
 
+## 2026-04-24 — task_007 Planner
+
+User invoked `/vs Ship the WebSearch-before-refusing rule to all vibe users` with explicit shape latitude (a/b/c/d). Step-1 simplicity gate: pass (multi-file, mechanical AC, no mid-flow user decisions). Rigorous mode.
+
+Spec drafted: shape (a) — vibe ships `devcontainer/claude-md/web-research.md`, install-claude-extras.sh syncs into a managed block in `~/.claude/CLAUDE.md` via `@vibe-md/<file>` import lines. 13 ACs, 10 tests, budget 1 cycle (max 2).
+
+Spec critic iteration 1: **revise** with 3 blocking concerns + 12 medium/low.
+- **#1 (high):** `@vibe-md/<file>` is unverified — no evidence Claude Code resolves `@<path>` imports inside CLAUDE.md. Could ship zero behavioral value while passing all tests.
+- **#2 (high):** block position vs write-env-hint.sh's existing managed block undefined.
+- **#3 (high):** @-import path resolution base unspecified.
+- 12 medium/low concerns: AC1 line floor gameable, no sequencing-sentinel test, no N→N-1 removal test, blank-line cleanup undefined, sort collation unspecified, write-env-hint coexistence untested, TODO.md line-number reference brittle, etc.
+
+Major revision: dropped @-import entirely, switched to **inline prose** written directly into the managed block (mirrors write-env-hint.sh's proven pattern). No separate `vibe-md/` dest dir. Block position pinned at END of CLAUDE.md (write-env-hint owns the top). Sort collation pinned to `LC_ALL=C`. Line floor raised to 50 non-blank lines + sequencing-sentinel grep mandated. Three new tests added (t11 write-env-hint coexistence, t12 N→N-1 removal, t13 absent-source + pre-existing block).
+
+Spec critic iteration 2: **pass**. All 15 iter-1 concerns RESOLVED. 6 new concerns surfaced by the revision; 3 deemed load-bearing residuals and patched inline:
+- AC3 amended: Generator MUST set `LC_ALL=C` explicitly (container's ambient locale is `C.UTF-8`).
+- t11 amended: Tester derives expected write-env-hint output dynamically from `write-env-hint.sh` source; no hardcoded bytes.
+- t12 amended: while 2 fragments present, asserts exactly one blank line separates them (closes AC4 separator coverage gap).
+
+Cap reached cleanly with pass+inline-patches verdict. Showing spec to user.
+
 ## 2026-04-23 — task_006 cycle 2: PASS
 
 - Generator (fresh Sonnet) reverted `code-check.py:scripts()` to the exact pre-cycle-1 three-liner. No other edits. Verified `python3 code-check.py` exits clean (10 files scanned, 0 findings). Watcher script itself is unscanned by default — AC15 is satisfied by "code-check passes", not "code-check scans watcher".
@@ -90,3 +111,33 @@ Replacement work (`vibe --continue` / `--resume` / `--resume <uid>` flags) is sm
 - Evaluator (Opus) verified cycle-2 diff is minimal and clean (only code-check.py revert relative to cycle 1; rest of cycle-1 work intact). CLAUDE.md invariants all intact (launcher contract, subscription auth, PAT scope, firewall/hook backstops, no Windows).
 - Cycle-1 shellcheck SC2015 info-level findings on the watcher (`A && B || C` pattern, lines 28 and 37) noted but not verdict-blocking — watcher is not in `code-check.py`'s scan path. Could be polished in a later /vs task or shellcheck-fixer pass.
 - Total cycles: 2. Cycle 1 developed all content correctly; cycle 2 fixed a single regression from a non-normative Generator deviation. Lesson: non-normative tooling tweaks are load-bearing — a `glob("*.sh")` addition broke a literal-string `.replace()` in a pre-existing test helper. Stick to the normative ACs.
+
+## 2026-04-25 — task_007 Planner amendment (extend to 2 fragments)
+
+User selected option 2 from approval offer: ship task_007 AND the SSH-out-rule TODO together as two fragments in one cycle, since the multi-fragment plumbing is already in spec (AC4 "for each fragment in sorted order"; t9 covers multi-fragment ordering; t12 covers N→N-1 removal).
+
+Spec patches applied:
+- **Task summary** rewritten to name both rules (WebSearch-before-refusing + no-SSH-out-without-explicit-OK).
+- **AC1b added** for `devcontainer/claude-md/ssh-discipline.md` — parallel structure to AC1: literal `ssh`, literal `scp`, prohibition sentinel from {`Do not`, `Don't`, `don't`, `Avoid`, `default to`}, ≥50 non-blank lines. Content guidance points Generator at feedback memory `feedback_no_ssh_out_of_vibe.md` for the rule's substance (blast-radius rationale, firewall-permission ≠ behavioral-approval, default-disposition is user-runs-the-command).
+- **AC12 broadened**: invariant clause now applies to both fragments; explicitly states `ssh-discipline.md` MUST NOT modify firewall, allowlist, `~/.ssh` handling, or `init-firewall.sh` — it's a disposition rule, not an enforcement rule.
+- **AC13 broadened**: TODO.md sweep now moves both open items (WebSearch rule + SSH-out rule) from Open to Done.
+- **t14 added**: parallel grep-checks for `ssh-discipline.md`.
+- **Test location** note extended with `SSH_DISCIPLINE_MD` path-constant suggestion.
+- **Out-of-scope** "ship one fragment" line replaced with "ship exactly two named fragments".
+- **Budget** unchanged (1 cycle, max 2). Justification: same mechanism, one extra source file + one extra grep test, no structural risk added.
+
+Spec Critic NOT re-run for the amendment — rationale: the amendment is a content extension via an already-Critic-passed mechanism, no shape change, no new infra, the multi-fragment path was already spec'd and tested. If Generator surfaces ambiguity during implementation, escalate to user before patching spec further.
+
+`tasks.json` task_007 description updated to name both rules; `last_modified` bumped.
+
+Proceeding to dispatch Generator + Tester.
+
+## 2026-04-25 — task_007 cycle 1: PASS
+
+- Generator (Sonnet) created `devcontainer/claude-md/web-research.md` (124 lines, 94 non-blank), `devcontainer/claude-md/ssh-discipline.md` (137 lines, 102 non-blank), added one Dockerfile `COPY claude-md` line, +57 lines to `install-claude-extras.sh` (`install_claude_md_fragments` function + call), moved both relevant TODO items Open→Done. Generator-report flags one correctness fix discovered during build: `close` is an awk reserved keyword, renamed strip-block awk variable to `closetag`. Coexistence with `write-env-hint.sh` block at top of CLAUDE.md verified (different delimiters, awk strip only matches own delimiters).
+- Tester (Haiku) appended t1–t14 + supporting tests (+695 lines to `smoke-test.py`). All 333 checks pass (including 14 task_007-specific test functions), zero regressions, `python3 code-check.py` shellcheck-clean across 10 files.
+- Evaluator (Opus) verified: AC1, AC1b — both fragments present with required grep markers + ≥50 non-blank lines. AC2 — Dockerfile has exactly one canonical `COPY claude-md /usr/local/share/vibe/claude-md/` line (count grep = 1). AC3 — `LC_ALL=C sort` explicit in install-extras (line 79). AC4–AC9 — covered by t3–t13 (all green). AC10 — code-check clean. AC11 — 333/333. AC12 — neither fragment instructs invariant violations; `ssh-discipline.md` explicitly forbids modifying `init-firewall.sh` / `~/.ssh` / SSH key permissions (lines 102–105) — disposition rule, not enforcement rule, as specified. AC13 — both Open items moved to Done at TODO.md lines 25–26 with one-line notes naming the chosen shape.
+- Scope check: Generator did not touch `smoke-test.py`, `code-check.py`, `write-env-hint.sh`, or any test/spec/progress file. Tester did not touch source files. No invariant violations vs `CLAUDE.md § Invariants`.
+- Cycle-2 not needed. Single fragment-mechanism task delivered in 1 cycle as specced.
+- Notable: this task ships TWO operational rules at once via the same machinery — a deliberate stress-test of the multi-fragment path. t9 (POSIX byte-order sort) and t12 (single-blank-line separator + N→N-1 removal) both green prove the mechanism is multi-fragment-correct, not just single-fragment-correct.
+

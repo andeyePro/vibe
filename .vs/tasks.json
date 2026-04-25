@@ -43,5 +43,14 @@
     "assigned_to": "generator",
     "mode": "rigorous",
     "last_modified": "2026-04-23T22:00:00Z"
+  },
+  {
+    "id": "task_007",
+    "description": "Ship two operational rules (WebSearch-before-refusing + no-SSH-out-without-explicit-OK) to all vibe users via inline-prose CLAUDE.md fragments synced from devcontainer/claude-md/ by install-claude-extras.sh",
+    "implementation_status": "complete",
+    "test_status": "passing",
+    "assigned_to": "generator",
+    "mode": "rigorous",
+    "last_modified": "2026-04-25T14:32:00Z"
   }
 ]

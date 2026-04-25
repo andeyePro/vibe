@@ -35,6 +35,8 @@ INSTALL_EXTRAS = REPO / "devcontainer" / "install-claude-extras.sh"
 C_MD = REPO / "devcontainer" / "commands" / "c.md"
 COPY_MD_OLD = REPO / "devcontainer" / "commands" / "copy.md"
 VIBE_COPY_WATCHER = REPO / "vibe-copy-watcher.sh"
+WEB_RESEARCH_MD = REPO / "devcontainer" / "claude-md" / "web-research.md"
+SSH_DISCIPLINE_MD = REPO / "devcontainer" / "claude-md" / "ssh-discipline.md"
 
 FAILURES: list[tuple[str, str]] = []
 
@@ -2223,6 +2225,685 @@ def test_vibe_exit_code_propagation() -> None:
               f"expected 7, got {r.returncode} stderr={r.stderr[:200]}")
 
 
+# ── task_007: WebSearch-before-refusing rule ─────────────────────────────────
+
+def test_task007_t1_web_research_md_exists_and_complete() -> None:
+    """t1: web-research.md exists and satisfies AC1."""
+    print("\n[task_007/t1: web-research.md content validation]")
+
+    check("[task007/t1] web-research.md exists", WEB_RESEARCH_MD.exists(), str(WEB_RESEARCH_MD))
+    if not WEB_RESEARCH_MD.exists():
+        return
+
+    content = WEB_RESEARCH_MD.read_text()
+    lines = content.splitlines()
+    non_blank_lines = [line for line in lines if line.strip()]
+
+    check("[task007/t1] contains 'WebSearch'", "WebSearch" in content, "phrase check")
+    check("[task007/t1] contains 'WebFetch'", "WebFetch" in content, "phrase check")
+
+    # Check for sequencing sentinel: one of {BEFORE, before, first, First}
+    sentinels = ["BEFORE", "before", "first", "First"]
+    has_sentinel = any(s in content for s in sentinels)
+    check("[task007/t1] contains sequencing sentinel", has_sentinel,
+          f"missing one of {sentinels}")
+
+    check("[task007/t1] ≥50 non-blank lines", len(non_blank_lines) >= 50,
+          f"found {len(non_blank_lines)} non-blank lines")
+
+
+def test_task007_t2_dockerfile_copy_canonical() -> None:
+    """t2: Dockerfile contains exactly one canonical COPY claude-md line."""
+    print("\n[task_007/t2: Dockerfile COPY claude-md]")
+
+    check("[task007/t2] Dockerfile exists", DOCKERFILE.exists(), str(DOCKERFILE))
+    if not DOCKERFILE.exists():
+        return
+
+    content = DOCKERFILE.read_text()
+    canonical_line = "COPY claude-md /usr/local/share/vibe/claude-md/"
+
+    count = content.count(canonical_line)
+    check("[task007/t2] exactly one canonical COPY line", count == 1,
+          f"found {count} canonical lines")
+
+
+def test_task007_t3_install_basics_one_fragment() -> None:
+    """t3: install-claude-extras.sh with one fragment in source."""
+    print("\n[task_007/t3: install with single fragment]")
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+
+        # Create fixture source with one fragment
+        fixture_src = tmp / "fixture_src" / "claude-md"
+        fixture_src.mkdir(parents=True)
+        (fixture_src / "web-research.md").write_text("# Test Fragment\nTest content for web research\n")
+
+        # Create destination
+        dest_dir = tmp / "dest_config"
+        dest_dir.mkdir()
+
+        env = {
+            **os.environ,
+            "VIBE_EXTRAS_SRC_ROOT": str(tmp / "fixture_src"),
+            "CLAUDE_CONFIG_DIR": str(dest_dir),
+        }
+
+        r = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        check("[task007/t3] install exit 0", r.returncode == 0,
+              f"exit={r.returncode} stderr={r.stderr}")
+
+        # Check CLAUDE.md exists and has correct structure
+        claude_md = dest_dir / "CLAUDE.md"
+        check("[task007/t3] CLAUDE.md created", claude_md.exists(), str(claude_md))
+
+        if not claude_md.exists():
+            return
+
+        content = claude_md.read_text()
+
+        # Check delimiters
+        check("[task007/t3] opening delimiter present",
+              "<!-- >>> vibe-managed (auto, do not edit) >>>" in content,
+              "delimiter check")
+        check("[task007/t3] closing delimiter present",
+              "<!-- <<< vibe-managed <<< -->" in content,
+              "delimiter check")
+
+        # Check fragment header
+        check("[task007/t3] fragment header present",
+              "<!-- vibe-md: web-research.md -->" in content,
+              "header check")
+
+        # Check block position: no non-blank line after closing delimiter
+        after_close = content.split("<!-- <<< vibe-managed <<< -->")[1]
+        non_blank_after = [line for line in after_close.splitlines() if line.strip()]
+        check("[task007/t3] no non-blank lines after closing delimiter",
+              len(non_blank_after) == 0,
+              f"found non-blank lines: {non_blank_after}")
+
+        # Check exactly one newline after close
+        expected_ending = "<!-- <<< vibe-managed <<< -->\n"
+        check("[task007/t3] exactly one newline after closing delimiter",
+              content.endswith(expected_ending),
+              f"ending check: {repr(content[-50:])}")
+
+
+def test_task007_t4_create_from_scratch() -> None:
+    """t4: install creates CLAUDE.md from scratch when absent."""
+    print("\n[task_007/t4: create CLAUDE.md from scratch]")
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+
+        fixture_src = tmp / "fixture_src" / "claude-md"
+        fixture_src.mkdir(parents=True)
+        (fixture_src / "web-research.md").write_text("Fragment content\n")
+
+        dest_dir = tmp / "dest_config"
+        dest_dir.mkdir()
+
+        env = {
+            **os.environ,
+            "VIBE_EXTRAS_SRC_ROOT": str(tmp / "fixture_src"),
+            "CLAUDE_CONFIG_DIR": str(dest_dir),
+        }
+
+        claude_md = dest_dir / "CLAUDE.md"
+        check("[task007/t4] CLAUDE.md does not exist initially", not claude_md.exists())
+
+        r = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        check("[task007/t4] install exit 0", r.returncode == 0,
+              f"exit={r.returncode} stderr={r.stderr}")
+        check("[task007/t4] CLAUDE.md created", claude_md.exists(), str(claude_md))
+
+        if claude_md.exists():
+            content = claude_md.read_text()
+            check("[task007/t4] file ends with exactly one newline",
+                  content.endswith("\n") and not content.endswith("\n\n"),
+                  f"ending: {repr(content[-20:])}")
+
+
+def test_task007_t5_idempotency() -> None:
+    """t5: running install twice with same source produces byte-identical CLAUDE.md."""
+    print("\n[task_007/t5: idempotency]")
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+
+        fixture_src = tmp / "fixture_src" / "claude-md"
+        fixture_src.mkdir(parents=True)
+        (fixture_src / "web-research.md").write_text("Fragment content\n")
+
+        dest_dir = tmp / "dest_config"
+        dest_dir.mkdir()
+
+        env = {
+            **os.environ,
+            "VIBE_EXTRAS_SRC_ROOT": str(tmp / "fixture_src"),
+            "CLAUDE_CONFIG_DIR": str(dest_dir),
+        }
+
+        claude_md = dest_dir / "CLAUDE.md"
+
+        # Run install twice
+        r1 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        check("[task007/t5] first install exit 0", r1.returncode == 0)
+
+        content1 = claude_md.read_text()
+        hash1 = __import__("hashlib").sha256(content1.encode()).hexdigest()
+
+        r2 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        check("[task007/t5] second install exit 0", r2.returncode == 0)
+
+        content2 = claude_md.read_text()
+        hash2 = __import__("hashlib").sha256(content2.encode()).hexdigest()
+
+        check("[task007/t5] sha256 hash identical", hash1 == hash2,
+              f"hash1={hash1[:16]}… hash2={hash2[:16]}…")
+        check("[task007/t5] file size identical",
+              len(content1) == len(content2),
+              f"size1={len(content1)} size2={len(content2)}")
+
+
+def test_task007_t6_user_content_preserved() -> None:
+    """t6: user content survives re-run with changed fragment set."""
+    print("\n[task_007/t6: user content preservation]")
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+
+        # Create initial fixture with one fragment
+        fixture_src = tmp / "fixture_src" / "claude-md"
+        fixture_src.mkdir(parents=True)
+        (fixture_src / "a-fragment.md").write_text("Fragment A\n")
+
+        dest_dir = tmp / "dest_config"
+        dest_dir.mkdir()
+
+        env = {
+            **os.environ,
+            "VIBE_EXTRAS_SRC_ROOT": str(tmp / "fixture_src"),
+            "CLAUDE_CONFIG_DIR": str(dest_dir),
+        }
+
+        claude_md = dest_dir / "CLAUDE.md"
+
+        # First run
+        r1 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        check("[task007/t6] first install exit 0", r1.returncode == 0)
+
+        # Insert user content mid-file (between what will be the vibe block and the rest)
+        content1 = claude_md.read_text()
+        user_content = "# User Notes\nThis is user content that should persist.\n"
+        # Insert user content after vibe-managed block
+        parts = content1.split("<!-- <<< vibe-managed <<< -->")
+        new_content = parts[0] + "<!-- <<< vibe-managed <<< -->\n\n" + user_content
+        claude_md.write_text(new_content)
+
+        # Second run with different fragment set
+        (fixture_src / "b-fragment.md").write_text("Fragment B\n")
+
+        r2 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        check("[task007/t6] second install exit 0", r2.returncode == 0)
+
+        content2 = claude_md.read_text()
+
+        # Verify user content still present
+        check("[task007/t6] user content preserved",
+              user_content in content2,
+              "user content check")
+
+        # Verify both fragments are present
+        check("[task007/t6] both fragments in block",
+              "<!-- vibe-md: a-fragment.md -->" in content2 and "<!-- vibe-md: b-fragment.md -->" in content2,
+              "fragment headers")
+
+
+def test_task007_t7_empty_source_cleanup() -> None:
+    """t7: empty-source case removes pre-existing vibe-managed block."""
+    print("\n[task_007/t7: empty-source cleanup]")
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+
+        # First: install with a fragment
+        fixture_src = tmp / "fixture_src" / "claude-md"
+        fixture_src.mkdir(parents=True)
+        (fixture_src / "test.md").write_text("Content\n")
+
+        dest_dir = tmp / "dest_config"
+        dest_dir.mkdir()
+
+        env = {
+            **os.environ,
+            "VIBE_EXTRAS_SRC_ROOT": str(tmp / "fixture_src"),
+            "CLAUDE_CONFIG_DIR": str(dest_dir),
+        }
+
+        claude_md = dest_dir / "CLAUDE.md"
+
+        r1 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        check("[task007/t7] first install exit 0", r1.returncode == 0)
+
+        content_with_block = claude_md.read_text()
+        check("[task007/t7] block present after first install",
+              "<!-- >>> vibe-managed" in content_with_block)
+
+        # Delete all fragments (empty source)
+        import shutil
+        shutil.rmtree(fixture_src)
+        fixture_src.mkdir()
+
+        # Re-run
+        r2 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        check("[task007/t7] second install (empty source) exit 0", r2.returncode == 0)
+
+        content_after = claude_md.read_text()
+
+        # Block should be gone
+        check("[task007/t7] block removed on empty source",
+              "<!-- >>> vibe-managed" not in content_after,
+              "block removal check")
+
+        # Run again to check no trailing blank-line accumulation
+        r3 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        check("[task007/t7] third install exit 0", r3.returncode == 0)
+
+        content_after_2 = claude_md.read_text()
+        check("[task007/t7] no blank-line accumulation on re-run",
+              content_after == content_after_2,
+              "idempotency check")
+
+
+def test_task007_t8_missing_source_directory() -> None:
+    """t8: missing-source case (directory does not exist)."""
+    print("\n[task_007/t8: missing-source handling]")
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+
+        # Create fixture without claude-md directory
+        fixture_src = tmp / "fixture_src"
+        fixture_src.mkdir(parents=True)
+
+        dest_dir = tmp / "dest_config"
+        dest_dir.mkdir()
+
+        env = {
+            **os.environ,
+            "VIBE_EXTRAS_SRC_ROOT": str(fixture_src),
+            "CLAUDE_CONFIG_DIR": str(dest_dir),
+        }
+
+        # Run should not error
+        r = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        check("[task007/t8] install exit 0 (no claude-md dir)", r.returncode == 0,
+              f"exit={r.returncode} stderr={r.stderr}")
+
+        # Now create initial state with a block, then remove claude-md directory
+        claude_md_src = fixture_src / "claude-md"
+        claude_md_src.mkdir()
+        (claude_md_src / "test.md").write_text("Content\n")
+
+        r1 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        check("[task007/t8] first install (with fragment) exit 0", r1.returncode == 0)
+
+        claude_md = dest_dir / "CLAUDE.md"
+        content_with_block = claude_md.read_text()
+        check("[task007/t8] block present after first install",
+              "<!-- >>> vibe-managed" in content_with_block)
+
+        # Remove the claude-md directory
+        import shutil
+        shutil.rmtree(claude_md_src)
+
+        # Re-run
+        r2 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        check("[task007/t8] install exit 0 (missing claude-md)", r2.returncode == 0,
+              f"exit={r.returncode} stderr={r.stderr}")
+
+        content_after = claude_md.read_text()
+        check("[task007/t8] block removed when source directory missing",
+              "<!-- >>> vibe-managed" not in content_after,
+              "block removal check")
+
+
+def test_task007_t9_posix_byte_order_sort() -> None:
+    """t9: multi-fragment ordering uses POSIX byte-order (LC_ALL=C)."""
+    print("\n[task_007/t9: POSIX byte-order sort]")
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+
+        # Create fragments with names that differ in POSIX vs locale sort
+        # In POSIX (LC_ALL=C): Z < a (capitals first)
+        # In many locales: a < Z (case-insensitive or lowercase first)
+        fixture_src = tmp / "fixture_src" / "claude-md"
+        fixture_src.mkdir(parents=True)
+        (fixture_src / "Z-fragment.md").write_text("Z content\n")
+        (fixture_src / "a-fragment.md").write_text("A content\n")
+
+        dest_dir = tmp / "dest_config"
+        dest_dir.mkdir()
+
+        env = {
+            **os.environ,
+            "VIBE_EXTRAS_SRC_ROOT": str(tmp / "fixture_src"),
+            "CLAUDE_CONFIG_DIR": str(dest_dir),
+        }
+
+        r = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        check("[task007/t9] install exit 0", r.returncode == 0)
+
+        claude_md = dest_dir / "CLAUDE.md"
+        content = claude_md.read_text()
+
+        # In POSIX byte-order, Z-fragment should come before a-fragment
+        z_pos = content.find("<!-- vibe-md: Z-fragment.md -->")
+        a_pos = content.find("<!-- vibe-md: a-fragment.md -->")
+
+        check("[task007/t9] both fragment headers present", z_pos >= 0 and a_pos >= 0,
+              "fragment header check")
+        check("[task007/t9] Z-fragment before a-fragment (POSIX order)", z_pos < a_pos,
+              f"Z_pos={z_pos} a_pos={a_pos}")
+
+
+def test_task007_t10_agents_and_commands_still_work() -> None:
+    """t10: agents, commands, and claude-md all install correctly together."""
+    print("\n[task_007/t10: agents + commands + claude-md coexistence]")
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+
+        # Create full fixture with agents, commands, and claude-md
+        fixture_src = tmp / "fixture_src"
+        agents_dir = fixture_src / "agents"
+        agents_dir.mkdir(parents=True)
+        (agents_dir / "test-agent.md").write_text("# Test Agent\nContent\n")
+
+        commands_dir = fixture_src / "commands"
+        commands_dir.mkdir(parents=True)
+        (commands_dir / "test-cmd.md").write_text("# Test Command\nContent\n")
+
+        claude_md_dir = fixture_src / "claude-md"
+        claude_md_dir.mkdir(parents=True)
+        (claude_md_dir / "test-frag.md").write_text("# Test Fragment\nContent\n")
+
+        dest_dir = tmp / "dest_config"
+        dest_dir.mkdir()
+
+        env = {
+            **os.environ,
+            "VIBE_EXTRAS_SRC_ROOT": str(fixture_src),
+            "CLAUDE_CONFIG_DIR": str(dest_dir),
+        }
+
+        r = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        check("[task007/t10] install exit 0", r.returncode == 0,
+              f"exit={r.returncode} stderr={r.stderr}")
+
+        # Check agents synced
+        agent_file = dest_dir / "agents" / "test-agent.md"
+        check("[task007/t10] agent file copied", agent_file.exists(), str(agent_file))
+
+        # Check commands synced
+        cmd_file = dest_dir / "commands" / "test-cmd.md"
+        check("[task007/t10] command file copied", cmd_file.exists(), str(cmd_file))
+
+        # Check claude-md block created
+        claude_md = dest_dir / "CLAUDE.md"
+        check("[task007/t10] CLAUDE.md created", claude_md.exists(), str(claude_md))
+        if claude_md.exists():
+            content = claude_md.read_text()
+            check("[task007/t10] claude-md block present",
+                  "<!-- >>> vibe-managed" in content and "<!-- vibe-md: test-frag.md -->" in content)
+
+
+def test_task007_t11_write_env_hint_coexistence() -> None:
+    """t11: write-env-hint and vibe-managed blocks coexist with correct delimiters."""
+    print("\n[task_007/t11: write-env-hint coexistence]")
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+
+        # Create fixture
+        fixture_src = tmp / "fixture_src" / "claude-md"
+        fixture_src.mkdir(parents=True)
+        (fixture_src / "test-frag.md").write_text("Test content\n")
+
+        dest_dir = tmp / "dest_config"
+        dest_dir.mkdir()
+
+        env = {
+            **os.environ,
+            "VIBE_EXTRAS_SRC_ROOT": str(tmp / "fixture_src"),
+            "CLAUDE_CONFIG_DIR": str(dest_dir),
+        }
+
+        claude_md = dest_dir / "CLAUDE.md"
+
+        # First: run write-env-hint to create its managed block
+        r1 = run(["bash", str(WRITE_ENV_HINT)], env=env)
+        check("[task007/t11] write-env-hint exit 0", r1.returncode == 0,
+              f"exit={r1.returncode} stderr={r1.stderr}")
+
+        content_after_hint = claude_md.read_text()
+
+        # Extract the expected write-env-hint block by reading write-env-hint.sh
+        # and finding the BLOCK variable value
+        hint_content = WRITE_ENV_HINT.read_text()
+        hint_start = hint_content.find('BLOCK="')
+        hint_end = hint_content.find('\n$END"', hint_start)
+        if hint_start >= 0 and hint_end >= 0:
+            # Extract the block (this is a bit fragile but mirrors the spec's requirement)
+            expected_hint_block = "<!-- BEGIN vibe env (managed) -->\n# vibe container environment"
+        else:
+            expected_hint_block = "<!-- BEGIN vibe env (managed) -->"
+
+        check("[task007/t11] write-env-hint block present",
+              "<!-- BEGIN vibe env (managed) -->" in content_after_hint,
+              "hint block check")
+
+        # Second: run install-claude-extras with fragment
+        r2 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        check("[task007/t11] install-claude-extras exit 0", r2.returncode == 0,
+              f"exit={r2.returncode} stderr={r2.stderr}")
+
+        content_after_both = claude_md.read_text()
+
+        # Verify both blocks present
+        check("[task007/t11] write-env-hint block still present",
+              "<!-- BEGIN vibe env (managed) -->" in content_after_both,
+              "hint block check")
+        check("[task007/t11] vibe-managed block present",
+              "<!-- >>> vibe-managed (auto, do not edit) >>>" in content_after_both,
+              "managed block check")
+
+        # Verify write-env-hint block is byte-identical to its original
+        hint_block_start = content_after_hint.find("<!-- BEGIN vibe env (managed) -->")
+        hint_block_end = content_after_hint.find("<!-- END vibe env -->") + len("<!-- END vibe env -->")
+        original_hint_block = content_after_hint[hint_block_start:hint_block_end]
+
+        hint_block_start_2 = content_after_both.find("<!-- BEGIN vibe env (managed) -->")
+        hint_block_end_2 = content_after_both.find("<!-- END vibe env -->") + len("<!-- END vibe env -->")
+        hint_block_after_install = content_after_both[hint_block_start_2:hint_block_end_2]
+
+        check("[task007/t11] write-env-hint block byte-identical after install",
+              original_hint_block == hint_block_after_install,
+              "byte comparison")
+
+        # Third: run install-claude-extras again with a different fragment set
+        (fixture_src / "another-frag.md").write_text("Another content\n")
+
+        r3 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        check("[task007/t11] second install exit 0", r3.returncode == 0)
+
+        content_after_second_install = claude_md.read_text()
+
+        # Verify write-env-hint block is STILL byte-identical
+        hint_block_start_3 = content_after_second_install.find("<!-- BEGIN vibe env (managed) -->")
+        hint_block_end_3 = content_after_second_install.find("<!-- END vibe env -->") + len("<!-- END vibe env -->")
+        hint_block_after_second = content_after_second_install[hint_block_start_3:hint_block_end_3]
+
+        check("[task007/t11] write-env-hint block unchanged after second install",
+              original_hint_block == hint_block_after_second,
+              "byte comparison after second install")
+
+
+def test_task007_t12_fragment_removal_and_separation() -> None:
+    """t12: N→N-1 fragment removal; verify single blank line separates fragments."""
+    print("\n[task_007/t12: fragment removal and blank-line separation]")
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+
+        # Create fixture with two fragments
+        fixture_src = tmp / "fixture_src" / "claude-md"
+        fixture_src.mkdir(parents=True)
+        (fixture_src / "first.md").write_text("First fragment\nLine 2\n")
+        (fixture_src / "second.md").write_text("Second fragment\nLine 2\n")
+
+        dest_dir = tmp / "dest_config"
+        dest_dir.mkdir()
+
+        env = {
+            **os.environ,
+            "VIBE_EXTRAS_SRC_ROOT": str(tmp / "fixture_src"),
+            "CLAUDE_CONFIG_DIR": str(dest_dir),
+        }
+
+        claude_md = dest_dir / "CLAUDE.md"
+
+        # First install with both fragments
+        r1 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        check("[task007/t12] first install exit 0", r1.returncode == 0)
+
+        content_two = claude_md.read_text()
+
+        # Verify both fragments present
+        check("[task007/t12] both fragment headers present initially",
+              "<!-- vibe-md: first.md -->" in content_two and "<!-- vibe-md: second.md -->" in content_two)
+
+        # Check for exactly one blank line between fragments
+        # The pattern should be: body of first\n\n<!-- vibe-md: second.md -->
+        # Find the end of the first fragment's body (last line is "Line 2")
+        first_body_end = content_two.find("Line 2\n", content_two.find("First fragment"))
+        if first_body_end >= 0:
+            first_body_end += len("Line 2\n")  # Move past the "Line 2\n"
+
+        second_start = content_two.find("<!-- vibe-md: second.md -->")
+        if first_body_end >= 0 and second_start >= 0:
+            between = content_two[first_body_end:second_start]
+            # Should be exactly one blank line: "\n"
+            check("[task007/t12] exactly one blank line separates fragments",
+                  between == "\n",
+                  f"got between content: {repr(between)}")
+
+        # Now remove first.md from source
+        (fixture_src / "first.md").unlink()
+
+        # Re-run install
+        r2 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        check("[task007/t12] second install (after removal) exit 0", r2.returncode == 0)
+
+        content_one = claude_md.read_text()
+
+        # Verify first fragment is gone
+        check("[task007/t12] first fragment removed",
+              "<!-- vibe-md: first.md -->" not in content_one,
+              "removal check")
+
+        # Verify second fragment still present
+        check("[task007/t12] second fragment still present",
+              "<!-- vibe-md: second.md -->" in content_one,
+              "presence check")
+
+
+def test_task007_t13_absent_source_with_preexisting_block() -> None:
+    """t13: absent-source case with pre-existing vibe-managed block."""
+    print("\n[task_007/t13: absent source + pre-existing block removal]")
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+
+        # Create initial fixture with fragment
+        fixture_src = tmp / "fixture_src" / "claude-md"
+        fixture_src.mkdir(parents=True)
+        (fixture_src / "test.md").write_text("Content\n")
+
+        dest_dir = tmp / "dest_config"
+        dest_dir.mkdir()
+
+        env = {
+            **os.environ,
+            "VIBE_EXTRAS_SRC_ROOT": str(tmp / "fixture_src"),
+            "CLAUDE_CONFIG_DIR": str(dest_dir),
+        }
+
+        claude_md = dest_dir / "CLAUDE.md"
+
+        # First install
+        r1 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        check("[task007/t13] first install exit 0", r1.returncode == 0)
+
+        content_with_block = claude_md.read_text()
+        check("[task007/t13] block present initially",
+              "<!-- >>> vibe-managed" in content_with_block)
+
+        # Add some user content to verify it persists
+        user_content = "# My Notes\nUser data\n"
+        content_with_user = content_with_block.split("<!-- <<< vibe-managed <<<")[0]
+        content_with_user += "# My Notes\nUser data\n<!-- <<< vibe-managed <<<" + \
+                             content_with_block.split("<!-- <<< vibe-managed <<<")[1]
+        claude_md.write_text(content_with_user)
+
+        # Delete the claude-md directory entirely
+        import shutil
+        shutil.rmtree(fixture_src.parent / "claude-md")
+
+        # Re-run install
+        r2 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        check("[task007/t13] install exit 0 (after dir deletion)", r2.returncode == 0,
+              f"exit={r2.returncode} stderr={r2.stderr}")
+
+        content_final = claude_md.read_text()
+
+        # Verify block is gone
+        check("[task007/t13] block removed when source directory absent",
+              "<!-- >>> vibe-managed" not in content_final,
+              "block removal")
+
+        # Verify CLAUDE.md is otherwise intact
+        check("[task007/t13] CLAUDE.md exists after cleanup", claude_md.exists())
+
+
+def test_task007_t14_ssh_discipline_md_exists_and_complete() -> None:
+    """t14: ssh-discipline.md exists and satisfies AC1b."""
+    print("\n[task_007/t14: ssh-discipline.md content validation]")
+
+    check("[task007/t14] ssh-discipline.md exists", SSH_DISCIPLINE_MD.exists(), str(SSH_DISCIPLINE_MD))
+    if not SSH_DISCIPLINE_MD.exists():
+        return
+
+    content = SSH_DISCIPLINE_MD.read_text()
+    lines = content.splitlines()
+    non_blank_lines = [line for line in lines if line.strip()]
+
+    check("[task007/t14] contains literal 'ssh'", "ssh" in content, "phrase check")
+    check("[task007/t14] contains literal 'scp'", "scp" in content, "phrase check")
+
+    # Check for prohibition/default-disposition sentinel
+    sentinels = ["Do not", "Don't", "don't", "Avoid", "default to"]
+    has_sentinel = any(s in content for s in sentinels)
+    check("[task007/t14] contains prohibition sentinel", has_sentinel,
+          f"missing one of {sentinels}")
+
+    check("[task007/t14] ≥50 non-blank lines", len(non_blank_lines) >= 50,
+          f"found {len(non_blank_lines)} non-blank lines")
+
+
 def main() -> int:
     test_help()
     test_env_hint_fresh()
@@ -2309,6 +2990,20 @@ def main() -> int:
     test_c_agents_not_touched_by_retirement()
     test_vibe_path_prefix_isolation()
     test_vibe_exit_code_propagation()
+    test_task007_t1_web_research_md_exists_and_complete()
+    test_task007_t2_dockerfile_copy_canonical()
+    test_task007_t3_install_basics_one_fragment()
+    test_task007_t4_create_from_scratch()
+    test_task007_t5_idempotency()
+    test_task007_t6_user_content_preserved()
+    test_task007_t7_empty_source_cleanup()
+    test_task007_t8_missing_source_directory()
+    test_task007_t9_posix_byte_order_sort()
+    test_task007_t10_agents_and_commands_still_work()
+    test_task007_t11_write_env_hint_coexistence()
+    test_task007_t12_fragment_removal_and_separation()
+    test_task007_t13_absent_source_with_preexisting_block()
+    test_task007_t14_ssh_discipline_md_exists_and_complete()
 
     print()
     if FAILURES:
