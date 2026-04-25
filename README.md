@@ -119,7 +119,7 @@ In flight or specced; no firm dates.
 
 ## License
 
-MIT
+[MIT](LICENSE)
 
 ---
 
