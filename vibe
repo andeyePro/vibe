@@ -940,8 +940,18 @@ if [ "$REBUILD" != true ] && docker image inspect "$IMAGE_TAG" >/dev/null 2>&1; 
 fi
 
 if [ "$REBUILD" = true ] || ! docker image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
-  echo "  Building vibe container image ($IMAGE_TAG)..."
-  docker build -t "$IMAGE_TAG" "$DEVCONTAINER_DIR"
+  # Resolve current Claude Code "latest" host-side. Without this the
+  # Dockerfile RUN string `npm install ...@latest` is byte-identical
+  # between rebuilds, so Docker reuses the cached layer even when the
+  # npm `latest` tag has moved on. Passing the resolved version as a
+  # build-arg makes the layer cache key version-sensitive. Falls back
+  # to "latest" if npm isn't on the host (Dockerfile ARG default).
+  CLAUDE_CC_VERSION="latest"
+  if command -v npm >/dev/null 2>&1; then
+    CLAUDE_CC_VERSION="$(npm view @anthropic-ai/claude-code version 2>/dev/null || echo latest)"
+  fi
+  echo "  Building vibe container image ($IMAGE_TAG, claude-code=${CLAUDE_CC_VERSION})..."
+  docker build --build-arg "CLAUDE_CODE_VERSION=${CLAUDE_CC_VERSION}" -t "$IMAGE_TAG" "$DEVCONTAINER_DIR"
   mkdir -p "$(dirname "$IMAGE_MARKER")"
   touch "$IMAGE_MARKER"
 fi
