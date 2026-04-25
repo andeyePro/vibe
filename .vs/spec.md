@@ -1,126 +1,100 @@
-# task_007 — WebSearch-before-refusing rule shipped to all vibe users
+# task_008 — vibe: drain clipboard scratch on exit
 
-**Revised after Spec Critic iteration 1. 3 blocking concerns + 12 medium/low concerns addressed.**
+**Revised after Spec Critic iteration 1.** 3 BLOCKING + 4 MEDIUM concerns addressed inline.
 
 Key changes from draft:
-- **Dropped the `@import` indirection.** Concern #1 was correct: `@vibe-md/<file>` is unverified as a real Claude Code feature. Replaced with **inline prose**: install-claude-extras.sh reads the contents of `$SRC_ROOT/claude-md/*.md` and inlines the concatenated body directly into the managed block (mirrors the proven `write-env-hint.sh` pattern). No separate `vibe-md/` dest dir. No @-import. Simpler and verifiably-works.
-- **Block position pinned.** Vibe-managed block goes at END of CLAUDE.md (write-env-hint owns the top; user content is in the middle; vibe-managed bookends the bottom). Two block managers, no spatial overlap.
-- **Sort collation pinned** as `LC_ALL=C` (POSIX byte-order).
-- **AC1 line floor raised to 50** + sequencing-sentinel grep added; t1 mechanically asserts both.
-- **TODO.md line-number reference dropped** — identified by content string.
-- **3 new tests** for previously-uncovered scenarios (write-env-hint coexistence, N→N-1 fragment removal, absent-source-with-pre-existing-block).
+- **mtime comparison switched to string `!=`** (resolves BLOCKING #1 — `stat -f %m` can return a float on some BSDs, integer `[ -gt ]` would abort the trap under `set -euo pipefail`). Watcher already uses this idiom.
+- **Drain step error isolation made explicit** (resolves BLOCKING #2 — `|| true` on the drain branch so a `pbcopy` failure cannot skip the kill).
+- **`WATCHER_SEED_MTIME` pre-declaration prohibited outside the Darwin block** (resolves BLOCKING #4 — closes the nounset trap for defensive Generators).
+- **`CLIP` variable name locked** (resolves MEDIUM #3).
+- **Seed must come from a `stat` call, not a literal** (resolves MEDIUM #5).
+- **AC14 grep pattern tightened** to require the mtime guard and `pbcopy <` to appear on consecutive non-blank lines inside the trap (resolves MEDIUM #6).
+- **Kill invocation locked exactly** to `kill "$WATCHER_PID" 2>/dev/null || true` (resolves MEDIUM #7).
+- **Concurrent vibe instances explicitly out-of-scope** (resolves MEDIUM #8).
+- LOW concerns 9–11 folded inline as rationale notes.
+
+---
 
 ## Task summary
 
-Bake two operational rules into vibe itself, so every vibe user inherits them on every container start without per-user setup. Today both rules live only in the current operator's personal feedback memory; the goal is to surface the same guidance to all users in a way Claude Code reads on every turn.
+Fix a race in `/workspace/vibe` where the EXIT trap kills the host-side `vibe-copy-watcher.sh` before it has a chance to `pbcopy` a final write to `/workspace/.vibe/copy-latest.txt`. Symptom (reported 2026-04-25): a user runs `/expaste`, types `/exit`, and finds the Mac clipboard unchanged from before the session — the actual command vibe was supposed to deliver never made it onto the clipboard.
 
-**Rule 1 (WebSearch-before-refusing):** when WebFetch fails (firewall, network, content-shape mismatch, 4xx/5xx, empty body), Claude must attempt WebSearch on the same domain or topic BEFORE telling the user the URL is unreachable, BEFORE pivoting to architecture/alternative discussion. Only after WebSearch also returns nothing useful should Claude surface "I can't reach this."
+The watcher's commit d38fdcc seeded its `last` mtime to the existing file's mtime so a stale `copy-latest.txt` from a prior session would not clobber the clipboard on startup. That fix is correct and stays. The new race it exposes is at the OTHER end: a write that happens shortly before `/exit` is dropped because the trap fires before the watcher's next poll (0.5s loop without `fswatch`) or before the in-flight `cp + pbcopy` chain completes.
 
-**Rule 2 (no SSH-out without explicit user OK):** SSH-out from a `bypassPermissions` vibe container extends blast radius from the container to the target host. Firewall permission to reach `.local`/LAN hosts is a network-layer allowance, not a behavioral approval. Claude must default to giving the user a command to run on their host shell, NOT running `ssh`/`scp`/`rsync` itself, unless the user explicitly authorises a specific SSH action in the current turn. Rationale captured in feedback memory `feedback_no_ssh_out_of_vibe.md`.
+The fix is to extend the existing EXIT trap so that, before killing the watcher, the launcher synchronously runs `pbcopy < "$CLIP"` — but only when the file's mtime has changed since the seed captured at watcher launch. That guarantees the final state of the scratch file lands on the clipboard regardless of whether the polling watcher saw it, and it does NOT clobber the host clipboard with a stale file from a prior session.
 
-Both rules ship as separate `*.md` fragments in `devcontainer/claude-md/` so future operational rules can land via the same mechanism. Both are always-on behavioral rules — they must be in force from the first turn of every vibe session.
+**Why direct read, not `cp` to TMP first.** The watcher uses `cp "$CLIP" "$TMP" && pbcopy < "$TMP"` to avoid a partial-read race against a concurrent in-container writer. At the point our drain runs, `devcontainer exec` has already returned — the container process and its claude session are gone, so no concurrent writer exists. Reading `"$CLIP"` directly is safe.
 
-## Chosen shape (Planner decision)
-
-**Inline-prose CLAUDE.md fragment, written into a managed block at the END of `~/.claude/CLAUDE.md` by install-claude-extras.sh on every container start.**
-
-Concrete mechanism:
-- **Source:** vibe ships a new dir `devcontainer/claude-md/` containing one or more `*.md` files. For this task the only fragment is `web-research.md` (the WebSearch rule prose, written as a Claude-facing instruction).
-- **Image bake:** Dockerfile gains `COPY claude-md /usr/local/share/vibe/claude-md/` — parallel to the existing `agents/` and `commands/` staging.
-- **Runtime sync:** `install-claude-extras.sh` extended with a third install path that reads the contents of every `*.md` file under `$SRC_ROOT/claude-md/` (sorted by filename in `LC_ALL=C` byte order) and inlines the concatenated bodies into a delimited managed block written to `$DEST_ROOT/CLAUDE.md`. No separate dest copy of the source files; the contents go directly into the block.
-- **Block delimiters:** `<!-- >>> vibe-managed (auto, do not edit) >>>` (opening) and `<!-- <<< vibe-managed <<< -->` (closing). Distinct from write-env-hint.sh's delimiters (`<!-- BEGIN vibe env (managed) -->` / `<!-- END vibe env -->`).
-- **Block position:** at the END of the file. Each fragment's body is preceded by a single comment line `<!-- vibe-md: <basename> -->` (so a human reading CLAUDE.md can see which fragment provides which content). Multiple fragments are joined by a blank line.
-- **Coexistence:** write-env-hint.sh continues to manage its own block at the TOP of CLAUDE.md. install-claude-extras.sh leaves the write-env-hint block byte-identical. The two scripts never touch each other's delimiters.
-- **User content** in the middle (anything not inside either managed block) is preserved verbatim. Whitespace cleanup mirrors write-env-hint.sh's pattern: leading/trailing blank lines collapsed; a single blank line separates user content from the closing-end managed block.
+**Why string `!=`, not arithmetic `-gt`.** `stat -f %m` returns sub-second-precision floats on some macOS versions; `[ "$cur" -gt "$WATCHER_SEED_MTIME" ]` would abort the trap mid-body under `set -euo pipefail`. The watcher uses `[ "$cur" != "$last" ]` for the same reason; we mirror that. The downside (a clock step backward could trigger a redundant pbcopy of unchanged content) is harmless: pbcopying the same bytes twice is a no-op the user will not perceive.
 
 ## Acceptance criteria
 
-1. **WebSearch fragment exists with substantive content.** `devcontainer/claude-md/web-research.md` is a tracked file. Its body:
-   - Contains the literal phrase `WebSearch` (grepable).
-   - Contains the literal phrase `WebFetch` (grepable).
-   - Contains a sequencing sentinel — at least one of the case-sensitive strings `BEFORE`, `before`, `first`, or `First` (grepable; signals temporal-order prose).
-   - Is at least **50 non-blank lines** (counted by `len([line for line in content.splitlines() if line.strip()])`). Floor is mechanical, not a stub-shaped 20-blank-lines-pad-it.
+1. **Seed-variable name.** `/workspace/vibe` introduces a shell variable named exactly `WATCHER_SEED_MTIME`, assigned from a `stat` invocation (NOT a hard-coded literal). Grep target: a line matching `WATCHER_SEED_MTIME=$(stat`.
 
-1b. **SSH-discipline fragment exists with substantive content.** `devcontainer/claude-md/ssh-discipline.md` is a tracked file. Its body:
-   - Contains the literal token `ssh` (grepable; the unix command name).
-   - Contains the literal token `scp` (grepable; an SSH-family command — guarantees Generator covers the full family, not just ssh).
-   - Contains a prohibition / default-disposition sentinel — at least one of the case-sensitive strings `Do not`, `Don't`, `don't`, `Avoid`, or `default to` (grepable; signals "don't do this by default" prose shape).
-   - Is at least **50 non-blank lines** (same counting rule as AC1).
-   - Content guidance for Generator (NOT additional ACs; informational): the rule should mirror feedback memory `feedback_no_ssh_out_of_vibe.md` — SSH-out from a `bypassPermissions` container extends blast radius from container to target host; firewall network-permission ≠ behavioral approval; Claude's default disposition is to give the user a command to run on their host shell rather than running `ssh`/`scp`/`rsync` itself; explicit per-turn user authorisation is the only override.
+2. **Scratch-path variable name.** `/workspace/vibe` introduces a shell variable named exactly `CLIP`, holding the literal string `"$WORKSPACE/.vibe/copy-latest.txt"` (or equivalent path concat). Grep target: a line matching `CLIP="$WORKSPACE/.vibe/copy-latest.txt"`.
 
-2. **Dockerfile stages the source.** `devcontainer/Dockerfile` contains exactly one line matching the canonical form `COPY claude-md /usr/local/share/vibe/claude-md/` (trailing slash on the destination — directory copy semantics, parallels existing agents/commands COPYs). Verified by literal-string grep + count.
+3. **Block scoping.** Both `WATCHER_SEED_MTIME` and `CLIP` are assigned ONLY inside the existing Darwin+pbcopy `if` block (`if [[ "$(uname)" == "Darwin" ]] && command -v pbcopy …; then … fi`, currently at vibe:1111-1117). They MUST NOT be pre-declared, defaulted, or referenced outside this block. Rationale: the launcher runs `set -euo pipefail`; an out-of-block reference on Linux would either hit `nounset` or run a `pbcopy` that does not exist.
 
-3. **install-claude-extras.sh reads source fragments.** install-claude-extras.sh, on each run, enumerates `*.md` files under `$SRC_ROOT/claude-md/` (if directory exists) and uses POSIX byte-order sort by basename (`LC_ALL=C sort` semantics — equivalent to bash `printf '%s\n' "${arr[@]}" | LC_ALL=C sort`). Generator's choice of internal helper naming is unconstrained. **Generator MUST set `LC_ALL=C` explicitly** for the sort step (e.g. `LC_ALL=C sort` or `LC_ALL=C` exported around the sort) — the container's ambient locale is `LC_ALL=C.UTF-8`, which coincides with `C` for ASCII filenames but diverges for non-ASCII. Relying on the ambient locale is non-compliant even though all current fragment names are ASCII.
+4. **Seed-capture timing.** Within the Darwin+pbcopy block, `CLIP` is assigned BEFORE `WATCHER_SEED_MTIME`, and `WATCHER_SEED_MTIME` is assigned AFTER `mkdir -p "$WORKSPACE/.vibe"` and BEFORE the watcher is backgrounded. The seed therefore reflects the file state at the moment the watcher starts polling.
 
-4. **Managed block at end of CLAUDE.md.** After install-claude-extras.sh runs with at least one `*.md` in `$SRC_ROOT/claude-md/`, `$DEST_ROOT/CLAUDE.md` contains a delimited block whose:
-   - Opening line is exactly `<!-- >>> vibe-managed (auto, do not edit) >>>`.
-   - Closing line is exactly `<!-- <<< vibe-managed <<< -->`.
-   - Body between delimiters contains, for each fragment in sorted order: a header line of the exact form `<!-- vibe-md: <basename> -->` followed by the literal contents of that fragment file. Adjacent fragments separated by a single blank line.
-   - Block is positioned at the END of the file: there is no non-blank line after the closing delimiter, and the file terminates with exactly one trailing newline after the closing delimiter.
+5. **Seed-capture portability.** The mtime read uses the same triple-fallback pattern `vibe-copy-watcher.sh` uses for its own `last` seed: `stat -f %m` (BSD/macOS) `||` `stat -c %Y` (GNU/Linux) `||` `echo 0`, all with `2>/dev/null`. Concrete form: `WATCHER_SEED_MTIME=$(stat -f %m "$CLIP" 2>/dev/null || stat -c %Y "$CLIP" 2>/dev/null || echo 0)`.
 
-5. **Block is created if CLAUDE.md doesn't exist.** When `$DEST_ROOT/CLAUDE.md` is absent at install time, install-claude-extras.sh creates it. The created file contains only the managed block (no leading user content), terminated by exactly one newline after the closing delimiter.
+6. **EXIT trap drains before kill.** The `trap '...' EXIT` set inside the Darwin+pbcopy block has a body of the exact shape:
+   ```
+   if [ -s "$CLIP" ] && [ "$(stat -f %m "$CLIP" 2>/dev/null || stat -c %Y "$CLIP" 2>/dev/null || echo 0)" != "$WATCHER_SEED_MTIME" ]; then pbcopy < "$CLIP" 2>/dev/null || true; fi; kill "$WATCHER_PID" 2>/dev/null || true
+   ```
+   Equivalent re-wrappings are allowed (e.g. splitting into multiple `;`-separated statements, factoring the mtime read into a helper var) provided every other AC still holds. The `kill` line MUST appear AFTER the `if … fi`. **The trap body MUST be single-quoted** (so `$(stat …)` and `$WATCHER_SEED_MTIME` expand at trap-fire time, not at trap-registration time). **The existing single-statement trap on vibe:1116 is REPLACED** — there must be exactly ONE `trap '…' EXIT` registration in this block; do not append a second one.
 
-6. **Block is regenerated, not appended.** Re-running install-claude-extras.sh strips any pre-existing vibe-managed block (matched by exact-string opening/closing delimiters) before writing the new one. The file does not grow on re-run with unchanged source. Removing a fragment from `$SRC_ROOT/claude-md/` removes its `<!-- vibe-md: <name> -->` header and body from the block on next run.
+7. **String inequality, not arithmetic.** The mtime comparison MUST use the string operator `!=` inside `[ … ]` or `[[ … ]]`, NOT `-gt`/`-lt`/`-ne`. Rationale: avoid arithmetic abort under `set -euo pipefail` if `stat` returns a float.
 
-7. **User content is preserved byte-identical.** Any text in `$DEST_ROOT/CLAUDE.md` outside both managed blocks (the write-env-hint block, if present, and the new vibe-managed block) is byte-identical before and after install-claude-extras.sh runs, regardless of how many times it runs and regardless of fragment-set changes. Verified by writing user prose between (or instead of) the blocks, then asserting byte-identity after re-runs.
+8. **Drain failure-safe.** The drain branch (the `pbcopy < "$CLIP"` invocation) ends with `2>/dev/null || true` (or is wrapped in a subshell that has the same swallowing effect). The `kill "$WATCHER_PID" 2>/dev/null || true` step MUST run regardless of any failure inside the drain branch.
 
-8. **Empty-source / missing-source cleanup.** Either of:
-   - `$SRC_ROOT/claude-md/` exists but contains no `*.md` files, OR
-   - `$SRC_ROOT/claude-md/` does not exist at all.
+9. **Drain is gated on file existence and non-emptiness.** The drain only runs when `[ -s "$CLIP" ]` is true (file exists and has size > 0). A missing or empty `copy-latest.txt` is a silent no-op.
 
-   Effect: install-claude-extras.sh removes any pre-existing vibe-managed block (delimiters and contents) from `$DEST_ROOT/CLAUDE.md`. User content and the write-env-hint block (if present) are preserved. Trailing blank lines after the removed block are collapsed so the file does not accumulate whitespace across runs (mirrors write-env-hint.sh's blank-line-collapse pattern). If the resulting file would be empty (no user content + no write-env-hint block + no vibe-managed block), install-claude-extras.sh either deletes the file OR leaves an empty file — Generator picks; either is acceptable.
+10. **Drain is gated on mtime change.** The drain only runs when the file's current mtime is NOT equal to `"$WATCHER_SEED_MTIME"`. If the file was not written during this vibe session, the host clipboard is NOT touched.
 
-9. **Existing functionality intact.** install-claude-extras.sh continues to sync `agents/` and `commands/` exactly as before. The retired-commands cleanup (`copy.md` removal) still runs. The `VIBE_EXTRAS_SRC_ROOT` env override still works. All existing extras-sync smoke tests (the c.md / agents tests at smoke-test.py:1847+) still pass unchanged. The write-env-hint block, if present in `$DEST_ROOT/CLAUDE.md`, is preserved byte-identical across install-claude-extras.sh runs.
+11. **Direct read, not pipe.** The drain calls `pbcopy < "$CLIP"` (input redirection). It does NOT use `cat "$CLIP" | pbcopy` and does NOT cp through a TMP file (rationale documented in task summary).
 
-10. **`python3 code-check.py` exits 0.** install-claude-extras.sh remains shellcheck-clean. No new shellcheck findings introduced anywhere in the project.
+12. **Kill invocation locked.** The trap body ends with EXACTLY this token sequence (whitespace flexible): `kill "$WATCHER_PID" 2>/dev/null || true`. NOT `kill -9 …`, NOT `pkill …`, NOT `wait`. The signal stays SIGTERM; the silencing-and-swallowing pattern stays identical.
 
-11. **`python3 smoke-test.py` exits 0** with all pre-existing tests still passing AND the following new test functions (Tester picks the names; the listed t-numbers are spec references for AC mapping). Every t-number must have at least one corresponding `def test_...()` and at least one `check(...)` call:
+13. **No new files.** The fix is implemented inline in `/workspace/vibe`. No new shell scripts, no helper functions in other files, no new directories, no new dependencies.
 
-    - **t1**: `web-research.md` exists and satisfies AC1 — contains `WebSearch`, `WebFetch`, a sequencing sentinel from {`BEFORE`, `before`, `first`, `First`}, and ≥50 non-blank lines.
-    - **t2**: Dockerfile contains the canonical `COPY claude-md /usr/local/share/vibe/claude-md/` line (literal-string + count = 1).
-    - **t3**: install-claude-extras.sh end-to-end with one fragment in source: managed block in `CLAUDE.md` opens/closes with the exact delimiters, contains the `<!-- vibe-md: web-research.md -->` header, and contains at least one substantive sentinel string from `web-research.md` (Tester picks a unique substring from the actual file body that's unlikely to collide with any other content). Block is at the end of the file (no non-blank line after closing delimiter).
-    - **t4**: install-claude-extras.sh creates `CLAUDE.md` from scratch when absent (AC5). File ends with exactly one newline after closing delimiter.
-    - **t5**: idempotency — running install twice with the same source produces a byte-identical `CLAUDE.md` (sha256 match, file size match).
-    - **t6**: user content above and below the block survives a re-run with changed fragment set. Specifically: write user content into CLAUDE.md (mid-file user prose between two newline blocks), run install, then re-run with a *different* set of source fragments (e.g. add a second fragment), assert user content is byte-identical and only the block contents changed.
-    - **t7**: empty-source case — `$SRC_ROOT/claude-md/` exists but is empty: a pre-existing vibe-managed block is removed; user content preserved; trailing blank-line accumulation does not occur on repeated empty-source runs.
-    - **t8**: missing-source case — `$SRC_ROOT/claude-md/` directory does not exist: install does not error AND if a vibe-managed block already exists (from a prior run), it is also removed (covers Critic's t8 gap).
-    - **t9**: multi-fragment ordering — running with two fragments named so that POSIX byte-order sort (`LC_ALL=C`) differs from locale-aware sort (e.g. `Z-fragment.md` and `a-fragment.md`; in POSIX `Z` < `a`, in many locales `a` < `Z` regardless of case): block headers appear in `LC_ALL=C` order. Test verifies the actual byte-order is used.
-    - **t10**: agents-and-commands-still-work — fixture has `claude-md/`, `commands/`, and `agents/` populated; install-claude-extras.sh runs once; all three populate correctly (commands/agents files copied to dest, vibe-managed block in CLAUDE.md).
-    - **t11** (NEW from Critic concern #9): write-env-hint coexistence — fixture starts with a CLAUDE.md containing user prose; first run write-env-hint.sh, then run install-claude-extras.sh with one fragment; verify both managed blocks are present, both have correct delimiters, and the write-env-hint block content is byte-identical to its expected output. **Tester derives the expected write-env-hint block content dynamically at test runtime by reading `devcontainer/write-env-hint.sh` and extracting the `BLOCK` variable's value (or running write-env-hint.sh against a fresh tempdir and reading the result) — does NOT hardcode the expected bytes, so the test does not drift if write-env-hint.sh is patched.** Then run install-claude-extras.sh AGAIN with a different fragment set and verify the write-env-hint block is STILL byte-identical.
-    - **t12** (NEW from Critic concern #5): N→N-1 fragment removal — start with two fragments, install (block contains both); remove one fragment from source; re-install; verify the removed fragment's header and body are gone from the block but the remaining fragment is still present in correct format. **Additionally: while two fragments are present, t12 asserts that exactly one blank line (not zero, not two) separates the closing of the first fragment's body from the `<!-- vibe-md: ... -->` header of the second fragment — closes the AC4 single-blank-line separator coverage gap.**
-    - **t13** (NEW from Critic concern #7 medium): absent-source + pre-existing vibe-managed block — first install with a fragment present (block lands), then delete `$SRC_ROOT/claude-md/` directory entirely, then re-run install; verify block is gone and CLAUDE.md is otherwise intact.
-    - **t14** (NEW from Planner amendment 2026-04-25): `ssh-discipline.md` exists and satisfies AC1b — contains literal `ssh`, literal `scp`, a prohibition sentinel from {`Do not`, `Don't`, `don't`, `Avoid`, `default to`}, and ≥50 non-blank lines.
+14. **Variable hygiene.** `$WATCHER_SEED_MTIME` and `$CLIP` are double-quoted at every reference. No new shellcheck warnings.
 
-12. **No project-invariant violations.** `vibe` launcher contract unchanged; subscription auth (`forceLoginMethod: "claudeai"`) unchanged; PAT scope unchanged; firewall + hook backstops unchanged; `bypassPermissions` safety unchanged. Specifically NEITHER `web-research.md` NOR `ssh-discipline.md` may instruct Claude to bypass the firewall, hooks, or permissions model; neither may instruct exfiltration; neither may weaken any other invariant. `web-research.md` is purely about retrieval-tool sequencing. `ssh-discipline.md` is purely about disposition (default to user-runs-the-command) — it does NOT disable SSH, does NOT modify the firewall, does NOT alter `init-firewall.sh`'s allowlist, does NOT touch `~/.ssh` handling.
+15. **No scope drift.** `vibe-copy-watcher.sh` is NOT modified. `/c` and `/expaste` skill bodies are NOT modified. The Dockerfile, `devcontainer.json`, `postStartCommand`, `init-firewall.sh`, `guard-bash.sh`, `settings.local.json`, `credential-helper.sh`, `setup-ssh.sh` are NOT touched.
 
-13. **TODO.md updated on landing.** Both relevant open items move from `## Open` to `## Done` with one-line notes naming the chosen shape (inline-prose CLAUDE.md fragment via install-claude-extras.sh-managed block at end of CLAUDE.md) and the final commit SHA. The two items are identified by content match:
-    - `vibe: default to WebSearch before declaring a URL unreachable`
-    - `vibe: ship "no SSH-out without explicit user OK" as a Claude-facing rule`
+16. **`code-check.py` passes.** `python3 code-check.py` exits 0.
 
-    (Line numbers not part of the AC; identification is by content.)
+17. **`smoke-test.py` passes; pre-existing test count unchanged or grows.** `python3 smoke-test.py` exits 0. The pre-existing total check count (today: see Evaluator's pre-change baseline) MUST NOT decrease.
+
+18. **New smoke coverage — AC-locked greps.** `smoke-test.py` gains a new test function (suggested name `test_clipboard_drain_on_exit`) that performs the following file-read greps against `Path(VIBE).read_text()`:
+    - **a.** Asserts that exactly one line matches the regex `^\s*CLIP="\$WORKSPACE/\.vibe/copy-latest\.txt"\s*$`.
+    - **b.** Asserts that exactly one line matches the regex `^\s*WATCHER_SEED_MTIME=\$\(stat -f %m "\$CLIP"`.
+    - **c.** Asserts that the source contains the substring `pbcopy < "$CLIP"`.
+    - **d.** Asserts that the source contains the substring `kill "$WATCHER_PID" 2>/dev/null || true`.
+    - **e.** Asserts that the substring matched by (b) appears at a smaller byte-offset than (c) (seed precedes drain).
+    - **f.** Asserts that the substring matched by (c) appears at a smaller byte-offset than (d) (drain precedes kill).
+    - **g.** Asserts that the substring `[ "$cur" -gt "$WATCHER_SEED_MTIME" ]` does NOT appear (negative test for the arithmetic-comparison loophole).
+    - **h.** Asserts that the substring `WATCHER_SEED_MTIME=0` does NOT appear as a stand-alone literal (negative test for the hard-coded-seed loophole). Match the literal token only — `WATCHER_SEED_MTIME=$(stat …` containing the `… || echo 0` fallback is fine.
+    Each assertion increments the existing smoke check counter by 1 (8 new checks).
+
+19. **Idempotent and safe to re-run.** If a user runs `vibe` twice on the same workspace and never invokes `/c` or `/expaste` in either session, the drain step is a no-op in both (file mtime never advances past the seed) and the host clipboard is NOT touched. A grep confirming the mtime-change guard is present (AC10/AC18) covers this mechanically.
 
 ## Out of scope
 
-- A `/research <url>` slash command (deferred — separate future task; this task ships the always-on rule only).
-- A PreToolUse / PostToolUse hook on WebFetch that mechanically enforces the retry chain (deferred — heavier infra; spec instruction sufficient for v1).
-- Behavioral verification that Claude actually obeys the rule in real WebFetch failures. This is trust-but-verify for the operator in real use, NOT an AC. Spec Critic and Reviewer may not require behavior-test coverage of the rule's effect.
-- Touching project-level `/workspace/CLAUDE.md`. The rule lives in the user's `~/.claude/CLAUDE.md` only.
-- Touching the personal feedback memory at `~/.claude/projects/-workspace/memory/feedback_try_websearch_before_refusing.md`. Personal memory and shipped vendor rule are separate artifacts; both can coexist without contradiction.
-- Migrating other one-off operational rules into this mechanism beyond the two named fragments (extension point exists for future fragments; this task ships exactly two: `web-research.md` and `ssh-discipline.md`).
-- Cross-host or cross-machine synchronization of the persistent volume's CLAUDE.md.
-- Internationalization or alternative-language versions of the rule prose.
-- Visual UI markers (e.g. surfacing in the vibe banner that the rule is active).
-- Concurrent install runs (two containers starting simultaneously sharing the persistent volume): the persistent volume is host-local and concurrent vibe sessions are not a real failure mode given the typical user pattern (one container per session). If a concurrent-write race is observed in practice, a follow-up task can add file locking.
-- Symlink / read-only / directory-instead-of-file edge cases for `$DEST_ROOT/CLAUDE.md` (Critic concern #6). Trust the persistent volume to be a normal writable directory; surface any failure mode if encountered.
-- A `/research` or similar manual-override slash command — explicitly deferred above.
-- Renaming the `claude-md/` source dir or the managed-block delimiters (these are pinned interface choices for v1).
+- Refactoring `vibe-copy-watcher.sh`.
+- Replacing the polling loop with a different IPC mechanism (e.g. socket, signal-based).
+- Adding a `vibepaste` host helper command (separate TODO entry).
+- Stop-hook auto-write of last fenced block (separate TODO entry).
+- Any change to `/c` or `/expaste` skill bodies.
+- Any change to Dockerfile, devcontainer.json, postStartCommand, firewall, hooks, or auth.
+- Cross-platform support beyond what `vibe-copy-watcher.sh` already gates (Darwin + `VIBE_COPY_WATCHER_FORCE=1` testing override).
+- **Concurrent vibe instances against the same workspace.** Two simultaneous vibe sessions on one workspace would both drain on exit and could publish each other's stale content. This is preserved-as-is — the bug existed before this fix and is not addressed here. (Arguably the scratch path should be PID-suffixed; that is a separate design conversation.)
 
 ## Test location
 
-`smoke-test.py` — Tester appends new test functions following the existing extras-sync test pattern (smoke-test.py:1847 onward). **Once Tester commits these tests, they are immutable — Generator cannot edit them.**
-
-The new fixture content for tests goes in tempdirs created per-test (existing pattern). No new fixture files committed to the repo. Tester may add new module-level path constants at the top of smoke-test.py (e.g. `WEB_RESEARCH_MD = REPO / "devcontainer" / "claude-md" / "web-research.md"` and `SSH_DISCIPLINE_MD = REPO / "devcontainer" / "claude-md" / "ssh-discipline.md"`) — those are Tester writes and Generator must not touch them.
+`/workspace/smoke-test.py` (host-side, no Docker, no network). New tests follow the existing pattern: a function named `test_<topic>` is defined, registered in the `if __name__ == "__main__":` test list, and increments the global check counter via the same helpers existing tests use. File-read greps via `Path(VIBE).read_text()` are the established pattern for source-level assertions; do NOT add a `VIBE_SOURCE_ONLY=1` runtime-source path for this test.
 
 ## Proposed budget
 
-**1 cycle** with `--max 2` headroom. Rationale: the change is an extension of an established pattern (install-claude-extras.sh's existing `install_dir`) plus inline-block management modeled directly on `write-env-hint.sh` (which is in-tree, ~40 lines, and proven). No external dependencies, no Docker required for verification, no novel infra. Spec Critic resolved 3 blocking concerns inline (shape change, block position, sort collation) plus 12 medium/low concerns. Planner-amendment 2026-04-25 added a second fragment (`ssh-discipline.md`) — same mechanism, one extra source file + one extra grep test, no structural risk added. If a residual concern surfaces during cycle 1 the budget can flex to 2.
+1 cycle. Mechanical, ≤15-line edit to a single block of `/workspace/vibe`; tests are 8 source-level grep / negative-grep / byte-offset assertions in `smoke-test.py`.

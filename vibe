@@ -1110,10 +1110,12 @@ fi
 WATCHER_PID=""
 if [[ "$(uname)" == "Darwin" ]] && command -v pbcopy >/dev/null 2>&1; then
   mkdir -p "$WORKSPACE/.vibe"
+  CLIP="$WORKSPACE/.vibe/copy-latest.txt"
+  WATCHER_SEED_MTIME=$(stat -f %m "$CLIP" 2>/dev/null || stat -c %Y "$CLIP" 2>/dev/null || echo 0)
   pkill -f "vibe-copy-watcher\.sh ${WORKSPACE}\$" 2>/dev/null || true
   "$VIBE_REPO_DIR/vibe-copy-watcher.sh" "$WORKSPACE" &
   WATCHER_PID=$!
-  trap 'kill "$WATCHER_PID" 2>/dev/null || true' EXIT
+  trap 'if [ -s "$CLIP" ] && [ "$(stat -f %m "$CLIP" 2>/dev/null || stat -c %Y "$CLIP" 2>/dev/null || echo 0)" != "$WATCHER_SEED_MTIME" ]; then pbcopy < "$CLIP" 2>/dev/null || true; fi; kill "$WATCHER_PID" 2>/dev/null || true' EXIT
 fi
 
 CLAUDE_RESUME_ARGS=$(build_claude_resume_args)
