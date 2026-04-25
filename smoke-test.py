@@ -971,6 +971,87 @@ def test_learning_capture_eof_cancel() -> None:
         check("[learn] AC8 EOF no write", len(files) == 0, f"files={files}")
 
 
+def test_learning_capture_confirm_yes_word() -> None:
+    """Confirm accepts 'yes' (full word), not just 'y'."""
+    print("\n[learning: capture confirm 'yes']")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        lib = home / "lib"
+        lib.mkdir()
+        cfg = home / ".vibe" / "learning.config"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(
+            f'VIBE_LEARNING_ENABLED="true"\n'
+            f'VIBE_LEARNING_PATH="{lib}"\n'
+            f'VIBE_LEARNING_VISIBILITY="private"\n'
+            f'VIBE_LEARNING_GIT_REMOTE=""\n'
+        )
+        env = {**os.environ, "HOME": str(home)}
+        r = run(["bash", str(VIBE), "learn", "yes-word pattern"], env=env, input="yes\n")
+        check("[learn] confirm 'yes' exits 0", r.returncode == 0, r.stderr)
+        files = list(lib.glob("*.md"))
+        check("[learn] confirm 'yes' wrote file", len(files) == 1, f"files={files}")
+
+
+def test_learning_capture_confirm_uppercase_y() -> None:
+    """Confirm accepts 'Y' (uppercase) - case-insensitive."""
+    print("\n[learning: capture confirm 'Y']")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        lib = home / "lib"
+        lib.mkdir()
+        cfg = home / ".vibe" / "learning.config"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(
+            f'VIBE_LEARNING_ENABLED="true"\n'
+            f'VIBE_LEARNING_PATH="{lib}"\n'
+            f'VIBE_LEARNING_VISIBILITY="private"\n'
+            f'VIBE_LEARNING_GIT_REMOTE=""\n'
+        )
+        env = {**os.environ, "HOME": str(home)}
+        r = run(["bash", str(VIBE), "learn", "uppercase-Y pattern"], env=env, input="Y\n")
+        check("[learn] confirm 'Y' exits 0", r.returncode == 0, r.stderr)
+        files = list(lib.glob("*.md"))
+        check("[learn] confirm 'Y' wrote file", len(files) == 1, f"files={files}")
+
+
+def test_learning_capture_confirm_uppercase_yes() -> None:
+    """Confirm accepts 'YES' (uppercase, full word)."""
+    print("\n[learning: capture confirm 'YES']")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        lib = home / "lib"
+        lib.mkdir()
+        cfg = home / ".vibe" / "learning.config"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(
+            f'VIBE_LEARNING_ENABLED="true"\n'
+            f'VIBE_LEARNING_PATH="{lib}"\n'
+            f'VIBE_LEARNING_VISIBILITY="private"\n'
+            f'VIBE_LEARNING_GIT_REMOTE=""\n'
+        )
+        env = {**os.environ, "HOME": str(home)}
+        r = run(["bash", str(VIBE), "learn", "uppercase-YES pattern"], env=env, input="YES\n")
+        check("[learn] confirm 'YES' exits 0", r.returncode == 0, r.stderr)
+        files = list(lib.glob("*.md"))
+        check("[learn] confirm 'YES' wrote file", len(files) == 1, f"files={files}")
+
+
+def test_learnings_md_fragment_present() -> None:
+    """devcontainer/claude-md/learnings.md ships and references /learnings."""
+    print("\n[learnings.md fragment: present + content]")
+    p = REPO / "devcontainer" / "claude-md" / "learnings.md"
+    check("[learnings.md] file exists", p.exists())
+    if not p.exists():
+        return
+    body = p.read_text()
+    check("[learnings.md] mentions /learnings path", "/learnings" in body, body[:200])
+    check("[learnings.md] explains read-only nature", "read-only" in body, body[:200])
+    check("[learnings.md] references vibe learn host command", "vibe learn" in body, body[:200])
+    nonblank = sum(1 for line in body.splitlines() if line.strip())
+    check("[learnings.md] >= 30 non-blank lines (substantive)", nonblank >= 30, f"non-blank={nonblank}")
+
+
 def test_learning_capture_confirm_no() -> None:
     """AC8: Answering 'n' to confirm cancels with no write."""
     print("\n[learning AC8: confirm 'n' cancels]")
@@ -3004,6 +3085,10 @@ def main() -> int:
     test_task007_t12_fragment_removal_and_separation()
     test_task007_t13_absent_source_with_preexisting_block()
     test_task007_t14_ssh_discipline_md_exists_and_complete()
+    test_learning_capture_confirm_yes_word()
+    test_learning_capture_confirm_uppercase_y()
+    test_learning_capture_confirm_uppercase_yes()
+    test_learnings_md_fragment_present()
 
     print()
     if FAILURES:

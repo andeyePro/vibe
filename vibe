@@ -650,7 +650,7 @@ _learning_capture() {
   confirm="$(printf '%s' "$confirm" | tr -d '[:space:]')"
   local confirm_lc
   confirm_lc=$(lowercase "$confirm")
-  if [ "$confirm_lc" != "y" ]; then
+  if [ "$confirm_lc" != "y" ] && [ "$confirm_lc" != "yes" ]; then
     echo "vibe learn: cancelled, nothing written" >&2
     exit 0
   fi
@@ -669,7 +669,7 @@ _learning_capture() {
     fi
     local push_lc
     push_lc=$(lowercase "$(printf '%s' "$push_ans" | tr -d '[:space:]')")
-    if [ "$push_lc" = "y" ]; then
+    if [ "$push_lc" = "y" ] || [ "$push_lc" = "yes" ]; then
       # Create tempfile for commit message; register cleanup trap.
       local msg_tmp
       msg_tmp=$(mktemp)
