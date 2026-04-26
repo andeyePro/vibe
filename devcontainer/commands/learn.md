@@ -1,11 +1,11 @@
-# /learn — capture a cross-org learning into /learnings
+# /learn - capture a cross-org learning into /learnings
 
 ## What this does
 
 `/learn <pattern>` captures a cross-org learning entry into `/learnings/` using
 the same filename and body format as the host-side `vibe learn` command. Because
 a PreToolUse hook guards every write to `/learnings`, you will see a permission
-prompt before the file is created — this is by design and is the security boundary.
+prompt before the file is created - this is by design and is the security boundary.
 
 ## Usage
 
@@ -13,7 +13,7 @@ prompt before the file is created — this is by design and is the security boun
 /learn <pattern>
 ```
 
-`<pattern>` is the learning you want to capture. It can be multi-line — embedded
+`<pattern>` is the learning you want to capture. It can be multi-line - embedded
 newlines pass through to the body as-is.
 
 ## How it works
@@ -21,7 +21,7 @@ newlines pass through to the body as-is.
 When `/learn <pattern>` is invoked, the model:
 
 1. **Checks that `/learnings` exists as a directory.** If it does not, responds
-   with the following message and stops — no Write is issued:
+   with the following message and stops - no Write is issued:
 
    ```
    /learn: /learnings is not mounted (run 'vibe learn --init' on host first)
@@ -55,7 +55,7 @@ When `/learn <pattern>` is invoked, the model:
    to confirm the write.
 
 6. **After the Write succeeds**, informs you that the entry is saved locally.
-   Pushing to git (for public-mode libraries) is host-only — run:
+   Pushing to git (for public-mode libraries) is host-only - run:
 
    ```bash
    vibe learn --push
@@ -74,14 +74,14 @@ Multi-line patterns are supported. Newlines in the pattern body pass through
 unchanged into the learning entry file. Example:
 
 ```
-/learn Use env dashes (–) not em dashes (—).
-Always surround en dashes with spaces.
+/learn use a plain ASCII hyphen ` - ` for parentheticals
+and separators, not en or em dashes - keyboards only have hyphens.
 ```
 
 ## Security note
 
 The `/learnings` bind-mount is read-write on macOS regardless of the `readonly`
 flag in the devcontainer config (Docker Desktop / OrbStack `fakeowner` quirk).
-The PreToolUse hook on Write/Edit/MultiEdit tool calls is the security boundary —
+The PreToolUse hook on Write/Edit/MultiEdit tool calls is the security boundary -
 it intercepts every write under `/learnings` and requires your explicit confirmation.
 Do not bypass the hook prompt.
