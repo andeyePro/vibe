@@ -19,7 +19,7 @@ norm_path=$(realpath -m "$raw_path")
 # Check whether the normalized path equals /learnings or is nested beneath it.
 if [ "$norm_path" = "/learnings" ] || [[ "$norm_path" == /learnings/* ]]; then
   printf '%s\n' "$(jq -n \
-    --arg reason "vibe: modifying the learning library at ${norm_path} — confirm to proceed" \
+    --arg reason "vibe: modifying the learning library at ${norm_path} - confirm to proceed" \
     '{
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
