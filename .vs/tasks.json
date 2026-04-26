@@ -61,5 +61,14 @@
     "assigned_to": "evaluator",
     "mode": "rigorous",
     "last_modified": "2026-04-25T17:00:00Z"
+  },
+  {
+    "id": "task_009",
+    "description": "In-container /learn slash command + /learnings write-confirm PreToolUse hook (Write/Edit/Bash all gated)",
+    "implementation_status": "complete",
+    "test_status": "passing",
+    "assigned_to": "evaluator",
+    "mode": "rigorous",
+    "last_modified": "2026-04-26T18:30:00Z"
   }
 ]
