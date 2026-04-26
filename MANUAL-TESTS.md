@@ -457,6 +457,45 @@ Inside Claude Code:
 
 ---
 
+---
+
+### Test 25: /learnings write-confirm hook (end-to-end)
+
+Verify that the PreToolUse hook fires and prompts the user when Claude attempts
+to write under `/learnings` inside a live container.
+
+**Prerequisites:** `/learnings` must be mounted (run `vibe learn --init` on the
+host if not already done).
+
+1. Inside a running vibe session, ask Claude to create a test file:
+
+   > "Write the text 'hello' to /learnings/hook-test.md"
+
+   **Expected:**
+   - [ ] Claude Code displays a permission prompt (not a tool call running silently)
+   - [ ] The prompt reason contains the text `vibe: modifying the learning library at /learnings/hook-test.md — confirm to proceed`
+   - [ ] The prompt is the standard Claude Code y/n confirmation dialog
+
+2. Answer **yes** to the prompt.
+
+   **Expected:**
+   - [ ] The Write tool call proceeds and `/learnings/hook-test.md` is created
+   - [ ] The file contains `hello`
+
+3. Ask Claude to run: `echo test > /learnings/bash-test.md`
+
+   **Expected:**
+   - [ ] Claude Code displays a permission prompt for the Bash tool call
+   - [ ] The prompt reason contains `vibe: shell command modifies the learning library — confirm to proceed`
+   - [ ] Answering **no** blocks the command and the file is NOT created
+
+**Note:** if no permission prompt appears for step 1 and the Write proceeds
+silently, the hook schema is wrong. Check that `guard-fs.sh` outputs JSON with
+the exact shape `{hookSpecificOutput: {permissionDecision: "ask", ...}}` and
+that `settings.local.json` lists `"Write|Edit|MultiEdit"` as a matcher.
+
+---
+
 ## Troubleshooting
 
 ### Docker not found

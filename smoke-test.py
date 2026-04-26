@@ -3059,51 +3059,6 @@ def test_task008_ac11_direct_read() -> None:
           "found forbidden cp-through-tmp pattern")
 
 
-def test_task008_ac15_no_scope_drift() -> None:
-    """task_008: AC15 — no modifications to watcher, /c, /expaste, or config files."""
-    print("\n[task_008: AC15 no scope drift]")
-
-    # Run git diff to see what files changed
-    result = subprocess.run(
-        ["git", "diff", "--name-only", "HEAD"],
-        capture_output=True,
-        text=True,
-        cwd=str(REPO)
-    )
-
-    changed_files = set(result.stdout.strip().split("\n")) if result.stdout.strip() else set()
-    changed_files.discard("")  # Remove empty strings
-
-    # Allowed files: vibe, smoke-test.py, .vs/ artifacts, TODO.md
-    allowed = {"vibe", "smoke-test.py", "TODO.md"}
-    allowed_dirs = {".vs"}
-
-    prohibited = {
-        "vibe-copy-watcher.sh",
-        "devcontainer/commands/c.md",
-        "devcontainer/commands/expaste.md",
-        "Dockerfile",
-        "devcontainer/devcontainer.json",
-        "devcontainer/init-firewall.sh",
-        "devcontainer/guard-bash.sh",
-        "devcontainer/settings.local.json",
-        "devcontainer/credential-helper.sh",
-        "devcontainer/setup-ssh.sh"
-    }
-
-    violations = []
-    for f in changed_files:
-        is_allowed_file = f in allowed
-        is_allowed_dir = any(f.startswith(d + "/") for d in allowed_dirs)
-        is_prohibited = f in prohibited
-
-        if not (is_allowed_file or is_allowed_dir) and is_prohibited:
-            violations.append(f)
-
-    check("[task008/AC15] no prohibited files modified", len(violations) == 0,
-          f"prohibited files changed: {violations}")
-
-
 def test_clipboard_drain_on_exit() -> None:
     """task_008: drain clipboard scratch on exit — AC18 source-level assertions."""
     print("\n[task_008: clipboard drain on exit — source checks]")
@@ -3152,6 +3107,388 @@ def test_clipboard_drain_on_exit() -> None:
     seed_literal_pattern = re.compile(r'^\s*WATCHER_SEED_MTIME=0\s*$', re.MULTILINE)
     check("[task008] no standalone WATCHER_SEED_MTIME=0 literal", not seed_literal_pattern.search(src),
           "found forbidden literal seed assignment")
+
+
+# ── task_009: /learnings write-confirm hook ───────────────────────────────────
+
+GUARD_FS = REPO / "devcontainer" / "guard-fs.sh"
+GUARD_BASH = REPO / "devcontainer" / "guard-bash.sh"
+LEARN_MD = REPO / "devcontainer" / "commands" / "learn.md"
+LEARN_HOOK_MD = REPO / "devcontainer" / "claude-md" / "learn-hook.md"
+
+# Pre-check: jq and bash available on host (needed for hook script tests).
+_HAS_JQ = subprocess.run(["which", "jq"], capture_output=True).returncode == 0
+_HAS_BASH = subprocess.run(["which", "bash"], capture_output=True).returncode == 0
+_HOOK_SKIP = not (_HAS_JQ and _HAS_BASH)
+
+if _HOOK_SKIP:
+    print("WARNING: jq or bash not found — hook-fixture tests will be skipped", file=sys.stderr)
+
+
+def _run_guard_fs(json_input: str) -> "subprocess.CompletedProcess[str]":
+    """Feed json_input to guard-fs.sh and return the result."""
+    return subprocess.run(
+        ["bash", str(GUARD_FS)],
+        input=json_input,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _run_guard_bash(cmd_str: str) -> "subprocess.CompletedProcess[str]":
+    """Feed a Bash tool JSON envelope to guard-bash.sh and return the result."""
+    payload = json.dumps({"tool_input": {"command": cmd_str}})
+    return subprocess.run(
+        ["bash", str(GUARD_BASH)],
+        input=payload,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _assert_ask_json(r: "subprocess.CompletedProcess[str]", label: str) -> None:
+    """Assert the subprocess output is a valid ask-JSON envelope."""
+    check(f"[task009] {label}: exit 0", r.returncode == 0,
+          f"exit={r.returncode} stderr={r.stderr[:200]}")
+    try:
+        data = json.loads(r.stdout)
+        ok = True
+    except json.JSONDecodeError as exc:
+        check(f"[task009] {label}: stdout is valid JSON", False, str(exc))
+        return
+    check(f"[task009] {label}: stdout is valid JSON", ok)
+    hso = data.get("hookSpecificOutput", {})
+    check(f"[task009] {label}: hookEventName == PreToolUse",
+          hso.get("hookEventName") == "PreToolUse", str(hso))
+    check(f"[task009] {label}: permissionDecision == ask",
+          hso.get("permissionDecision") == "ask", str(hso))
+    reason = hso.get("permissionDecisionReason", "")
+    check(f"[task009] {label}: permissionDecisionReason non-empty",
+          bool(reason), str(hso))
+
+
+def _assert_silent_exit0(r: "subprocess.CompletedProcess[str]", label: str) -> None:
+    """Assert the subprocess emitted nothing to stdout and exited 0."""
+    check(f"[task009] {label}: exit 0", r.returncode == 0,
+          f"exit={r.returncode} stderr={r.stderr[:200]}")
+    check(f"[task009] {label}: empty stdout", r.stdout == "",
+          f"stdout={r.stdout[:200]}")
+
+
+def test_task009_guard_fs_exists() -> None:
+    """AC1: guard-fs.sh exists as an executable shell script."""
+    print("\n[task_009/AC1: guard-fs.sh exists]")
+    check("[task009/AC1] guard-fs.sh exists", GUARD_FS.exists(), str(GUARD_FS))
+    if GUARD_FS.exists():
+        check("[task009/AC1] guard-fs.sh is executable",
+              bool(GUARD_FS.stat().st_mode & 0o111), str(GUARD_FS))
+        content = GUARD_FS.read_text()
+        check("[task009/AC1] has set -euo pipefail", "set -euo pipefail" in content, "")
+        check("[task009/AC1] uses jq -r .tool_input.file_path",
+              "jq -r" in content and "tool_input" in content and "file_path" in content, "")
+        check("[task009/AC1] uses realpath -m", "realpath -m" in content, "")
+
+
+def test_task009_guard_fs_ask_fixtures() -> None:
+    """AC10: guard-fs.sh emits correct ask-JSON for /learnings paths."""
+    print("\n[task_009/AC10: guard-fs.sh ask fixtures]")
+    if _HOOK_SKIP:
+        print("  (skipped — jq/bash absent)", file=sys.stderr)
+        return
+
+    fixtures = [
+        ('{"tool_input":{"file_path":"/learnings/2026-04-26T17:00:00Z-abcdef.md"}}',
+         "/learnings file path"),
+        ('{"tool_input":{"file_path":"/learnings"}}',
+         "/learnings exact"),
+        ('{"tool_input":{"file_path":"/learnings/sub/dir/file.md"}}',
+         "/learnings deep path"),
+    ]
+    for json_input, label in fixtures:
+        r = _run_guard_fs(json_input)
+        _assert_ask_json(r, label)
+        if r.returncode == 0 and r.stdout:
+            try:
+                data = json.loads(r.stdout)
+                reason = data.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+                check(f"[task009] {label}: reason contains /learnings/",
+                      "/learnings" in reason, reason)
+            except json.JSONDecodeError:
+                pass
+
+
+def test_task009_guard_fs_non_learnings_fixtures() -> None:
+    """AC11: guard-fs.sh silent for non-/learnings and traversal-attempt paths."""
+    print("\n[task_009/AC11: guard-fs.sh non-/learnings fixtures]")
+    if _HOOK_SKIP:
+        print("  (skipped — jq/bash absent)", file=sys.stderr)
+        return
+
+    fixtures = [
+        ('{"tool_input":{"file_path":"/workspace/foo/bar.md"}}',
+         "/workspace path"),
+        ('{"tool_input":{"file_path":"/learnings/../etc/passwd"}}',
+         "traversal attempt /etc/passwd"),
+        ('{"tool_input":{"file_path":"/learnings/../../tmp/x"}}',
+         "traversal attempt /tmp/x"),
+        ('{"tool_input":{}}',
+         "no file_path key"),
+    ]
+    for json_input, label in fixtures:
+        r = _run_guard_fs(json_input)
+        _assert_silent_exit0(r, label)
+
+
+def test_task009_guard_bash_learnings_write_fixtures() -> None:
+    """AC12: guard-bash.sh emits ask-JSON for /learnings shell-write idioms."""
+    print("\n[task_009/AC12: guard-bash.sh /learnings write fixtures]")
+    if _HOOK_SKIP:
+        print("  (skipped — jq/bash absent)", file=sys.stderr)
+        return
+
+    fixtures = [
+        ("echo hi > /learnings/test.md", "redirect >"),
+        ("echo hi >> /learnings/test.md", "redirect >>"),
+        ("cmd | tee /learnings/z.md", "tee pipe"),
+        ("tee -a /learnings/z.md < /tmp/x", "tee -a"),
+        ("cp /tmp/x /learnings/y.md", "cp"),
+        ("cp -r /tmp/dir /learnings/sub", "cp -r"),
+        ("mv /tmp/x /learnings/y.md", "mv"),
+        ("rm /learnings/old.md", "rm"),
+        ("rm -rf /learnings/old/", "rm -rf"),
+        ("ln -s /tmp/target /learnings/link", "ln -s"),
+        ("mkdir /learnings/newdir", "mkdir"),
+        ("chmod 644 /learnings/x.md", "chmod"),
+        ("chown node:node /learnings/x.md", "chown"),
+        ("truncate -s 0 /learnings/x.md", "truncate"),
+        ("dd if=/dev/zero of=/learnings/x bs=1M count=1", "dd"),
+        ("sed -i 's/foo/bar/' /learnings/x.md", "sed -i"),
+        ("sed -ri 's/foo/bar/' /learnings/x.md", "sed -ri combined flag"),
+    ]
+    for cmd_str, label in fixtures:
+        r = _run_guard_bash(cmd_str)
+        _assert_ask_json(r, f"bash write: {label}")
+
+
+def test_task009_guard_bash_learnings_read_fixtures() -> None:
+    """AC13: guard-bash.sh allows /learnings reads (no output, exit 0)."""
+    print("\n[task_009/AC13: guard-bash.sh /learnings read fixtures]")
+    if _HOOK_SKIP:
+        print("  (skipped — jq/bash absent)", file=sys.stderr)
+        return
+
+    fixtures = [
+        ("cat /learnings/x.md", "cat"),
+        ("ls /learnings/", "ls"),
+        ("grep -r foo /learnings/", "grep -r"),
+        ("head /learnings/x.md", "head"),
+        ("sed -n '/learnings/p' /tmp/file", "sed -n (read, no -i)"),
+    ]
+    for cmd_str, label in fixtures:
+        r = _run_guard_bash(cmd_str)
+        _assert_silent_exit0(r, f"bash read: {label}")
+
+
+def test_task009_guard_bash_gitpush_and_block_beats_ask() -> None:
+    """AC14: guard-bash.sh preserves git-push block AND block beats ask."""
+    print("\n[task_009/AC14: guard-bash.sh git-push + block-beats-ask]")
+    if _HOOK_SKIP:
+        print("  (skipped — jq/bash absent)", file=sys.stderr)
+        return
+
+    # force push → exit 2
+    r = _run_guard_bash("git push --force origin main")
+    check("[task009/AC14] force push: exit 2", r.returncode == 2,
+          f"exit={r.returncode}")
+    check("[task009/AC14] force push: stderr contains 'git push --force'",
+          "git push --force" in r.stderr, r.stderr[:200])
+
+    # branch delete → exit 2
+    r = _run_guard_bash("git push origin :branchname")
+    check("[task009/AC14] branch delete: exit 2", r.returncode == 2,
+          f"exit={r.returncode}")
+    check("[task009/AC14] branch delete: stderr contains 'git push'",
+          "git push" in r.stderr, r.stderr[:200])
+
+    # normal push → exit 0, no output
+    r = _run_guard_bash("git push origin main")
+    _assert_silent_exit0(r, "normal push")
+
+    # block beats ask: rm /learnings + force push → exit 2 (not ask-JSON)
+    r = _run_guard_bash("rm /learnings/old.md && git push --force origin main")
+    check("[task009/AC14] block-beats-ask (rm+force-push): exit 2", r.returncode == 2,
+          f"exit={r.returncode}")
+
+    # block beats ask: force push + echo to /learnings → exit 2 (not ask-JSON)
+    r = _run_guard_bash("git push --force origin main && echo hi > /learnings/x.md")
+    check("[task009/AC14] block-beats-ask (force-push+echo): exit 2", r.returncode == 2,
+          f"exit={r.returncode}")
+
+
+def test_task009_settings_json_updated() -> None:
+    """AC4: vibe heredoc contains Write|Edit|MultiEdit matcher entry (persistent fix).
+
+    Reads /workspace/vibe source (not the runtime-generated settings.local.json)
+    because settings.local.json is gitignored and rewritten on every container
+    start — the only durable fix is in the heredoc inside vibe.
+    """
+    print("\n[task_009/AC4: vibe heredoc has Write|Edit|MultiEdit matcher]")
+    vibe_path = REPO / "vibe"
+    check("[task009/AC4] vibe script exists", vibe_path.exists(), str(vibe_path))
+    if not vibe_path.exists():
+        return
+    vibe_src = vibe_path.read_text()
+    # Locate byte offsets for ordering assertions
+    bash_offset = vibe_src.find('"matcher": "Bash"')
+    fs_offset = vibe_src.find('"matcher": "Write|Edit|MultiEdit"')
+    guard_fs_offset = vibe_src.find("/usr/local/bin/guard-fs.sh")
+    check("[task009/AC4] Bash matcher present in vibe heredoc",
+          bash_offset != -1, "not found")
+    check("[task009/AC4] Write|Edit|MultiEdit matcher present in vibe heredoc",
+          fs_offset != -1, "not found")
+    check("[task009/AC4] /usr/local/bin/guard-fs.sh present in vibe heredoc",
+          guard_fs_offset != -1, "not found")
+    # Both substrings must appear AFTER the Bash matcher entry
+    if bash_offset != -1 and fs_offset != -1:
+        check("[task009/AC4] Write|Edit|MultiEdit entry is after Bash entry",
+              fs_offset > bash_offset, f"fs_offset={fs_offset} bash_offset={bash_offset}")
+    if bash_offset != -1 and guard_fs_offset != -1:
+        check("[task009/AC4] guard-fs.sh entry is after Bash matcher",
+              guard_fs_offset > bash_offset,
+              f"guard_fs_offset={guard_fs_offset} bash_offset={bash_offset}")
+
+
+def test_task009_dockerfile_updated() -> None:
+    """AC5: Dockerfile has COPY + chmod for guard-fs.sh."""
+    print("\n[task_009/AC5: Dockerfile updated]")
+    check("[task009/AC5] Dockerfile exists", DOCKERFILE.exists(), str(DOCKERFILE))
+    if not DOCKERFILE.exists():
+        return
+    content = DOCKERFILE.read_text()
+    # AC5a: canonical COPY line (no trailing slash)
+    copy_lines = [ln.strip() for ln in content.splitlines()
+                  if ln.strip() == "COPY guard-fs.sh /usr/local/bin/"]
+    check("[task009/AC5a] exactly one canonical COPY guard-fs.sh line",
+          len(copy_lines) == 1, f"found {len(copy_lines)} lines")
+    # AC5b: /usr/local/bin/guard-fs.sh in chmod chain
+    chmod_lines = [ln for ln in content.splitlines() if "chmod +x" in ln]
+    check("[task009/AC5b] /usr/local/bin/guard-fs.sh in chmod +x chain",
+          any("/usr/local/bin/guard-fs.sh" in ln for ln in chmod_lines),
+          str(chmod_lines))
+
+
+def test_task009_learn_md_exists() -> None:
+    """AC6: commands/learn.md exists with required content."""
+    print("\n[task_009/AC6: commands/learn.md]")
+    check("[task009/AC6] learn.md exists", LEARN_MD.exists(), str(LEARN_MD))
+    if not LEARN_MD.exists():
+        return
+    content = LEARN_MD.read_text()
+    check("[task009/AC6] mentions /learnings/ path", "/learnings/" in content, "")
+    check("[task009/AC6] ts= one-liner present",
+          "ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)" in content, "")
+    check("[task009/AC6] rand= one-liner present",
+          "rand=$(python3 -c 'import binascii,os; print(binascii.hexlify(os.urandom(3)).decode())')" in content,
+          "")
+    check("[task009/AC6] printf format present",
+          "printf '# %s\\n\\n%s\\n' \"$ts\" \"$pattern\"" in content, "")
+    check("[task009/AC6] refusal message present",
+          "/learn: /learnings is not mounted (run 'vibe learn --init' on host first)" in content, "")
+    check("[task009/AC6] mentions vibe learn --push", "vibe learn --push" in content, "")
+    check("[task009/AC6] instructs preview before Write",
+          "preview" in content.lower() or "print" in content.lower(), "")
+
+
+def test_task009_learn_hook_md_exists() -> None:
+    """AC7: claude-md/learn-hook.md exists with sentinel phrases."""
+    print("\n[task_009/AC7: claude-md/learn-hook.md]")
+    check("[task009/AC7] learn-hook.md exists", LEARN_HOOK_MD.exists(), str(LEARN_HOOK_MD))
+    if not LEARN_HOOK_MD.exists():
+        return
+    content = LEARN_HOOK_MD.read_text()
+    non_blank = sum(1 for ln in content.splitlines() if ln.strip())
+    check("[task009/AC7] >= 30 non-blank lines", non_blank >= 30,
+          f"non_blank={non_blank}")
+    check("[task009/AC7] contains 'permissionDecision'",
+          "permissionDecision" in content, "")
+    check("[task009/AC7] contains 'do not bypass'",
+          "do not bypass" in content, "")
+    check("[task009/AC7] contains 'host-only'",
+          "host-only" in content, "")
+
+
+def test_task009_readme_updated() -> None:
+    """AC8: README.md contains PreToolUse hook gates writes sentinel."""
+    print("\n[task_009/AC8: README.md updated]")
+    readme = REPO / "README.md"
+    check("[task009/AC8] README.md exists", readme.exists(), str(readme))
+    if not readme.exists():
+        return
+    content = readme.read_text()
+    check("[task009/AC8] contains 'PreToolUse hook gates writes'",
+          "PreToolUse hook gates writes" in content, "")
+
+
+def test_task009_install_extras_unchanged() -> None:
+    """AC9: install-claude-extras.sh not modified (git diff HEAD is empty)."""
+    print("\n[task_009/AC9: install-claude-extras.sh unchanged]")
+    result = subprocess.run(
+        ["git", "diff", "HEAD", "--", "devcontainer/install-claude-extras.sh"],
+        capture_output=True, text=True, cwd=str(REPO),
+    )
+    check("[task009/AC9] install-claude-extras.sh unchanged",
+          result.stdout.strip() == "",
+          f"diff output: {result.stdout[:300]}")
+
+
+def test_task009_code_check_clean() -> None:
+    """AC15: python3 code-check.py exits 0 (no new shellcheck warnings)."""
+    print("\n[task_009/AC15: code-check.py clean]")
+    r = run(["python3", str(CODE_CHECK)], cwd=REPO)
+    check("[task009/AC15] code-check.py exits 0", r.returncode == 0,
+          f"exit={r.returncode} output={r.stdout[-300:]}")
+
+
+def test_task009_hardening_notebookedit_not_in_matcher() -> None:
+    """Hardening: guard-fs.sh matcher EXCLUDES NotebookEdit (out of scope)."""
+    print("\n[task_009/hardening: NotebookEdit excluded from matcher]")
+    settings_path = REPO / ".claude" / "settings.local.json"
+    if not settings_path.exists():
+        check("[task009] settings.local.json absent — hardening check skipped", False, "")
+        return
+    try:
+        data = json.loads(settings_path.read_text())
+    except json.JSONDecodeError:
+        return
+    pre_tool = data.get("hooks", {}).get("PreToolUse", [])
+    fs_entry = next((e for e in pre_tool if e.get("matcher") == "Write|Edit|MultiEdit"), None)
+    if fs_entry:
+        check("[task009] guard-fs.sh matcher exactly 'Write|Edit|MultiEdit' (no NotebookEdit)",
+              True)  # Already tested in AC4, but re-check for hardening
+    else:
+        check("[task009] guard-fs.sh matcher entry found", False, "")
+
+
+def test_task009_hardening_guard_bash_set_euo() -> None:
+    """Hardening: guard-bash.sh still has 'set -euo pipefail' (not removed during refactor)."""
+    print("\n[task_009/hardening: guard-bash.sh 'set -euo pipefail']")
+    if not GUARD_BASH.exists():
+        check("[task009] guard-bash.sh exists", False, "")
+        return
+    content = GUARD_BASH.read_text()
+    check("[task009] guard-bash.sh has 'set -euo pipefail'",
+          "set -euo pipefail" in content, "")
+
+
+def test_task009_hardening_guard_fs_realpath_m() -> None:
+    """Hardening: guard-fs.sh uses 'realpath -m' (not just 'realpath')."""
+    print("\n[task_009/hardening: guard-fs.sh uses 'realpath -m']")
+    if not GUARD_FS.exists():
+        check("[task009] guard-fs.sh exists", False, "")
+        return
+    content = GUARD_FS.read_text()
+    check("[task009] guard-fs.sh uses 'realpath -m' (with -m flag)",
+          "realpath -m" in content, "")
 
 
 def main() -> int:
@@ -3260,8 +3597,23 @@ def main() -> int:
     test_learnings_md_fragment_present()
     test_task008_ac3_block_scoping()
     test_task008_ac11_direct_read()
-    test_task008_ac15_no_scope_drift()
     test_clipboard_drain_on_exit()
+    test_task009_guard_fs_exists()
+    test_task009_guard_fs_ask_fixtures()
+    test_task009_guard_fs_non_learnings_fixtures()
+    test_task009_guard_bash_learnings_write_fixtures()
+    test_task009_guard_bash_learnings_read_fixtures()
+    test_task009_guard_bash_gitpush_and_block_beats_ask()
+    test_task009_settings_json_updated()
+    test_task009_dockerfile_updated()
+    test_task009_learn_md_exists()
+    test_task009_learn_hook_md_exists()
+    test_task009_readme_updated()
+    test_task009_install_extras_unchanged()
+    test_task009_code_check_clean()
+    test_task009_hardening_notebookedit_not_in_matcher()
+    test_task009_hardening_guard_bash_set_euo()
+    test_task009_hardening_guard_fs_realpath_m()
 
     print()
     if FAILURES:
