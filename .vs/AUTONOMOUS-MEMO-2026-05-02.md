@@ -8,7 +8,7 @@
 
 ## Headline summary
 
-**Shipped 10 commits, +135 smoke checks (525 → 660+), +3 shellcheck files (11 → 14).**
+**Shipped 12 commits, +130 smoke checks (525 → 655), +3 shellcheck files (11 → 14).**
 
 Major items:
 - **`check-numbering.sh` Stop hook** — fixes the dangling reference that printed "Stop hook error: ... script not found" at every turn.
@@ -35,9 +35,11 @@ What I left alone:
 
 ---
 
-## Commits this session
+## Commits this session (newest first)
 
 ```
+920e636 README: surface the new Stop hooks + retire shipped Coming-soon item
+8a0bdc8 TODO + memo update: /expaste subsumed by copy-last-block.sh
 772241e smoke: extend install_hooks test to cover all shipped hooks
 5846a49 ship copy-last-block.sh Stop hook (auto-clipboard)
 9afffeb add .vs/README.md + autonomous session memo
@@ -49,8 +51,6 @@ aaec89b ship /sp Superpowers methodology slash command
 0d4bb51 fix(vibe): ~/.vibe/skipped persistence — match canonical paths
 00a942e ship check-numbering.sh Stop hook + commit parked parse_vibe_args fix
 ```
-
-Plus this memo + the `/expaste`-subsumed TODO update (separate commit at end of session).
 
 ---
 
@@ -144,7 +144,35 @@ Picked from `TODO.md` open block, prioritised by: (a) finishable solo in <30 min
 - Was only checking `check-numbering.sh` got synced. Extended to cover both shipped hooks plus an assertion that README.md is NOT installed (verifies install_hooks correctly globs only `*.sh`).
 
 ### 23:44 UTC — verification 2
-- 14/14 shellcheck files clean (was 11). 660+ smoke checks pass (was 525). Ten new commits in session.
+- 14/14 shellcheck files clean (was 11). 655 smoke checks pass (was 525). Twelve new commits in session.
+
+### 23:48 UTC — TODO + README polish
+- `/expaste` open entry rewritten to point at `copy-last-block.sh` as the resolution path; remaining open work narrowed to three concrete decisions (RETIRED_COMMANDS expaste.md? document migration path? value of explicit-checkpoint shape?).
+- README's slash-commands paragraph gains a "two opt-in Stop hooks" sentence.
+- `Coming soon` section retires the auto-copy entry now that copy-last-block.sh ships.
+
+### 23:49 UTC — final state
+- `git status` clean except for Martin's artifacts (Ghostty screenshots, XAP/).
+- `python3 code-check.py` exits 0 across 14 files. `python3 smoke-test.py` exits 0 with 655 passing checks, 0 failures.
+- Live container: `install-claude-extras.sh` re-run installs both hooks under `/home/node/.claude/hooks/` (`check-numbering.sh`, `copy-last-block.sh`); commands dir now has `sp.md` synced; the dangling-reference noise in this session ended at 23:16 UTC when `check-numbering.sh` first reached `~/.claude/hooks/`.
+
+## Closing
+
+Twelve commits, 130 new smoke checks, three new shell files in scope. The
+biggest unblock is probably the `~/.vibe/skipped` canonical-path fix
+(real bug Martin had been hitting). The biggest forward step is the
+`copy-last-block.sh` Stop hook — it removes the LLM round-trip from the
+common copy case while keeping `/c <pattern>` as override for specific
+older blocks.
+
+Two follow-up TODO entries remain that are still bounded enough for the
+next session: `vibe: wire check-sp-current.sh into vibe --rebuild` and
+`vibe: decide whether to retire user-state expaste.md via RETIRED_COMMANDS`.
+
+Memo handed off at 23:50 UTC = 00:50 BST = ~1h ahead of the 01:50 BST
+deadline. Used the buffer for final verification and polish rather than
+starting another medium-sized task that might have left an unstable
+state behind.
 
 ### Note on parked working tree (not mine)
 The repo had two pre-existing uncommitted task chunks before I started:
