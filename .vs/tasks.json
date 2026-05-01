@@ -70,5 +70,24 @@
     "assigned_to": "evaluator",
     "mode": "rigorous",
     "last_modified": "2026-04-26T18:30:00Z"
+  },
+  {
+    "id": "task_013",
+    "description": "/vs intelligent Spec Critic iteration cap (convergence/plateau/divergence + --max-iter flag, replaces hardcoded max 2)",
+    "implementation_status": "complete",
+    "test_status": "failing",
+    "assigned_to": "parked",
+    "mode": "rigorous",
+    "last_modified": "2026-04-27T00:00:00Z",
+    "parked_note": "Cycle 1 Step 6 escalation: AC10 spec defect (diff.patch from git diff includes Planner bookkeeping in .vs/spec.md + .vs/tasks.json, which AC10 didn't whitelist). 18/19 task_013 checks pass; only AC10 fails. Resume options documented in TODO.md task_013 entry."
+  },
+  {
+    "id": "task_014",
+    "description": "Per-project Claude projects/ bind: each host project gets its own /home/node/.claude/projects/ inside the container so vibe X --continue scopes by project, not globally",
+    "implementation_status": "pending",
+    "test_status": "pending",
+    "assigned_to": "planner",
+    "mode": "rigorous",
+    "last_modified": "2026-04-29T00:00:00Z"
   }
 ]

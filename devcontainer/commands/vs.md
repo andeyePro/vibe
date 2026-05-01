@@ -25,6 +25,7 @@ Spec Critic runs **once at task start**, before user approval. It does not re-ru
 - `/vs --max N <prompt>` — override the cycle ceiling. Default is whatever Planner proposes.
 - `/vs --fuzzy <prompt>` — run in fuzzy mode (Reviewer replaces Tester). Combinable with `--max`.
 - `/vs --cost <prompt>` — opt in to token-spend logging for this run only. Off by default. See Token-spend logging section for the trade-off (subagent tokens auto-captured; Opus Director/Evaluator tokens are NOT trackable from inside a session and require manual entry via `/cost`).
+- `/vs --max-iter N <prompt>` — cap the Spec Critic loop at N iterations. Distinct from `--max` (which is the cycle ceiling); `--max-iter` controls only the Spec Critic loop. If the cap fires before convergence, Planner escalates to the user — does not silently auto-pass.
 
 ## State directory: `.vs/`
 
@@ -109,7 +110,22 @@ Spawn `Agent(subagent_type: "general-purpose", model: "sonnet")`:
 - Under-specified failure modes.
 - Output `.vs/cycle-1/spec-critique.md` with **Concerns** (numbered, with AC#) and **Verdict** (`pass` or `revise`).
 
-Planner reads critique. If `revise`, update spec, re-spawn critic (max 2 iterations). If `pass` or max hit, append task to `TODO.md` Open, show final spec + `spec critic: pass after N iteration(s)` note to user. Wait for approval. In fuzzy mode the user note also includes `mode: --fuzzy`.
+Planner reads critique and applies these stopping rules in priority order:
+
+**Convergence** (good case): iterate until Spec Critic returns `pass`. There is no hardcoded cap — the loop runs as many iterations as the spec needs to reach `pass`.
+
+**Plateau detection**: if iter-N's BLOCKING-concern set is substantively identical to iter-(N-1)'s, the Spec Critic plateaued at iter-N and looping again will not help. Stop the loop and surface three options to the user:
+- (a) accept residuals — proceed to Generator with the spec as-is
+- (b) restart with a revised brief — user rewrites the spec direction; cycle resets to iter-1
+- (c) drop the task — stop here, mark abandoned in TODO.md
+
+Do NOT auto-pass on a plateau. Escalate.
+
+**Divergence detection**: if the Spec Critic divergent pattern emerges — concern count growing across three consecutive iterations — the brief is structurally wrong. Stop and tell the user. Suggest rewriting the spec from scratch. Do NOT auto-pass.
+
+**`--max-iter N` cap**: if the cap fires before convergence, do NOT silently auto-pass. Escalate to the user using the same plateau-style options above (a/b/c).
+
+On `pass` (by any rule path): append task to `TODO.md` Open, show final spec + `spec critic: pass after N iteration(s)` note to user. Wait for approval. In fuzzy mode the user note also includes `mode: --fuzzy`.
 
 ## Step 4 — Generate (Sonnet Generator subagent)
 
