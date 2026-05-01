@@ -38,6 +38,7 @@ VIBE_COPY_WATCHER = REPO / "vibe-copy-watcher.sh"
 WEB_RESEARCH_MD = REPO / "devcontainer" / "claude-md" / "web-research.md"
 SSH_DISCIPLINE_MD = REPO / "devcontainer" / "claude-md" / "ssh-discipline.md"
 VS_MD = REPO / "devcontainer" / "commands" / "vs.md"
+SP_MD = REPO / "devcontainer" / "commands" / "sp.md"
 CYCLE_1_DIFF = REPO / ".vs" / "cycle-1" / "diff.patch"
 
 FAILURES: list[tuple[str, str]] = []
@@ -3754,6 +3755,48 @@ def test_task013_diff_scope() -> None:
               f"touched: {', '.join(sorted(touched_paths))}")
 
 
+# ── /sp slash command tests ────────────────────────────────────────────────────
+
+
+def test_sp_md_present_and_complete() -> None:
+    """sp.md is shipped and references the seven Superpowers core skills."""
+    print("\n[/sp: sp.md present + complete]")
+    check("[sp] sp.md exists", SP_MD.exists(), str(SP_MD))
+    if not SP_MD.exists():
+        return
+    content = SP_MD.read_text()
+    check("[sp] frontmatter description present",
+          "description: Apply Superpowers methodology" in content,
+          "missing description in frontmatter")
+    expected_skills = [
+        "superpowers:brainstorming",
+        "superpowers:writing-plans",
+        "superpowers:subagent-driven-development",
+        "superpowers:test-driven-development",
+        "superpowers:requesting-code-review",
+        "superpowers:finishing-a-development-branch",
+        "superpowers:using-git-worktrees",
+    ]
+    for skill in expected_skills:
+        check(f"[sp] mentions {skill}", skill in content,
+              f"missing skill: {skill}")
+    check("[sp] documents official marketplace install",
+          "claude-plugins-official" in content, "")
+    check("[sp] documents fallback obra marketplace",
+          "obra/superpowers-marketplace" in content, "")
+
+
+def test_sp_md_referenced_from_readme() -> None:
+    """README mentions /sp so users can discover it."""
+    print("\n[/sp: README mentions /sp]")
+    readme = REPO / "README.md"
+    check("[sp] README.md exists", readme.exists(), str(readme))
+    if not readme.exists():
+        return
+    content = readme.read_text()
+    check("[sp] README mentions `/sp`", "/sp" in content, "")
+
+
 # ── ~/.vibe/skipped persistence tests ──────────────────────────────────────────
 
 
@@ -4197,6 +4240,8 @@ def main() -> int:
     test_task013_vs_md_max_iter_flag()
     test_task013_no_hardcoded_cap_string()
     test_task013_diff_scope()
+    test_sp_md_present_and_complete()
+    test_sp_md_referenced_from_readme()
     test_skipped_marker_round_trip()
     test_skipped_marker_trailing_slash()
     test_skipped_marker_symlink_path()
