@@ -4,6 +4,56 @@
 
 **Brief:** "work through as many TODO's as you can autonomously and work on self improvement, refactoring and perfecting vibe and /vs by yourself until 01:50 BST".
 
+---
+
+## Headline summary
+
+**Shipped 10 commits, +135 smoke checks (525 → 660+), +3 shellcheck files (11 → 14).**
+
+Major items:
+- **`check-numbering.sh` Stop hook** — fixes the dangling reference that printed "Stop hook error: ... script not found" at every turn.
+- **`copy-last-block.sh` Stop hook** — auto-extracts the LAST fenced code block per turn, writes to `/workspace/.vibe/copy-latest.txt` for `pbcopy`. Eliminates `/c` round-trips for the common case. Per-turn opt-out via `<!-- vibe: no-copy -->`. Per-user opt-in via `~/.claude/settings.json`.
+- **`~/.vibe/skipped` persistence fix** — the "never" reply to GitHub-prompt now matches across symlink-equivalent paths and trailing-slash variants. Was failing for users with macOS Dropbox/iCloud mirror dirs.
+- **`/sp` slash command shipped** — was untracked since 2026-04-27. Now in HEAD with README mention + 13 smoke checks.
+- **`check-sp-current.sh` upstream-drift probe** — detects when `sp.md` skill list drifts from `obra/superpowers/skills/`. Online + `--offline` + `--fixture` modes; fails soft on missing curl/jq/network.
+- **`task_013` cycle-1 accepted** — picked option (b) of the parked TODO; feature work (Spec Critic intelligent stopping rules) committed; AC10 process-defect documented as benign.
+- **Parked `parse_vibe_args` flag-parser fix committed** — was sitting uncommitted in working tree since 2026-04-29; tests pass; bundled with hook commit.
+- **`.vs/README.md`** — documents the `/vs` harness state directory for future contributors.
+
+Housekeeping:
+- Softened the README cross-org learning library blurb to match reality (capture is manual; auto-promotion is planned).
+- `.gitignore` covers `__pycache__/` and `*.pyc`.
+- Retired one obsolete TODO entry (`vibe: in-container /learn slash command` — task_009 already shipped it).
+- Retired one stale freeze-anchored test (`test_task009_install_extras_unchanged`) following the auto-memory rule.
+
+What I left alone:
+- The two Ghostty screenshot JPGs at repo root — Martin's; not mine to commit.
+- The `XAP/` untracked directory — Martin's standards work; not vibe scope.
+- Several big multi-cycle `/vs` tasks (task_010-012, language profiles, --TDD mode, Green-AI backend, etc.) — too large for the time budget.
+- The Mac-host zshrc wrapper bugs — host-shell work, can't fix from inside the container.
+- `~/.claude/commands/expaste.md` in user state — the new copy-last-block.sh subsumes its use case but I didn't auto-delete user-customised commands.
+
+---
+
+## Commits this session
+
+```
+772241e smoke: extend install_hooks test to cover all shipped hooks
+5846a49 ship copy-last-block.sh Stop hook (auto-clipboard)
+9afffeb add .vs/README.md + autonomous session memo
+503231b README + .gitignore housekeeping
+84b7b36 ship check-sp-current.sh - /sp upstream drift probe
+88cedec TODO: retire obsolete in-container /learn entry
+aaec89b ship /sp Superpowers methodology slash command
+0b84199 accept task_013 cycle-1 (intelligent Spec Critic stopping rules)
+0d4bb51 fix(vibe): ~/.vibe/skipped persistence — match canonical paths
+00a942e ship check-numbering.sh Stop hook + commit parked parse_vibe_args fix
+```
+
+Plus this memo + the `/expaste`-subsumed TODO update (separate commit at end of session).
+
+---
+
 ## Pre-flight
 
 - Saved memory `feedback_default_to_local_time_for_uk_user.md` — both this session and the parallel ClaudeHarness session defaulted to UTC when Martin said "01:50". Future sessions will assume BST/GMT for UK wall-clock without TZ.
@@ -65,9 +115,36 @@ Picked from `TODO.md` open block, prioritised by: (a) finishable solo in <30 min
 ### 23:32 UTC — TODO housekeeping
 - Removed obsolete `vibe: in-container /learn slash command` open entry. task_009 (Done block, 2026-04-26) shipped exactly the feature this entry described as "follow-up". Open count went from 27 to 25 over the session.
 
-### 23:35 UTC — final verification
+### 23:35 UTC — verification 1
 - 617 smoke checks pass (was 525 at start). 12/12 shellcheck files clean (was 11). Five new commits (`88cedec`, `aaec89b`, `0b84199`, `0d4bb51`, `00a942e`).
 - Live install verified: hook responds correctly to mixed-list synthetic transcript. install-claude-extras.sh idempotent across re-runs.
+
+### 23:38 UTC — task: ship `check-sp-current.sh` upstream drift probe
+- Wrote new `devcontainer/check-sp-current.sh` (online / `--offline` / `--fixture` modes). Extracts hardcoded skills from sp.md via `grep -oE 'superpowers:[a-z][a-z0-9-]*'`, fetches upstream `obra/superpowers/contents/skills` via the GitHub API (curl + jq, 10s timeout), comm-diffs the two sets, prints stderr summary distinguishing missing vs extra. Always exits 0 in informational paths; exit 1 only on usage errors.
+- Fails soft when curl / jq / network missing.
+- 18 new smoke checks. 13/13 shellcheck files clean (was 12).
+- Auto-invocation from `vibe --rebuild` deferred to a follow-up TODO.
+
+### 23:39 UTC — README + .gitignore housekeeping
+- Softened the cross-org learning library README blurb to match reality (capture is manual; auto-promotion is a planned follow-up). Was overpromising per a 2026-04-25 user-raised TODO.
+- Added `__pycache__/` and `*.pyc` to .gitignore (smoke-test/code-check Python byproducts).
+
+### 23:40 UTC — `.vs/README.md` + session memo
+- Wrote `.vs/README.md` documenting the `/vs` harness state directory: tracked vs gitignored files, lifecycle, parked-task resumption protocol, "don't commit cycle-N artifacts" rule.
+
+### 23:42 UTC — task: ship `copy-last-block.sh` Stop hook
+- Stop hook that auto-extracts the LAST fenced code block from the assistant turn and writes to `/workspace/.vibe/copy-latest.txt` for the host-side `vibe-copy-watcher.sh` to `pbcopy`. Eliminates the `/c` LLM round-trip for the common case.
+- Per-turn opt-out via the literal sentinel `<!-- vibe: no-copy -->` anywhere in the message.
+- Per-user opt-in via `~/.claude/settings.json` Stop-hook reference. Vibe does not auto-edit user settings.
+- bash + jq + awk state machine (handles language-tag stripping on the opening fence, multi-line preservation, multi-block last-wins). Falls back gracefully on missing transcript / empty stdin / no fenced blocks.
+- 17 new smoke checks (file shape, single block, language-tag stripped, multi-block last-wins, no-fence no-write, opt-out marker, multi-line preservation, empty stdin).
+- `devcontainer/hooks/README.md` rewritten as a multi-hook landing page covering both hooks with enable snippets and trade-off discussion.
+
+### 23:44 UTC — extend `install_hooks` test
+- Was only checking `check-numbering.sh` got synced. Extended to cover both shipped hooks plus an assertion that README.md is NOT installed (verifies install_hooks correctly globs only `*.sh`).
+
+### 23:44 UTC — verification 2
+- 14/14 shellcheck files clean (was 11). 660+ smoke checks pass (was 525). Ten new commits in session.
 
 ### Note on parked working tree (not mine)
 The repo had two pre-existing uncommitted task chunks before I started:
