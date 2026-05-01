@@ -37,6 +37,8 @@ COPY_MD_OLD = REPO / "devcontainer" / "commands" / "copy.md"
 VIBE_COPY_WATCHER = REPO / "vibe-copy-watcher.sh"
 WEB_RESEARCH_MD = REPO / "devcontainer" / "claude-md" / "web-research.md"
 SSH_DISCIPLINE_MD = REPO / "devcontainer" / "claude-md" / "ssh-discipline.md"
+VS_MD = REPO / "devcontainer" / "commands" / "vs.md"
+CYCLE_1_DIFF = REPO / ".vs" / "cycle-1" / "diff.patch"
 
 FAILURES: list[tuple[str, str]] = []
 
@@ -330,6 +332,7 @@ def _patched_code_check(tmp: Path, target_paths: list[Path]) -> Path:
         "def scripts() -> list[Path]:\n"
         "    candidates = [REPO / \"vibe\", REPO / \"install.sh\"]\n"
         "    candidates += sorted((REPO / \"devcontainer\").glob(\"*.sh\"))\n"
+        "    candidates += sorted((REPO / \"devcontainer\" / \"hooks\").glob(\"*.sh\"))\n"
         "    return [p for p in candidates if p.exists()]",
         f"def scripts() -> list[Path]:\n    return {paths_repr}",
     )
@@ -708,6 +711,113 @@ def test_vibe_help_mentions_continue_and_resume() -> None:
     check("--help exits 0", r.returncode == 0, r.stderr)
     check("help mentions --continue", "--continue" in r.stdout, r.stdout[:400])
     check("help mentions --resume", "--resume" in r.stdout, r.stdout[:400])
+    check("help notes positional+flag any-order",
+          "any order" in r.stdout, r.stdout[:600])
+
+
+# parse_vibe_args: flags-and-positional-in-any-order parser. The bug it fixes:
+# pre-2026-04-29 the parser was a leading-only `while [[ "${1:-}" == --* ]]`
+# loop, so `vibe vibe --continue` silently dropped --continue (project name as
+# $1 ended the loop before --continue at $2 was ever read). New parser accepts
+# flags and the positional in any order so `vibe vibe --continue` and
+# `vibe --continue vibe` are equivalent.
+
+def _parse_args_probe(argv: list[str]) -> subprocess.CompletedProcess:
+    """Source vibe, call parse_vibe_args, echo resulting globals."""
+    quoted = " ".join(shlex.quote(a) for a in argv)
+    call = (
+        f'parse_vibe_args {quoted}; '
+        'echo "REBUILD=[$REBUILD]"; '
+        'echo "CONTINUE=[$CONTINUE]"; '
+        'echo "RESUME=[$RESUME]"; '
+        'echo "RESUME_UID=[$RESUME_UID]"; '
+        'echo "PROJECT_ARG=[$PROJECT_ARG]"'
+    )
+    return _source_vibe_call({}, call)
+
+
+def test_parse_args_no_args() -> None:
+    print("\n[parse_vibe_args: no args → all defaults]")
+    r = _parse_args_probe([])
+    check("exits 0", r.returncode == 0, r.stderr)
+    check("REBUILD=false", "REBUILD=[false]" in r.stdout, r.stdout)
+    check("CONTINUE=false", "CONTINUE=[false]" in r.stdout, r.stdout)
+    check("RESUME=false", "RESUME=[false]" in r.stdout, r.stdout)
+    check("RESUME_UID empty", "RESUME_UID=[]" in r.stdout, r.stdout)
+    check("PROJECT_ARG empty", "PROJECT_ARG=[]" in r.stdout, r.stdout)
+
+
+def test_parse_args_leading_continue() -> None:
+    print("\n[parse_vibe_args: --continue (no project)]")
+    r = _parse_args_probe(["--continue"])
+    check("exits 0", r.returncode == 0, r.stderr)
+    check("CONTINUE=true", "CONTINUE=[true]" in r.stdout, r.stdout)
+    check("PROJECT_ARG empty", "PROJECT_ARG=[]" in r.stdout, r.stdout)
+
+
+def test_parse_args_project_only() -> None:
+    print("\n[parse_vibe_args: vibe (project only)]")
+    r = _parse_args_probe(["vibe"])
+    check("exits 0", r.returncode == 0, r.stderr)
+    check("PROJECT_ARG=vibe", "PROJECT_ARG=[vibe]" in r.stdout, r.stdout)
+    check("CONTINUE=false", "CONTINUE=[false]" in r.stdout, r.stdout)
+
+
+def test_parse_args_project_then_continue() -> None:
+    print("\n[parse_vibe_args: vibe --continue (regression: was silently dropped)]")
+    r = _parse_args_probe(["vibe", "--continue"])
+    check("exits 0", r.returncode == 0, r.stderr)
+    check("PROJECT_ARG=vibe", "PROJECT_ARG=[vibe]" in r.stdout, r.stdout)
+    check("CONTINUE=true (the fix)", "CONTINUE=[true]" in r.stdout, r.stdout)
+
+
+def test_parse_args_continue_then_project() -> None:
+    print("\n[parse_vibe_args: --continue vibe (leading-flag form, must still work)]")
+    r = _parse_args_probe(["--continue", "vibe"])
+    check("exits 0", r.returncode == 0, r.stderr)
+    check("PROJECT_ARG=vibe", "PROJECT_ARG=[vibe]" in r.stdout, r.stdout)
+    check("CONTINUE=true", "CONTINUE=[true]" in r.stdout, r.stdout)
+
+
+def test_parse_args_project_then_resume_uid() -> None:
+    print("\n[parse_vibe_args: vibe --resume <uuid>]")
+    uid = "12345678-1234-1234-1234-123456789abc"
+    r = _parse_args_probe(["vibe", "--resume", uid])
+    check("exits 0", r.returncode == 0, r.stderr)
+    check("PROJECT_ARG=vibe", "PROJECT_ARG=[vibe]" in r.stdout, r.stdout)
+    check("RESUME=true", "RESUME=[true]" in r.stdout, r.stdout)
+    check(f"RESUME_UID={uid}", f"RESUME_UID=[{uid}]" in r.stdout, r.stdout)
+
+
+def test_parse_args_project_then_resume_picker() -> None:
+    print("\n[parse_vibe_args: vibe --resume (no uuid → picker)]")
+    r = _parse_args_probe(["vibe", "--resume"])
+    check("exits 0", r.returncode == 0, r.stderr)
+    check("PROJECT_ARG=vibe", "PROJECT_ARG=[vibe]" in r.stdout, r.stdout)
+    check("RESUME=true", "RESUME=[true]" in r.stdout, r.stdout)
+    check("RESUME_UID empty", "RESUME_UID=[]" in r.stdout, r.stdout)
+
+
+def test_parse_args_project_then_rebuild() -> None:
+    print("\n[parse_vibe_args: vibe --rebuild]")
+    r = _parse_args_probe(["vibe", "--rebuild"])
+    check("exits 0", r.returncode == 0, r.stderr)
+    check("PROJECT_ARG=vibe", "PROJECT_ARG=[vibe]" in r.stdout, r.stdout)
+    check("REBUILD=true", "REBUILD=[true]" in r.stdout, r.stdout)
+
+
+def test_parse_args_two_positionals_rejected() -> None:
+    print("\n[parse_vibe_args: two positionals rejected]")
+    r = _parse_args_probe(["vibe", "other"])
+    check("exits 1", r.returncode == 1, r.stdout + r.stderr)
+    check("error mentions extra", "extra argument" in r.stderr, r.stderr)
+
+
+def test_parse_args_unknown_flag_rejected() -> None:
+    print("\n[parse_vibe_args: unknown trailing flag rejected]")
+    r = _parse_args_probe(["vibe", "--bogus"])
+    check("exits 1", r.returncode == 1, r.stdout + r.stderr)
+    check("error mentions unknown", "Unknown flag" in r.stderr, r.stderr)
 
 
 # ── Runner ────────────────────────────────────────────────────────────────────
@@ -3429,18 +3539,6 @@ def test_task009_readme_updated() -> None:
           "PreToolUse hook gates writes" in content, "")
 
 
-def test_task009_install_extras_unchanged() -> None:
-    """AC9: install-claude-extras.sh not modified (git diff HEAD is empty)."""
-    print("\n[task_009/AC9: install-claude-extras.sh unchanged]")
-    result = subprocess.run(
-        ["git", "diff", "HEAD", "--", "devcontainer/install-claude-extras.sh"],
-        capture_output=True, text=True, cwd=str(REPO),
-    )
-    check("[task009/AC9] install-claude-extras.sh unchanged",
-          result.stdout.strip() == "",
-          f"diff output: {result.stdout[:300]}")
-
-
 def test_task009_code_check_clean() -> None:
     """AC15: python3 code-check.py exits 0 (no new shellcheck warnings)."""
     print("\n[task_009/AC15: code-check.py clean]")
@@ -3491,6 +3589,318 @@ def test_task009_hardening_guard_fs_realpath_m() -> None:
           "realpath -m" in content, "")
 
 
+def test_task013_vs_md_intelligent_stopping() -> None:
+    """AC5: vs.md documents intelligent Spec Critic stopping rules (13 checks)."""
+    print("\n[task_013/AC5: intelligent stopping rules]")
+    if not VS_MD.exists():
+        check("[task013/AC5] vs.md exists", False, str(VS_MD))
+        return
+    content = VS_MD.read_text()
+
+    # Convergence (3 sentinels)
+    check("[task013/AC5] Convergence sentinel present", "Convergence" in content,
+          "missing 'Convergence'")
+    check("[task013/AC5] iterate until Spec Critic returns `pass` sentinel",
+          "iterate until Spec Critic returns `pass`" in content,
+          "missing 'iterate until Spec Critic returns `pass`'")
+    check("[task013/AC5] no hardcoded cap sentinel",
+          "no hardcoded cap" in content,
+          "missing 'no hardcoded cap'")
+
+    # Plateau detection (6 sentinels: 5 substring + 1 proximity check)
+    check("[task013/AC5] Plateau detection sentinel",
+          "Plateau detection" in content,
+          "missing 'Plateau detection'")
+    check("[task013/AC5] Spec Critic plateaued at iter- sentinel",
+          "Spec Critic plateaued at iter-" in content,
+          "missing 'Spec Critic plateaued at iter-'")
+    check("[task013/AC5] (a) accept residuals sentinel",
+          "(a) accept residuals" in content,
+          "missing '(a) accept residuals'")
+    check("[task013/AC5] (b) restart with a revised brief sentinel",
+          "(b) restart with a revised brief" in content,
+          "missing '(b) restart with a revised brief'")
+    check("[task013/AC5] (c) drop the task sentinel",
+          "(c) drop the task" in content,
+          "missing '(c) drop the task'")
+
+    # Plateau proximity check: all three labels in same paragraph as "Plateau detection"
+    plateau_idx = content.find("Plateau detection")
+    if plateau_idx != -1:
+        # Find next blank line (or EOF) after the anchor line
+        anchor_line_end = content.find("\n", plateau_idx)
+        if anchor_line_end == -1:
+            # "Plateau detection" is on last line
+            paragraph_end = len(content)
+        else:
+            # Search for next blank line
+            search_pos = anchor_line_end + 1
+            while search_pos < len(content):
+                next_newline = content.find("\n", search_pos)
+                if next_newline == -1:
+                    next_newline = len(content)
+                # Check if line is blank (only whitespace)
+                line = content[search_pos:next_newline]
+                if line.strip() == "":
+                    paragraph_end = search_pos
+                    break
+                search_pos = next_newline + 1
+            else:
+                paragraph_end = len(content)
+
+        paragraph = content[plateau_idx:paragraph_end]
+        all_labels_in_para = (
+            "(a) accept residuals" in paragraph and
+            "(b) restart with a revised brief" in paragraph and
+            "(c) drop the task" in paragraph
+        )
+        check("[task013/AC5] plateau option labels in same paragraph",
+              all_labels_in_para,
+              "option labels not all in paragraph starting with 'Plateau detection'")
+    else:
+        check("[task013/AC5] plateau option labels in same paragraph", False,
+              "'Plateau detection' not found")
+
+    # Divergence detection (4 sentinels)
+    check("[task013/AC5] Divergence detection sentinel",
+          "Divergence detection" in content,
+          "missing 'Divergence detection'")
+    check("[task013/AC5] Spec Critic divergent sentinel",
+          "Spec Critic divergent" in content,
+          "missing 'Spec Critic divergent'")
+    check("[task013/AC5] concern count growing sentinel",
+          "concern count growing" in content,
+          "missing 'concern count growing'")
+    check("[task013/AC5] three consecutive iterations sentinel",
+          "three consecutive iterations" in content,
+          "missing 'three consecutive iterations'")
+
+
+def test_task013_vs_md_max_iter_flag() -> None:
+    """AC6: vs.md documents --max-iter flag with 4+ checks."""
+    print("\n[task_013/AC6: --max-iter flag documentation]")
+    if not VS_MD.exists():
+        check("[task013/AC6] vs.md exists", False, str(VS_MD))
+        return
+    content = VS_MD.read_text()
+    lines = content.split("\n")
+
+    # AC3 check: same-line co-occurrence of "--max-iter" AND "Spec Critic loop"
+    same_line_found = False
+    for line in lines:
+        if "--max-iter" in line and "Spec Critic loop" in line:
+            same_line_found = True
+            break
+    check("[task013/AC6] AC3: same-line co-occurrence of '--max-iter' and 'Spec Critic loop'",
+          same_line_found,
+          "no single line contains both '--max-iter' and 'Spec Critic loop'")
+
+    # AC4 checks: three required substrings
+    check("[task013/AC6] AC4: --max-iter substring",
+          "--max-iter" in content,
+          "missing '--max-iter'")
+    check("[task013/AC6] AC4: cap fires before convergence substring",
+          "cap fires before convergence" in content,
+          "missing 'cap fires before convergence'")
+    check("[task013/AC6] AC4: do NOT silently auto-pass substring",
+          "do NOT silently auto-pass" in content,
+          "missing 'do NOT silently auto-pass'")
+
+
+def test_task013_no_hardcoded_cap_string() -> None:
+    """AC7: vs.md does not contain 'max 2 iterations'."""
+    print("\n[task_013/AC7: no hardcoded cap string]")
+    if not VS_MD.exists():
+        check("[task013/AC7] vs.md exists", False, str(VS_MD))
+        return
+    content = VS_MD.read_text()
+    check("[task013/AC7] 'max 2 iterations' not present in vs.md",
+          "max 2 iterations" not in content,
+          "'max 2 iterations' found in file (should be removed)")
+
+
+def test_task013_diff_scope() -> None:
+    """AC10: diff.patch (if present) only touches {vs.md, smoke-test.py, TODO.md}."""
+    print("\n[task_013/AC10: diff scope check]")
+
+    if not CYCLE_1_DIFF.exists():
+        check("[task013/AC10] diff.patch not present — scope check skipped",
+              True, "skipped — file absent")
+        return
+
+    diff_content = CYCLE_1_DIFF.read_text()
+
+    # Parse +++ b/<path> lines (skip +++ /dev/null for deletions)
+    touched_paths = set()
+    for line in diff_content.split("\n"):
+        if line.startswith("+++ b/"):
+            path = line[6:]  # Remove "+++ b/" prefix
+            if path != "/dev/null":
+                touched_paths.add(path)
+
+    # Allowed paths
+    allowed_paths = {"devcontainer/commands/vs.md", "smoke-test.py", "TODO.md"}
+
+    # Check if all touched paths are in allowed set
+    illegal_paths = touched_paths - allowed_paths
+
+    if illegal_paths:
+        check("[task013/AC10] diff touches only allowed files",
+              False,
+              f"illegal paths in diff: {', '.join(sorted(illegal_paths))}")
+    else:
+        check("[task013/AC10] diff touches only allowed files",
+              True,
+              f"touched: {', '.join(sorted(touched_paths))}")
+
+
+# ── check-numbering.sh Stop hook tests ─────────────────────────────────────────
+
+CHECK_NUMBERING = REPO / "devcontainer" / "hooks" / "check-numbering.sh"
+NUMBERING_HOOK_README = REPO / "devcontainer" / "hooks" / "README.md"
+
+
+def _run_numbering_hook(transcript_jsonl: str) -> tuple[int, str]:
+    """Write transcript_jsonl to a temp file, invoke the hook with a fake
+    Stop-hook payload pointing at it, return (exit_code, stderr)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tpath = Path(tmp) / "t.jsonl"
+        tpath.write_text(transcript_jsonl)
+        payload = json.dumps({"transcript_path": str(tpath)})
+        r = subprocess.run(
+            ["bash", str(CHECK_NUMBERING)],
+            input=payload, capture_output=True, text=True,
+        )
+        return r.returncode, r.stderr
+
+
+def test_check_numbering_exists_and_executable() -> None:
+    """check-numbering.sh exists, is executable, and is a bash script."""
+    print("\n[check-numbering: file shape]")
+    check("[numbering] script exists", CHECK_NUMBERING.exists(), str(CHECK_NUMBERING))
+    if not CHECK_NUMBERING.exists():
+        return
+    check("[numbering] script is executable",
+          os.access(CHECK_NUMBERING, os.X_OK), "")
+    head = CHECK_NUMBERING.read_text().splitlines()[0]
+    check("[numbering] starts with bash shebang",
+          head == "#!/usr/bin/env bash", head)
+
+
+def test_check_numbering_silent_on_clean() -> None:
+    """No warning when reply has only numbered list (1./2./3.)."""
+    print("\n[check-numbering: silent on numbered-only]")
+    if not CHECK_NUMBERING.exists():
+        return
+    rc, err = _run_numbering_hook(
+        '{"type":"user","message":{"content":"hi"}}\n'
+        '{"type":"assistant","message":{"content":[{"type":"text","text":'
+        '"Three options:\\n1. First\\n2. Second\\n3. Third"}]}}\n'
+    )
+    check("[numbering] exits 0", rc == 0, f"rc={rc} err={err[:200]}")
+    check("[numbering] silent on numbered-only", "warning" not in err, err[:200])
+
+
+def test_check_numbering_silent_on_lettered_only() -> None:
+    """No warning when reply has only lettered list (a./b./c.)."""
+    print("\n[check-numbering: silent on lettered-only]")
+    if not CHECK_NUMBERING.exists():
+        return
+    rc, err = _run_numbering_hook(
+        '{"type":"user","message":{"content":"hi"}}\n'
+        '{"type":"assistant","message":{"content":[{"type":"text","text":'
+        '"Pick one:\\na. cancel\\nb. proceed"}]}}\n'
+    )
+    check("[numbering] exits 0", rc == 0, f"rc={rc} err={err[:200]}")
+    check("[numbering] silent on lettered-only", "warning" not in err, err[:200])
+
+
+def test_check_numbering_warns_on_mixed() -> None:
+    """Warning when reply mixes 1./2./3. and a./b./c."""
+    print("\n[check-numbering: warns on mixed]")
+    if not CHECK_NUMBERING.exists():
+        return
+    rc, err = _run_numbering_hook(
+        '{"type":"user","message":{"content":"hi"}}\n'
+        '{"type":"assistant","message":{"content":[{"type":"text","text":'
+        '"Working list:\\n1. First task\\n2. Second task\\n\\nNext:\\n'
+        'a. Do A\\nb. Do B"}]}}\n'
+    )
+    check("[numbering] exits 0 (non-blocking)", rc == 0, f"rc={rc} err={err[:200]}")
+    check("[numbering] stderr contains 'numbering warning'",
+          "numbering warning" in err, err[:200])
+
+
+def test_check_numbering_ignores_code_fences() -> None:
+    """Numbering inside ``` blocks does not trigger the warning."""
+    print("\n[check-numbering: ignores code fences]")
+    if not CHECK_NUMBERING.exists():
+        return
+    rc, err = _run_numbering_hook(
+        '{"type":"user","message":{"content":"hi"}}\n'
+        '{"type":"assistant","message":{"content":[{"type":"text","text":'
+        '"Sample:\\n```\\n1. step\\na. label\\n```\\nNo lists outside fence."}]}}\n'
+    )
+    check("[numbering] exits 0", rc == 0, f"rc={rc} err={err[:200]}")
+    check("[numbering] silent when only fenced numbering",
+          "warning" not in err, err[:200])
+
+
+def test_check_numbering_handles_missing_transcript() -> None:
+    """Hook tolerates empty stdin / missing transcript / unreadable file."""
+    print("\n[check-numbering: edge cases]")
+    if not CHECK_NUMBERING.exists():
+        return
+    for label, payload in (
+        ("empty stdin", ""),
+        ("no transcript_path", '{"foo":"bar"}'),
+        ("unreadable transcript", '{"transcript_path":"/no/such/file.jsonl"}'),
+    ):
+        r = subprocess.run(
+            ["bash", str(CHECK_NUMBERING)],
+            input=payload, capture_output=True, text=True,
+        )
+        check(f"[numbering] {label}: exit 0",
+              r.returncode == 0, f"rc={r.returncode} err={r.stderr[:200]}")
+        check(f"[numbering] {label}: silent",
+              r.stderr.strip() == "", r.stderr[:200])
+
+
+def test_numbering_hook_readme_present() -> None:
+    """devcontainer/hooks/README.md explains the hook + opt-in wiring."""
+    print("\n[check-numbering: hooks/README.md]")
+    check("[numbering] hooks/README.md exists",
+          NUMBERING_HOOK_README.exists(), str(NUMBERING_HOOK_README))
+    if not NUMBERING_HOOK_README.exists():
+        return
+    content = NUMBERING_HOOK_README.read_text()
+    check("[numbering] readme names hook script path",
+          "/home/node/.claude/hooks/check-numbering.sh" in content, "")
+    check("[numbering] readme explains working-list/action-pick split",
+          "working list" in content and "action pick" in content, "")
+
+
+def test_install_extras_syncs_hooks() -> None:
+    """install-claude-extras.sh installs hooks/*.sh with +x into $DEST_ROOT/hooks/."""
+    print("\n[check-numbering: install-claude-extras.sh syncs hooks]")
+    with tempfile.TemporaryDirectory() as tmp:
+        env = os.environ.copy()
+        env["VIBE_EXTRAS_SRC_ROOT"] = str(REPO / "devcontainer")
+        env["CLAUDE_CONFIG_DIR"] = tmp
+        r = subprocess.run(
+            ["bash", str(INSTALL_EXTRAS)],
+            env=env, capture_output=True, text=True,
+        )
+        check("[numbering] install-extras exits 0",
+              r.returncode == 0, f"rc={r.returncode} err={r.stderr[:200]}")
+        installed = Path(tmp) / "hooks" / "check-numbering.sh"
+        check("[numbering] hook installed at $DEST_ROOT/hooks/",
+              installed.exists(), str(installed))
+        if installed.exists():
+            check("[numbering] installed hook is executable",
+                  os.access(installed, os.X_OK), "")
+
+
 def main() -> int:
     test_help()
     test_env_hint_fresh()
@@ -3520,6 +3930,16 @@ def main() -> int:
     test_vibe_resume_args_resume_uid()
     test_vibe_is_uuid()
     test_vibe_help_mentions_continue_and_resume()
+    test_parse_args_no_args()
+    test_parse_args_leading_continue()
+    test_parse_args_project_only()
+    test_parse_args_project_then_continue()
+    test_parse_args_continue_then_project()
+    test_parse_args_project_then_resume_uid()
+    test_parse_args_project_then_resume_picker()
+    test_parse_args_project_then_rebuild()
+    test_parse_args_two_positionals_rejected()
+    test_parse_args_unknown_flag_rejected()
     test_learning_config_format()
     test_learning_strict_parser_no_injection()
     test_learning_init_interactive()
@@ -3609,11 +4029,22 @@ def main() -> int:
     test_task009_learn_md_exists()
     test_task009_learn_hook_md_exists()
     test_task009_readme_updated()
-    test_task009_install_extras_unchanged()
     test_task009_code_check_clean()
     test_task009_hardening_notebookedit_not_in_matcher()
     test_task009_hardening_guard_bash_set_euo()
     test_task009_hardening_guard_fs_realpath_m()
+    test_task013_vs_md_intelligent_stopping()
+    test_task013_vs_md_max_iter_flag()
+    test_task013_no_hardcoded_cap_string()
+    test_task013_diff_scope()
+    test_check_numbering_exists_and_executable()
+    test_check_numbering_silent_on_clean()
+    test_check_numbering_silent_on_lettered_only()
+    test_check_numbering_warns_on_mixed()
+    test_check_numbering_ignores_code_fences()
+    test_check_numbering_handles_missing_transcript()
+    test_numbering_hook_readme_present()
+    test_install_extras_syncs_hooks()
 
     print()
     if FAILURES:

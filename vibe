@@ -11,6 +11,11 @@
 #   vibe --resume <uuid>     # resume a specific Claude conversation by id
 #   vibe --list              # list available projects
 #   vibe --help              # show this help
+#
+# Flags and the project name can appear in any order, so e.g.
+#   vibe vibe --continue
+#   vibe --continue vibe
+# both resume the most recent conversation in the `vibe` project.
 #   vibe learn "<pattern>"   # save a cross-project pattern to your learning library
 #   vibe learn --init        # set up the learning library (one-time opt-in)
 #   vibe learn --exclude     # opt this project out of learning (creates .no-learn)
@@ -808,6 +813,50 @@ _learning_build_override_config() {
   echo "$dst"
 }
 
+# ── Argv parser ───────────────────────────────────────────────────────────────
+# parse_vibe_args "$@" - parse flags and an optional project positional in any
+# order. Sets globals REBUILD / CONTINUE / RESUME / RESUME_UID / PROJECT_ARG.
+# Errors out on unknown flags or a second positional. Defined above the
+# VIBE_SOURCE_ONLY guard so smoke-test.py can source it. Handles --list and
+# --help inline (both exit, as before).
+parse_vibe_args() {
+  REBUILD=false
+  CONTINUE=false
+  RESUME=false
+  RESUME_UID=""
+  PROJECT_ARG=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --rebuild) REBUILD=true; shift ;;
+      --continue) CONTINUE=true; shift ;;
+      --resume)
+        RESUME=true; shift
+        if is_uuid "${1:-}"; then
+          RESUME_UID="$1"; shift
+        fi
+        ;;
+      --list)
+        echo "Projects in $PROJECTS_DIR:"
+        ls "$PROJECTS_DIR"
+        exit 0
+        ;;
+      --help|-h) usage ;;
+      --*)
+        echo "Unknown flag: $1" >&2
+        exit 1
+        ;;
+      *)
+        if [ -n "$PROJECT_ARG" ]; then
+          echo "Unexpected extra argument: $1 (already have project '$PROJECT_ARG')" >&2
+          exit 1
+        fi
+        PROJECT_ARG="$1"
+        shift
+        ;;
+    esac
+  done
+}
+
 # Allow smoke-test.py to source this file for pure unit-testing of helpers
 # without running the main launch logic below.
 [ "${VIBE_SOURCE_ONLY:-}" = "1" ] && return 0 2>/dev/null
@@ -822,29 +871,9 @@ if [ "${1:-}" = "learn" ]; then
 fi
 
 # ── Flags ─────────────────────────────────────────────────────────────────────
-REBUILD=false
-CONTINUE=false
-RESUME=false
-RESUME_UID=""
-while [[ "${1:-}" == --* ]]; do
-  case "$1" in
-    --rebuild) REBUILD=true; shift ;;
-    --continue) CONTINUE=true; shift ;;
-    --resume)
-      RESUME=true; shift
-      if is_uuid "${1:-}"; then
-        RESUME_UID="$1"; shift
-      fi
-      ;;
-    --list)
-      echo "Projects in $PROJECTS_DIR:"
-      ls "$PROJECTS_DIR"
-      exit 0
-      ;;
-    --help|-h) usage ;;
-    *) echo "Unknown flag: $1"; exit 1 ;;
-  esac
-done
+# parse_vibe_args (defined above the VIBE_SOURCE_ONLY guard so smoke-test.py
+# can source-test it) accepts flags and the project positional in any order.
+parse_vibe_args "$@"
 
 if [ "$CONTINUE" = true ] && [ "$RESUME" = true ]; then
   echo "  ✗ --continue and --resume are mutually exclusive."
@@ -852,11 +881,11 @@ if [ "$CONTINUE" = true ] && [ "$RESUME" = true ]; then
 fi
 
 # ── Resolve workspace ─────────────────────────────────────────────────────────
-if [ "$#" -eq 0 ]; then
+if [ -z "$PROJECT_ARG" ]; then
   WORKSPACE="$(pwd)"
   PROJECT_NAME="$(basename "$WORKSPACE")"
 else
-  PROJECT_NAME="$1"
+  PROJECT_NAME="$PROJECT_ARG"
   if [ -d "$PROJECT_NAME" ]; then
     WORKSPACE="$(cd "$PROJECT_NAME" && pwd)"
     PROJECT_NAME="$(basename "$WORKSPACE")"

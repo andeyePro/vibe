@@ -23,6 +23,7 @@ REPO = Path(__file__).resolve().parent
 def scripts() -> list[Path]:
     candidates = [REPO / "vibe", REPO / "install.sh"]
     candidates += sorted((REPO / "devcontainer").glob("*.sh"))
+    candidates += sorted((REPO / "devcontainer" / "hooks").glob("*.sh"))
     return [p for p in candidates if p.exists()]
 
 

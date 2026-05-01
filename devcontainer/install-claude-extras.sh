@@ -35,6 +35,27 @@ install_dir() {
   done
 }
 
+# Sync executable hook scripts into $DEST_ROOT/hooks/ and ensure +x.
+# Hooks are referenced by absolute path from the user-level settings.json
+# (e.g. Stop hook calling `/home/node/.claude/hooks/check-numbering.sh`),
+# so the path must exist for the reference to resolve. User-authored
+# hook files in the destination are left untouched.
+install_hooks() {
+  local src="$SRC_ROOT/hooks"
+  local dest="$DEST_ROOT/hooks"
+
+  [ -d "$src" ] || return 0
+  mkdir -p "$dest"
+
+  local file name
+  for file in "$src"/*.sh; do
+    [ -e "$file" ] || continue
+    name=$(basename "$file")
+    cp -f "$file" "$dest/$name"
+    chmod +x "$dest/$name"
+  done
+}
+
 # Install inline-prose Claude MD fragments into a managed block at the END
 # of $DEST_ROOT/CLAUDE.md. The block is delimited by HTML comment markers
 # distinct from write-env-hint.sh's block (which sits at the TOP).
@@ -120,4 +141,5 @@ install_claude_md_fragments() {
 
 install_dir agents
 install_dir commands
+install_hooks
 install_claude_md_fragments
