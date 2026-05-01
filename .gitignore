@@ -8,5 +8,9 @@
 # macOS
 .DS_Store
 
+# Python bytecode (smoke-test.py + code-check.py)
+__pycache__/
+*.pyc
+
 # /vs per-cycle artifacts (spec.md, progress.md, tasks.json stay tracked)
 .vs/cycle-*/
