@@ -4375,7 +4375,7 @@ def test_copy_last_block_empty_stdin() -> None:
 
 def test_install_extras_syncs_hooks() -> None:
     """install-claude-extras.sh installs hooks/*.sh with +x into $DEST_ROOT/hooks/."""
-    print("\n[check-numbering: install-claude-extras.sh syncs hooks]")
+    print("\n[hooks: install-claude-extras.sh syncs every shipped hook]")
     with tempfile.TemporaryDirectory() as tmp:
         env = os.environ.copy()
         env["VIBE_EXTRAS_SRC_ROOT"] = str(REPO / "devcontainer")
@@ -4384,14 +4384,21 @@ def test_install_extras_syncs_hooks() -> None:
             ["bash", str(INSTALL_EXTRAS)],
             env=env, capture_output=True, text=True,
         )
-        check("[numbering] install-extras exits 0",
+        check("[hooks] install-extras exits 0",
               r.returncode == 0, f"rc={r.returncode} err={r.stderr[:200]}")
-        installed = Path(tmp) / "hooks" / "check-numbering.sh"
-        check("[numbering] hook installed at $DEST_ROOT/hooks/",
-              installed.exists(), str(installed))
-        if installed.exists():
-            check("[numbering] installed hook is executable",
-                  os.access(installed, os.X_OK), "")
+        for hook_name in ("check-numbering.sh", "copy-last-block.sh"):
+            installed = Path(tmp) / "hooks" / hook_name
+            check(f"[hooks] {hook_name} installed at $DEST_ROOT/hooks/",
+                  installed.exists(), str(installed))
+            if installed.exists():
+                check(f"[hooks] {hook_name} is executable",
+                      os.access(installed, os.X_OK), "")
+        # README.md should NOT be chmod'd (it's not a *.sh file but install_hooks
+        # only chmods *.sh; verify it didn't get installed at all since we
+        # don't sync non-.sh files into the hooks dir).
+        readme_installed = Path(tmp) / "hooks" / "README.md"
+        check("[hooks] README.md NOT installed (only *.sh synced)",
+              not readme_installed.exists(), str(readme_installed))
 
 
 def main() -> int:
