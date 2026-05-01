@@ -39,6 +39,7 @@ WEB_RESEARCH_MD = REPO / "devcontainer" / "claude-md" / "web-research.md"
 SSH_DISCIPLINE_MD = REPO / "devcontainer" / "claude-md" / "ssh-discipline.md"
 VS_MD = REPO / "devcontainer" / "commands" / "vs.md"
 SP_MD = REPO / "devcontainer" / "commands" / "sp.md"
+CHECK_SP_CURRENT = REPO / "devcontainer" / "check-sp-current.sh"
 CYCLE_1_DIFF = REPO / ".vs" / "cycle-1" / "diff.patch"
 
 FAILURES: list[tuple[str, str]] = []
@@ -3755,6 +3756,136 @@ def test_task013_diff_scope() -> None:
               f"touched: {', '.join(sorted(touched_paths))}")
 
 
+# ── check-sp-current.sh upstream drift probe tests ─────────────────────────────
+
+
+SP_CORE_SKILLS = sorted([
+    "brainstorming",
+    "writing-plans",
+    "subagent-driven-development",
+    "test-driven-development",
+    "requesting-code-review",
+    "finishing-a-development-branch",
+    "using-git-worktrees",
+])
+
+
+def _run_sp_probe(args: list[str]) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["bash", str(CHECK_SP_CURRENT), *args],
+        capture_output=True, text=True,
+    )
+
+
+def test_check_sp_current_exists_and_executable() -> None:
+    print("\n[check-sp-current: file shape]")
+    check("[sp-probe] script exists", CHECK_SP_CURRENT.exists(), str(CHECK_SP_CURRENT))
+    if not CHECK_SP_CURRENT.exists():
+        return
+    check("[sp-probe] script is executable",
+          os.access(CHECK_SP_CURRENT, os.X_OK), "")
+
+
+def test_check_sp_current_offline_silent() -> None:
+    """--offline mode exits 0 silently."""
+    print("\n[check-sp-current: offline silent]")
+    if not CHECK_SP_CURRENT.exists():
+        return
+    r = _run_sp_probe(["--offline"])
+    check("[sp-probe] --offline exits 0", r.returncode == 0,
+          f"rc={r.returncode} err={r.stderr[:200]}")
+    check("[sp-probe] --offline silent on stderr", r.stderr.strip() == "",
+          r.stderr[:200])
+
+
+def test_check_sp_current_fixture_no_drift() -> None:
+    """Fixture matches sp.md exactly → no drift output."""
+    print("\n[check-sp-current: fixture exact match]")
+    if not CHECK_SP_CURRENT.exists():
+        return
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+        f.write("\n".join(SP_CORE_SKILLS) + "\n")
+        fixture = f.name
+    try:
+        r = _run_sp_probe(["--fixture", fixture])
+        check("[sp-probe] no-drift fixture exits 0", r.returncode == 0,
+              f"rc={r.returncode} err={r.stderr[:200]}")
+        check("[sp-probe] no-drift fixture silent",
+              "DRIFT" not in r.stderr, r.stderr[:200])
+    finally:
+        os.unlink(fixture)
+
+
+def test_check_sp_current_fixture_missing_skill() -> None:
+    """Fixture has a skill sp.md doesn't list → drift, names it."""
+    print("\n[check-sp-current: fixture missing skill]")
+    if not CHECK_SP_CURRENT.exists():
+        return
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+        f.write("\n".join(SP_CORE_SKILLS + ["new-skill-x"]) + "\n")
+        fixture = f.name
+    try:
+        r = _run_sp_probe(["--fixture", fixture])
+        check("[sp-probe] missing-skill exits 0 (informational)",
+              r.returncode == 0, f"rc={r.returncode} err={r.stderr[:200]}")
+        check("[sp-probe] missing-skill stderr says DRIFT",
+              "DRIFT" in r.stderr, r.stderr[:200])
+        check("[sp-probe] missing-skill names the new skill",
+              "new-skill-x" in r.stderr, r.stderr[:200])
+        check("[sp-probe] missing-skill labels it 'Missing from sp.md'",
+              "Missing from sp.md" in r.stderr, r.stderr[:200])
+    finally:
+        os.unlink(fixture)
+
+
+def test_check_sp_current_fixture_extra_skill() -> None:
+    """Fixture missing a skill sp.md lists → drift labelled 'Extra in sp.md'."""
+    print("\n[check-sp-current: fixture extra in sp.md]")
+    if not CHECK_SP_CURRENT.exists():
+        return
+    # Drop one skill from the fixture so sp.md has one extra.
+    fixture_skills = [s for s in SP_CORE_SKILLS if s != "using-git-worktrees"]
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+        f.write("\n".join(fixture_skills) + "\n")
+        fixture = f.name
+    try:
+        r = _run_sp_probe(["--fixture", fixture])
+        check("[sp-probe] extra-skill exits 0", r.returncode == 0,
+              f"rc={r.returncode} err={r.stderr[:200]}")
+        check("[sp-probe] extra-skill stderr says DRIFT",
+              "DRIFT" in r.stderr, r.stderr[:200])
+        check("[sp-probe] extra-skill names the dropped skill",
+              "using-git-worktrees" in r.stderr, r.stderr[:200])
+        check("[sp-probe] extra-skill labels it 'Extra in sp.md'",
+              "Extra in sp.md" in r.stderr, r.stderr[:200])
+    finally:
+        os.unlink(fixture)
+
+
+def test_check_sp_current_fixture_nonexistent_errors() -> None:
+    """--fixture with unreadable path errors out."""
+    print("\n[check-sp-current: fixture nonexistent]")
+    if not CHECK_SP_CURRENT.exists():
+        return
+    r = _run_sp_probe(["--fixture", "/no/such/file"])
+    check("[sp-probe] nonexistent fixture exit 1", r.returncode == 1,
+          f"rc={r.returncode}")
+    check("[sp-probe] nonexistent fixture explains itself",
+          "readable file" in r.stderr, r.stderr[:200])
+
+
+def test_check_sp_current_unknown_arg_errors() -> None:
+    """Unknown flag errors out."""
+    print("\n[check-sp-current: unknown arg]")
+    if not CHECK_SP_CURRENT.exists():
+        return
+    r = _run_sp_probe(["--bogus"])
+    check("[sp-probe] unknown arg exit 1", r.returncode == 1,
+          f"rc={r.returncode}")
+    check("[sp-probe] unknown arg names the bad flag",
+          "--bogus" in r.stderr, r.stderr[:200])
+
+
 # ── /sp slash command tests ────────────────────────────────────────────────────
 
 
@@ -4240,6 +4371,13 @@ def main() -> int:
     test_task013_vs_md_max_iter_flag()
     test_task013_no_hardcoded_cap_string()
     test_task013_diff_scope()
+    test_check_sp_current_exists_and_executable()
+    test_check_sp_current_offline_silent()
+    test_check_sp_current_fixture_no_drift()
+    test_check_sp_current_fixture_missing_skill()
+    test_check_sp_current_fixture_extra_skill()
+    test_check_sp_current_fixture_nonexistent_errors()
+    test_check_sp_current_unknown_arg_errors()
     test_sp_md_present_and_complete()
     test_sp_md_referenced_from_readme()
     test_skipped_marker_round_trip()
