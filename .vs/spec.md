@@ -1,185 +1,311 @@
-# task_009 — vibe: in-container `/learn` slash command + `/learnings` write-confirm hook
+# Spec - task_014: per-project Claude `projects/` bind
 
-**Revised after Spec Critic iterations 1 + 2.** Iter-1: 4 BLOCKING + 8 MEDIUM addressed. Iter-2 returned `revise` with 2 BLOCKING + 5 MEDIUM/LOW; all addressed inline below per the /vs 2-iteration cap. Iter-2 BLOCKING fixes: (a) the generic `sed -i` regex was rewritten to require an explicit standalone `-i` token alongside `/learnings/`, so `sed -n '/learnings/p'` no longer false-positives; (b) `tee --` (and analogous `--` end-of-options bypasses for `cp`/`mv`/`rm`/etc.) explicitly added to the out-of-scope bypass list. Iter-2 MEDIUM fixes: AC12 fixture list expanded to cover all 9 binaries (was 3); AC9 git-diff check pinned to `git diff HEAD` (commit-state-independent); AC2 architectural "evaluate ALL conditions" requirement clarified — the existing `is_push` short-circuit is acceptable because all guard-bash exit paths run on the full command string, so block-beats-ask is preserved by the existing structure.
-
-Key changes from draft:
-- **Hook output schema cited** (resolves BLOCKING #1) — primary source URL pinned in spec body, AC10 fixture asserts the exact key path so a wrong schema fails the test (not just silently no-ops).
-- **Bash detection bypass acknowledged inside AC2** (resolves BLOCKING #2) — moved the best-effort scope language out of preamble prose into the AC's body, with a concrete enumerated list of out-of-scope bypass classes.
-- **Compound-command "block beats ask" rule** (resolves BLOCKING #3) — guard-bash.sh now refactored to evaluate ALL conditions before deciding; exit-2 always wins over ask. New AC explicit.
-- **Path normalization required for guard-fs.sh** (resolves BLOCKING #5) — `realpath -m` before the prefix check; AC1 + AC10/AC11 fixtures cover `..` traversal.
-- **NotebookEdit dropped from matcher** (resolves MEDIUM #16) — learning entries are markdown, notebooks are out of scope; documented.
-- **`sed -i` and other multi-clause patterns specified explicitly** (resolves MEDIUM #3).
-- **`learn-hook.md` content sentinels locked** (resolves LOW #8) — three required phrases verifiable by grep.
-- **jq host-dependency handling for smoke tests** (resolves MEDIUM #13).
-- **`code-check.py` file-count assertion replaced by exit-0 check** (resolves LOW #12).
-- **Dockerfile COPY + chmod tested separately** (resolves MEDIUM #10).
-- **Trust-model justification moved into spec body** (resolves MEDIUM #14).
-- **`permissionDecisionReason` UX text specified more carefully** (resolves MEDIUM #15) — generic "modifying" wording covers writes/edits/deletes accurately.
-
----
+**Revised after Spec Critic iter 1 + 2.** Iter-1 closed 4 BLOCKING (cksum /
+40-hex incompatibility, baseline count 573 vs 574, mount-order verifiability
+under mixed string/object mounts, AC3 underspecified preservation) + 5
+MEDIUM + 4 LOW. Iter-2 returned `pass` with 3 MEDIUM residuals folded
+inline below: (M1) AC14 added to verify cksum removal from
+`_learning_build_override_config` via static grep; (M2) AC4/AC5/AC6/AC10
+explicitly require a clean tmpdir `HOME` override for ALL three /learnings
+sub-cases (config absent, `ENABLED=false`, `.no-learn` marker present);
+(M3) AC3 mkdir-p regex tightened to reject the bare `$HOME/.vibe/projects/`
+prefix without a sha1 component. Plus 1 LOW (test-quality gate per AC):
+AC10 now requires each `test_task014_*` function to contain at least one
+`check()` call per assertion bullet in its target AC.
 
 ## Task summary
 
-Today vibe's cross-org learning library at `/learnings` is bind-mounted into every container with `readonly: True` set in the per-session devcontainer override config. Verified 2026-04-25: the readonly flag is silently ignored on macOS by Docker Desktop / OrbStack's `fakeowner` overlay — `mount` reports `rw,nosuid,nodev,relatime,fakeowner` and a write test (`echo > /learnings/test`) succeeds. A buggy or compromised in-container Claude could overwrite, delete, or amend library entries; in public-mode (git-tracked) libraries, those changes can be committed and pushed before the user notices.
+Inside the vibe container, every host project mounts at `/workspace`, and the
+entire `/home/node/.claude` is a single shared Docker volume
+(`vibe-claude-config`). Claude Code keys conversation history by working
+directory, so all sessions land in `/home/node/.claude/projects/-workspace/`,
+jumbled together across projects. Result: `vibe voting --continue` resumes the
+globally-most-recent vibe session regardless of project. The same leak hits the
+in-container `/resume` picker and the per-`/workspace` auto-memory at
+`/home/node/.claude/projects/-workspace/memory/MEMORY.md`.
 
-Separately: there is no in-container slash command for capturing learnings. The user has to switch to their Mac shell and run `vibe learn "<pattern>"` host-side, breaking session flow. The blocker for shipping `/learn` inside the container has been the same write-bridge design question — until we have a trust gate, a `/learn` command can write anything anywhere under `/learnings` unprompted.
+This task gives each host project its own `/home/node/.claude/projects/`
+directory inside the container, while keeping the rest of `/home/node/.claude`
+(login, agents, settings, slash commands) shared via the existing
+`vibe-claude-config` volume. After this lands, `vibe X --continue` resumes
+the most recent conversation FOR project X, not globally.
 
-This task ships both halves of the answer at once, because they are interdependent and the trust model only makes sense when shipped together:
+## Mechanism
 
-1. **A PreToolUse hook gates every write to `/learnings`.** Write tool, Edit tool, MultiEdit tool, and Bash tool (for the common shell-write idioms) all go through it. On detection the hook emits a Claude Code `permissionDecision: ask` JSON envelope so Claude Code itself prompts the user y/n. Trust nothing; no token-bypass; same trust boundary as host-side `vibe learn`'s confirm flow. The mount staying RW is now intended state — the hook is the security layer.
-
-2. **A `/learn` slash command writes a proposed entry.** `/learn <pattern>` produces a filename and body that exactly match the host-side `vibe learn` output (`/learnings/${ts}-${rand}.md` with body `# ${ts}\n\n${pattern}\n`), then issues a Write tool call to land it. The hook fires, the user sees the prompt with the proposed file path and reason, the user confirms, the Write proceeds. Push-to-git stays host-only — the command output tells the user to run `vibe learn --push` (a stub that does NOT yet exist; explicit out-of-scope) on the Mac shell when ready.
-
-This shape resolves the existing `vibe learn: /learnings mount is RW, not RO (security)` TODO and lays groundwork for the `auto-promote feedback memories to learning library` TODO.
-
-### Hook output schema (canonical)
-
-Source: Claude Code hooks documentation at `https://code.claude.com/docs/en/hooks.md`. PreToolUse hooks return JSON to stdout and exit 0; the JSON envelope is:
-
-```json
-{
-  "hookSpecificOutput": {
-    "hookEventName": "PreToolUse",
-    "permissionDecision": "ask",
-    "permissionDecisionReason": "<text shown to the user in the prompt>"
-  }
-}
-```
-
-Claude Code renders its standard permission prompt with the reason text. AC10/AC12 assert the EXACT key path (`.hookSpecificOutput.permissionDecision == "ask"`) so an implementation that uses the wrong shape (e.g. flat `{"decision": "ask"}`) fails the test rather than silently no-opping.
-
-### Block-beats-ask invariant
-
-The existing guard-bash.sh emits `exit 2` for `git push --force` (without `--force-with-lease`) and for `git push --delete <branch>`. This task adds an `ask` path for `/learnings` writes. **If a single command triggers BOTH an exit-2 condition AND a /learnings write detection, exit 2 wins.** The script must evaluate ALL conditions before choosing, never short-circuit on the ask path. AC2 specifies this. Without this rule a compound command like `rm /learnings/old.md && git push --force origin main` would prompt the user to confirm the `rm`, and on yes the entire compound runs — including the unprotected force-push.
-
-### CLAUDE.md invariant analysis
-
-CLAUDE.md says: "hooks in `guard-bash.sh` + `settings.local.json` are the tool-call backstop. Don't weaken either." This change does not weaken the existing hook — the existing exit-2 conditions are preserved byte-for-byte (AC3). It adds a NEW `ask` path for `/learnings` writes that previously had NO hook protection (the `readonly` mount was the supposed boundary, but it never worked on macOS). Going from "no protection" to "ask the user" is strictly stronger, not weaker. The block-beats-ask rule (above) ensures the new path never undermines existing block paths.
-
-### Defense-in-depth scope: what the Bash hook CANNOT catch
-
-Static pattern matching against the Bash command string detects literal write idioms but cannot detect (and AC2 explicitly excludes from the contract):
-- Variable indirection (`f=/learnings/x; echo > "$f"`) — the redirect target is a variable, not a literal path.
-- Env-var path (`OUT=/learnings/x command-that-uses-OUT`) — same reason.
-- Interpreter-embedded writes (`python3 -c "open('/learnings/x','w').write('y')"`, `perl -e "open(F,'>/learnings/x')"`, `node -e "require('fs').writeFileSync('/learnings/x','y')"`).
-- Heredoc-redirected writes where the destination is constructed via expansion.
-- Multi-stage pipelines (`some-cmd | tee >(cat > /learnings/x)`) — the redirect inside process substitution is harder to detect.
-- `eval`, `bash -c <constructed string>`, and other dynamic-command-execution paths.
-- `tee -- /learnings/x` specifically. The `tee` regex anchors directly on `\s+['"]?/learnings/` after the flag group with no `[^|;&]*` wildcard, so `--` between `tee` and the path defeats it. The other binaries in the family (`cp`, `mv`, `rm`, `ln`, `mkdir`, `chmod`, `chown`, `truncate`, `dd`) use a generic regex with `[^|;&]*` wildcard before `/learnings/`, which DOES match across `--`; `rm -- /learnings/x` is correctly caught. Acknowledged limitation only for tee.
-- Long-form GNU flags (e.g. `sed --in-place …` rather than `sed -i …`). The sed-write detection regex requires short-form `-i` (standalone or combined like `-ri`); `--in-place` is not matched. Acknowledged limitation.
-
-These are real bypass vectors. The Write/Edit/MultiEdit hook (AC1) is the primary gate — it sees the structured `tool_input.file_path` and is reliable. The Bash hook is layered defense-in-depth that catches the obvious shell idioms; AC2 enumerates what it covers and what it does not. The README paragraph (AC8) communicates this scope to the user.
+1. **Single shared hash helper.** Add a function
+   `vibe_workspace_sha1 <abs_workspace_path>` that echoes a 40-character
+   lowercase hex sha1 of the input. Implementation uses the
+   `sha1sum | shasum` two-rung fallback ladder (the existing third rung,
+   `cksum`, is dropped from this helper because cksum produces a decimal
+   CRC32 not a 40-char hex sha1; both `sha1sum` (Linux coreutils) and
+   `shasum` (Perl, ships with macOS) are available on every supported host
+   and at least one of them is required). Both the existing per-session
+   override-config run-dir filename (`$HOME/.vibe/run/devcontainer-<sha1>.json`)
+   and the new per-project bind dir (`$HOME/.vibe/projects/<sha1>/`) MUST
+   call this helper with the SAME input (the absolute workspace path), so
+   the two sha1 values are identical for the same workspace.
+2. **Per-project bind path helper.** Add `vibe_projects_bind_path
+   <abs_workspace_path>` that echoes
+   `<HOME>/.vibe/projects/<sha1>` where `<sha1>` is the output of
+   `vibe_workspace_sha1`. The path is fully resolved (no `${localEnv:HOME}`
+   template) so smoke tests can override `$HOME` to a tempdir and inspect
+   the result.
+3. **Launcher creates the dir.** The vibe launcher calls `mkdir -p` on the
+   per-project bind path BEFORE `devcontainer up` runs, idempotent across
+   invocations.
+4. **Bind mounted at `/home/node/.claude/projects`.** Type=bind, NOT
+   readonly. Source value in the override JSON MUST be the resolved
+   absolute host path (output of `vibe_projects_bind_path`), not a
+   `${localEnv:HOME}` template - same convention the existing /learnings
+   bind uses.
+5. **Mount order: vibe-claude-config volume FIRST, projects bind AFTER.**
+   In the override JSON's `mounts` array, the entry whose target is
+   `/home/node/.claude` (the `vibe-claude-config` volume) MUST appear at a
+   strictly lower array index than the entry whose target is
+   `/home/node/.claude/projects`. The devcontainer CLI passes mount entries
+   to `docker run --mount` in array order; Docker mounts in the order
+   given; nesting works only when the parent (volume) mounts first.
+   Verified for Linux Docker engine. If this assumption breaks for any
+   runtime, the symptom would be the bind landing under the volume's
+   shadow rather than on top - failure is observable, not silent.
+6. **Override JSON ALWAYS exists.** The per-session override-config builder
+   in vibe (today: `_learning_build_override_config`, which falls back to
+   echoing the source `devcontainer/devcontainer.json` path when /learnings
+   is opted out) MUST be modified so it ALWAYS produces a real override
+   file. The projects bind is added unconditionally; the /learnings bind
+   is added only when `learning_should_mount` returns 0. The function name
+   is preserved (smoke tests reference it by name; see Out-of-scope #6).
+7. **Mount entry format.** The new projects bind MUST be added as a JSON
+   OBJECT (not a comma-separated string), matching the format
+   `learning_render_devcontainer_config` already uses for the /learnings
+   bind. Schema:
+   ```json
+   {"source": "<resolved-abs-path>", "target": "/home/node/.claude/projects",
+    "type": "bind"}
+   ```
+   No `readonly` field (defaults to false).
 
 ## Acceptance criteria
 
-1. **`devcontainer/guard-fs.sh` exists** as an executable shell script using `set -euo pipefail`. Reads PreToolUse JSON from stdin. Extracts `tool_input.file_path` via `jq -r '.tool_input.file_path // empty'`. **Normalizes** the extracted path via `realpath -m` (which resolves `..`, `.`, and double-slashes without requiring the path to exist). If the normalized path equals `/learnings` OR starts with `/learnings/`, the script emits the canonical ask-JSON to stdout (with a `permissionDecisionReason` of the exact form `vibe: modifying the learning library at <normalized-path> — confirm to proceed`) and exits 0. Otherwise the script prints nothing and exits 0. Reasoning for `realpath -m`: a literal `/learnings/../etc/passwd` "starts with" `/learnings/` but resolves outside the library; without normalization, a confirmed write would land outside the library while the user thought they were confirming a learning-library change.
+AC1. **`vibe_workspace_sha1` helper exists and is exposed under
+`VIBE_SOURCE_ONLY=1`.** Takes a single argument (an absolute workspace
+path) and echoes a 40-character lowercase hexadecimal string. Uses the
+`sha1sum | shasum` two-rung fallback ladder. The ladder MUST exit
+successfully with at least one rung available; if neither is on PATH, the
+helper exits non-zero with an error message to stderr. Test asserts:
+(a) output length is exactly 40, (b) output matches `^[0-9a-f]{40}$`,
+(c) calling with the same input twice produces identical output,
+(d) calling with two distinct inputs produces distinct outputs.
 
-2. **`devcontainer/guard-bash.sh` extended** with a `/learnings` write-detection step. Implementation requirements:
-   - The script evaluates all conditions before deciding the exit path. **No early-exit on the ask path** — block beats ask.
-   - Evaluation order: (a) detect git-push violations as today (`is_push && has_force && !has_lease` → block; `is_push && (has_delete || has_colondel)` → block); (b) detect `/learnings` write idioms; (c) decide. If (a) fires → `exit 2` with the existing stderr message. Else if (b) fires → emit canonical ask-JSON to stdout, `exit 0`. Else → `exit 0` silently.
-   - The detection in (b) MUST cover at minimum these idioms; each is matched against the literal command text:
-     - Shell redirect to /learnings: regex `(>|>>|&>|&>>)\s*['"]?/learnings/`
-     - tee to /learnings: regex `(^|[[:space:]]|;|&|\|)tee([[:space:]]+-[a-zA-Z]+)*\s+['"]?/learnings/`
-     - File-modifying binaries against /learnings: any of `cp`, `mv`, `rm`, `ln`, `mkdir`, `chmod`, `chown`, `truncate`, `dd`. For each, the regex is `(^|[[:space:]]|;|&|\|)<binary>([[:space:]]+-[a-zA-Z]+)*\s+[^|;&]*['"]?/learnings/`. Note: this generic regex inherently false-positives on `<binary>` followed by `/learnings/` substring inside a quoted argument, but the listed binaries are all destructive/modifying so any `/learnings/` reference deserves the prompt. The `dd` case relies on `[^|;&]*` skipping past `if=…` and `bs=…` arguments to find `of=/learnings/...`.
-     - **`sed -i` write detection (special case).** The generic regex above is NOT used for `sed`, because `sed -n '/learnings/p'` (a read) contains the literal `/learnings/` inside the sed expression and would false-positive. Instead, the detection requires THREE separate conditions all to hold against the command string: (i) a `sed` invocation token via regex `(^|[[:space:]]|;|&|\|)sed[[:space:]]`; (ii) an explicit standalone `-i` flag via regex `(^|[[:space:]])-i([[:space:]]|$)` OR a combined-flag form like `-ri`/`-Ei`/`-iE` via regex `(^|[[:space:]])-[a-zA-Z]*i[a-zA-Z]*([[:space:]]|$)` — the second alternative is a superset of the first (it also matches plain `-i` since `[a-zA-Z]*` allows zero chars on each side); the two are an OR for clarity, not a partition. Implementation can use either single combined-flag regex alone or both — same result.; (iii) the literal substring `/learnings/`. Implementation guidance: a triple-`grep -qE` chain (each emitting a result, all three required to be true) is the canonical implementation. Tester fixture `sed -n '/learnings/p' /tmp/file` MUST exit 0 (read; no `-i`); fixture `sed -i 's/foo/bar/' /learnings/x.md` MUST trigger ask (write; `-i` present, `/learnings/` present).
-   - Read commands MUST NOT trigger detection: `cat`, `ls`, `grep`, `head`, `tail`, `less`, `find /learnings`, `wc`, `awk`, `diff`, `cmp` against `/learnings` paths exit 0 with no output.
-   - **Out-of-scope bypass classes** (acknowledged in AC, not contract violations): variable-indirection redirects, env-var path commands, interpreter-embedded writes (`python3 -c`, `perl -e`, `node -e`, etc.), `eval`, `bash -c <constructed>`, dynamic heredoc destinations, process-substitution redirects. The Write tool hook (AC1) covers tool-call writes; the Bash hook is layered best-effort for the common literal idioms only.
+AC2. **`vibe_projects_bind_path` helper exists and is exposed under
+`VIBE_SOURCE_ONLY=1`.** Takes a single argument (an absolute workspace
+path) and echoes a path of the form `<HOME>/.vibe/projects/<sha1>` where
+`<sha1>` is the output of `vibe_workspace_sha1` for the same input. Test
+asserts the echoed path equals `$HOME/.vibe/projects/$(vibe_workspace_sha1
+<input>)` exactly.
 
-3. **Existing guard-bash.sh git-push protections preserved unchanged.** `git push --force` (without `--force-with-lease`) still hits `exit 2` with the existing stderr message; `git push origin :branchname` still hits `exit 2`. After the change a command like `rm /learnings/old.md && git push --force origin main` MUST exit 2 (block beats ask), NOT exit 0 with ask-JSON.
+AC3. **Launcher calls `mkdir -p` on the per-project bind path before
+`devcontainer up`.** Verified by static analysis of the vibe source: the
+test reads `vibe`, locates the line invoking `devcontainer up` (or the
+construction of `UP_BASE_ARGS` that feeds it), and asserts that an earlier
+line in the same file contains a `mkdir -p` call whose argument refers to
+the per-project bind path. The argument MUST reference `vibe_projects_bind_path`
+(via captured output, e.g. `mkdir -p "$(vibe_projects_bind_path "$WORKSPACE")"`
+or assigned-then-passed) OR include a `$HOME/.vibe/projects/` prefix
+followed by a variable, subshell, or sha1-shaped component (`$sha1`,
+`$(...)`, `${VAR}`). The bare literal `mkdir -p "$HOME/.vibe/projects/"` (no
+per-workspace component) MUST NOT pass the check. The static check is a
+regex/substring match; no Docker invocation required.
 
-4. **`/workspace/vibe`'s settings.local.json heredoc is updated.** **Critical location note:** `.claude/settings.local.json` is gitignored and runtime-generated by the `vibe` launcher itself — there is a `cat > "$WORKSPACE/.claude/settings.local.json" << 'EOF'` heredoc at vibe lines ~974–1007 that overwrites the file fresh on every launch. The edit MUST land in this heredoc, NOT in the runtime artifact at `.claude/settings.local.json` (which would be wallpaper — overwritten next launch). Required change inside the heredoc: APPEND a new entry to the `hooks.PreToolUse` array (after the existing Bash entry; order is documented but not behaviorally critical since a single tool call matches a single matcher). The new entry has `matcher` field exactly `"Write|Edit|MultiEdit"` (NOT `NotebookEdit` — see Out of scope) and a hooks array pointing to `/usr/local/bin/guard-fs.sh`. The existing Bash matcher entry stays byte-identical. The Stop and Notification entries stay byte-identical. `permissions.defaultMode` and `forceLoginMethod` stay byte-identical. The heredoc must remain valid JSON when emitted (`python3 -c 'import json; json.load(open("…"))'` against a freshly-launched vibe's runtime file exits 0). The smoke test for AC4 reads `/workspace/vibe`'s text and asserts the heredoc body contains the new matcher entry — NOT the runtime `.claude/settings.local.json`.
+AC4. **Override JSON exists unconditionally.** With learning fully
+disabled (no `~/.vibe/learning.config` file in the test's tmpdir-overridden
+`HOME`), and called against any workspace, `_learning_build_override_config
+<workspace>` MUST echo a path that is NOT equal to
+`$DEVCONTAINER_DIR/devcontainer.json` AND that points to a real, readable
+JSON file. The generated file's `mounts` array MUST contain ALL 4 mount
+entries from `devcontainer/devcontainer.json` (currently `vibe-bash-history`,
+`vibe-claude-config`, `~/.ssh` bind, `~/.gitconfig` bind), preserved verbatim
+(string format unchanged), PLUS the new projects bind object whose target is
+`/home/node/.claude/projects`. Total mounts count when /learnings is
+disabled: exactly 5. When /learnings is enabled and not opted out: exactly
+6 (the additional /learnings bind). The smoke test for AC4 MUST set
+`HOME` to a clean tmpdir to ensure no stray `~/.vibe/learning.config` from
+the test runner's host leaks into the result.
 
-5. **Dockerfile updated.** Two distinct changes verified by separate greps:
-   - **5a.** A line matching exactly `COPY guard-fs.sh /usr/local/bin/` (canonical no-trailing-slash form, mirroring the existing guard-bash.sh COPY). One occurrence.
-   - **5b.** `/usr/local/bin/guard-fs.sh` appears in the `chmod +x` chain. One occurrence in a `chmod +x` line.
+AC5. **Composition with /learnings enabled and not opted out.** With
+`~/.vibe/learning.config` configured (`VIBE_LEARNING_ENABLED=true`, valid
+existing `VIBE_LEARNING_PATH`) AND the workspace not opted out (no
+`.no-learn` marker on the walk to `$HOME`), calling
+`_learning_build_override_config <workspace>` MUST produce an override
+whose `mounts` array contains BOTH the projects bind (target
+`/home/node/.claude/projects`) AND the existing /learnings bind (target
+`/learnings`, readonly). Smoke tests for AC5 MUST exercise the FULL
+builder (`_learning_build_override_config`), NOT the lower-level
+renderer (`learning_render_devcontainer_config`), so the gating logic
+(`learning_should_mount`) is also exercised.
 
-6. **`devcontainer/commands/learn.md` exists** as a slash command markdown file. Body must include all of:
-   - A description that `/learn <pattern>` captures a cross-org learning into `/learnings/`.
-   - The exact Bash one-liners to compute filename components (must be present verbatim so the format matches host-side byte-for-byte):
-     ```
-     ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-     rand=$(python3 -c 'import binascii,os; print(binascii.hexlify(os.urandom(3)).decode())')
-     ```
-   - A description of the file path: `/learnings/${ts}-${rand}.md`.
-   - The exact body format (matching host-side `learning_format_entry`): `printf '# %s\n\n%s\n' "$ts" "$pattern"` — timestamp header, blank line, pattern body, single trailing newline.
-   - Instruction that the model issues a single Write tool call to that path with that body.
-   - Instruction that the model PRINTS the proposed path + body preview to the user BEFORE issuing the Write, so the hook prompt's context is clear.
-   - Refusal text: if `/learnings` does not exist as a directory, respond with the exact one-line message `/learn: /learnings is not mounted (run 'vibe learn --init' on host first)` and do NOT issue the Write tool call.
-   - Note that pushing the new entry (in public-mode libraries) is host-only — point user at `vibe learn --push` (acknowledged as not-yet-built, separate task) or to `cd $VIBE_LEARNING_PATH; git add … && git commit && git push` manually.
-   - Multi-line `<pattern>` is supported — embedded newlines pass through to the body as-is.
+AC6. **Composition with /learnings disabled or excluded.** With learning
+config absent OR `VIBE_LEARNING_ENABLED=false` OR a `.no-learn` marker
+present in the workspace's walk-to-`$HOME` chain, calling
+`_learning_build_override_config <workspace>` MUST produce an override
+whose `mounts` array contains the projects bind but NOT a /learnings bind
+(no mount entry whose target is `/learnings`). Smoke tests MUST cover all
+three sub-cases (config absent, ENABLED=false, .no-learn marker present)
+and MUST exercise the FULL builder, not the renderer directly. ALL three
+sub-cases MUST run with a clean tmpdir `HOME` (separate `tempfile.TemporaryDirectory()`
+per sub-case), set the `~/.vibe/learning.config` content explicitly per
+sub-case (absent: no file written; ENABLED=false: file written with
+`VIBE_LEARNING_ENABLED="false"`; .no-learn: config enabled AND a `.no-learn`
+marker created in the workspace tmpdir under HOME). This isolation is
+required so the result does not depend on whether vibe is configured on
+the test runner's actual host.
 
-7. **`devcontainer/claude-md/learn-hook.md` fragment exists**, picked up by `install-claude-extras.sh`'s existing `claude-md/*.md` sync. Content explains the hook trust model to in-container Claude. Mechanically: ≥30 non-blank lines AND contains all three sentinel phrases (locked for Tester grep): `permissionDecision`, `do not bypass`, and `host-only`.
+AC7. **Mount order in override JSON.** Within the override JSON's
+`mounts` array, the entry whose target is `/home/node/.claude` (string-
+or object-formatted) MUST appear at a strictly lower array index than
+the entry whose target is `/home/node/.claude/projects`. AC9 test
+parsing MUST handle BOTH string-format mount entries (e.g.
+`"source=...,target=/home/node/.claude,type=volume"`, parsed by
+splitting on `,` and extracting `target=` substring) AND object-format
+entries (e.g. `{"target": "/home/node/.claude/projects"}`, parsed via
+`.get("target")`). A helper test function MAY be written; the test
+MUST NOT silently skip string entries.
 
-8. **README.md gets a paragraph** in or directly under the existing `/learnings` discussion. Content explains: the bind-mount is read-write on macOS regardless of `readonly` (Docker Desktop / OrbStack `fakeowner` quirk); a PreToolUse hook intercepts every tool call writing under `/learnings` and prompts the user y/n; this is the security boundary, not the mount itself; the Bash gate is best-effort and detailed bypass classes are documented in `devcontainer/guard-bash.sh`. Verifiable via grep for the sentinel phrase `PreToolUse hook gates writes` (exact match locked).
+AC8. **Hash determinism (covers AC1.c, AC1.d explicitly as a separate
+gate).** Two distinct absolute workspace paths produce two distinct
+per-project bind dirs. Same path produces same dir. Verified by calling
+`vibe_projects_bind_path` with two different paths in a tempdir and
+asserting different outputs.
 
-9. **`install-claude-extras.sh` requires NO change.** `git diff HEAD -- devcontainer/install-claude-extras.sh` is empty (uses `HEAD` so the check is commit-state-independent for the smoke-test runner). (The slash command and CLAUDE.md fragment are picked up by existing sync mechanisms.)
+AC9. **No regression.** All 574 currently-passing smoke checks (baseline
+verified by `python3 smoke-test.py 2>&1 | grep -cE "^  ✓ "` on
+2026-04-29; the parked `task_013/AC10 diff scope check` is a single
+pre-existing fail and remains excluded from this gate per its parked
+status in TODO.md) MUST still pass after this change. In particular
+`test_learning_render_devcontainer_config`, `test_learning_helpers_exist`,
+`test_learning_banner_*` family, `test_learning_marker_*` family, and
+`test_vibe_resume_args_*` must continue to pass without modification.
 
-10. **`/usr/local/bin/guard-fs.sh` produces correct ask-JSON for /learnings writes.** Smoke test fixture set, each as its own subprocess invocation:
-    - Input `{"tool_input":{"file_path":"/learnings/2026-04-26T17:00:00Z-abcdef.md"}}` → stdout is valid JSON with `.hookSpecificOutput.hookEventName == "PreToolUse"`, `.hookSpecificOutput.permissionDecision == "ask"`, `.hookSpecificOutput.permissionDecisionReason` non-empty and contains the substring `/learnings/`. Exit 0.
-    - Input `{"tool_input":{"file_path":"/learnings"}}` → same ask-JSON. Exit 0.
-    - Input `{"tool_input":{"file_path":"/learnings/sub/dir/file.md"}}` → same. Exit 0.
+AC10. **New smoke tests.** Tester adds new `test_task014_*` functions
+(prefix mandatory; the Evaluator must be able to enumerate new tests via
+`grep -n "^def test_task014" smoke-test.py`) covering AC1 through AC8
+plus AC14 (cksum-removal static check) without invoking docker. Tests
+parse the generated override JSON via Python's `json` module. Tests
+exercise `_source_vibe_call` with `VIBE_SOURCE_ONLY=1` for helper-level
+checks; for AC4-AC6 they call `_learning_build_override_config` (NOT the
+lower-level renderer) inside the same source-only environment, ALWAYS
+with a clean tmpdir `HOME` override (use `tempfile.TemporaryDirectory()`
+in each test), and with explicit per-sub-case `~/.vibe/learning.config`
+setup as described in AC4 (absent), AC5 (enabled+valid path), and AC6
+(three sub-cases). The new test count MUST be at least 10 (one per AC
+plus separation tests for sub-cases). EACH `test_task014_*` function
+MUST contain at least one `check()` call per assertion bullet enumerated
+in its target AC (e.g. AC1 has four sub-assertions a/b/c/d; the test
+covering AC1 MUST emit at least 4 `check()` calls). Thin tests that
+satisfy the count via single-assertion bodies do NOT pass AC10.
 
-11. **`/usr/local/bin/guard-fs.sh` correctly handles non-/learnings AND traversal-attempt paths.** Smoke test fixture set:
-    - Input `{"tool_input":{"file_path":"/workspace/foo/bar.md"}}` → empty stdout, exit 0.
-    - Input `{"tool_input":{"file_path":"/learnings/../etc/passwd"}}` → empty stdout, exit 0 (after normalization `/etc/passwd` is not under `/learnings`).
-    - Input `{"tool_input":{"file_path":"/learnings/../../tmp/x"}}` → empty stdout, exit 0 (normalizes to `/tmp/x`).
-    - Input `{"tool_input":{}}` (no file_path key) → empty stdout, exit 0.
+AC11. **shellcheck clean.** `python3 code-check.py` exits 0 across all
+shell files (currently 11). No new shellcheck findings introduced.
 
-12. **`devcontainer/guard-bash.sh` produces correct ask-JSON for /learnings shell-write idioms.** Smoke test fixture set, iterated (one assertion per fixture):
-    - `echo hi > /learnings/test.md` → ask-JSON, exit 0.
-    - `echo hi >> /learnings/test.md` → ask-JSON, exit 0.
-    - `cmd | tee /learnings/z.md` → ask-JSON, exit 0.
-    - `tee -a /learnings/z.md < /tmp/x` → ask-JSON, exit 0.
-    - `cp /tmp/x /learnings/y.md` → ask-JSON, exit 0.
-    - `cp -r /tmp/dir /learnings/sub` → ask-JSON, exit 0.
-    - `mv /tmp/x /learnings/y.md` → ask-JSON, exit 0.
-    - `rm /learnings/old.md` → ask-JSON, exit 0.
-    - `rm -rf /learnings/old/` → ask-JSON, exit 0.
-    - `ln -s /tmp/target /learnings/link` → ask-JSON, exit 0.
-    - `mkdir /learnings/newdir` → ask-JSON, exit 0.
-    - `chmod 644 /learnings/x.md` → ask-JSON, exit 0.
-    - `chown node:node /learnings/x.md` → ask-JSON, exit 0.
-    - `truncate -s 0 /learnings/x.md` → ask-JSON, exit 0.
-    - `dd if=/dev/zero of=/learnings/x bs=1M count=1` → ask-JSON, exit 0.
-    - `sed -i 's/foo/bar/' /learnings/x.md` → ask-JSON, exit 0.
-    - `sed -ri 's/foo/bar/' /learnings/x.md` → ask-JSON, exit 0 (combined `-ri` flag).
+AC12. **MANUAL-TESTS.md updated with concrete pass/fail signal.** A new
+section is appended to `MANUAL-TESTS.md` describing the per-project
+resume verification with an OBSERVABLE pass criterion:
 
-13. **`devcontainer/guard-bash.sh` correctly allows /learnings reads.** Smoke test fixture set:
-    - `cat /learnings/x.md` → empty stdout, exit 0.
-    - `ls /learnings/` → empty stdout, exit 0.
-    - `grep -r foo /learnings/` → empty stdout, exit 0.
-    - `head /learnings/x.md` → empty stdout, exit 0.
-    - `sed -n '/learnings/p' /tmp/file` → empty stdout, exit 0 (`sed` without `-i` is a read).
+> **Setup:** in two distinct host directories `~/work/projA` and
+> `~/work/projB`, each containing a unique sentinel file
+> (`projA/CLAUDE.md` says "this is project A", `projB/CLAUDE.md` says
+> "this is project B"). **Steps:**
+> (1) `cd ~/work/projA && vibe`, hold a brief conversation, type
+>     `/exit`.
+> (2) `cd ~/work/projB && vibe`, hold a brief conversation, type
+>     `/exit`.
+> (3) `vibe projA --continue`.
+> **Pass criterion:** the resumed Claude session is the projA
+> conversation from step 1 (Claude's most recent prior turn references
+> "this is project A" or projA-specific content), NOT the projB
+> conversation. Additionally inside the container, `ls
+> /home/node/.claude/projects/` shows exactly one slug (`-workspace`)
+> containing only the projA JSONL(s), not projB's.
+> **Fail signal:** the resumed conversation is projB's, OR the
+> `projects/` directory contains JSONLs for both projects.
 
-14. **`devcontainer/guard-bash.sh` preserves git-push behavior AND enforces block-beats-ask.** Smoke test fixture set:
-    - `git push --force origin main` → exit 2, stderr matches existing `vibe: 'git push --force'` message.
-    - `git push origin :branchname` → exit 2, stderr matches existing branch-delete message.
-    - `git push origin main` (normal push) → exit 0, no output.
-    - `rm /learnings/old.md && git push --force origin main` → exit 2 (NOT 0 with ask-JSON — block beats ask).
-    - `git push --force origin main && echo hi > /learnings/x.md` → exit 2 (same — block beats ask regardless of order).
+AC14. **cksum removal verification (static).** A test_task014_*
+function asserts that `_learning_build_override_config` no longer
+contains the `cksum` token by reading `vibe` source and checking the
+function body (delimited by `_learning_build_override_config()` start
+through the next top-level function or end-of-section delimiter). A
+single static-grep / regex check is sufficient. This anchors the
+Mechanism-section requirement that `_learning_build_override_config`
+calls the new `vibe_workspace_sha1` helper (which uses only
+sha1sum/shasum) instead of the inline cksum fallback. The check ensures
+the run-dir filename and the per-project bind dir use the SAME hash
+function, not just claim to.
 
-15. **`python3 code-check.py` exits 0.** No new shellcheck warnings. (Do not assert on a specific file count — `code-check.py` is the source of truth for which files it scans; check exit 0, not the count.)
+AC13. **CLAUDE.md fragment.** A new file at
+`devcontainer/claude-md/auto-memory-scope.md` (per task_007 convention,
+shipped to all vibe containers via `install-claude-extras.sh`) explains:
+(a) auto-memory at `/home/node/.claude/projects/-workspace/memory/`
+is now scoped per-host-project after task_014;
+(b) cross-project facts (preferences, voice, work style) belong in
+`/learnings`, not auto-memory;
+(c) at least one sentence explaining WHY the per-project isolation
+matters - i.e. preventing `vibe X --continue` from resuming an
+unrelated project's conversation, and preventing project-specific
+memory from polluting unrelated work.
+The fragment MUST be at least 12 non-blank lines, MUST contain the
+sentinel phrases `per-project`, `/learnings`, and `vibe X --continue`,
+AND MUST contain the substring "preventing" (anchors the WHY clause).
 
-16. **`python3 smoke-test.py` exits 0.** Pre-existing check count (360) MUST NOT decrease. New tests for ACs 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14 added. The hook-fixture tests (AC10–14) are guarded by a `which jq` and `which bash` check at smoke-test startup; if either is absent, the affected tests SKIP with a clear stderr warning, but the rest of the suite still runs (and the absence of these tools must NOT cause smoke-test to exit non-zero). The new test functions are registered in `main()` and follow the existing `test_task009_<topic>` naming convention.
+## Out of scope (do NOT implement)
 
-17. **MANUAL-TESTS.md gets a new entry** describing how to verify end-to-end in a live container: launch vibe in a project with `/learnings` enabled, in the container have Claude attempt to Write to `/learnings/test.md`, confirm the user sees a permission prompt with the reason text, confirm "yes" lets the Write proceed, confirm "no" blocks the Write. Three numbered steps. This is the safety-net for the hook-output-schema risk — if the schema is somehow wrong despite passing AC10's structural check, this manual test catches it before users hit it.
-
-## Out of scope
-
-- Host-side `vibe learn --push` helper. Mentioned in `/learn` output as the pointer; building it is a separate task.
-- Auto-promote feedback memories to /learnings (separate TODO).
-- Volume-vs-bind-mount design (separate TODO).
-- Backup mechanism (separate TODO).
-- **NotebookEdit tool coverage.** Learning entries are markdown (`.md`), not Jupyter notebooks. NotebookEdit's input schema uses `notebook_path`, not `file_path`, and would require separate handling. Excluded from this task; if a future use-case emerges, add then.
-- Bash detection bypass classes enumerated in spec body (variable indirection, interpreter-embedded writes, etc.) — by design, not by omission. Documented in spec body and AC2.
-- Behavior when the user denies the prompt — Claude Code's standard "tool call denied by user" path applies; no custom recovery.
-- Updating the existing RW-mount-security TODO entry to Done (Planner does this manually post-pass).
-- Live in-container schema verification — handled via MANUAL-TESTS.md entry (AC17), not by an automated AC, since the smoke-test host typically does not have Claude Code installed.
+- Migration of existing JSONLs from the shared volume's
+  `projects/-workspace/` to per-project dirs. No clean signal exists
+  (JSONLs do not record host project). One-time loss accepted.
+- Auto-promotion of cross-project memories from current `MEMORY.md` to
+  `/learnings`. Separate task.
+- Cleanup of orphaned `~/.vibe/projects/<hash>/` directories when host
+  projects are deleted. Future TODO.
+- Any change to behavior under concurrent vibe launches against the same
+  project (no change from today; share the same bind dir, last writer
+  wins, same as the current shared volume).
+- Any change to `~/.vibe/learning.config` schema or learning subcommand
+  behavior. Untouched.
+- Any change to the `vibe-bash-history` volume mount or to the workspace
+  bind at `/workspace`.
+- Any rename of `_learning_build_override_config` or
+  `learning_render_devcontainer_config`. Generator MAY refactor internals
+  but MUST NOT break the public surface that smoke tests reference by
+  name (specifically `learning_render_devcontainer_config` is referenced
+  by `test_learning_helpers_exist`; see `smoke-test.py:1449`).
+- Removing the cksum branch from anywhere OTHER than the new
+  `vibe_workspace_sha1` helper. The existing inline cksum fallback in
+  `_learning_build_override_config`'s run-dir filename computation MUST
+  be replaced by a call to `vibe_workspace_sha1` (so the same hash is
+  used everywhere) but that removal is the only place cksum-related
+  code is touched.
 
 ## Test location
 
-`/workspace/smoke-test.py`. Hook tests use `subprocess.run([…], input=<json>, capture_output=True)` to feed synthetic stdin to the shell scripts and assert on stdout / exit code. Tests guard against host absence of `jq` or `bash` (skip with warning).
+`smoke-test.py` (project convention - all unit and structural tests live
+in this single file; see existing `test_learning_*` family for shape).
+Tester adds new `test_task014_*` functions (prefix mandatory) and wires
+them into `main()`.
 
 ## Proposed budget
 
-2 cycles. Wide diff (new file + 4 modified files + new slash command + new CLAUDE.md fragment + README + ~15 new smoke tests) on security-sensitive surface; one cycle is plausible if Generator nails it but Spec Critic + Evaluator should be ready for a second pass.
+**2 cycles.** Rationale: the mechanism is tightly specified but composes
+with two existing systems (the /learnings override-config logic and the
+mount-order semantics of devcontainer CLI / Docker). Composition bugs
+typically catch a Generator on first pass; cycle 2 reserved for
+integration polish if cycle 1 surfaces interaction issues. If cycle 1
+passes cleanly, accept and stop.
+
+## Known irreversible side effect
+
+After this lands, the existing JSONLs in the shared `vibe-claude-config`
+volume (under `projects/-workspace/`) become inaccessible from inside
+new vibe containers - they are still in the volume, but shadowed by
+the empty per-project bind that mounts on top. Existing per-`/workspace`
+auto-memory is similarly shadowed. This is a one-time loss on first
+launch after upgrade, and MUST be documented in the TODO.md Done entry
+when this task completes.
