@@ -8,7 +8,7 @@
 
 ## Headline summary
 
-**Shipped 12 commits, +130 smoke checks (525 → 655), +3 shellcheck files (11 → 14).**
+**Shipped 14 commits, +130 smoke checks (525 → 655), +3 shellcheck files (11 → 14).**
 
 Major items:
 - **`check-numbering.sh` Stop hook** — fixes the dangling reference that printed "Stop hook error: ... script not found" at every turn.
@@ -38,6 +38,8 @@ What I left alone:
 ## Commits this session (newest first)
 
 ```
+55a5ec4 CLAUDE.md: refresh shipped-extras list
+c278837 memo: closing summary + final verification entries
 920e636 README: surface the new Stop hooks + retire shipped Coming-soon item
 8a0bdc8 TODO + memo update: /expaste subsumed by copy-last-block.sh
 772241e smoke: extend install_hooks test to cover all shipped hooks
