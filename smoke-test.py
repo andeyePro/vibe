@@ -4091,6 +4091,7 @@ def test_skipped_marker_back_compat_literal() -> None:
 # ── check-numbering.sh Stop hook tests ─────────────────────────────────────────
 
 CHECK_NUMBERING = REPO / "devcontainer" / "hooks" / "check-numbering.sh"
+COPY_LAST_BLOCK = REPO / "devcontainer" / "hooks" / "copy-last-block.sh"
 NUMBERING_HOOK_README = REPO / "devcontainer" / "hooks" / "README.md"
 
 
@@ -4212,6 +4213,164 @@ def test_numbering_hook_readme_present() -> None:
           "/home/node/.claude/hooks/check-numbering.sh" in content, "")
     check("[numbering] readme explains working-list/action-pick split",
           "working list" in content and "action pick" in content, "")
+
+
+def _run_copy_last_block(text: str, clip_dir: Path) -> tuple[int, str]:
+    """Synthesise a transcript with one assistant message of `text`,
+    invoke copy-last-block.sh with VIBE_CLIP_DIR=clip_dir, return
+    (exit_code, copy-latest.txt content or '<NO_FILE>')."""
+    transcript = clip_dir.parent / "t.jsonl"
+    transcript.write_text(
+        json.dumps({"type": "user", "message": {"content": "hi"}}) + "\n"
+        + json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "text", "text": text}]}}) + "\n"
+    )
+    clip_file = clip_dir / "copy-latest.txt"
+    if clip_file.exists():
+        clip_file.unlink()
+    payload = json.dumps({"transcript_path": str(transcript)})
+    env = {**os.environ, "VIBE_CLIP_DIR": str(clip_dir)}
+    r = subprocess.run(
+        ["bash", str(COPY_LAST_BLOCK)],
+        input=payload, capture_output=True, text=True, env=env,
+    )
+    actual = clip_file.read_text() if clip_file.exists() else "<NO_FILE>"
+    return r.returncode, actual
+
+
+def test_copy_last_block_exists_and_executable() -> None:
+    print("\n[copy-last-block: file shape]")
+    check("[copy-block] script exists",
+          COPY_LAST_BLOCK.exists(), str(COPY_LAST_BLOCK))
+    if not COPY_LAST_BLOCK.exists():
+        return
+    check("[copy-block] script is executable",
+          os.access(COPY_LAST_BLOCK, os.X_OK), "")
+    head = COPY_LAST_BLOCK.read_text().splitlines()[0]
+    check("[copy-block] starts with bash shebang",
+          head == "#!/usr/bin/env bash", head)
+
+
+def test_copy_last_block_single_block() -> None:
+    """Single fenced block → block content written, language fence stripped."""
+    print("\n[copy-last-block: single block]")
+    if not COPY_LAST_BLOCK.exists():
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        cd = Path(tmp) / ".vibe"
+        cd.mkdir()
+        rc, out = _run_copy_last_block(
+            "Result:\n```\necho hello\n```",
+            cd,
+        )
+        check("[copy-block] single: exit 0", rc == 0, f"rc={rc}")
+        check("[copy-block] single: file content matches",
+              out == "echo hello", repr(out))
+
+
+def test_copy_last_block_language_tag() -> None:
+    """Opening fence with language tag → tag is dropped, only content written."""
+    print("\n[copy-last-block: language-tagged fence]")
+    if not COPY_LAST_BLOCK.exists():
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        cd = Path(tmp) / ".vibe"
+        cd.mkdir()
+        rc, out = _run_copy_last_block(
+            "```bash\necho hi\n```",
+            cd,
+        )
+        check("[copy-block] langtag: exit 0", rc == 0, f"rc={rc}")
+        check("[copy-block] langtag: language line dropped",
+              out == "echo hi", repr(out))
+
+
+def test_copy_last_block_multiple_blocks_last_wins() -> None:
+    """Multiple blocks → LAST one is written."""
+    print("\n[copy-last-block: multiple blocks, last wins]")
+    if not COPY_LAST_BLOCK.exists():
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        cd = Path(tmp) / ".vibe"
+        cd.mkdir()
+        rc, out = _run_copy_last_block(
+            "first:\n```\nblock A\n```\nsecond:\n```\nblock B\n```",
+            cd,
+        )
+        check("[copy-block] multi: exit 0", rc == 0, f"rc={rc}")
+        check("[copy-block] multi: last block wins (B not A)",
+              out == "block B", repr(out))
+
+
+def test_copy_last_block_no_fence_no_write() -> None:
+    """No fenced blocks → no file written."""
+    print("\n[copy-last-block: no fence, no write]")
+    if not COPY_LAST_BLOCK.exists():
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        cd = Path(tmp) / ".vibe"
+        cd.mkdir()
+        rc, out = _run_copy_last_block(
+            "Just plain text, no code samples here.",
+            cd,
+        )
+        check("[copy-block] nofence: exit 0", rc == 0, f"rc={rc}")
+        check("[copy-block] nofence: file NOT written",
+              out == "<NO_FILE>", repr(out))
+
+
+def test_copy_last_block_opt_out_marker() -> None:
+    """Per-turn opt-out: <!-- vibe: no-copy --> sentinel skips the write."""
+    print("\n[copy-last-block: opt-out marker]")
+    if not COPY_LAST_BLOCK.exists():
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        cd = Path(tmp) / ".vibe"
+        cd.mkdir()
+        rc, out = _run_copy_last_block(
+            "<!-- vibe: no-copy -->\nResult:\n```\nshould-not-be-copied\n```",
+            cd,
+        )
+        check("[copy-block] optout: exit 0", rc == 0, f"rc={rc}")
+        check("[copy-block] optout: file NOT written despite block",
+              out == "<NO_FILE>", repr(out))
+
+
+def test_copy_last_block_multiline_preserved() -> None:
+    """Multi-line blocks preserve their interior newlines."""
+    print("\n[copy-last-block: multi-line preservation]")
+    if not COPY_LAST_BLOCK.exists():
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        cd = Path(tmp) / ".vibe"
+        cd.mkdir()
+        rc, out = _run_copy_last_block(
+            "```\nline 1\nline 2\nline 3\n```",
+            cd,
+        )
+        check("[copy-block] multiline: exit 0", rc == 0, f"rc={rc}")
+        check("[copy-block] multiline: interior newlines preserved",
+              out == "line 1\nline 2\nline 3", repr(out))
+
+
+def test_copy_last_block_empty_stdin() -> None:
+    """Empty stdin / no transcript → silent exit 0, no write."""
+    print("\n[copy-last-block: empty stdin]")
+    if not COPY_LAST_BLOCK.exists():
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        cd = Path(tmp) / ".vibe"
+        cd.mkdir()
+        env = {**os.environ, "VIBE_CLIP_DIR": str(cd)}
+        r = subprocess.run(
+            ["bash", str(COPY_LAST_BLOCK)],
+            input="", capture_output=True, text=True, env=env,
+        )
+        check("[copy-block] empty stdin: exit 0", r.returncode == 0,
+              f"rc={r.returncode}")
+        clip_file = cd / "copy-latest.txt"
+        check("[copy-block] empty stdin: no file",
+              not clip_file.exists(), str(clip_file))
 
 
 def test_install_extras_syncs_hooks() -> None:
@@ -4392,6 +4551,14 @@ def main() -> int:
     test_check_numbering_warns_on_mixed()
     test_check_numbering_ignores_code_fences()
     test_check_numbering_handles_missing_transcript()
+    test_copy_last_block_exists_and_executable()
+    test_copy_last_block_single_block()
+    test_copy_last_block_language_tag()
+    test_copy_last_block_multiple_blocks_last_wins()
+    test_copy_last_block_no_fence_no_write()
+    test_copy_last_block_opt_out_marker()
+    test_copy_last_block_multiline_preserved()
+    test_copy_last_block_empty_stdin()
     test_numbering_hook_readme_present()
     test_install_extras_syncs_hooks()
 
