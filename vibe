@@ -118,14 +118,29 @@ detect_github_repo() {
   return 1
 }
 
+# Canonical form of $WORKSPACE: trailing-slash stripped, symlinks resolved.
+# Falls back to a slash-stripped literal if cd fails (e.g. dir gone). Used
+# by both mark and check so a project marked "never" stays marked even when
+# the user reaches it via a different symlink path or with a trailing slash.
+_canonical_workspace() {
+  local p="${WORKSPACE%/}"
+  [ -z "$p" ] && p="$WORKSPACE"
+  (cd "$p" 2>/dev/null && pwd -P) || echo "$p"
+}
+
 is_github_skipped() {
   [ -f "$SKIPPED_FILE" ] || return 1
-  grep -qxF "$WORKSPACE" "$SKIPPED_FILE"
+  local canon
+  canon="$(_canonical_workspace)"
+  # Match either the literal current $WORKSPACE (back-compat with entries
+  # written before canonicalisation) or its canonical form.
+  grep -qxF "$WORKSPACE" "$SKIPPED_FILE" && return 0
+  [ "$canon" != "$WORKSPACE" ] && grep -qxF "$canon" "$SKIPPED_FILE"
 }
 
 mark_github_skipped() {
   mkdir -p "$(dirname "$SKIPPED_FILE")"
-  echo "$WORKSPACE" >> "$SKIPPED_FILE"
+  _canonical_workspace >> "$SKIPPED_FILE"
   echo "  ✓ Got it — won't ask about GitHub for this project again."
 }
 

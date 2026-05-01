@@ -3754,6 +3754,166 @@ def test_task013_diff_scope() -> None:
               f"touched: {', '.join(sorted(touched_paths))}")
 
 
+# ── ~/.vibe/skipped persistence tests ──────────────────────────────────────────
+
+
+def _run_skipped_probe(workspace: str, marker_state: list[str], home: Path) -> tuple[int, str, list[str]]:
+    """Source vibe with VIBE_SOURCE_ONLY=1 and HOME=<temp>, set WORKSPACE,
+    optionally pre-seed $HOME/.vibe/skipped from marker_state, then call
+    is_github_skipped and report the boolean result + post-run file content."""
+    skipped_path = home / ".vibe" / "skipped"
+    skipped_path.parent.mkdir(parents=True, exist_ok=True)
+    if marker_state:
+        skipped_path.write_text("\n".join(marker_state) + "\n")
+    elif skipped_path.exists():
+        skipped_path.unlink()
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "VIBE_CONFIG": "/dev/null",
+        "VIBE_SOURCE_ONLY": "1",
+        "WORKSPACE": workspace,
+    }
+    script = (
+        f"source {shlex.quote(str(VIBE))}; "
+        'if is_github_skipped; then echo "SKIPPED=true"; '
+        'else echo "SKIPPED=false"; fi'
+    )
+    r = subprocess.run(["bash", "-c", script], env=env,
+                       capture_output=True, text=True)
+    content = skipped_path.read_text().splitlines() if skipped_path.exists() else []
+    return r.returncode, r.stdout, content
+
+
+def test_skipped_marker_round_trip() -> None:
+    """mark_github_skipped writes WORKSPACE; is_github_skipped reads it back."""
+    print("\n[skipped: literal path round-trip]")
+    with tempfile.TemporaryDirectory() as tmp:
+        home = Path(tmp)
+        proj = home / "realproj"
+        proj.mkdir()
+        env = {
+            **os.environ,
+            "HOME": str(home),
+            "VIBE_CONFIG": "/dev/null",
+            "VIBE_SOURCE_ONLY": "1",
+            "WORKSPACE": str(proj),
+        }
+        script = (
+            f"source {shlex.quote(str(VIBE))}; "
+            'mark_github_skipped >/dev/null; '
+            'if is_github_skipped; then echo "SKIPPED=true"; '
+            'else echo "SKIPPED=false"; fi'
+        )
+        r = subprocess.run(["bash", "-c", script], env=env,
+                           capture_output=True, text=True)
+        check("[skipped] mark+check round-trip exits 0",
+              r.returncode == 0, f"rc={r.returncode} err={r.stderr[:200]}")
+        check("[skipped] is_github_skipped returns true after mark",
+              "SKIPPED=true" in r.stdout, r.stdout)
+
+
+def test_skipped_marker_trailing_slash() -> None:
+    """is_github_skipped tolerates trailing-slash difference between mark and lookup."""
+    print("\n[skipped: trailing-slash tolerance]")
+    with tempfile.TemporaryDirectory() as tmp:
+        home = Path(tmp)
+        proj = home / "realproj"
+        proj.mkdir()
+        # Pre-seed with no-slash form (canonical), then look up with trailing slash.
+        rc, out, _ = _run_skipped_probe(
+            workspace=f"{proj}/",
+            marker_state=[str(proj)],
+            home=home,
+        )
+        check("[skipped] trailing-slash WORKSPACE matches no-slash entry",
+              "SKIPPED=true" in out, out)
+
+
+def test_skipped_marker_symlink_path() -> None:
+    """is_github_skipped tolerates symlinked path equivalent to a marked entry."""
+    print("\n[skipped: symlink-equivalent path]")
+    with tempfile.TemporaryDirectory() as tmp:
+        home = Path(tmp)
+        proj = home / "realproj"
+        proj.mkdir()
+        sym = home / "symproj"
+        sym.symlink_to("realproj")
+        # Pre-seed with the canonical (real) path, look up via symlink.
+        rc, out, _ = _run_skipped_probe(
+            workspace=str(sym),
+            marker_state=[str(proj)],
+            home=home,
+        )
+        check("[skipped] symlinked WORKSPACE matches canonical entry",
+              "SKIPPED=true" in out, out)
+
+
+def test_skipped_marker_writes_canonical() -> None:
+    """mark_github_skipped writes the canonical (cd && pwd -P) form."""
+    print("\n[skipped: mark writes canonical path]")
+    with tempfile.TemporaryDirectory() as tmp:
+        home = Path(tmp)
+        proj = home / "realproj"
+        proj.mkdir()
+        # Set WORKSPACE with a trailing slash; mark should still write canonical.
+        env = {
+            **os.environ,
+            "HOME": str(home),
+            "VIBE_CONFIG": "/dev/null",
+            "VIBE_SOURCE_ONLY": "1",
+            "WORKSPACE": f"{proj}/",
+        }
+        script = (
+            f"source {shlex.quote(str(VIBE))}; mark_github_skipped >/dev/null"
+        )
+        r = subprocess.run(["bash", "-c", script], env=env,
+                           capture_output=True, text=True)
+        check("[skipped] mark exits 0", r.returncode == 0,
+              f"rc={r.returncode} err={r.stderr[:200]}")
+        skipped_path = home / ".vibe" / "skipped"
+        content = skipped_path.read_text().splitlines() if skipped_path.exists() else []
+        check("[skipped] file contains canonical (no trailing slash) path",
+              str(proj) in content, str(content))
+
+
+def test_skipped_marker_unrelated_path_rejected() -> None:
+    """is_github_skipped returns false for a path that wasn't marked."""
+    print("\n[skipped: unrelated path rejected]")
+    with tempfile.TemporaryDirectory() as tmp:
+        home = Path(tmp)
+        proj_a = home / "proj_a"
+        proj_b = home / "proj_b"
+        proj_a.mkdir()
+        proj_b.mkdir()
+        rc, out, _ = _run_skipped_probe(
+            workspace=str(proj_b),
+            marker_state=[str(proj_a)],
+            home=home,
+        )
+        check("[skipped] unrelated WORKSPACE returns false",
+              "SKIPPED=false" in out, out)
+
+
+def test_skipped_marker_back_compat_literal() -> None:
+    """Pre-existing literal (non-canonical) entries still resolve."""
+    print("\n[skipped: back-compat with non-canonical entries]")
+    with tempfile.TemporaryDirectory() as tmp:
+        home = Path(tmp)
+        proj = home / "realproj"
+        proj.mkdir()
+        # Marker file has a non-canonical literal (e.g. trailing-slash entry
+        # from before this fix). Lookup with the same literal should match.
+        literal_with_slash = f"{proj}/"
+        rc, out, _ = _run_skipped_probe(
+            workspace=literal_with_slash,
+            marker_state=[literal_with_slash],
+            home=home,
+        )
+        check("[skipped] literal-with-slash entry still matches its own path",
+              "SKIPPED=true" in out, out)
+
+
 # ── check-numbering.sh Stop hook tests ─────────────────────────────────────────
 
 CHECK_NUMBERING = REPO / "devcontainer" / "hooks" / "check-numbering.sh"
@@ -4037,6 +4197,12 @@ def main() -> int:
     test_task013_vs_md_max_iter_flag()
     test_task013_no_hardcoded_cap_string()
     test_task013_diff_scope()
+    test_skipped_marker_round_trip()
+    test_skipped_marker_trailing_slash()
+    test_skipped_marker_symlink_path()
+    test_skipped_marker_writes_canonical()
+    test_skipped_marker_unrelated_path_rejected()
+    test_skipped_marker_back_compat_literal()
     test_check_numbering_exists_and_executable()
     test_check_numbering_silent_on_clean()
     test_check_numbering_silent_on_lettered_only()
