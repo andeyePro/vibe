@@ -39,6 +39,8 @@ WEB_RESEARCH_MD = REPO / "devcontainer" / "claude-md" / "web-research.md"
 SSH_DISCIPLINE_MD = REPO / "devcontainer" / "claude-md" / "ssh-discipline.md"
 VS_MD = REPO / "devcontainer" / "commands" / "vs.md"
 SP_MD = REPO / "devcontainer" / "commands" / "sp.md"
+VSS_MD = REPO / "devcontainer" / "commands" / "vss.md"
+VSSS_MD = REPO / "devcontainer" / "commands" / "vsss.md"
 CHECK_SP_CURRENT = REPO / "devcontainer" / "check-sp-current.sh"
 CYCLE_1_DIFF = REPO / ".vs" / "cycle-1" / "diff.patch"
 
@@ -4373,6 +4375,83 @@ def test_copy_last_block_empty_stdin() -> None:
               not clip_file.exists(), str(clip_file))
 
 
+def test_vss_md_exists_with_frontmatter() -> None:
+    """vss.md has frontmatter and the required structure markers."""
+    print("\n[/vss: file shape]")
+    check("[vss] vss.md exists", VSS_MD.exists(), str(VSS_MD))
+    if not VSS_MD.exists():
+        return
+    content = VSS_MD.read_text()
+    check("[vss] frontmatter open delimiter", content.startswith("---\n"), "first 4 chars")
+    check("[vss] description: in frontmatter",
+          "description:" in content.split("---\n")[1] if "---\n" in content else False, "")
+    check("[vss] declares Mode A header", "## Mode A" in content, "")
+    check("[vss] declares Mode B header", "## Mode B" in content, "")
+    check("[vss] cites 270s redirect window", "270" in content, "")
+    check("[vss] mentions terminal bell", "printf" in content and "\\\\a" in content, "")
+
+
+def test_vss_md_hard_escalate_sentinels() -> None:
+    """vss.md preserves the canonical hard-escalate list. These are
+    safety boundaries; a regression silently dropping a sentinel is the
+    failure this test exists to catch."""
+    print("\n[/vss: hard-escalate sentinels]")
+    if not VSS_MD.exists():
+        check("[vss-escalate] vss.md exists", False, "missing")
+        return
+    content = VSS_MD.read_text()
+    sentinels = [
+        ("physical hardware actuation", "Physical hardware actuation"),
+        ("SSH-out idiom", "SSH-out"),
+        ("Pioreactor named in actuation context", "Pioreactor"),
+        ("/vs --fuzzy subjective verdict", "fuzzy"),
+        ("force-push named", "Force-push" in content or "force-push" in content),
+        ("hook bypass --no-verify", "--no-verify"),
+        ("/learnings writes", "/learnings"),
+        ("firewall/hook/settings scope", "firewall" in content.lower()),
+        ("scope creep", "Scope creep" in content or "scope creep" in content),
+    ]
+    for label, pattern in sentinels:
+        if isinstance(pattern, bool):
+            check(f"[vss-escalate] {label}", pattern, "")
+        else:
+            check(f"[vss-escalate] {label}", pattern in content, f"missing: {pattern!r}")
+
+
+def test_vsss_md_inherits_escalate_and_budget() -> None:
+    """vsss.md inherits /vss's escalate list, repeats its own safety floor,
+    and pins BUDGET_HOURS=5 (full Pro/Max session, no graceful-shutdown
+    cushion). A flip back to 4h would be a regression."""
+    print("\n[/vsss: inherited escalate + budget]")
+    check("[vsss] vsss.md exists", VSSS_MD.exists(), str(VSSS_MD))
+    if not VSSS_MD.exists():
+        return
+    content = VSSS_MD.read_text()
+    check("[vsss] frontmatter open delimiter", content.startswith("---\n"), "first 4 chars")
+    check("[vsss] inherits /vss escalate list",
+          "Inherited verbatim from `/vss`" in content, "")
+    check("[vsss] BUDGET_HOURS=5 default", "BUDGET_HOURS=5" in content, "")
+    check("[vsss] no stale 4h default",
+          "BUDGET_HOURS=4" not in content,
+          "found 4h default — should be 5h since 2026-05-07")
+    check("[vsss] safety floor section present",
+          "/vsss safety floor" in content, "")
+    floor_sentinels = [
+        ("physical hardware", "Actuate physical hardware"),
+        ("SSH-out", "SSH out"),
+        ("force-push", "Force-push"),
+        ("hook disable", "--no-verify"),
+        ("/learnings", "/learnings"),
+        ("--fuzzy auto-pass refusal", "fuzzy"),
+    ]
+    for label, pattern in floor_sentinels:
+        check(f"[vsss-floor] {label}", pattern in content, f"missing: {pattern!r}")
+    check("[vsss] declares .vss/loop.md as audit trail",
+          ".vss/loop.md" in content, "")
+    check("[vsss] three-no-op exit condition",
+          "Three consecutive A-mode" in content or "three consecutive A-mode" in content, "")
+
+
 def test_install_extras_syncs_hooks() -> None:
     """install-claude-extras.sh installs hooks/*.sh with +x into $DEST_ROOT/hooks/."""
     print("\n[hooks: install-claude-extras.sh syncs every shipped hook]")
@@ -4567,6 +4646,9 @@ def main() -> int:
     test_copy_last_block_multiline_preserved()
     test_copy_last_block_empty_stdin()
     test_numbering_hook_readme_present()
+    test_vss_md_exists_with_frontmatter()
+    test_vss_md_hard_escalate_sentinels()
+    test_vsss_md_inherits_escalate_and_budget()
     test_install_extras_syncs_hooks()
 
     print()
