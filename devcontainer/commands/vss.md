@@ -82,7 +82,7 @@ Dispatch `Agent(subagent_type: "general-purpose", model: "opus")` with this brie
 >
 > - `/vs` (rigorous) — task has mechanical acceptance criteria a Tester can verify. Tests can be written. Pass/fail is automatic.
 > - `/vs --fuzzy` — adversarial review needed but no test gate possible. Reviewer judgment, not mechanical.
-> - A specific Superpowers skill (name it: brainstorming, writing-plans, test-driven-development, subagent-driven-development, etc.) — when the task fits a Superpowers methodology cleanly.
+> - A specific Superpowers skill (name it from the current set: `using-superpowers`, `brainstorming`, `writing-plans`, `executing-plans`, `subagent-driven-development`, `dispatching-parallel-agents`, `test-driven-development`, `systematic-debugging`, `requesting-code-review`, `receiving-code-review`, `verification-before-completion`, `finishing-a-development-branch`, `using-git-worktrees`, `writing-skills`) — when the task fits a Superpowers methodology cleanly. Run `bash devcontainer/check-sp-current.sh` if uncertain whether the upstream list has drifted.
 > - `/sp` — when broad Superpowers discipline applies but no single skill dominates.
 > - **Direct in-session edit** — task is small, concrete, mechanically bounded. Most documentation, single-file changes, and config updates fall here.
 >
