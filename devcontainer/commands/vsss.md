@@ -21,9 +21,11 @@ At the very start of `/vsss`, before any work:
 1. Capture `START_TIME=$(date -u +%s)` (or equivalent in your context).
 2. Read `MEMORY.md` for `feedback_autonomous_session_protocol` and `feedback_default_to_local_time_for_uk_user`. Apply both.
 3. Set `BUDGET_HOURS=5` unless the user passed an explicit budget in `$ARGUMENTS` (e.g. `/vsss --budget 2h <task>`). 5h is intended to consume a full Pro/Max session when `/vsss` is invoked at session start. There is no graceful-shutdown cushion — if the loop is approaching the limit, the optimiser should bias toward "stop the loop" (perfection gate) so pending work is committed cleanly before the cap rather than mid-iteration. If you want a softer cap, pass `--budget 4h` explicitly.
-4. Write `.vss/loop.md` with a header line: `# /vsss session — start <ISO8601 UTC> – budget <Nh>`.
+4. Open `.vss/sessions/<start-ISO>.md` (filename uses `T` separator and replaces `:` with `-`, e.g. `2026-05-07T14-29-02Z.md`) and write the audit header per the format defined in `/vss` § Session audit format. The Initial-plan section captures the initial args, priority queue (if any), and budget.
 
-Every iteration appends one line to `.vss/loop.md`: `<iter#> <ISO8601> <mode A|B> <one-line summary> <commit SHA or "no-op">`.
+Every iteration appends a full Iter section to the session file (Plan / Files touched / Commit / Outcome / Notes). Final-state line is appended at exit.
+
+The session file is the single canonical audit Martin reviews. There is no separate roll-up index.
 
 ## Loop structure
 
@@ -63,9 +65,9 @@ In priority order — check each at the start of every iteration:
 2. **Optimiser returns "stop the loop"** (perfection gate).
 3. **Session credit exhaustion signal.** Operationalised as: `(date -u +%s) - START_TIME` exceeds `BUDGET_HOURS * 3600`. Default 5h consumes a full Pro/Max session when `/vsss` is invoked at session start.
 4. **Three consecutive A-mode iterations with `no-op` outcomes** (no commits). Indicates TODO is empty AND repo-scan finds nothing high-leverage. Stop.
-5. **Destructive-state signal.** If git is in an unrecoverable state (merge conflict, detached HEAD with uncommitted work, dirty tree the executor can't clean up). Stop, leave a status note in `.vss/loop.md`.
+5. **Destructive-state signal.** If git is in an unrecoverable state (merge conflict, detached HEAD with uncommitted work, dirty tree the executor can't clean up). Stop, mark the abort in the session file's Final state.
 
-On any exit, write a final-state line to `.vss/loop.md`: `# session ended <ISO8601 UTC> – exit reason: <reason> – iterations: <N> – commits: <M>`.
+On any exit, append the Final-state section to `.vss/sessions/<start-ISO>.md` per `/vss` § Session audit format (Exit reason / End time / Iterations / Commits / Pushed / Escalations / Deferred). Atomic write at exit; do not rely on incremental appends to survive an abort. If aborted by a hard-escalate trigger, write what's known at the abort point, mark the abort in Final state, then exit.
 
 ## /vsss safety floor
 
@@ -79,6 +81,7 @@ Even with autonomy turned all the way up, never autonomously:
 - Touch `/learnings` (the write-confirm hook will block; respect that).
 - Auto-pass a `/vs --fuzzy` subjective-recognisability verdict.
 - Edit `init-firewall.sh`, `guard-bash.sh`, `guard-fs.sh`, `settings.local.json` permission lists.
+- `git push`. Inherited from `/vss` § Push policy: local commits only by default. User reviews `.vss/sessions/<ISO>.md` and pushes manually, or invokes `/vsss --push-on-pass` to opt in to autonomous push for that single run.
 
 If a wrapped `/vss` iteration tries any of these, the iteration aborts (per `/vss` rules) AND the `/vsss` loop exits per condition 1.
 
@@ -95,8 +98,10 @@ When the loop ends (any reason), report to the user:
 - Total iterations run.
 - Commit count and SHAs.
 - Exit reason in plain English.
-- One-line note on each commit (from the rolling log).
+- One-line note on each commit (sourced from the per-iter blocks in the session file).
 - Anything left in escalate-pending state that needs the user.
+- Path to the full session audit: `.vss/sessions/<start-ISO>.md` — explicitly named, so the user can open it without guessing the filename.
+- Reminder line: "not pushed; review the session file then `git push` if approved" (omit the reminder only if `--push-on-pass` was passed AND the run cleared the perfection-gate).
 
 Lead with `---` before the report block.
 
