@@ -58,6 +58,39 @@ Created at repo root.
      "timestamp": "<ISO8601>"}
     ```
 - `.vs/cost-summary.json` — per-task rollup, written by Evaluator on Step-7 pass. Aggregates across all cycles. Schema: `{"task_id", "cycles", "subagent_calls", "total_tokens", "by_role": {"spec_critic": N, "generator": N, ...}, "by_model": {"sonnet": N, "haiku": N, "opus": N}, "wall_time_ms"}`. **Committed.**
+- `.vs/archive/<task-id>/` — preserved state from prior tasks. See § Multi-task state convention. **`spec.md` is committed; `critiques/` subdirs are committed (renamed out of the `cycle-*/` gitignore pattern).**
+
+## Multi-task state convention
+
+`.vs/`'s files split into two groups:
+
+- **Per-task** (overwritten on new task → must be archived):
+  - `.vs/spec.md` — current task's sprint contract
+  - `.vs/cycle-N/` directories — current task's per-cycle artifacts (gitignored)
+- **Repo-wide accumulating** (stay in `.vs/` across tasks → must NOT be archived):
+  - `.vs/tasks.json` — running list of all tasks ever run
+  - `.vs/progress.md` — append-only log across all tasks
+  - `.vs/cost-summary.json` — rollup of the most recent completed task (overwritten on each Step-7 pass, NOT on task start)
+
+When a `/vs` task is parked mid-flight (Spec Critic passed but user hasn't approved, or cycles ran but the task abandoned without a clean Step-7 verdict), and a NEW `/vs` task needs to start, Planner archives the parked task's per-task state before writing fresh state.
+
+Archive procedure (when new task is starting and `.vs/spec.md` belongs to a different parked task):
+
+1. Read `.vs/tasks.json` to discover the parked task's `id` (e.g. `task_014`). Cross-check by reading `.vs/spec.md`'s heading to confirm.
+2. Create `.vs/archive/<task-id>/critiques/` (the inner dir avoids the `.vs/cycle-*/` gitignore pattern matching).
+3. `git mv .vs/spec.md .vs/archive/<task-id>/spec.md`.
+4. For each existing `.vs/cycle-N/` directory: `mv .vs/cycle-N/* .vs/archive/<task-id>/critiques/cycle-N-files/` (after `mkdir -p` of that subdir). Then `rmdir .vs/cycle-N`. The rename out of `cycle-*/` un-ignores the files so they commit as part of the audit. The `.vs/cycle-*/` gitignore rule still applies to the new task's workspace cycle-N/.
+5. Commit with `vs: archive <task-id> state (parked at <stage>)`. Local only — same no-autonomous-push policy as the rest of `/vss`/`/vsss`.
+6. Now write fresh `.vs/spec.md` for the new task; `tasks.json` and `progress.md` get appended-to (not overwritten) per their normal usage.
+
+Resuming an archived task:
+
+1. `git mv .vs/archive/<task-id>/spec.md .vs/spec.md` (and ensure no current task's spec is sitting there — archive that one first if so).
+2. For each cycle-N preserved: `mkdir -p .vs/cycle-N` and `mv .vs/archive/<task-id>/critiques/cycle-N-files/* .vs/cycle-N/`.
+3. Remove the now-empty `.vs/archive/<task-id>/` tree (`rmdir` chain).
+4. Commit with `vs: resume <task-id> from archive`.
+
+Note: this is a structural-state convention, not a methodology change. Spec Critic, Generator, Tester, Reviewer, Evaluator all behave identically. The convention only affects how Planner manages multi-task state at task boundaries.
 
 ## Step 1 — Simplicity gate (Planner)
 
