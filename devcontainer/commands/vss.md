@@ -52,7 +52,21 @@ Read `MEMORY.md` at start; surface relevant feedback memories into the planner b
 
    Announce the top candidate with one-line rationale (lead with the literal action). **At the moment of announcement, ring the terminal bell to surface the wait window to the user**: `Bash(command: "printf '\\a' >&2", description: "vss A-mode notify – bounce terminal icon + audio cue")`. The bell character maps to a system sound + dock-icon bounce in Ghostty / Terminal.app / iTerm — vibe already uses this idiom for idle hooks (see `vibe` line ~1043). One bell per announcement; do not spam.
 
-   Then `ScheduleWakeup(delaySeconds=270, reason="vss A-mode 5-min redirect window")` — under the 5-min cache TTL. **The semantics**: scan the repo, decide the best next thing to do, announce what that is, wait 270s, and execute the announced item if no human response arrives within the window. On wake: if the user has redirected in the meantime, follow that. If silent, proceed with the announced item. The spec calls this "5-min" colloquially; the actual wait is 270s for cache discipline.
+   **The announcement MUST include explicit instructions on how the user can skip the wait, approve the plan, and continue immediately.** Add a final line in the announce message in this exact shape (or trivially equivalent — the substance must be present):
+
+   ```
+   Type `go` to skip the 270s wait and proceed immediately, or send any other
+   message to redirect. Silence for 270s = auto-proceed with the announced item.
+   ```
+
+   Then `ScheduleWakeup(delaySeconds=270, reason="vss A-mode 5-min redirect window")` — under the 5-min cache TTL. **The semantics**:
+
+   - **Auto-proceed**: scan the repo, decide the best next thing to do, announce, wait 270s, execute the announced item if no human response arrives within the window. The spec calls this "5-min" colloquially; the actual wait is 270s for cache discipline.
+   - **Skip-and-go**: if the user replies with any of the recognised approval phrases — case-insensitive match against `go`, `y`, `yes`, `ok`, `proceed`, `approve`, `approved` — execute the announced item immediately. No further wait. Treat the approval message as ratification of the announced plan.
+   - **Redirect**: if the user replies with anything ELSE (any text not matching the approval phrases above), abandon the announced item and follow the user's redirect verbatim. The redirect IS the new task; restart Mode A's decision flow against it.
+   - **Cancel**: if the user types only `n`, `no`, `cancel`, `stop`, or `abort` (case-insensitive), abandon without executing the announced item AND without redirecting. Surface a one-line confirmation and stop.
+
+   Whichever branch fires, record the outcome in the session file's iter block as `auto-proceeded` / `user-approved-immediately` / `user-redirected-to <new task>` / `user-cancelled`. The wait-skip information surfacing in the announce is a hard requirement — Martin asked for it explicitly 2026-05-07; a regression silently dropping the instruction is a failure.
 
 Mode A always does **exactly one item**, then stops. For autonomous looping use `/vsss`.
 

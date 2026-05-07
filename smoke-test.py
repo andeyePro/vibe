@@ -4403,6 +4403,16 @@ def test_vss_md_exists_with_frontmatter() -> None:
     check("[vss] declares Mode B header", "## Mode B" in content, "")
     check("[vss] cites 270s redirect window", "270" in content, "")
     check("[vss] mentions terminal bell", "printf" in content and "\\\\a" in content, "")
+    check("[vss] announce includes skip-the-wait instruction",
+          "skip the 270s wait" in content or "skip the wait" in content, "")
+    check("[vss] documents approval-phrase recognition (go/y/yes/...)",
+          "`go`" in content and ("`y`" in content or "yes" in content), "")
+    check("[vss] documents redirect branch",
+          "redirect" in content.lower() and ("any other" in content or "anything ELSE" in content or "anything else" in content), "")
+    check("[vss] documents cancel branch",
+          ("`n`" in content or "no`" in content) and ("cancel" in content.lower() or "abort" in content.lower()), "")
+    check("[vss] outcome labels named in session file rules",
+          "auto-proceeded" in content and "user-approved-immediately" in content, "")
 
 
 def test_vss_md_hard_escalate_sentinels() -> None:
