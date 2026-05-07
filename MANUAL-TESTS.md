@@ -347,6 +347,27 @@ ls -la ~/.ssh ~/.gitconfig        # should now exist
 
 ---
 
+### Test 20: `git config --global` works inside the container
+Regression test for the `.gitconfig` bind-mount EBUSY failure: host `~/.gitconfig`
+is mounted read-only at `~/.gitconfig-host`, and `setup-git.sh` copies it to a
+writable `~/.gitconfig` so `git config --global` can rename-over-tempfile.
+
+```bash
+vibe
+# inside the container:
+git config --global user.email "test@example.com"
+git config --global --get user.email      # should print test@example.com
+git config --global --get credential.helper  # should print /usr/local/bin/vibe-credential-helper
+```
+
+**Expected:**
+- [ ] No `Device or resource busy` error on postStartCommand
+- [ ] `git config --global` writes succeed
+- [ ] `credential.helper` points to vibe's helper
+- [ ] Host `~/.gitconfig` is unchanged after the container exits
+
+---
+
 ### Test 21: Force-push guardrail
 Inside a vibe session, ask Claude to run:
 
@@ -396,27 +417,6 @@ cat /home/node/.claude/vibe-blocks.log
 
 ---
 
-### Test 20: `git config --global` works inside the container
-Regression test for the `.gitconfig` bind-mount EBUSY failure: host `~/.gitconfig`
-is mounted read-only at `~/.gitconfig-host`, and `setup-git.sh` copies it to a
-writable `~/.gitconfig` so `git config --global` can rename-over-tempfile.
-
-```bash
-vibe
-# inside the container:
-git config --global user.email "test@example.com"
-git config --global --get user.email      # should print test@example.com
-git config --global --get credential.helper  # should print /usr/local/bin/vibe-credential-helper
-```
-
-**Expected:**
-- [ ] No `Device or resource busy` error on postStartCommand
-- [ ] `git config --global` writes succeed
-- [ ] `credential.helper` points to vibe's helper
-- [ ] Host `~/.gitconfig` is unchanged after the container exits
-
----
-
 ### Test 24: Curated agents + lean-mode commands
 
 Canonical copies live at `/usr/local/share/vibe/{agents,commands}/` in the image
@@ -436,11 +436,15 @@ ls ~/.claude/commands/
 - [ ] `~/.claude/commands/diet.md` exists
 - [ ] `~/.claude/commands/feast.md` exists
 - [ ] `~/.claude/commands/vs.md` exists
+- [ ] `~/.claude/commands/vss.md` exists
+- [ ] `~/.claude/commands/vsss.md` exists
 
 Inside Claude Code:
 - [ ] Typing `/diet` lists the command with its description in the picker
 - [ ] `/feast` likewise
 - [ ] `/vs` likewise
+- [ ] `/vss` likewise — picker description names "Versus Solo" and the autonomous-one-shot shape
+- [ ] `/vsss` likewise — picker description names "Versus Super Solo" and the loop-until-perfection shape
 - [ ] Ask Claude to "run shellcheck-fixer" — subagent launches, runs `python3 code-check.py`, exits with `clean` if repo is clean
 - [ ] Ask Claude to "run security-review" with no staged diff — subagent replies `no diff — nothing to review`
 - [ ] Invoking `/diet` causes Claude to acknowledge lean mode; subsequent requests that would normally spawn subagents are handled inline
