@@ -37,6 +37,7 @@ COPY_MD_OLD = REPO / "devcontainer" / "commands" / "copy.md"
 VIBE_COPY_WATCHER = REPO / "vibe-copy-watcher.sh"
 WEB_RESEARCH_MD = REPO / "devcontainer" / "claude-md" / "web-research.md"
 SSH_DISCIPLINE_MD = REPO / "devcontainer" / "claude-md" / "ssh-discipline.md"
+FEEDBACK_AUTO_PROMOTE_MD = REPO / "devcontainer" / "claude-md" / "feedback-auto-promote.md"
 VS_MD = REPO / "devcontainer" / "commands" / "vs.md"
 SP_MD = REPO / "devcontainer" / "commands" / "sp.md"
 VSS_MD = REPO / "devcontainer" / "commands" / "vss.md"
@@ -4665,6 +4666,38 @@ def test_vsss_md_inherits_escalate_and_budget() -> None:
           "git push" in content.lower() and ("push-on-pass" in content or "Push policy" in content), "")
 
 
+def test_feedback_auto_promote_fragment() -> None:
+    """devcontainer/claude-md/feedback-auto-promote.md spec'd 2026-05-07.
+    Behavioral fragment instructing Claude when to propose /learnings
+    promotion after saving a feedback memory. A regression dropping the
+    fragment, the IS/IS-NOT list, or the opt-out hook would silently lose
+    the cross-repo behavioral propagation channel."""
+    print("\n[feedback-auto-promote: fragment shape]")
+    check("[auto-promote] fragment file exists",
+          FEEDBACK_AUTO_PROMOTE_MD.exists(), str(FEEDBACK_AUTO_PROMOTE_MD))
+    if not FEEDBACK_AUTO_PROMOTE_MD.exists():
+        return
+    content = FEEDBACK_AUTO_PROMOTE_MD.read_text()
+    check("[auto-promote] § When to propose promotion present",
+          "When to propose promotion" in content, "")
+    check("[auto-promote] IS/NOT examples present",
+          "YES:" in content and "NO:" in content, "")
+    check("[auto-promote] cross-repo-applicable filter named",
+          "cross-repo applicable" in content.lower() or "cross-repo-applicable" in content.lower(), "")
+    check("[auto-promote] Y/n/never-ask three-option prompt",
+          "Y / n / never-ask" in content or "Y, n, never-ask" in content, "")
+    check("[auto-promote] VIBE_AUTO_PROMOTE opt-out env var",
+          "VIBE_AUTO_PROMOTE" in content, "")
+    check("[auto-promote] PreToolUse hook still gates the write",
+          "PreToolUse hook" in content, "")
+    check("[auto-promote] uses /learn command for the write",
+          "/learn" in content, "")
+    check("[auto-promote] explicit no-auto-write rule",
+          "do NOT auto-write" in content.lower() or "Do NOT auto-write" in content, "")
+    check("[auto-promote] one-prompt-per-memory rule",
+          "One prompt per" in content or "one prompt per" in content, "")
+
+
 def test_vs_md_plain_techy_verbosity_flags() -> None:
     """vs.md spec'd --plain / --techy / --verbosity flags 2026-05-07. The
     flags govern Spec Critic / Tester / Evaluator output mode; a regression
@@ -4955,6 +4988,7 @@ def main() -> int:
     test_vss_md_exists_with_frontmatter()
     test_vss_md_hard_escalate_sentinels()
     test_vss_md_audit_trail_and_push_policy()
+    test_feedback_auto_promote_fragment()
     test_vs_md_plain_techy_verbosity_flags()
     test_vs_md_multi_task_archive_convention()
     test_vsss_md_inherits_escalate_and_budget()
