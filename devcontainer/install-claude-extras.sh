@@ -139,7 +139,43 @@ install_claude_md_fragments() {
   mv "$target.tmp" "$target"
 }
 
+# Detect whether Superpowers is installed (user-scope) and surface a one-line
+# banner + install command if not. Auto-install via direct file write into
+# ~/.claude/plugins/ is the long-term goal but requires empirical layout
+# discovery (option b in the TODO) - punt for now and at least make the manual
+# install command visible on every container start. Opt-out via VIBE_PLUGINS=0.
+check_superpowers() {
+  # Honour opt-out
+  if [ "${VIBE_PLUGINS:-1}" = "0" ]; then
+    return 0
+  fi
+
+  local plugins_dir="$DEST_ROOT/plugins"
+  # Heuristic: any subdir matching */superpowers* or any file containing
+  # "obra/superpowers" path components. Layout TBD by empirical probe.
+  if [ -d "$plugins_dir" ] && find "$plugins_dir" -maxdepth 3 -name '*superpowers*' 2>/dev/null | grep -q .; then
+    return 0
+  fi
+
+  # Surface the banner to stderr so it shows up in postStart output.
+  cat >&2 <<'EOF'
+
+  vibe: Superpowers plugin not detected at ~/.claude/plugins/.
+        For /sp and the 14 superpowers skills, run inside a vibe session:
+
+          /plugin marketplace add anthropics/claude-plugins-official
+          /plugin install superpowers@claude-plugins-official
+
+        Persists in the vibe-claude-config volume across all your projects.
+        Opt out of this banner: VIBE_PLUGINS=0.
+        Auto-install pending empirical layout discovery (TODO: vibe ship
+        Superpowers by default).
+
+EOF
+}
+
 install_dir agents
 install_dir commands
 install_hooks
 install_claude_md_fragments
+check_superpowers
