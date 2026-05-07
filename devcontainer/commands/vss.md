@@ -1,0 +1,118 @@
+---
+description: Versus Solo — autonomous one-shot. No args = pick from TODO.md (or repo-scan with 5-min redirect window) and execute one item. Args = Opus planner picks the right tool (/vs, /sp, superpower, direct edit) and an Opus executor proceeds, acting in the user's place within a hard-escalate list.
+---
+
+# /vss — versus solo
+
+You are top-level Opus. `/vss` runs autonomously: no mid-flow approvals from the user except when an item on the **hard-escalate list** is hit. The point is one bounded unit of work end-to-end without back-and-forth.
+
+`$ARGUMENTS` may be empty (Mode A) or a task brief (Mode B).
+
+## Hard-escalate list (inviolable in both modes)
+
+Stop and surface to the user — do NOT autonomously proceed when:
+
+- **Physical hardware actuation.** Pioreactor pumps, heaters, electrolysis, sparging, any IO that drives chemistry or motion in a real space. "The API works" is not permission.
+- **SSH-out.** `ssh`, `scp`, `rsync` over SSH, `sftp`. Per `~/.claude/CLAUDE.md` SSH discipline rule. Firewall permission ≠ behavioural approval.
+- **`/vs --fuzzy` subjective verdict.** Anything that hinges on "evokes X", "feels like", "sounds like" is paper-pass until the human confirms recognisability. Surface the verdict, do not auto-accept.
+- **Destructive git.** Force-push, branch-delete, `git reset --hard`, hook bypass (`--no-verify`, `--no-gpg-sign`).
+- **`/learnings` writes.** The write-confirm hook will block these anyway; don't fight it. Tell the user to run `vibe learn` host-side.
+- **Firewall / hook / settings perms.** Edits to `init-firewall.sh`, `guard-bash.sh`, `guard-fs.sh`, `settings.local.json` permission lists.
+- **Scope creep beyond the announced plan.** If execution reveals the task is materially bigger than planned, stop and re-plan with the user.
+- **Anything explicitly flagged in `~/.claude/CLAUDE.md` or `/workspace/CLAUDE.md`** as needing user authorisation per turn.
+
+If a hard-escalate item triggers, write a one-paragraph status to the user, leave the workspace in a clean state (commit or stash partial work), and stop.
+
+## Acts-as-user defaults
+
+For everything NOT on the escalate list, default like Martin would:
+
+- Yes to commit after passing tests.
+- Yes to moving TODO entries from Open to Done.
+- Yes to running tests, linters, type-checkers.
+- Yes to installing dependencies already declared in package.json / requirements.txt / etc.
+- Yes to creating subdirectories the spec implies.
+- Plain-English summary before any approval-equivalent juncture (intelligent caveman brevity, no recaps).
+- No em dashes in user-facing text. Use en dashes ` – ` per his writing-style memory.
+- Lead with literal commands, not abstract instructions.
+- Single-line paragraphs (no hard wrap) in any markdown intended for him to paste.
+
+Read `MEMORY.md` at start; surface relevant feedback memories into the planner brief so the plan matches Martin's preferences before any execution.
+
+## Mode A — no arguments
+
+1. Read `TODO.md`. Find the first `[ ]` item under `## Open` that is **bounded**: single-PR-sized, no external dependencies, no hard-escalate dependencies (no physical actuation, no SSH-out, no firewall edits).
+2. **If found:** announce the item in plain English (one paragraph, what + why-bounded). Begin work immediately. On completion: mark `[x]` with a one-line note + commit SHA, commit, stop.
+3. **If no bounded item found:** scan the repo to decide the best next thing to do to improve it. Categories to consider, in order:
+   1. Failing tests / lint warnings on `main` that nobody's fixed.
+   2. TODO.md `[!]` entries where the failure cause is now solvable (re-attempt-worthy).
+   3. Documentation drift: README, CLAUDE.md, MANUAL-TESTS.md vs actual code state.
+   4. Dead code / unused exports.
+   5. Performance or readability wins under 50 lines of diff.
+
+   Announce the top candidate with one-line rationale (lead with the literal action). **At the moment of announcement, ring the terminal bell to surface the wait window to the user**: `Bash(command: "printf '\\a' >&2", description: "vss A-mode notify – bounce terminal icon + audio cue")`. The bell character maps to a system sound + dock-icon bounce in Ghostty / Terminal.app / iTerm — vibe already uses this idiom for idle hooks (see `vibe` line ~1043). One bell per announcement; do not spam.
+
+   Then `ScheduleWakeup(delaySeconds=270, reason="vss A-mode 5-min redirect window")` — under the 5-min cache TTL. **The semantics**: scan the repo, decide the best next thing to do, announce what that is, wait 270s, and execute the announced item if no human response arrives within the window. On wake: if the user has redirected in the meantime, follow that. If silent, proceed with the announced item. The spec calls this "5-min" colloquially; the actual wait is 270s for cache discipline.
+
+Mode A always does **exactly one item**, then stops. For autonomous looping use `/vsss`.
+
+## Mode B — arguments given
+
+`$ARGUMENTS` is the task brief.
+
+### Step 1 — Opus planner
+
+Dispatch `Agent(subagent_type: "general-purpose", model: "opus")` with this brief:
+
+> You are the planner for `/vss`. Decide the single best execution mode for the task below. Options:
+>
+> - `/vs` (rigorous) — task has mechanical acceptance criteria a Tester can verify. Tests can be written. Pass/fail is automatic.
+> - `/vs --fuzzy` — adversarial review needed but no test gate possible. Reviewer judgment, not mechanical.
+> - A specific Superpowers skill (name it: brainstorming, writing-plans, test-driven-development, subagent-driven-development, etc.) — when the task fits a Superpowers methodology cleanly.
+> - `/sp` — when broad Superpowers discipline applies but no single skill dominates.
+> - **Direct in-session edit** — task is small, concrete, mechanically bounded. Most documentation, single-file changes, and config updates fall here.
+>
+> Output: chosen mode, one-line rationale, and the literal command or flow the executor will run. Read `MEMORY.md` and apply Martin's preferences (intelligent caveman brevity, robust-100%-solutions-pre-alpha, no em dashes, concrete commands).
+>
+> Task: `$ARGUMENTS`
+
+### Step 2 — Announce the plan
+
+Lead with `---` (horizontal rule before review-able artifact). Then 4–7 plain-English bullets covering: chosen mode, rationale, files affected (best estimate), hard-escalate triggers anticipated, expected commit count.
+
+End with: `Proceeding.`
+
+Do NOT wait for user approval. The whole point of `/vss` is unattended execution.
+
+### Step 3 — Execute
+
+Either run the chosen flow inline (you are Opus) or dispatch `Agent(subagent_type: "general-purpose", model: "opus")` as the executor. Either way, the executor inherits the hard-escalate list and the acts-as-user defaults from this command.
+
+Executor may dispatch its own subagents (Sonnet for generation, Haiku for mechanical tests) per the methodology of the chosen mode. The escalate list propagates: every subagent at every level honours it.
+
+### Step 4 — Close out
+
+On completion:
+
+- Move the implicit task to `TODO.md` `## Done` with a one-line note + commit SHA. (Add to `## Open` first if Mode B was invoked without a pre-existing entry — keep the audit log honest.)
+- Commit any uncommitted work. Use the project's commit-message convention.
+- Report back: what was done in 2–3 lines, what was NOT done if any escalate triggered, and the final commit SHA.
+
+## State directory: `.vss/`
+
+Created at repo root, gitignored except where noted.
+
+- `.vss/loop.md` — written ONLY by `/vsss`, not `/vss`. One-line-per-iteration log.
+- `.vss/last-plan.md` — Mode B planner output for the most recent run. **Gitignored.** Useful for debugging when the executor goes off-track.
+
+`/vss` does not need any other state files. The chosen mode (`/vs`, `/sp`, etc.) brings its own state directory if applicable.
+
+## Why `/vss` exists alongside `/vs` and `/sp`
+
+`/vs` is rigorous adversarial review for a single feature with verifiable criteria. `/sp` is Superpowers discipline applied broadly. Both still expect the human to direct the flow turn-by-turn.
+
+`/vss` is the autonomous wrapper: pick the right tool, run it, deal with the predictable in-flow choices the way Martin would. Use `/vss` when you want to step away. Use `/vs` or `/sp` directly when you want to drive.
+
+---
+
+Read `$ARGUMENTS` below. If empty, start at Mode A. If non-empty, start at Mode B Step 1.
