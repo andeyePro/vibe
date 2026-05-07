@@ -124,3 +124,21 @@ turn copied" rather than "the hook is broken". Either:
 available and overrides the hook's auto-copy when invoked. The two
 mechanisms compose: the hook keeps the clipboard fresh by default,
 and `/c` lets you override when you need a specific older block.
+
+### Migrating from `/expaste`
+
+`/expaste` was a slash command that copied the most recent fenced
+block AND nudged you to `/exit` — the goal was "load my clipboard
+right before I drop back to the shell, in one step". `copy-last-block.sh`
+subsumes the auto-copy half: after enabling the hook, every turn's
+last fenced block is already on your Mac clipboard, so plain `/exit`
+gives you the same result with no slash-command round-trip.
+
+If you previously used `/expaste`, enable `copy-last-block.sh` per
+the snippet in the [How to enable](#how-to-enable) section above and
+use plain `/exit` going forward. `/expaste` is still shipped as a
+slash command (it has not been retired from `install-claude-extras.sh`'s
+`RETIRED_COMMANDS` list, intentionally — that retirement carries a
+small risk of clobbering user-customised bodies), so it continues to
+work if you have a specific use for the explicit-checkpoint shape.
+For most users the hook is the simpler path.
