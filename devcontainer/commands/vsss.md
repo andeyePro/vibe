@@ -47,7 +47,9 @@ When `/vsss` is invoked (with any args, or `--resume`), Planner first scans `.vs
 
 Three branches:
 
-- **`/vsss --resume` flag passed**: load the most recent in-progress session and resume it. The original args, priority queue, budget, and remaining-iter context all come from that file. Continue from the iter AFTER the most recent committed one.
+- **`/vsss --resume` flag passed, in-progress session exists**: load the most recent in-progress session and resume it. The original args, priority queue, budget, and remaining-iter context all come from that file. Continue from the iter AFTER the most recent committed one.
+
+- **`/vsss --resume` flag passed, NO in-progress session exists**: fall back to the most recent COMPLETED session (Final state present). Read its `## Final state` § Deferred list. If non-empty, treat the deferred items as the new priority queue and start iter 1 against the first one. Open a fresh session file at `.vss/sessions/<new-ISO>.md` (do NOT append to the completed one — it's finalised); record in Initial-plan that args were `--resume` and the queue was inherited from `<previous-session-file-path>`. Budget is fresh 5h (or `--hours N` override) since the previous session reached Final state cleanly. If the deferred list is empty, surface to the user "no in-progress session and no deferred items in the last completed session; pass args or no flag to start fresh" and stop.
 
 - **`/vsss <new args>` invoked while an in-progress session exists**: surface the conflict to the user. Two reasonable resolutions: (a) `--resume` to pick up the in-progress one, OR (b) explicitly mark the in-progress session as halted (write a Final state section with `Exit reason: superseded by new /vsss invocation` and start fresh). Per `/vss`'s hard-escalate list this is "scope-creep beyond announced plan" — do NOT auto-pick; surface to the user. (User has Q1=a authorisation? They still need to disambiguate this case explicitly; the new args might not match the parked session's queue.)
 
