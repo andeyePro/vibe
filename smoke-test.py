@@ -4471,6 +4471,37 @@ def test_vsss_md_inherits_escalate_and_budget() -> None:
           "git push" in content.lower() and ("push-on-pass" in content or "Push policy" in content), "")
 
 
+def test_vs_md_multi_task_archive_convention() -> None:
+    """vs.md spec'd a multi-task archive convention 2026-05-07. The convention
+    distinguishes per-task state (overwritten -> must archive) from repo-wide
+    state (must NOT archive). A regression where someone re-broadens the
+    archive scope to include tasks.json/progress.md would silently drop
+    historical data, hence this guard."""
+    print("\n[/vs: multi-task archive convention]")
+    if not VS_MD.exists():
+        check("[vs-archive] vs.md exists", False, "missing")
+        return
+    content = VS_MD.read_text()
+    check("[vs-archive] § Multi-task state convention header",
+          "## Multi-task state convention" in content, "")
+    check("[vs-archive] documents .vs/archive/<task-id>/ path",
+          ".vs/archive/<task-id>/" in content, "")
+    check("[vs-archive] names spec.md as per-task (archived)",
+          "Per-task" in content and ".vs/spec.md" in content, "")
+    check("[vs-archive] names tasks.json as repo-wide (NOT archived)",
+          "Repo-wide accumulating" in content and "tasks.json" in content, "")
+    check("[vs-archive] explicit MUST NOT for tasks.json/progress.md",
+          "must NOT be archived" in content, "")
+    check("[vs-archive] critiques rename to bypass gitignore documented",
+          "critiques/" in content and "cycle-*/" in content, "")
+    check("[vs-archive] archive procedure references git mv",
+          "git mv .vs/spec.md" in content, "")
+    check("[vs-archive] resume procedure documented",
+          "Resuming an archived task" in content, "")
+    check("[vs-archive] inherits no-autonomous-push",
+          "no-autonomous-push" in content, "")
+
+
 def test_vss_md_audit_trail_and_push_policy() -> None:
     """vss.md defines the per-session audit format and the no-autonomous-push
     rule. Both are safety boundaries (audit = reviewability; no-push = trust
@@ -4693,6 +4724,7 @@ def main() -> int:
     test_vss_md_exists_with_frontmatter()
     test_vss_md_hard_escalate_sentinels()
     test_vss_md_audit_trail_and_push_policy()
+    test_vs_md_multi_task_archive_convention()
     test_vsss_md_inherits_escalate_and_budget()
     test_install_extras_syncs_hooks()
 
