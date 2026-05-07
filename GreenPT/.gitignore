@@ -1,0 +1,7 @@
+# Never commit the API key.
+greenpt.key
+*.key
+
+# Python bytecode.
+__pycache__/
+*.pyc
