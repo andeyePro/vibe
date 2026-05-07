@@ -4460,10 +4460,40 @@ def test_vsss_md_inherits_escalate_and_budget() -> None:
     ]
     for label, pattern in floor_sentinels:
         check(f"[vsss-floor] {label}", pattern in content, f"missing: {pattern!r}")
-    check("[vsss] declares .vss/loop.md as audit trail",
-          ".vss/loop.md" in content, "")
+    check("[vsss] points at .vss/sessions/ audit trail",
+          ".vss/sessions/" in content, "")
+    check("[vsss] no stale .vss/loop.md references",
+          ".vss/loop.md" not in content,
+          "found .vss/loop.md - per-session audit replaced loop.md 2026-05-07")
     check("[vsss] three-no-op exit condition",
           "Three consecutive A-mode" in content or "three consecutive A-mode" in content, "")
+    check("[vsss] inherits no-autonomous-push rule",
+          "git push" in content.lower() and ("push-on-pass" in content or "Push policy" in content), "")
+
+
+def test_vss_md_audit_trail_and_push_policy() -> None:
+    """vss.md defines the per-session audit format and the no-autonomous-push
+    rule. Both are safety boundaries (audit = reviewability; no-push = trust
+    model). A regression silently dropping either is the failure this guards."""
+    print("\n[/vss: audit trail + push policy]")
+    if not VSS_MD.exists():
+        check("[vss-policy] vss.md exists", False, "missing")
+        return
+    content = VSS_MD.read_text()
+    check("[vss-policy] § Session audit format header",
+          "Session audit format" in content, "")
+    check("[vss-policy] sessions/ path declared",
+          ".vss/sessions/" in content, "")
+    check("[vss-policy] format names per-iter blocks",
+          "Iter " in content and "Final state" in content, "")
+    check("[vss-policy] § Push policy header",
+          "## Push policy" in content, "")
+    check("[vss-policy] explicit no-autonomous-push wording",
+          "Do NOT" in content and "push" in content.lower(), "")
+    check("[vss-policy] --push-on-pass override flag named",
+          "--push-on-pass" in content, "")
+    check("[vss-policy] sessions file marked Committed",
+          "**Committed.**" in content and ".vss/sessions" in content, "")
 
 
 def test_install_extras_syncs_hooks() -> None:
@@ -4662,6 +4692,7 @@ def main() -> int:
     test_numbering_hook_readme_present()
     test_vss_md_exists_with_frontmatter()
     test_vss_md_hard_escalate_sentinels()
+    test_vss_md_audit_trail_and_push_policy()
     test_vsss_md_inherits_escalate_and_budget()
     test_install_extras_syncs_hooks()
 

@@ -15,5 +15,5 @@ __pycache__/
 # /vs per-cycle artifacts (spec.md, progress.md, tasks.json stay tracked)
 .vs/cycle-*/
 
-# /vss + /vsss ephemeral state (loop.md is the committed audit trail)
+# /vss + /vsss ephemeral state (.vss/sessions/*.md is the committed audit trail)
 .vss/last-plan.md

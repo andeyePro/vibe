@@ -100,12 +100,59 @@ On completion:
 
 ## State directory: `.vss/`
 
-Created at repo root, gitignored except where noted.
+Created at repo root.
 
-- `.vss/loop.md` — written ONLY by `/vsss`, not `/vss`. One-line-per-iteration log.
+- `.vss/sessions/<ISO8601-UTC-start>.md` — per-session detailed audit trail. **Committed.** One file per `/vss` or `/vsss` invocation. Format below. This is the canonical audit Martin reviews; do not skip writing it.
 - `.vss/last-plan.md` — Mode B planner output for the most recent run. **Gitignored.** Useful for debugging when the executor goes off-track.
 
 `/vss` does not need any other state files. The chosen mode (`/vs`, `/sp`, etc.) brings its own state directory if applicable.
+
+### Session audit format
+
+Every `/vss` invocation writes `.vss/sessions/<start-ISO>.md` (filename uses `T` separator and replaces `:` with `-` for filesystem portability — e.g. `2026-05-07T14-29-02Z.md`). Sections:
+
+```markdown
+# /vss session <start ISO8601 UTC>
+
+## Mode
+A or B
+
+## Args
+$ARGUMENTS verbatim, or "(none)" for Mode A
+
+## Initial plan
+[the announce block — 4-7 plain-English bullets]
+
+## Iter <N> — <one-line label>
+**Plan**: ...
+**Files touched**: list
+**Commit**: <SHA> — <first line of message>
+**Outcome**: success / failure-and-reason / abandoned-with-reason / redirected-by-user
+**Notes**: anything noteworthy
+
+## Final state
+**Exit reason**: ...
+**End time**: <ISO8601 UTC> (~<N> minutes wall)
+**Iterations**: <N>
+**Commits**: <count> (SHAs: ...)
+**Pushed**: no / yes (only if user passed --push-on-pass or pushed manually after)
+**Escalations**: none / [list with reasons]
+**Deferred**: [list of items I declined to touch and why]
+```
+
+For `/vss` (single-shot), there is exactly one Iter section. For `/vsss` (loop wrapper) there are many.
+
+Write the file ATOMICALLY at exit — not incrementally — so a partial-write doesn't leave a malformed audit. If the run is aborted by a hard-escalate trigger, write what you have at the abort point, mark the abort in Final state, then exit.
+
+## Push policy
+
+**Do NOT `git push` autonomously after `/vss` or `/vsss` completes.** Local commits land on the working branch (typically `main`). The user reviews the session audit at `.vss/sessions/<ISO>.md`, optionally inspects `git log` and per-commit diffs, and pushes manually with `git push` (or rejects and `git reset --hard <pre-session SHA>`).
+
+**Rationale**: autonomous push leaks unreviewed AI work to the remote. Local commits are reversible (`git reset HEAD~N`); pushed commits are not without force-push semantics, which the hard-escalate list forbids. The audit-trail-first / push-second order is the trust model.
+
+**Override**: `/vss --push-on-pass <task>` or `/vsss --push-on-pass <task>` opts in to autonomous push for that single invocation, only if the run completes without escalation triggers AND the optimiser (in `/vsss`) reaches a clean perfection-gate exit. A user passing `--push-on-pass` is explicitly accepting the un-reviewed-push trade-off for that run.
+
+Default is no push. Always.
 
 ## Why `/vss` exists alongside `/vs` and `/sp`
 
