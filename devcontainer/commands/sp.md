@@ -30,15 +30,22 @@ Alternative install path via the obra direct marketplace if the Anthropic offici
 
 ## Apply
 
-If Superpowers is loaded, apply its methodology to `$ARGUMENTS`. Lean on the seven core skills as the task requires:
+If Superpowers is loaded, apply its methodology to `$ARGUMENTS`. Lean on the skills as the task requires:
 
+- `superpowers:using-superpowers` – baseline: how to find and apply skills in a session
 - `superpowers:brainstorming` – refine requirements before any code
 - `superpowers:writing-plans` – decompose into 2-5 minute chunks
+- `superpowers:executing-plans` – run a written plan in a separate session with review checkpoints
 - `superpowers:subagent-driven-development` – fan out parallel work with two-stage review
+- `superpowers:dispatching-parallel-agents` – 2+ independent tasks without shared state
 - `superpowers:test-driven-development` – red / green / refactor; tests first, always
+- `superpowers:systematic-debugging` – diagnose bugs and unexpected behaviour before proposing fixes
 - `superpowers:requesting-code-review` – plan compliance and quality assessment
+- `superpowers:receiving-code-review` – verify feedback rigorously, neither rubber-stamp nor blind-implement
+- `superpowers:verification-before-completion` – evidence before assertions; verify before claiming "done"
 - `superpowers:finishing-a-development-branch` – merge or PR decision
 - `superpowers:using-git-worktrees` – isolated workspace per task
+- `superpowers:writing-skills` – create or edit skills
 
 ## Note: `/sp` is additive, not a wrapper
 

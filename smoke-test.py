@@ -3762,13 +3762,20 @@ def test_task013_diff_scope() -> None:
 
 
 SP_CORE_SKILLS = sorted([
+    "using-superpowers",
     "brainstorming",
     "writing-plans",
+    "executing-plans",
     "subagent-driven-development",
+    "dispatching-parallel-agents",
     "test-driven-development",
+    "systematic-debugging",
     "requesting-code-review",
+    "receiving-code-review",
+    "verification-before-completion",
     "finishing-a-development-branch",
     "using-git-worktrees",
+    "writing-skills",
 ])
 
 
@@ -3902,13 +3909,20 @@ def test_sp_md_present_and_complete() -> None:
           "description: Apply Superpowers methodology" in content,
           "missing description in frontmatter")
     expected_skills = [
+        "superpowers:using-superpowers",
         "superpowers:brainstorming",
         "superpowers:writing-plans",
+        "superpowers:executing-plans",
         "superpowers:subagent-driven-development",
+        "superpowers:dispatching-parallel-agents",
         "superpowers:test-driven-development",
+        "superpowers:systematic-debugging",
         "superpowers:requesting-code-review",
+        "superpowers:receiving-code-review",
+        "superpowers:verification-before-completion",
         "superpowers:finishing-a-development-branch",
         "superpowers:using-git-worktrees",
+        "superpowers:writing-skills",
     ]
     for skill in expected_skills:
         check(f"[sp] mentions {skill}", skill in content,
