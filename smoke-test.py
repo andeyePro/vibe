@@ -4665,6 +4665,44 @@ def test_vsss_md_inherits_escalate_and_budget() -> None:
           "git push" in content.lower() and ("push-on-pass" in content or "Push policy" in content), "")
 
 
+def test_vs_md_plain_techy_verbosity_flags() -> None:
+    """vs.md spec'd --plain / --techy / --verbosity flags 2026-05-07. The
+    flags govern Spec Critic / Tester / Evaluator output mode; a regression
+    silently dropping any of them would let the canonical default drift,
+    hence this guard."""
+    print("\n[/vs: --plain / --techy / --verbosity flags]")
+    if not VS_MD.exists():
+        check("[vs-flags] vs.md exists", False, "missing")
+        return
+    content = VS_MD.read_text()
+    check("[vs-flags] --plain flag named",
+          "`/vs --plain " in content, "")
+    check("[vs-flags] --plain default ON documented",
+          "default ON" in content, "")
+    check("[vs-flags] --techy inverse flag named",
+          "`/vs --techy " in content, "")
+    check("[vs-flags] --verbosity N global flag named",
+          "--verbosity N" in content, "")
+    check("[vs-flags] verbosity scale 0-9 documented",
+          "0-9" in content, "")
+    check("[vs-flags] verbosity default 5",
+          "Default 5" in content or "default 5" in content, "")
+    check("[vs-flags] level 0 anchor (one-line pass/fail)",
+          "**0**" in content and "one-line" in content, "")
+    check("[vs-flags] level 5 anchor (default)",
+          "**5**" in content, "")
+    check("[vs-flags] level 9 anchor (full verbose)",
+          "**9**" in content, "")
+    check("[vs-flags] --vN-spec per-output override",
+          "--vN-spec" in content, "")
+    check("[vs-flags] --vN-test per-output override",
+          "--vN-test" in content, "")
+    check("[vs-flags] --vN-eval per-output override",
+          "--vN-eval" in content, "")
+    check("[vs-flags] flags propagate to subagent briefs",
+          "propagate" in content.lower() and "subagent" in content.lower(), "")
+
+
 def test_vs_md_multi_task_archive_convention() -> None:
     """vs.md spec'd a multi-task archive convention 2026-05-07. The convention
     distinguishes per-task state (overwritten -> must archive) from repo-wide
@@ -4917,6 +4955,7 @@ def main() -> int:
     test_vss_md_exists_with_frontmatter()
     test_vss_md_hard_escalate_sentinels()
     test_vss_md_audit_trail_and_push_policy()
+    test_vs_md_plain_techy_verbosity_flags()
     test_vs_md_multi_task_archive_convention()
     test_vsss_md_inherits_escalate_and_budget()
     test_install_extras_syncs_hooks()

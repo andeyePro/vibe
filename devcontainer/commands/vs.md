@@ -26,6 +26,24 @@ Spec Critic runs **once at task start**, before user approval. It does not re-ru
 - `/vs --fuzzy <prompt>` — run in fuzzy mode (Reviewer replaces Tester). Combinable with `--max`.
 - `/vs --cost <prompt>` — opt in to token-spend logging for this run only. Off by default. See Token-spend logging section for the trade-off (subagent tokens auto-captured; Opus Director/Evaluator tokens are NOT trackable from inside a session and require manual entry via `/cost`).
 - `/vs --max-iter N <prompt>` — cap the Spec Critic loop at N iterations. Distinct from `--max` (which is the cycle ceiling); `--max-iter` controls only the Spec Critic loop. If the cap fires before convergence, Planner escalates to the user — does not silently auto-pass.
+- `/vs --plain <prompt>` (default ON) — output mode. Spec Critic critiques, Tester summaries, and Evaluator verdicts written in clear concise English with minimal under-the-hood terminology. Reviewable by readers who don't already have the harness vocabulary loaded. Inverse: `--techy`.
+- `/vs --techy <prompt>` — opt out of `--plain`. Spec Critic / Tester / Evaluator output uses terse technical shorthand assuming full context (e.g. "AC8 fails: lit-substring `2-5k tokens` absent from §SC body" rather than "the Semantic check section doesn't mention the expected token cost in the form the spec required").
+- `/vs --verbosity N <prompt>` — global verbosity knob, integer 0-9. Default 5. Applied to ALL THREE outputs (Spec Critic critique, Tester summary, Evaluator verdict) unless an output-specific override is passed. Levels:
+  - **0**: one-line pass/fail per output (Spec Critic: `pass` or `revise: N concerns`; Tester: `total: N passed: P failed: F`; Evaluator: `pass` or `fail`).
+  - **3**: bullet-list of concerns / failures with brief rationale per item; no rationale for passes.
+  - **5** (default): full per-AC assessment with one-sentence rationale per assertion; concerns enumerated in numbered list.
+  - **7**: as 5, plus mid-section interpretive commentary explaining why each concern matters and what fixing it would change.
+  - **9**: full verbose — every AC enumerated even on pass, edge-cases discussed, alternative interpretations surfaced, references to spec line numbers, "why this AC exists" rationale for the report's reader.
+  - **1, 2, 4, 6, 8**: linearly interpolated between adjacent named levels. Producers should treat the named levels as anchors and fill intermediate levels with proportional content density.
+- `/vs --vN-spec N <prompt>` — Spec Critic-only verbosity override. Same 0-9 scale.
+- `/vs --vN-test N <prompt>` — Tester-only verbosity override.
+- `/vs --vN-eval N <prompt>` — Evaluator-only verbosity override.
+
+The `--plain` / `--techy` and `--verbosity` flags are independent dimensions: `--plain --verbosity 9` is verbose plain English; `--techy --verbosity 0` is one-line technical pass/fail. The cross-product is always meaningful.
+
+Per-output overrides win over global `--verbosity` when both are passed: `--verbosity 3 --vN-spec 9` means Spec Critic at v9, Tester+Evaluator at v3.
+
+These flags propagate from Planner into the subagent briefs at dispatch time. Each subagent honours both `--plain`/`--techy` and the resolved verbosity in its writing of `.vs/cycle-N/*.md` artifacts.
 
 ## State directory: `.vs/`
 
