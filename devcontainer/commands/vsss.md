@@ -20,12 +20,62 @@ At the very start of `/vsss`, before any work:
 
 1. Capture `START_TIME=$(date -u +%s)` (or equivalent in your context).
 2. Read `MEMORY.md` for `feedback_autonomous_session_protocol` and `feedback_default_to_local_time_for_uk_user`. Apply both.
-3. Set `BUDGET_HOURS=5` unless the user passed an explicit budget in `$ARGUMENTS` (e.g. `/vsss --budget 2h <task>`). 5h is intended to consume a full Pro/Max session when `/vsss` is invoked at session start. There is no graceful-shutdown cushion — if the loop is approaching the limit, the optimiser should bias toward "stop the loop" (perfection gate) so pending work is committed cleanly before the cap rather than mid-iteration. If you want a softer cap, pass `--budget 4h` explicitly.
+3. Set `BUDGET_HOURS=5` unless the user passed an explicit budget. Recognised flags (in order of precedence; first match wins):
+   - `/vsss --hours N <args>` — canonical. `N` is a positive integer or decimal (e.g. `2`, `2.5`, `0.5`). Sets the budget cap to `N` hours from `START_TIME`.
+   - `/vsss --budget Nh <args>` — backward-compatible alias. Same semantics; `Nh` parsed as a positive integer or decimal followed by literal `h`.
+   - `/vsss --budget Nm <args>` — minutes form, for short-runs (e.g. `--budget 30m`).
+   - No flag → 5h default. Intended to consume a full Pro/Max session when `/vsss` is invoked at session start.
+
+   There is no graceful-shutdown cushion — if the loop is approaching the cap, the optimiser should bias toward "stop the loop" (perfection gate) so pending work is committed cleanly before the cap rather than mid-iteration. If you want a softer cap, pass `--hours 4` explicitly.
 4. Open `.vss/sessions/<start-ISO>.md` (filename uses `T` separator and replaces `:` with `-`, e.g. `2026-05-07T14-29-02Z.md`) and write the audit header per the format defined in `/vss` § Session audit format. The Initial-plan section captures the initial args, priority queue (if any), and budget.
 
 Every iteration appends a full Iter section to the session file (Plan / Files touched / Commit / Outcome / Notes). Final-state line is appended at exit.
 
 The session file is the single canonical audit Martin reviews. There is no separate roll-up index.
+
+## Resumption protocol (after out-of-tokens halt or interrupted session)
+
+A `/vsss` session can be killed by token-exhaustion, a manual interrupt, or any unhandled error. Without a resumption protocol the work in flight is dropped — partial commits sit on `main`, the priority queue is forgotten, the user has to re-issue the original `/vsss` invocation. Resumption fixes that.
+
+### State that survives a halt
+
+The session file at `.vss/sessions/<start-ISO>.md` is the persistence layer. After every iter completes (Generator commit landed, Tester commit landed, optimiser verdict written), the iter block in the session file is up to date. If the session halts, that file's most recent iter block plus the absence of a `## Final state` section is the signal "this session was alive when killed".
+
+### Detecting an in-progress session at startup
+
+When `/vsss` is invoked (with any args, or `--resume`), Planner first scans `.vss/sessions/*.md` for **in-progress sessions**: files where the most recent section is an `## Iter <N>` block (any iter) and there is NO `## Final state` section yet. If one or more found, sort by start-ISO descending and inspect the most recent.
+
+Three branches:
+
+- **`/vsss --resume` flag passed**: load the most recent in-progress session and resume it. The original args, priority queue, budget, and remaining-iter context all come from that file. Continue from the iter AFTER the most recent committed one.
+
+- **`/vsss <new args>` invoked while an in-progress session exists**: surface the conflict to the user. Two reasonable resolutions: (a) `--resume` to pick up the in-progress one, OR (b) explicitly mark the in-progress session as halted (write a Final state section with `Exit reason: superseded by new /vsss invocation` and start fresh). Per `/vss`'s hard-escalate list this is "scope-creep beyond announced plan" — do NOT auto-pick; surface to the user. (User has Q1=a authorisation? They still need to disambiguate this case explicitly; the new args might not match the parked session's queue.)
+
+- **`/vsss` with no args, no in-progress session**: normal Mode A start.
+
+### Resume budget arithmetic
+
+The in-progress session's `START_TIME` is preserved. Resumption does NOT reset the clock. If the original budget was 5h and 3h have already been consumed (the session halted after running, then the user resumed via `vibe --continue`), the resumed `/vsss` has 2h of budget remaining. The session file's header line (`# /vsss session — start <ISO> – budget Nh`) plus current `date -u` lets Planner compute remaining time.
+
+If remaining budget is negative (clock-wall exceeded the original cap during the halt period), Planner asks the user whether to extend the budget (`/vsss --hours N --resume` to extend to N hours total, NOT N additional hours) or finalise the session with whatever's been committed.
+
+### Resumption procedure
+
+1. Read `.vss/sessions/<resumed-ISO>.md` end-to-end. Identify last completed iter and pending state.
+2. Read `git log` since session start (`git log --since="<start-ISO>" --oneline`) to verify the iter blocks match the actual commits. If they don't (e.g. iter block claims commit X but `git log` shows X was reverted), surface to the user — DO NOT silently proceed.
+3. Compute remaining budget. If positive, continue. If negative, escalate.
+4. Append a new `## Resumption — <ISO>` block to the session file noting: timestamp of resumption, hours-elapsed-during-halt, budget-remaining, the iter we're picking up at.
+5. Continue the loop from the next iter per the original priority queue / optimiser logic.
+
+### Auto-resume across halts (host-launcher feature, NOT in this spec)
+
+The user's stated long-term goal: automatic continuation across N out-of-session-tokens halts without manual `vibe --continue` invocation. This requires host-side launcher integration:
+
+- A marker file (e.g. `.vss/auto-resume.json` containing `{ "active": true, "remaining_halts": N, "session_file": "<path>" }`) written by `/vsss --auto-resume N`.
+- The vibe launcher (`/workspace/vibe`) checking the marker on every container start. If `active: true` and `remaining_halts > 0`, the launcher invokes `claude --continue` automatically and decrements the counter.
+- Exhaustion detection: when claude session ends, the launcher distinguishes "session ran out of tokens" (auto-resume eligible) from "user typed /exit" (do not auto-resume; clear marker). Heuristic: if claude's exit code or last-stderr indicates 5h-cap-hit, treat as token exhaustion.
+
+This requires changes to `/workspace/vibe` (host-side bash) and possibly to the Mac-side `~/.zshrc` wrapper. **Out of scope for the `/vsss` slash-command body.** Tracked as a separate TODO entry.
 
 ## Loop structure
 

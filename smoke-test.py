@@ -3723,39 +3723,16 @@ def test_task013_no_hardcoded_cap_string() -> None:
           "'max 2 iterations' found in file (should be removed)")
 
 
-def test_task013_diff_scope() -> None:
-    """AC10: diff.patch (if present) only touches {vs.md, smoke-test.py, TODO.md}."""
-    print("\n[task_013/AC10: diff scope check]")
-
-    if not CYCLE_1_DIFF.exists():
-        check("[task013/AC10] diff.patch not present — scope check skipped",
-              True, "skipped — file absent")
-        return
-
-    diff_content = CYCLE_1_DIFF.read_text()
-
-    # Parse +++ b/<path> lines (skip +++ /dev/null for deletions)
-    touched_paths = set()
-    for line in diff_content.split("\n"):
-        if line.startswith("+++ b/"):
-            path = line[6:]  # Remove "+++ b/" prefix
-            if path != "/dev/null":
-                touched_paths.add(path)
-
-    # Allowed paths
-    allowed_paths = {"devcontainer/commands/vs.md", "smoke-test.py", "TODO.md"}
-
-    # Check if all touched paths are in allowed set
-    illegal_paths = touched_paths - allowed_paths
-
-    if illegal_paths:
-        check("[task013/AC10] diff touches only allowed files",
-              False,
-              f"illegal paths in diff: {', '.join(sorted(illegal_paths))}")
-    else:
-        check("[task013/AC10] diff touches only allowed files",
-              True,
-              f"touched: {', '.join(sorted(touched_paths))}")
+# test_task013_diff_scope retired 2026-05-07 (/vsss session) — was an over-
+# scoped freeze guard anchored to live working tree's .vs/cycle-1/diff.patch
+# with task_013's specific allowlist {vs.md, smoke-test.py, TODO.md}
+# hard-coded. The next /vs cycle that wrote a diff.patch (task_010 cycle 1)
+# tripped it on legitimate files. This is exactly the pattern memory
+# feedback_vs_tester_no_file_freeze_guards documents: hardening tests
+# Tester adds for AC scope must be cycle-anchored (HEAD~1 HEAD on the
+# cycle's commit) or PR-level CI, not live-working-tree freezes that
+# block unrelated future tasks. test_task008_ac15_no_scope_drift was
+# retired for the same reason 2026-04-26.
 
 
 # ── check-sp-current.sh upstream drift probe tests ─────────────────────────────
@@ -4472,6 +4449,24 @@ def test_vsss_md_inherits_escalate_and_budget() -> None:
         check(f"[vsss-floor] {label}", pattern in content, f"missing: {pattern!r}")
     check("[vsss] points at .vss/sessions/ audit trail",
           ".vss/sessions/" in content, "")
+    check("[vsss] --hours N flag canonical",
+          "--hours N" in content or "--hours `N`" in content, "")
+    check("[vsss] --budget Nh alias preserved",
+          "--budget Nh" in content, "")
+    check("[vsss] --budget Nm minutes form",
+          "--budget Nm" in content, "")
+    check("[vsss] § Resumption protocol header",
+          "## Resumption protocol" in content, "")
+    check("[vsss] resumption detects in-progress session",
+          "in-progress session" in content, "")
+    check("[vsss] --resume flag named",
+          "`/vsss --resume`" in content, "")
+    check("[vsss] resume budget arithmetic documented",
+          "Resume budget arithmetic" in content or "Resumption budget" in content or "remaining budget" in content.lower(), "")
+    check("[vsss] auto-resume marked out-of-scope (host-launcher)",
+          "host-launcher" in content.lower() or "host-side launcher" in content.lower(), "")
+    check("[vsss] auto-resume marker file path proposed",
+          ".vss/auto-resume.json" in content or ".vss/auto-resume" in content, "")
     check("[vsss] no stale .vss/loop.md references",
           ".vss/loop.md" not in content,
           "found .vss/loop.md - per-session audit replaced loop.md 2026-05-07")
@@ -4700,7 +4695,6 @@ def main() -> int:
     test_task013_vs_md_intelligent_stopping()
     test_task013_vs_md_max_iter_flag()
     test_task013_no_hardcoded_cap_string()
-    test_task013_diff_scope()
     test_check_sp_current_exists_and_executable()
     test_check_sp_current_offline_silent()
     test_check_sp_current_fixture_no_drift()
