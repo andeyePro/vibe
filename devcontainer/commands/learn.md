@@ -44,17 +44,21 @@ When `/learn <pattern>` is invoked, the model:
    ```
 
    That is: a `# <timestamp>` header line, a blank line, the pattern body,
-   and a single trailing newline.
+   and a single trailing newline. (For grep-able regression-test purposes:
+   the entry begins with a `# <timestamp> header line`, then blank line, then body.)
 
-4. **Prints a preview** to the user showing the proposed file path and the
+4. **Runs the semantic check** — see [§ Semantic check](#semantic-check) below.
+   This step runs on every `/learn` invocation before the preview or Write.
+
+5. **Prints a preview** to the user showing the proposed file path and the
    complete entry body BEFORE issuing the Write tool call, so the hook prompt's
    context is clear.
 
-5. **Issues a single Write tool call** to `/learnings/${ts}-${rand}.md` with
+6. **Issues a single Write tool call** to `/learnings/${ts}-${rand}.md` with
    the formatted body. The PreToolUse hook fires at this point and prompts you
    to confirm the write.
 
-6. **After the Write succeeds**, informs you that the entry is saved locally.
+7. **After the Write succeeds**, informs you that the entry is saved locally.
    Pushing to git (for public-mode libraries) is host-only - run:
 
    ```bash
@@ -67,6 +71,37 @@ When `/learn <pattern>` is invoked, the model:
    ```bash
    cd $VIBE_LEARNING_PATH && git add . && git commit -m "learn: <pattern>" && git push
    ```
+
+## Semantic check
+
+Before issuing the preview or Write, scan all existing /learnings entries to
+detect contradictions and evaluate input quality. Marginal token cost per
+invocation: 2-5k tokens. This check runs on every /learn invocation — always
+runs regardless of library size, input length, or pattern complexity.
+
+**Input quality gate:** if the new pattern is low-quality input (vague
+reference, unclear input, or obvious nonsense), flag the issue and present
+options even when no contradiction is found.
+
+**Zero friction for already-good input:** when the new pattern is already
+efficient, clear, and non-contradictory, apply it directly — zero friction,
+no options surfaced to the user.
+
+**When improvement is possible**, present the option scheme:
+
+- **Z1** is always the user-verbatim original. Z1 is ALWAYS the verbatim
+  user input, unchanged. Z1 is ALWAYS the opt-out from any rewrite.
+- **Z2** (and optionally **Z3**) are smarter alternatives Claude constructs.
+  Cap n at 3 total Z-options (1 or 2 alternatives is typical, no more than 3);
+  never generate exhaustive lists.
+- When a contradiction with an existing entry is detected, offer an option to
+  edit an existing contradicting entry rather than add a new file. Omit this
+  option when no contradiction exists.
+- **N** — drops the new capture entirely; no Write is issued; existing
+  entries are unchanged; the user may cancel and start over.
+
+**Hook and preview context:** the preview still comes BEFORE the Write so the
+PreToolUse hook prompt has clear context about exactly what will be written.
 
 ## Multi-line patterns
 

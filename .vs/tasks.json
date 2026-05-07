@@ -82,6 +82,15 @@
     "parked_note": "Cycle 1 Step 6 escalation: AC10 spec defect (diff.patch from git diff includes Planner bookkeeping in .vs/spec.md + .vs/tasks.json, which AC10 didn't whitelist). 18/19 task_013 checks pass; only AC10 fails. Resume options documented in TODO.md task_013 entry."
   },
   {
+    "id": "task_010",
+    "description": "/learn smart-capture: semantic check phase (contradiction detection, quality gate, option scheme Z1/Z2/N)",
+    "implementation_status": "complete",
+    "test_status": "passing",
+    "assigned_to": "generator",
+    "mode": "rigorous",
+    "last_modified": "2026-05-07T00:00:00Z"
+  },
+  {
     "id": "task_014",
     "description": "Per-project Claude projects/ bind: each host project gets its own /home/node/.claude/projects/ inside the container so vibe X --continue scopes by project, not globally",
     "implementation_status": "pending",

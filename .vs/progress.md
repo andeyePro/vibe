@@ -213,3 +213,19 @@ Invariants vs `CLAUDE.md`: container bypassPermissions backstop is STRENGTHENED 
 CLAUDE.md TODO update (manual per spec out-of-scope): `vibe learn: /learnings mount is RW, not RO (security)` entry moved to Done — subsumed by task_009's hook approach. The mount being RW is now intended state; the hook is the security boundary.
 
 Cycle-2 pass. Total: 2 cycles for task_009 (cycle-1 fail → spec-clarity bug; cycle-2 fix). Spec Critic: 3 iterations. Wide diff on security-sensitive surface.
+
+## 2026-05-07 — task_010 Evaluator (cycle 1 PASS)
+
+Evaluator verdict: PASS in 1 cycle. TODO predicted 2; cycle 1 closed
+cleanly with all 20 ACs satisfied. Spec converged after Spec Critic
+iter 3. Generator self-checked all ACs ✓; Tester wrote 30 mechanical
+checks (≥19 floor); full pre-existing suite still green.
+
+Files changed in cycle 1 (subset of AC18 allowlist):
+- devcontainer/commands/learn.md (semantic-check phase added)
+- smoke-test.py (test_task010_smart_capture appended)
+- .vs/spec.md (locked after Spec Critic iter 3)
+- .vs/tasks.json (task_010 added with implementation_status=complete,
+  test_status=passing)
+- .vs/cycle-1/* (artifacts)
+

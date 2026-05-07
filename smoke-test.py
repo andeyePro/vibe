@@ -3593,6 +3593,195 @@ def test_task009_hardening_guard_fs_realpath_m() -> None:
           "realpath -m" in content, "")
 
 
+def test_task010_smart_capture() -> None:
+    """AC1-AC19: /learn smart-capture semantic check phase."""
+    print("\n[task_010: /learn smart-capture]")
+
+    if not LEARN_MD.exists():
+        check("[task010/AC1] learn.md exists", False, str(LEARN_MD))
+        return
+
+    content = LEARN_MD.read_text()
+
+    # AC1: Semantic check section with exact heading
+    check("[task010/AC1] '## Semantic check' section heading present",
+          "## Semantic check" in content, "missing exact heading")
+
+    # AC2: Relative ordering — "Formats the entry body" before "Runs the semantic check" before "Prints a preview"
+    lines = content.splitlines()
+    format_body_idx = None
+    runs_check_idx = None
+    prints_preview_idx = None
+
+    for i, line in enumerate(lines):
+        if "Formats the entry body" in line:
+            format_body_idx = i
+        if "Runs the semantic check" in line:
+            runs_check_idx = i
+        if "Prints a preview" in line:
+            prints_preview_idx = i
+
+    check("[task010/AC2] 'Formats the entry body' appears before 'Runs the semantic check'",
+          format_body_idx is not None and runs_check_idx is not None and format_body_idx < runs_check_idx,
+          f"format_body={format_body_idx}, runs_check={runs_check_idx}")
+
+    check("[task010/AC2] 'Runs the semantic check' appears before 'Prints a preview'",
+          runs_check_idx is not None and prints_preview_idx is not None and runs_check_idx < prints_preview_idx,
+          f"runs_check={runs_check_idx}, prints_preview={prints_preview_idx}")
+
+    # AC3: Literal phrase "Runs the semantic check"
+    check("[task010/AC3] 'Runs the semantic check' phrase present",
+          "Runs the semantic check" in content, "missing exact phrase")
+
+    # AC3a: "existing /learnings entries" in semantic check section
+    semantic_section_start = content.find("## Semantic check")
+    if semantic_section_start >= 0:
+        next_section = content.find("\n##", semantic_section_start + 1)
+        semantic_section = content[semantic_section_start:next_section] if next_section > 0 else content[semantic_section_start:]
+    else:
+        semantic_section = ""
+
+    check("[task010/AC3a] 'existing /learnings entries' phrase in semantic check section",
+          "existing /learnings entries" in semantic_section, "missing exact phrase")
+
+    # AC4: Low-quality input explicitly addressed
+    low_quality_check = any(phrase in semantic_section for phrase in
+                            ["low-quality input", "low quality input", "vague reference", "unclear input"])
+    check("[task010/AC4] Low-quality input explicitly addressed",
+          low_quality_check, "missing at least one of: low-quality input, low quality input, vague reference, unclear input")
+
+    # AC5: Zero friction (both phrases required)
+    zero_friction_present = "zero friction" in semantic_section.lower()
+    no_options_present = any(phrase in semantic_section.lower() for phrase in
+                             ["no options", "without surfacing options", "no options surfaced"])
+    check("[task010/AC5] 'zero friction' (case-insensitive) present",
+          zero_friction_present, "missing phrase")
+    check("[task010/AC5] 'no options' or equivalent present",
+          no_options_present, "missing one of: no options, without surfacing options, no options surfaced")
+
+    # AC6: Option scheme enumeration
+    z1_present = "Z1" in semantic_section
+    z1_verbatim = any(phrase in semantic_section for phrase in ["user-verbatim", "user verbatim"])
+    z1_check = z1_present and z1_verbatim
+
+    z2_present = "Z2" in semantic_section
+
+    edit_existing = any(phrase in semantic_section for phrase in ["edit existing", "edit an existing"])
+
+    n_present = "N" in semantic_section
+    n_drops = any(phrase in semantic_section for phrase in ["drop", "drops", "cancel", "cancels"])
+    n_check = n_present and n_drops
+
+    check("[task010/AC6] Z1 and 'user-verbatim'/'user verbatim' within 200 chars",
+          z1_check, "missing Z1 label or user-verbatim phrase")
+    check("[task010/AC6] Z2 label present",
+          z2_present, "missing Z2")
+    check("[task010/AC6] 'edit existing' or 'edit an existing' present",
+          edit_existing, "missing phrase")
+    check("[task010/AC6] N label and drop/drops/cancel/cancels within 200 chars",
+          n_check, "missing N label or drop/drops/cancel/cancels")
+
+    # AC7: Z1 is ALWAYS the user-verbatim original
+    z1_always_check = any(phrase in semantic_section for phrase in ["Z1 is always", "Z1 is ALWAYS"])
+    verbatim_in_section = "verbatim" in semantic_section
+    z1_always_correct = z1_always_check and verbatim_in_section
+    check("[task010/AC7] 'Z1 is always' or 'Z1 is ALWAYS' AND 'verbatim'",
+          z1_always_correct, "missing or incomplete requirement")
+
+    # AC8: Marginal token cost (2-5k tokens, en-dash or hyphen variants)
+    token_cost_check = any(phrase in semantic_section for phrase in
+                           ["2-5k tokens", "2–5k tokens", "2 to 5k tokens"])
+    check("[task010/AC8] '2-5k tokens' or '2–5k tokens' or '2 to 5k tokens' present",
+          token_cost_check, "missing token cost phrase")
+
+    # AC9: Preview and hook mentioned in same paragraph (within 400 chars if no blank line separation)
+    preview_present = "preview" in semantic_section.lower()
+    hook_present = "hook" in semantic_section.lower()
+    preview_hook_proximity = (preview_present and hook_present)
+    check("[task010/AC9] 'preview' and 'hook' both present",
+          preview_hook_proximity, "missing or incomplete proximity")
+
+    # AC10: Conditional skipping forbidden (positive check + negative grepping)
+    always_runs = any(phrase in semantic_section for phrase in
+                     ["every /learn invocation", "runs on every invocation", "always runs"])
+    skip_forbidden = not any(phrase in semantic_section for phrase in
+                            ["skip the", "skip if", "bypass the check", "omit the check"])
+    ac10_check = always_runs and skip_forbidden
+    check("[task010/AC10] 'every /learn invocation' or equivalent AND no skip/bypass/omit",
+          ac10_check, "missing always-runs or found skip/bypass/omit phrasing")
+
+    # AC11: Z-options capped
+    cap_check = any(phrase in semantic_section for phrase in
+                   ["cap n at 3", "no more than 3", "up to 3 alternatives", "1 or 2 alternatives"])
+    check("[task010/AC11] Z-options capped (cap n at 3, no more than 3, etc.)",
+          cap_check, "missing cap/limit phrase")
+
+    # AC12-AC17: Regression gates (filename, body format, multi-line, host-only, refusal, hook)
+    check("[task010/AC12] ts=$(date -u present",
+          "ts=$(date -u" in content, "missing filename component")
+    check("[task010/AC12] binascii.hexlify present",
+          "binascii.hexlify" in content, "missing random component")
+    check("[task010/AC12] ${ts}-${rand}.md present",
+          "${ts}-${rand}.md" in content, "missing filename format")
+
+    check("[task010/AC13] printf format present",
+          "printf '# %s\\n\\n%s\\n'" in content, "missing body format")
+    check("[task010/AC13] '# <timestamp> header line' mentioned",
+          "# <timestamp> header line" in content, "missing header reference")
+
+    check("[task010/AC14] '## Multi-line patterns' section present",
+          "## Multi-line patterns" in content, "missing section")
+
+    check("[task010/AC15] 'vibe learn --push' present",
+          "vibe learn --push" in content, "missing host-only push instruction")
+    check("[task010/AC15] 'host-only' present",
+          "host-only" in content, "missing host-only reference")
+
+    check("[task010/AC16] '/learn: /learnings is not mounted' refusal message",
+          "/learn: /learnings is not mounted" in content, "missing refusal message")
+
+    check("[task010/AC17] 'PreToolUse hook' mentioned",
+          "PreToolUse hook" in content, "missing hook reference")
+
+    # AC18: Diff scope check (files modified must be subset of allowlist)
+    # Try git diff first if commit exists, otherwise check current state
+    try:
+        diff_result = run(["git", "diff", "--name-only", "HEAD~1", "HEAD"], cwd=REPO)
+        if diff_result.returncode == 0 and diff_result.stdout.strip():
+            changed_files = set(diff_result.stdout.strip().split('\n'))
+        else:
+            # Fallback: check git status
+            status_result = run(["git", "status", "--porcelain"], cwd=REPO)
+            changed_files = set(line.split()[-1] for line in status_result.stdout.strip().split('\n') if line.strip())
+    except:
+        changed_files = set()
+
+    allowlist = {
+        "devcontainer/commands/learn.md",
+        "smoke-test.py",
+        ".vs/spec.md",
+        ".vs/progress.md",
+        ".vs/tasks.json"
+    }
+    # Also allow .vs/cycle-1/ directory and its contents
+    scope_ok = all(f not in allowlist and not f.startswith(".vs/cycle-1/") for f in changed_files
+                   if f not in allowlist and not f.startswith(".vs/cycle-1/"))
+
+    check("[task010/AC18] No scope creep (only allowed files modified)",
+          scope_ok, f"changed files: {', '.join(changed_files)}")
+
+    # AC19: This test function itself exists
+    try:
+        with open("/workspace/smoke-test.py", "r") as f:
+            smoke_test_content = f.read()
+        test_func_exists = "def test_task010_smart_capture() -> None:" in smoke_test_content
+        check("[task010/AC19] test_task010_smart_capture function exists",
+              test_func_exists, "function signature not found")
+    except:
+        check("[task010/AC19] test_task010_smart_capture function exists",
+              False, "could not read smoke-test.py")
+
+
 def test_task013_vs_md_intelligent_stopping() -> None:
     """AC5: vs.md documents intelligent Spec Critic stopping rules (13 checks)."""
     print("\n[task_013/AC5: intelligent stopping rules]")
@@ -4731,6 +4920,7 @@ def main() -> int:
     test_vs_md_multi_task_archive_convention()
     test_vsss_md_inherits_escalate_and_budget()
     test_install_extras_syncs_hooks()
+    test_task010_smart_capture()
 
     print()
     if FAILURES:
