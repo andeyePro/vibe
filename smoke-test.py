@@ -38,6 +38,9 @@ VIBE_COPY_WATCHER = REPO / "vibe-copy-watcher.sh"
 WEB_RESEARCH_MD = REPO / "devcontainer" / "claude-md" / "web-research.md"
 SSH_DISCIPLINE_MD = REPO / "devcontainer" / "claude-md" / "ssh-discipline.md"
 FEEDBACK_AUTO_PROMOTE_MD = REPO / "devcontainer" / "claude-md" / "feedback-auto-promote.md"
+TODO_CHANGELOG_MD = REPO / "devcontainer" / "claude-md" / "todo-changelog.md"
+PROJECT_HYGIENE_MD = REPO / "devcontainer" / "claude-md" / "project-hygiene.md"
+CHANGELOG_MD = REPO / "CHANGELOG.md"
 VS_MD = REPO / "devcontainer" / "commands" / "vs.md"
 SP_MD = REPO / "devcontainer" / "commands" / "sp.md"
 VSS_MD = REPO / "devcontainer" / "commands" / "vss.md"
@@ -4666,6 +4669,99 @@ def test_vsss_md_inherits_escalate_and_budget() -> None:
           "git push" in content.lower() and ("push-on-pass" in content or "Push policy" in content), "")
 
 
+def test_todo_changelog_split() -> None:
+    """TODO/CHANGELOG split adopted 2026-05-08 after AEP-Plugin PR #16
+    review. CLAUDE.md must instruct: open work in TODO.md, done in
+    CHANGELOG.md, abandoned items stay in TODO ## Open with [!] marker.
+    A cross-project fragment ships the convention to all vibe projects."""
+    print("\n[TODO/CHANGELOG split convention]")
+    claude_md = REPO / "CLAUDE.md"
+    if claude_md.exists():
+        c = claude_md.read_text()
+        check("[todo-cl] CLAUDE.md names TODO.md and CHANGELOG.md split",
+              "TODO.md and CHANGELOG.md" in c, "")
+        check("[todo-cl] CLAUDE.md says don't put done in TODO",
+              "Don't put done items in TODO" in c or "don't put done items in TODO" in c.lower(), "")
+        check("[todo-cl] CLAUDE.md retains [!] for abandoned in Open",
+              "[!]" in c and "Abandoned" in c, "")
+        # Note: CLAUDE.md may still mention `TODO.md ## Done` as a "no longer
+        # exists" historical pointer; that's intended. Don't grep for # ## Done
+        # absent. The "Don't put done items in TODO" check above is the
+        # forward-looking guard.
+    check("[todo-cl] CHANGELOG.md exists",
+          CHANGELOG_MD.exists(), str(CHANGELOG_MD))
+    if CHANGELOG_MD.exists():
+        cl = CHANGELOG_MD.read_text()
+        check("[todo-cl] CHANGELOG.md has header",
+              cl.startswith("# CHANGELOG"), "")
+        check("[todo-cl] CHANGELOG.md is non-trivial (migrated entries)",
+              len(cl) > 500, f"size={len(cl)}")
+    check("[todo-cl] cross-project fragment ships",
+          TODO_CHANGELOG_MD.exists(), str(TODO_CHANGELOG_MD))
+    if TODO_CHANGELOG_MD.exists():
+        f = TODO_CHANGELOG_MD.read_text()
+        check("[todo-cl-frag] explains TODO is open + abandoned",
+              "open backlog" in f.lower() and "abandoned" in f.lower(), "")
+        check("[todo-cl-frag] explains CHANGELOG is reader-facing",
+              "Reader-facing" in f or "reader-facing" in f.lower(), "")
+        check("[todo-cl-frag] cites the AEP-Plugin trigger",
+              "Pioreactor" in f or "PR" in f, "")
+    todo = REPO / "TODO.md"
+    if todo.exists():
+        t = todo.read_text()
+        check("[todo-cl] TODO.md no longer has ## Done section",
+              "## Done" not in t, "stale ## Done section in TODO.md")
+
+
+def test_project_hygiene_fragment() -> None:
+    """devcontainer/claude-md/project-hygiene.md ships the cross-project
+    rule learned from AEP-Plugin PR #16: don't commit per-machine runtime
+    cruft, setup-specific notes, or unconsented system-patching scripts in
+    upstream-bound repos."""
+    print("\n[project-hygiene fragment]")
+    check("[hygiene] fragment exists",
+          PROJECT_HYGIENE_MD.exists(), str(PROJECT_HYGIENE_MD))
+    if not PROJECT_HYGIENE_MD.exists():
+        return
+    f = PROJECT_HYGIENE_MD.read_text()
+    check("[hygiene] flags .claude/settings.local.json",
+          ".claude/settings.local.json" in f, "")
+    check("[hygiene] flags .vibe/ runtime dir",
+          ".vibe/" in f, "")
+    check("[hygiene] flags hardcoded local IPs",
+          "192.168" in f and "IP" in f, "")
+    check("[hygiene] flags hostname/.local pattern",
+          ".local" in f, "")
+    check("[hygiene] consent rule for system-patching scripts",
+          "without consent" in f.lower() or "consent flow" in f.lower(), "")
+    check("[hygiene] cites the PR review trigger (AEP-Plugin)",
+          "AEP-Plugin" in f or "electroPioreactor" in f.lower() or "PR #16" in f, "")
+    check("[hygiene] pre-commit checklist present",
+          "Pre-commit checklist" in f or "pre-commit checklist" in f.lower(), "")
+
+
+def test_install_extras_ensures_project_gitignore() -> None:
+    """install-claude-extras.sh adds a managed block to /workspace/.gitignore
+    that excludes vibe's runtime files. Idempotent on re-run; opt-out via
+    VIBE_AUTO_GITIGNORE=0; respects user-removed-block (no re-add)."""
+    print("\n[install-extras: ensure_project_gitignore]")
+    src = INSTALL_EXTRAS.read_text()
+    check("[gi-fn] function defined",
+          "ensure_project_gitignore()" in src, "")
+    check("[gi-fn] honours VIBE_AUTO_GITIGNORE=0 opt-out",
+          "VIBE_AUTO_GITIGNORE" in src, "")
+    check("[gi-fn] checks for git repo before acting",
+          "/workspace/.git" in src or "$project/.git" in src, "")
+    check("[gi-fn] managed-block sentinel present",
+          "vibe-managed runtime exclusions" in src, "")
+    check("[gi-fn] excludes .claude/settings.local.json",
+          ".claude/settings.local.json" in src, "")
+    check("[gi-fn] excludes .vibe/",
+          '".vibe/"' in src or "echo \".vibe/\"" in src, "")
+    check("[gi-fn] called from main script body",
+          "ensure_project_gitignore\n" in src or "ensure_project_gitignore$" in src.rstrip() + "\n", "")
+
+
 def test_feedback_auto_promote_fragment() -> None:
     """devcontainer/claude-md/feedback-auto-promote.md spec'd 2026-05-07.
     Behavioral fragment instructing Claude when to propose /learnings
@@ -4988,6 +5084,9 @@ def main() -> int:
     test_vss_md_exists_with_frontmatter()
     test_vss_md_hard_escalate_sentinels()
     test_vss_md_audit_trail_and_push_policy()
+    test_todo_changelog_split()
+    test_project_hygiene_fragment()
+    test_install_extras_ensures_project_gitignore()
     test_feedback_auto_promote_fragment()
     test_vs_md_plain_techy_verbosity_flags()
     test_vs_md_multi_task_archive_convention()
