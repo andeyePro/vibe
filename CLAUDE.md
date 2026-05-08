@@ -16,14 +16,24 @@ A single-command, containerised YOLO coding environment for Claude Code. `cd pro
 - `python3 smoke-test.py` — host-side black-box tests (no docker, no network). Fast. Covers `--help`, write-env-hint block management, token helpers.
 - `MANUAL-TESTS.md` — end-to-end checklist for container lifecycle behaviour (auto-rebuild, partial-fail retry, SSH, bind mounts). Run before shipping changes that touch the Dockerfile, devcontainer.json, postStartCommand, or the vibe launcher.
 
-## TODO.md
+## TODO.md and CHANGELOG.md
 
-`TODO.md` is this project's canonical backlog and audit log. Keep it honest — don't quietly drop items.
+Two canonical files. Different audiences, different lifecycles. **Don't put done items in TODO.md.**
 
-- **Plan step:** when the user approves a plan or you break work into discrete tasks, append them under `## Open` in `TODO.md` with a one-line description. Markers: `[ ]` open · `[x]` done · `[!]` failed/abandoned.
-- **Review step:** when closing a task, move it to `## Done` with a one-line note on what was done (or the final commit SHA). If a task failed or was abandoned, mark it `[!]` with a one-line note on what was tried and why it didn't work — that failure memory is the point.
-- Keep entries bullet-sized. Commit TODO.md updates alongside the code change that resolves (or creates) the task, so history stays paired.
+`TODO.md` — open backlog plus parked/abandoned items. Maintainer-facing.
+
+- **Plan step:** when the user approves a plan or you break work into discrete tasks, append them under `## Open` in `TODO.md` with a one-line description. Markers: `[ ]` open · `[!]` failed/abandoned.
+- **Abandoned items stay in `## Open` with `[!]`** plus a one-line note on what was tried and why it didn't work — that failure memory is the point. They are NOT moved to CHANGELOG.
 - TODO.md is for persistent, cross-session work tracking — distinct from in-session `TaskCreate` todos, which are ephemeral scratchpad.
+
+`CHANGELOG.md` — done-work audit log. Reader-facing (a future maintainer or upstream PR reviewer can scan it without slogging through Open backlog).
+
+- **Review step:** when closing a successful task, append a `[x] **<title>** — <narrative>` entry to `CHANGELOG.md` (NOT to `TODO.md ## Done` — that section no longer exists). Reverse-chronological: newest at top, under the most recent date heading.
+- Date headings (`## YYYY-MM-DD`) group same-day commits. New day → new heading.
+- Keep entries bullet-sized but include enough context for a future PR reviewer to understand what shipped (commit SHA, what changed, why).
+- Commit CHANGELOG updates in the SAME commit as the code change that closed the task — history stays paired.
+
+Convention reasoning: this split was adopted 2026-05-08 after an upstream maintainer (gniezen on amy-bo/electroPioreactor PR #16) couldn't tell whether a TODO file was a TODO or a CHANGELOG. Mixed-purpose TODO confuses external reviewers and dilutes both signals. Two files, one job each.
 
 ## Invariants (don't break these)
 

@@ -174,8 +174,45 @@ check_superpowers() {
 EOF
 }
 
+# Ensure /workspace/.gitignore excludes vibe's runtime files. Without this,
+# downstream projects using vibe risk committing .claude/settings.local.json
+# (an inside-container runtime file) and .vibe/copy-latest.txt (clipboard
+# scratch). Both happened in amy-bo/electroPioreactor PR #16; the upstream
+# reviewer flagged them. This is the structural fix.
+#
+# Behaviour: add a managed block to /workspace/.gitignore on first
+# container start. If the block exists, leave it alone. User opt-out:
+# VIBE_AUTO_GITIGNORE=0 (or remove the managed block by hand; it won't
+# be re-added because the function checks for the block sentinel).
+ensure_project_gitignore() {
+  if [ "${VIBE_AUTO_GITIGNORE:-1}" = "0" ]; then
+    return 0
+  fi
+  local project="/workspace"
+  [ -d "$project/.git" ] || return 0  # only act in a git repo
+  local gitignore="$project/.gitignore"
+  local marker='# >>> vibe-managed runtime exclusions (auto-added; do not edit body) >>>'
+  local close='# <<< vibe-managed <<<'
+  if [ -f "$gitignore" ] && grep -qF "$marker" "$gitignore"; then
+    return 0  # block already present; idempotent
+  fi
+  {
+    [ -f "$gitignore" ] && [ -s "$gitignore" ] && echo
+    echo "$marker"
+    echo "# Files vibe writes to /workspace at runtime. Committing them"
+    echo "# leaks per-machine state into the repo (PR-review-noise risk)."
+    echo "# Opt out: set VIBE_AUTO_GITIGNORE=0 before container start, or"
+    echo "# delete this entire block (won't be re-added once removed)."
+    echo ".claude/settings.local.json"
+    echo ".vibe/"
+    echo "$close"
+  } >> "$gitignore"
+  echo "vibe: added managed runtime-exclusions block to $gitignore" >&2
+}
+
 install_dir agents
 install_dir commands
 install_hooks
 install_claude_md_fragments
 check_superpowers
+ensure_project_gitignore
