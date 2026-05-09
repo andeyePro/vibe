@@ -16,6 +16,20 @@ A single-command, containerised YOLO coding environment for Claude Code. `cd pro
 - `python3 smoke-test.py` — host-side black-box tests (no docker, no network). Fast. Covers `--help`, write-env-hint block management, token helpers.
 - `MANUAL-TESTS.md` — end-to-end checklist for container lifecycle behaviour (auto-rebuild, partial-fail retry, SSH, bind mounts). Run before shipping changes that touch the Dockerfile, devcontainer.json, postStartCommand, or the vibe launcher.
 
+## On session start: surface Martin's review pile
+
+`TODO.md` opens with a `## For Martin (review and decide)` section. This is the boot-time checklist of items waiting on Martin's hands or judgement.
+
+**Every fresh session in this repo, your opening response MUST:**
+
+1. Read `TODO.md` and locate the `## For Martin (review and decide)` section.
+2. List its unticked `[ ]` items in your opening message, grouped by sub-heading (Push and CI / GreenPT / AEP-Plugin / Mac-side empirical / Design decisions / Small bounded items I can ship).
+3. Offer to walk Martin through any of them, or to start the autonomous-shippable items in the last group.
+
+Do NOT skip this step on the assumption Martin remembers the state — the whole point of the review pile is that he doesn't have to. Surfacing it costs ~10 lines of text and saves him scrolling through TODO.md, CHANGELOG.md, and `.vss/sessions/*.md` to reconstruct what's outstanding.
+
+Tick items off (`[ ]` → `[x]`) only when Martin confirms an action complete OR when an autonomous run from `## Small bounded items I can ship without further input` lands a closing commit. Don't tick on assumption.
+
 ## TODO.md and CHANGELOG.md
 
 Two canonical files. Different audiences, different lifecycles. **Don't put done items in TODO.md.**
