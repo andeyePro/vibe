@@ -3780,16 +3780,15 @@ def test_task010_smart_capture() -> None:
     check("[task010/AC18] No scope creep (only allowed files modified)",
           scope_ok, f"changed files: {', '.join(changed_files)}")
 
-    # AC19: This test function itself exists
-    try:
-        with open("/workspace/smoke-test.py", "r") as f:
-            smoke_test_content = f.read()
-        test_func_exists = "def test_task010_smart_capture() -> None:" in smoke_test_content
-        check("[task010/AC19] test_task010_smart_capture function exists",
-              test_func_exists, "function signature not found")
-    except:
-        check("[task010/AC19] test_task010_smart_capture function exists",
-              False, "could not read smoke-test.py")
+    # AC19: This test function itself exists. Use REPO-relative path so this
+    # works on CI (checkout at /home/runner/work/vibe/vibe/) as well as inside
+    # the vibe container (workspace at /workspace/). Earlier hardcoded
+    # /workspace/smoke-test.py path failed in CI 2026-05-09 (commit 2ec36b3);
+    # the bare except: swallowed FileNotFoundError into a check-fail.
+    smoke_test_content = (REPO / "smoke-test.py").read_text()
+    test_func_exists = "def test_task010_smart_capture() -> None:" in smoke_test_content
+    check("[task010/AC19] test_task010_smart_capture function exists",
+          test_func_exists, "function signature not found")
 
 
 def test_task013_vs_md_intelligent_stopping() -> None:
