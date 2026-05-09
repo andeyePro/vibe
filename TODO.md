@@ -1,8 +1,56 @@
 # TODO
 
-Project backlog and audit log. See `CLAUDE.md` § TODO.md for usage.
+Project backlog. See `CLAUDE.md` § TODO.md for usage. Done items live in `CHANGELOG.md`.
 
-Markers: `[ ]` open · `[x]` done · `[!]` failed/abandoned (note what was tried)
+Markers: `[ ]` open · `[!]` failed/abandoned (note what was tried)
+
+## For Martin (review and decide)
+
+**This section is the boot-time checklist Martin reviews when he comes back to vibe.** Items here are blocked on Martin's hands or judgement and CANNOT be progressed autonomously. CLAUDE.md instructs Claude to surface this section on every session start — if you're reading this as Claude, list the unticked items in your opening response and offer to walk Martin through them.
+
+### Push and CI
+
+- [ ] **Push the 17 unpushed commits.** As of 2026-05-09 there are 17 local commits ahead of `origin/main` since `c29b6b1`. Run `git push` to land them. The most recent (`fae64b3`) fixes the three red CI runs from 2026-05-07; once pushed, CI for `fae64b3` should be the first green run since 2026-04-25. Review first if you want: `git log --oneline c29b6b1..HEAD`.
+
+### GreenPT (17-day deadline from 2026-05-07 — confirm what)
+
+- [ ] **Run `GreenPT/main.py` on your Mac** (outside the vibe container) to confirm the Vibe001 key works and the carbon telemetry shape matches what's documented. Expected output is in `GreenPT/README.md`. The script is committed; the key file `GreenPT/greenpt.key` is gitignored and lives only on disk.
+- [ ] **Confirm the 17-day deadline meaning.** Trial credits expiring? Beta-access window? Something else? Knowing this sharpens priority on the rest of the GreenPT track.
+- [ ] **Top up Vibe001 with EUR credits** (https://greenpt.com or wherever the user portal lives). Without this the chat-completion `impact` schema can't be empirically confirmed (it's assumed identical to embeddings/rerank but that's untested for chat).
+- [ ] **Spot-check at GreenPT account portal** for: subscription tier availability (probe found none — confirm), embeddings-pricing-vs-chat-pricing (probe suggests embeddings are free; confirm), whether the EUR balance is per-key or per-account.
+- [ ] **Decide on Green-AI integration shape**: Shape 1 (full backend swap), Shape 2 (split-brain — chat on Anthropic, embeddings/rerank on GreenPT), or Shape 3 (documentation-only). Audit recommends Shape 2; needs your call. See `.vs/audits/green-ai-probe.md` for the full reasoning.
+
+### AEP-Plugin PR #16 (your plugin repo, not vibe — but vibe-rules now ship to prevent recurrence)
+
+- [ ] **Reply to gniezen's review comments on amy-bo/electroPioreactor PR #16.** Vibe-side rules now exist (commit 953db1a) but the actual PR still needs YOUR replies and changes. Specifically:
+  - LED channel D / PWM channel 4 hardcoded — make configurable in the plugin's config schema (reviewer: "What if PWM 4 is set to something else?")
+  - `apply-pr615-patch.sh` patches Pioreactor without consent — reviewer's suggestion: require Pioreactor 26.5.0 as a minimum instead of patching. Decide: keep with consent flow added, or replace with version requirement.
+  - `pi02-setup-notes.md` is too specific to your setup — gitignore it or move to a personal-notes path outside the repo. (Vibe's new `project-hygiene.md` fragment will warn future-Claude about this pattern.)
+  - `revert-pr615-patch.sh` only needed if you keep the patch. If you take the version-requirement route, delete both patch scripts.
+  - `.claude/settings.local.json` and `.vibe/copy-latest.txt` were committed — fix retroactively in the PR by adding them to that repo's `.gitignore` and removing from git tracking. Vibe's new `ensure_project_gitignore()` (commit 953db1a) will auto-add the gitignore block in future containers.
+
+### Mac-side empirical work (can't do autonomously inside a fresh container)
+
+- [ ] **Capture the on-disk layout of Superpowers after a manual user-scope install.** From inside a vibe session: `/plugin marketplace add anthropics/claude-plugins-official` then `/plugin install superpowers@claude-plugins-official` then `/reload-plugins`. After it's installed: `find ~/.claude/plugins/ -type f | head -20` and paste the output back. This unblocks the full auto-install (currently only a banner ships at container start).
+- [ ] **Paste your `~/.zshrc` vibe wrapper text** so the three known regressions can be fixed: `vibe --continue` / `vibe --resume <UID>` flag-eating, `exit` closing the Ghostty window before you can read the session UID, and multi-instance window-title disambiguation. Run `sed -n '/^[[:space:]]*\(function[[:space:]]\+\)\?vibe[[:space:]]*(/,/^}/p' ~/.zshrc` and paste the output.
+
+### Design decisions waiting on your judgement
+
+- [ ] **`/vs` vs `/sp` long-term**: keep both / retire `/vs` / reposition `/vs` as `--fuzzy`-only or token-tracking-only? See the relevant TODO entry in `## Open` below.
+- [ ] **vibe-learn library: Docker volume vs host bind mount?** Trade-off matrix is in the TODO entry below; decide (i) keep host bind, (ii) offer Docker volume as opt-in at `--init`, or (iii) move default to volume.
+- [ ] **vibepaste shape**: option (a) `vibe paste` subcommand, (b) zshrc helper, or (c) standalone `vibepaste` script on PATH? Pick one to unblock the implementation.
+- [ ] **Ghostty OSC-intercept (option C)**: pursue or drop, gated on whether the existing zshrc-wrapper option A is sufficient once you've pasted the wrapper text.
+- [ ] **`/expaste` retirement**: delete from RETIRED_COMMANDS now (risk: clobbering user customisations) or keep shipping. Plus: does the explicit-checkpoint shape have value distinct from `copy-last-block.sh`'s per-turn auto-copy?
+- [ ] **TODO Open's bigger items** (TDD/spec-first/BDD modes, language-profile presets, Green-AI backend, etc.) all need a priority decision before autonomous work can start — name a queue when you're ready.
+
+### Small bounded items I can ship without further input
+
+The next time you authorise autonomous work (`/vss`, `/vsss`, or just say "go"), I can ship these without needing your judgement:
+
+- vs.md + README: 1-paragraph mapping to canonical Architect/Writer/Reviewer pattern (audit follow-up)
+- Optional pre-configured Architect/Writer/Reviewer agent definitions in `devcontainer/agents/` (audit follow-up; ~3 small files)
+- Bump `actions/checkout@v4` → `@v5` in `.github/workflows/ci.yml` to clear the Node 20 deprecation warning (one-line change, but worth a separate atomic CI run to verify)
+- Mistral `codestral` API probe (Green-AI vendor-comparison, parallels the GreenPT probe)
 
 ## Open
 
