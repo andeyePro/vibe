@@ -3,7 +3,7 @@
 vibe ships two opt-in Stop hooks under `/home/node/.claude/hooks/`:
 
 - **`check-numbering.sh`** — warns when an assistant turn mixes 1./2./3. and a./b./c. lists.
-- **`copy-last-block.sh`** — auto-extracts the LAST fenced code block from the assistant's reply into `/workspace/.vibe/copy-latest.txt` so the host-side `vibe-copy-watcher.sh` can `pbcopy` it to the Mac clipboard with no slash-command round-trip.
+- **`copy-last-block.sh`** — when the assistant's reply contains the literal sentinel `<!-- vibe: copy -->`, extracts the LAST fenced code block of that reply into `/workspace/.vibe/copy-latest.txt` so the host-side `vibe-copy-watcher.sh` can `pbcopy` it to the Mac clipboard with no slash-command round-trip. Silent on replies without the sentinel — the assistant must explicitly flag a block as paste-worthy for the clipboard to be touched.
 
 Both ship to every vibe container by default (`install-claude-extras.sh` syncs them) but are silent until you wire them up in `~/.claude/settings.json`. Vibe does not auto-edit user settings.
 
@@ -68,24 +68,33 @@ If you don't want the warning, leave the hook reference out of settings.json
 
 ## copy-last-block.sh
 
-Reads the most recent assistant message from the session transcript, finds
-the LAST fenced code block (lines between matching ` ``` ` markers — language
-tag on the opening fence is dropped), and writes the block content to
-`/workspace/.vibe/copy-latest.txt`. The host-side `vibe-copy-watcher.sh`
-(launched by `vibe` on macOS) detects the file change and `pbcopy`s the
-content to the Mac clipboard.
+Reads the most recent assistant message from the session transcript. If
+the text contains the literal sentinel `<!-- vibe: copy -->` anywhere,
+the hook finds the LAST fenced code block in that message (lines between
+matching ` ``` ` markers — language tag on the opening fence is dropped)
+and writes the block content to `/workspace/.vibe/copy-latest.txt`. The
+host-side `vibe-copy-watcher.sh` (launched by `vibe` on macOS) detects
+the file change and `pbcopy`s the content to the Mac clipboard.
 
-Net effect: every assistant turn that contains a fenced code block, the
-LAST block of that turn lands on your clipboard. No `/c` slash-command
-round-trip required.
+If the sentinel is absent, the hook does nothing — your clipboard is
+not touched. This is the default. The assistant must explicitly include
+the sentinel on turns where it wants you to paste the block elsewhere.
 
-### Per-turn opt-out
+Net effect: when the assistant intends a block for you to paste, the
+clipboard is loaded by the time your prompt unblocks. No `/c` slash-
+command round-trip required. On turns where there is nothing to paste,
+nothing happens.
 
-If the assistant message contains the literal sentinel
-`<!-- vibe: no-copy -->` anywhere in the text, the hook skips the write
-for that turn. Useful for: long replies where the last fence is a small
-example, not the actionable block; replies where the user explicitly
-asked for "no clipboard pollution".
+### Per-turn opt-in
+
+The literal sentinel `<!-- vibe: copy -->` must appear somewhere in the
+assistant's text for the hook to fire. The marker is an HTML comment so
+it does not render visibly in the user's Markdown view — the assistant
+should also tell you in plain text that the clipboard has been loaded.
+
+Convention: the marker appears at the end of the reply, after the fenced
+block intended for copying. The hook always copies the LAST fenced block
+of the message, regardless of where the marker sits relative to it.
 
 ### How to enable
 
@@ -111,34 +120,31 @@ Code hook spec.
 
 ### Trade-offs
 
-The hook is fire-and-forget for the user but writes whatever the LAST
-fenced block of the turn happens to be. If you find yourself with
-inappropriate content on your clipboard, the cause is "I don't want this
-turn copied" rather than "the hook is broken". Either:
-
-- Use the `<!-- vibe: no-copy -->` sentinel on those turns.
-- Re-run with `/c <pattern>` to override the file (the watcher always
-  picks up the most recent change).
-
-`/c <pattern>` (the LLM-driven copy with argument-match) remains
-available and overrides the hook's auto-copy when invoked. The two
-mechanisms compose: the hook keeps the clipboard fresh by default,
-and `/c` lets you override when you need a specific older block.
+The opt-in default puts the decision on the assistant: it must remember
+to include the sentinel on turns where you should paste. The previous
+auto-copy-every-turn default (used until 2026-05-18) traded user-side
+clipboard pollution for zero assistant-side effort. The current opt-in
+default minimises clipboard noise — your clipboard is only touched on
+turns where the assistant has explicitly flagged a block as paste-
+worthy — at the cost of missed copies on turns where the assistant
+forgets the marker. `/c <pattern>` remains available as a manual
+override for those cases, and overwrites whatever the watcher most
+recently picked up.
 
 ### Migrating from `/expaste`
 
 `/expaste` was a slash command that copied the most recent fenced
 block AND nudged you to `/exit` — the goal was "load my clipboard
-right before I drop back to the shell, in one step". `copy-last-block.sh`
-subsumes the auto-copy half: after enabling the hook, every turn's
-last fenced block is already on your Mac clipboard, so plain `/exit`
-gives you the same result with no slash-command round-trip.
+right before I drop back to the shell, in one step". With
+`copy-last-block.sh` wired and the assistant including
+`<!-- vibe: copy -->` on the exit-relevant turn, plain `/exit` gives
+you the same result with no slash-command round-trip.
 
 If you previously used `/expaste`, enable `copy-last-block.sh` per
 the snippet in the [How to enable](#how-to-enable) section above and
-use plain `/exit` going forward. `/expaste` is still shipped as a
-slash command (it has not been retired from `install-claude-extras.sh`'s
-`RETIRED_COMMANDS` list, intentionally — that retirement carries a
-small risk of clobbering user-customised bodies), so it continues to
-work if you have a specific use for the explicit-checkpoint shape.
-For most users the hook is the simpler path.
+ask the assistant to include the sentinel on the turn where you plan
+to exit. `/expaste` is still shipped as a slash command (it has not
+been retired from `install-claude-extras.sh`'s `RETIRED_COMMANDS`
+list, intentionally — that retirement carries a small risk of
+clobbering user-customised bodies), so it continues to work if you
+have a specific use for the explicit-checkpoint shape.

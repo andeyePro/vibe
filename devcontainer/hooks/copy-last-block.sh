@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
-# copy-last-block.sh - Stop hook: write the LAST fenced code block from the
-# most recent assistant message to /workspace/.vibe/copy-latest.txt so the
-# host-side vibe-copy-watcher.sh can pbcopy it to the Mac clipboard with no
-# slash-command round-trip.
+# copy-last-block.sh - Stop hook: when the assistant message contains the
+# literal sentinel `<!-- vibe: copy -->`, write the LAST fenced code block
+# of that message to /workspace/.vibe/copy-latest.txt so the host-side
+# vibe-copy-watcher.sh can pbcopy it to the Mac clipboard with no slash-
+# command round-trip. Without the sentinel the hook is silent.
 #
-# Opt-in: only fires if `~/.claude/settings.json` references this script as
-# a Stop hook. The script is shipped to every vibe container by
-# install-claude-extras.sh but is silent until wired up.
-#
-# Per-turn opt-out: if the assistant message contains the literal sentinel
-# `<!-- vibe: no-copy -->`, the hook skips the write for that turn.
+# Opt-in twice: (1) wire the hook in `~/.claude/settings.json` as a Stop
+# hook (the script is shipped to every vibe container by install-claude-
+# extras.sh but does nothing until wired); (2) the assistant must include
+# `<!-- vibe: copy -->` in the message for that specific turn to copy.
+# Default is silent so the user's clipboard is only touched when the
+# assistant has explicitly flagged a block as paste-worthy.
 #
 # Behaviour: exits 0 in all paths (informational). Tolerates missing transcript,
-# empty assistant text, and zero fenced blocks.
+# empty assistant text, missing marker, and zero fenced blocks.
 
 set -euo pipefail
 
@@ -32,9 +33,10 @@ text="$(jq -rs '
 ' "$transcript_path" 2>/dev/null || true)"
 [ -n "$text" ] || exit 0
 
-# Per-turn opt-out: silent skip when the marker is present anywhere.
+# Per-turn opt-in: silent unless the sentinel is present anywhere in the text.
 case "$text" in
-  *'<!-- vibe: no-copy -->'*) exit 0 ;;
+  *'<!-- vibe: copy -->'*) : ;;
+  *) exit 0 ;;
 esac
 
 # Extract the LAST fenced code block. State machine:
