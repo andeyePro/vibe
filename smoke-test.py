@@ -4443,7 +4443,7 @@ def test_copy_last_block_exists_and_executable() -> None:
 
 
 def test_copy_last_block_single_block() -> None:
-    """Single fenced block → block content written, language fence stripped."""
+    """Marker + single fenced block → block content written, fence stripped."""
     print("\n[copy-last-block: single block]")
     if not COPY_LAST_BLOCK.exists():
         return
@@ -4451,7 +4451,7 @@ def test_copy_last_block_single_block() -> None:
         cd = Path(tmp) / ".vibe"
         cd.mkdir()
         rc, out = _run_copy_last_block(
-            "Result:\n```\necho hello\n```",
+            "<!-- vibe: copy -->\nResult:\n```\necho hello\n```",
             cd,
         )
         check("[copy-block] single: exit 0", rc == 0, f"rc={rc}")
@@ -4460,7 +4460,7 @@ def test_copy_last_block_single_block() -> None:
 
 
 def test_copy_last_block_language_tag() -> None:
-    """Opening fence with language tag → tag is dropped, only content written."""
+    """Marker + fence with language tag → tag dropped, only content written."""
     print("\n[copy-last-block: language-tagged fence]")
     if not COPY_LAST_BLOCK.exists():
         return
@@ -4468,7 +4468,7 @@ def test_copy_last_block_language_tag() -> None:
         cd = Path(tmp) / ".vibe"
         cd.mkdir()
         rc, out = _run_copy_last_block(
-            "```bash\necho hi\n```",
+            "<!-- vibe: copy -->\n```bash\necho hi\n```",
             cd,
         )
         check("[copy-block] langtag: exit 0", rc == 0, f"rc={rc}")
@@ -4477,7 +4477,7 @@ def test_copy_last_block_language_tag() -> None:
 
 
 def test_copy_last_block_multiple_blocks_last_wins() -> None:
-    """Multiple blocks → LAST one is written."""
+    """Marker + multiple blocks → LAST one is written."""
     print("\n[copy-last-block: multiple blocks, last wins]")
     if not COPY_LAST_BLOCK.exists():
         return
@@ -4485,7 +4485,7 @@ def test_copy_last_block_multiple_blocks_last_wins() -> None:
         cd = Path(tmp) / ".vibe"
         cd.mkdir()
         rc, out = _run_copy_last_block(
-            "first:\n```\nblock A\n```\nsecond:\n```\nblock B\n```",
+            "<!-- vibe: copy -->\nfirst:\n```\nblock A\n```\nsecond:\n```\nblock B\n```",
             cd,
         )
         check("[copy-block] multi: exit 0", rc == 0, f"rc={rc}")
@@ -4494,7 +4494,7 @@ def test_copy_last_block_multiple_blocks_last_wins() -> None:
 
 
 def test_copy_last_block_no_fence_no_write() -> None:
-    """No fenced blocks → no file written."""
+    """Marker but no fenced blocks → no file written."""
     print("\n[copy-last-block: no fence, no write]")
     if not COPY_LAST_BLOCK.exists():
         return
@@ -4502,7 +4502,7 @@ def test_copy_last_block_no_fence_no_write() -> None:
         cd = Path(tmp) / ".vibe"
         cd.mkdir()
         rc, out = _run_copy_last_block(
-            "Just plain text, no code samples here.",
+            "<!-- vibe: copy -->\nJust plain text, no code samples here.",
             cd,
         )
         check("[copy-block] nofence: exit 0", rc == 0, f"rc={rc}")
@@ -4510,25 +4510,25 @@ def test_copy_last_block_no_fence_no_write() -> None:
               out == "<NO_FILE>", repr(out))
 
 
-def test_copy_last_block_opt_out_marker() -> None:
-    """Per-turn opt-out: <!-- vibe: no-copy --> sentinel skips the write."""
-    print("\n[copy-last-block: opt-out marker]")
+def test_copy_last_block_no_marker_silent() -> None:
+    """Default is opt-in: without `<!-- vibe: copy -->`, no write even with a block."""
+    print("\n[copy-last-block: no marker = silent]")
     if not COPY_LAST_BLOCK.exists():
         return
     with tempfile.TemporaryDirectory() as tmp:
         cd = Path(tmp) / ".vibe"
         cd.mkdir()
         rc, out = _run_copy_last_block(
-            "<!-- vibe: no-copy -->\nResult:\n```\nshould-not-be-copied\n```",
+            "Result:\n```\nshould-not-be-copied\n```",
             cd,
         )
-        check("[copy-block] optout: exit 0", rc == 0, f"rc={rc}")
-        check("[copy-block] optout: file NOT written despite block",
+        check("[copy-block] no-marker: exit 0", rc == 0, f"rc={rc}")
+        check("[copy-block] no-marker: file NOT written without sentinel",
               out == "<NO_FILE>", repr(out))
 
 
 def test_copy_last_block_multiline_preserved() -> None:
-    """Multi-line blocks preserve their interior newlines."""
+    """Marker + multi-line block → interior newlines preserved."""
     print("\n[copy-last-block: multi-line preservation]")
     if not COPY_LAST_BLOCK.exists():
         return
@@ -4536,7 +4536,7 @@ def test_copy_last_block_multiline_preserved() -> None:
         cd = Path(tmp) / ".vibe"
         cd.mkdir()
         rc, out = _run_copy_last_block(
-            "```\nline 1\nline 2\nline 3\n```",
+            "<!-- vibe: copy -->\n```\nline 1\nline 2\nline 3\n```",
             cd,
         )
         check("[copy-block] multiline: exit 0", rc == 0, f"rc={rc}")
@@ -5082,7 +5082,7 @@ def main() -> int:
     test_copy_last_block_language_tag()
     test_copy_last_block_multiple_blocks_last_wins()
     test_copy_last_block_no_fence_no_write()
-    test_copy_last_block_opt_out_marker()
+    test_copy_last_block_no_marker_silent()
     test_copy_last_block_multiline_preserved()
     test_copy_last_block_empty_stdin()
     test_numbering_hook_readme_present()
