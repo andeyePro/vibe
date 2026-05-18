@@ -19,7 +19,7 @@ install_dir() {
   # Commands-only retirement: remove files that vibe used to ship but no
   # longer does. Allow-listed; user-authored files in dest are untouched.
   if [ "$kind" = "commands" ]; then
-    local RETIRED_COMMANDS=("copy.md")
+    local RETIRED_COMMANDS=("copy.md" "expaste.md")
     local retired
     for retired in "${RETIRED_COMMANDS[@]}"; do
       rm -f "$dest/$retired"

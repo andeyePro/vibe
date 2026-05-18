@@ -131,20 +131,3 @@ forgets the marker. `/c <pattern>` remains available as a manual
 override for those cases, and overwrites whatever the watcher most
 recently picked up.
 
-### Migrating from `/expaste`
-
-`/expaste` was a slash command that copied the most recent fenced
-block AND nudged you to `/exit` — the goal was "load my clipboard
-right before I drop back to the shell, in one step". With
-`copy-last-block.sh` wired and the assistant including
-`<!-- vibe: copy -->` on the exit-relevant turn, plain `/exit` gives
-you the same result with no slash-command round-trip.
-
-If you previously used `/expaste`, enable `copy-last-block.sh` per
-the snippet in the [How to enable](#how-to-enable) section above and
-ask the assistant to include the sentinel on the turn where you plan
-to exit. `/expaste` is still shipped as a slash command (it has not
-been retired from `install-claude-extras.sh`'s `RETIRED_COMMANDS`
-list, intentionally — that retirement carries a small risk of
-clobbering user-customised bodies), so it continues to work if you
-have a specific use for the explicit-checkpoint shape.
