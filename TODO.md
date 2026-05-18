@@ -47,7 +47,6 @@ Markers: `[ ]` open · `[!]` failed/abandoned (note what was tried)
 
 The next time you authorise autonomous work (`/vss`, `/vsss`, or just say "go"), I can ship these without needing your judgement:
 
-- Bump `actions/checkout@v4` → `@v5` in `.github/workflows/ci.yml` to clear the Node 20 deprecation warning (one-line change, but worth a separate atomic CI run to verify)
 - Mistral `codestral` API probe (Green-AI vendor-comparison, parallels the GreenPT probe)
 
 ## Open
