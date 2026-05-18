@@ -40,12 +40,7 @@ Markers: `[ ]` open · `[!]` failed/abandoned (note what was tried)
 - [ ] **vibe-learn library: Docker volume vs host bind mount?** Trade-off matrix is in the TODO entry below; decide (i) keep host bind, (ii) offer Docker volume as opt-in at `--init`, or (iii) move default to volume.
 - [ ] **vibepaste shape**: option (a) `vibe paste` subcommand, (b) zshrc helper, or (c) standalone `vibepaste` script on PATH? Pick one to unblock the implementation.
 - [ ] **Ghostty OSC-intercept (option C)**: pursue or drop, gated on whether the existing zshrc-wrapper option A is sufficient once you've pasted the wrapper text.
-- [ ] **TODO Open's bigger items** (TDD/spec-first/BDD modes, language-profile presets, Green-AI backend, etc.) all need a priority decision before autonomous work can start — name a queue when you're ready.
-
-### Small bounded items I can ship without further input
-
-The next time you authorise autonomous work (`/vss`, `/vsss`, or just say "go"), I can ship these without needing your judgement:
-
+- [ ] **TODO Open's bigger items** (TDD/spec-first modes under the XP-as-umbrella framing, language-profile presets, Green-AI backend, etc.) all need a priority decision before autonomous work can start — name a queue when you're ready.
 
 ## Open
 

@@ -6,6 +6,8 @@ Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion 
 
 ## 2026-05-18
 
+- [x] **TODO.md prune pass 3**: dropped the now-empty `### Small bounded items I can ship without further input` subsection from `## For Martin (review and decide)` — all four items closed today (vs.md+README mapping, agent definitions, checkout@v5 bump, Mistral codestral audit), leaving the subsection as just its intro paragraph with no items. Subsection deleted. Also updated the For-Martin Design-decisions entry "TODO Open's bigger items" to drop the `/BDD` reference (dropped in pass 2) and add the XP-as-umbrella framing.
+
 - [x] **TODO.md prune pass 2**: dropped `vibe --BDD session mode` per Martin's "we're looking at extreme programming with each as a subset" — TDD and spec-first stay as XP subsets, BDD is out-of-scope niche. Added XP-as-umbrella context note to the `vibe --TDD` entry so the methodology framing is durable. Tagged the XAP engagement-plan entry with a note that it should likely move to a separate XAP repo eventually (XAP is a distinct standard from vibe and the engagement-plan lifecycle is separate).
 
 - [x] **TODO.md prune pass 1**: removed `## Open` entry "Authenticated Mistral codestral probe" (added earlier today as a follow-up to the Mistral codestral comparison audit but superseded immediately by Martin's pushback that the whole Mistral evaluation track was scope creep). Rephrased the For-Martin Push-and-CI item to drop the stale "17 commits since 2026-05-09" count in favour of a `git rev-list --count` recipe that stays accurate as commits accumulate. Five other entries surface as ambiguous in the follow-up Q3 to Martin; not removed autonomously.
