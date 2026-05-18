@@ -223,13 +223,26 @@ save_token() {
 setup_token() {
   local repo="$1"
   local repo_short="${repo#*/}"
+  local token_name="vibe-$repo_short"
+  local clip_note
+
+  # Best-effort: pre-load the Mac clipboard with the suggested token name so
+  # the user can ⌘V into GitHub's 'Token name' field without retyping. Silent
+  # fallback if pbcopy is unavailable (e.g. Linux host) — message degrades
+  # gracefully to the original "e.g.: vibe-<repo>" wording.
+  if command -v pbcopy >/dev/null 2>&1 && printf '%s' "$token_name" | pbcopy 2>/dev/null; then
+    clip_note=" (clipboard has '$token_name' — ⌘V into 'Token name')"
+  else
+    clip_note=", e.g.: $token_name"
+  fi
+
   cat << MSG
 
   No GitHub token found for $repo.
 
   I'll open GitHub so you can create a fine-grained token.
   On that page:
-    1. Give it a name, e.g.: vibe-$repo_short
+    1. Give it a name${clip_note}
     2. Set an expiry (90 days is a good default)
     3. Under 'Repository access' → 'Only select repositories'
        → choose $repo_short
