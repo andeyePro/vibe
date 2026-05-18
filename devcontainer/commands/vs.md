@@ -20,6 +20,16 @@ Spec Critic runs **once at task start**, before user approval. It does not re-ru
 - **Default (rigorous)** — for tasks with verifiable acceptance criteria. Tester (Haiku 4.5) writes immutable tests; pass/fail is mechanical.
 - **`--fuzzy`** — for tasks without verifiable criteria (`fix this bug`, `make this nicer`, `look around for X`). Reviewer (Sonnet) reads Generator's diff + original prompt and produces a written verdict. Pass/fail is judgment, not mechanical. Use when the simplicity gate would otherwise refuse on "no verifiable criteria" grounds.
 
+### Relation to canonical Architect/Writer/Reviewer
+
+Claude Code's welcome banner suggests creating Software Architect, Code Writer, and Code Reviewer agents via `/agents`. `/vs` strictly extends this three-role pattern with two adversarial-separation splits: the canonical Architect role becomes Planner (drafts the spec) plus Spec Critic (audits it BEFORE any code is written), and the canonical Reviewer role becomes Tester (mechanical, Haiku-tier; rigorous mode) or Reviewer (judgment-based, Sonnet-tier; `--fuzzy` mode) plus Evaluator (Opus-tier final verdict). The Tester/Reviewer + Evaluator split lets cheap Haiku do rote test-writing while reserving Opus for the pass/fail call. Full audit: [`../../.vs/audits/architect-writer-reviewer.md`](../../.vs/audits/architect-writer-reviewer.md).
+
+| Canonical role     | `/vs` equivalent                                                |
+| ------------------ | --------------------------------------------------------------- |
+| Software Architect | Planner + Spec Critic                                           |
+| Code Writer        | Generator                                                       |
+| Code Reviewer      | Tester (rigorous) or Reviewer (`--fuzzy`) + Evaluator           |
+
 ## Flags
 
 - `/vs --max N <prompt>` — override the cycle ceiling. Default is whatever Planner proposes.

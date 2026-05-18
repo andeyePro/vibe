@@ -23,6 +23,8 @@ To maximise Pro/Max plan usage efficiency and minimise user input on complex tas
 4. a Sonnet Reviewer with `/vs --fuzzy` for tasks without mechanical acceptance criteria
 Generator never sees Tester's output and vice versa – that separation is the point by having independent adversarial agents none of them over-value the work of the others, and you get a completed feature that passes all tests.
 
+`/vs` extends Claude Code's canonical Software Architect / Code Writer / Code Reviewer pattern – the Architect role splits into Planner + Spec Critic (adversarial spec review before any code), and the Reviewer role splits into Tester (mechanical, Haiku) or Reviewer (judgment-based, `--fuzzy`) plus Evaluator (Opus, final verdict). See [`devcontainer/commands/vs.md`](devcontainer/commands/vs.md) § Modes for the mapping table.
+
 Flags: `--max N` (limits number of iterations), `--fuzzy` (Reviewer instead of Tester), `--cost` (opt-in token-spend logging). See full protocol in [`devcontainer/commands/vs.md`](devcontainer/commands/vs.md).
 
 ## Prerequisites

@@ -47,14 +47,11 @@ Markers: `[ ]` open · `[!]` failed/abandoned (note what was tried)
 
 The next time you authorise autonomous work (`/vss`, `/vsss`, or just say "go"), I can ship these without needing your judgement:
 
-- vs.md + README: 1-paragraph mapping to canonical Architect/Writer/Reviewer pattern (audit follow-up)
 - Optional pre-configured Architect/Writer/Reviewer agent definitions in `devcontainer/agents/` (audit follow-up; ~3 small files)
 - Bump `actions/checkout@v4` → `@v5` in `.github/workflows/ci.yml` to clear the Node 20 deprecation warning (one-line change, but worth a separate atomic CI run to verify)
 - Mistral `codestral` API probe (Green-AI vendor-comparison, parallels the GreenPT probe)
 
 ## Open
-
-- [ ] **vs.md + README: add 1-paragraph mapping to canonical Architect/Writer/Reviewer pattern (2026-05-07 audit follow-up)** — see `.vs/audits/architect-writer-reviewer.md`. Bounded direct edit. Add a § "Relation to canonical Architect/Writer/Reviewer" subsection under vs.md `## Modes` (1 paragraph, mapping table) plus a 1-sentence bullet under README's `## Adversarial coding mode /vs` section explaining the Architect-split-into-Planner+Spec-Critic and the Reviewer-split-into-Tester+Evaluator. Connects users coming from Claude Code's welcome-banner tip to /vs's flow.
 
 - [ ] **vibe: optional pre-configured Software Architect / Code Writer / Code Reviewer agent definitions in `devcontainer/agents/` (2026-05-07 audit follow-up)** — new files `software-architect.md`, `code-writer.md`, `code-reviewer.md` following the `security-review.md` / `shellcheck-fixer.md` shape (~5-10 lines each). Provides one-keystroke canonical shape for users coming from Claude Code's welcome-banner tip without going through /vs. Independent of /vs flow. Bounded /vs task. Optional — value depends on whether vibe wants to compete with raw `/agents` invocation; if users prefer creating their own, this is overhead.
 
