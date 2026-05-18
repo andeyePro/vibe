@@ -47,13 +47,10 @@ Markers: `[ ]` open · `[!]` failed/abandoned (note what was tried)
 
 The next time you authorise autonomous work (`/vss`, `/vsss`, or just say "go"), I can ship these without needing your judgement:
 
-- Optional pre-configured Architect/Writer/Reviewer agent definitions in `devcontainer/agents/` (audit follow-up; ~3 small files)
 - Bump `actions/checkout@v4` → `@v5` in `.github/workflows/ci.yml` to clear the Node 20 deprecation warning (one-line change, but worth a separate atomic CI run to verify)
 - Mistral `codestral` API probe (Green-AI vendor-comparison, parallels the GreenPT probe)
 
 ## Open
-
-- [ ] **vibe: optional pre-configured Software Architect / Code Writer / Code Reviewer agent definitions in `devcontainer/agents/` (2026-05-07 audit follow-up)** — new files `software-architect.md`, `code-writer.md`, `code-reviewer.md` following the `security-review.md` / `shellcheck-fixer.md` shape (~5-10 lines each). Provides one-keystroke canonical shape for users coming from Claude Code's welcome-banner tip without going through /vs. Independent of /vs flow. Bounded /vs task. Optional — value depends on whether vibe wants to compete with raw `/agents` invocation; if users prefer creating their own, this is overhead.
 
 - [ ] **vibe + /vsss: host-launcher auto-resume after token-exhaustion halts (2026-05-07 user-raised)** — `/vsss` Resumption protocol shipped 2026-05-07 covers the manual case (`vibe --continue` then `/vsss --resume` resumes from `.vss/sessions/<ISO>.md`). The user wants automatic continuation across N out-of-tokens halts without any manual step. Requires host-side launcher work: (a) `/vsss --auto-resume N <args>` writes `.vss/auto-resume.json` with `{ "active": true, "remaining_halts": N, "session_file": "<path>" }`; (b) `/workspace/vibe` checks the marker on every container start and if `active && remaining_halts > 0` invokes `claude --continue` automatically and decrements; (c) exhaustion-vs-clean-exit detection — distinguish "session ran out of 5h" from "user typed /exit" via claude's exit code or last-stderr signal (heuristic — needs probing); (d) clear marker on clean exit, optimiser stop, hard-escalate, or budget cap; (e) Mac-host wrapper integration (the zshrc wrapper that opens Ghostty with `--title=<folder>` would need to forward auto-resume state to the inner vibe). Likely a `/vs` task with multi-cycle scope. Spec'd canonically as out-of-scope-for-the-slash-command in `vsss.md` § Auto-resume across halts.
 
