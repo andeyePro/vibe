@@ -4,35 +4,26 @@ A single-command containerised Claude Code environment. `cd my-project && vibe` 
 
 ## What you get
 
-- Claude Code running in Anthropic's official devcontainer, with its firewall whitelist in place.
-- One-time Claude Pro/Max subscription auth (no API key required / no metered billing).
-- One-time per-repo fine-grained GitHub Personal Access Token (PAT) injected as `$GITHUB_TOKEN` and wired into git – `git push` just works.
-- SSH out to remote dev machines (Raspberry Pis, lab boxes, anything you've already keyed). Your host `~/.ssh` bind-mounts read-only – a sanitised writable copy lives inside the container so `known_hosts` prompts and `ssh-keygen` work normally, while your host keys stay untouched.
-- An opt-in cross-org learning library (`vibe learn --init`) – you choose where it lives, public or private. Mounts into every container at `/learnings`. Capture is **manual**: run `vibe learn "<pattern>"` on the host shell, or use the `/learn` slash command from inside a session. There is no background "save my preferences automatically" mode today; auto-promotion of feedback memories to the library is a planned follow-up.
-
-  **Security note:** the bind-mount is read-write on macOS regardless of the `readonly` flag (Docker Desktop / OrbStack `fakeowner` quirk). A PreToolUse hook gates writes — every Write, Edit, or MultiEdit tool call targeting `/learnings` prompts the user for confirmation before proceeding. This PreToolUse hook gates writes, not the mount itself. The Bash tool is also hooked for common shell-write idioms (redirects, `tee`, `cp`, `mv`, `rm`, etc.) as best-effort defense-in-depth; acknowledged bypass classes are documented in `devcontainer/guard-bash.sh`.
-- Two house rules baked into every Claude session via a managed `~/.claude/CLAUDE.md` block – try WebSearch before declaring a URL unreachable, and don't SSH/scp/rsync out of the container without explicit per-turn user approval. Both ship with vibe; no per-user setup.
-- Slash commands include `/c` (copy the most recent fenced code block from Claude's last reply to your Mac clipboard via a host-side watcher; Linux hosts fall back to a scratch file under `.vibe/copy-latest.txt`), `/diet` (lean token-frugal mode – no subagents, no optional verifications, terse output), `/feast` to exit `/diet`, `/learn` (capture a cross-org learning into your `/learnings` library; needs `vibe learn --init` host-side first), `/sp` (apply Superpowers methodology to a task; requires the `superpowers` plugin to be installed), `/vs` (see [Adversarial coding mode](#adversarial-coding-mode-vs) below), `/vss` (versus solo – one-shot autonomous wrapper: with args, an Opus planner picks `/vs` / `/sp` / a superpower / direct edit and proceeds without approval; with no args, it picks the first bounded TODO item or scans the repo with a 270s redirect window and a terminal-bell notification when the candidate is announced – both modes honour a documented hard-escalate list covering physical hardware actuation, SSH-out, destructive git, `/learnings` writes, firewall/hook/perm edits, and `/vs --fuzzy` subjective verdicts), and `/vsss` (versus super solo – wraps `/vss` in an autonomous loop with an Opus optimiser between iterations and exit conditions for perfection-gate / 5h budget / three-no-op A-mode iterations / hard-escalate; per-session detailed audit at `.vss/sessions/<ISO>.md` for review; **does not push autonomously** — local commits land on the working branch and the user reviews + pushes manually, or passes `--push-on-pass` to opt in for that single run; intended for "burn the rest of my session productively" runs). Subagents include `shellcheck-fixer` and `security-review`. Two opt-in Stop hooks ship under `~/.claude/hooks/`: `check-numbering.sh` (warns if a reply mixes `1./2./3.` with `a./b./c.`) and `copy-last-block.sh` (when the assistant's reply contains the literal sentinel `<!-- vibe: copy -->`, extracts the LAST fenced code block of that reply into the clipboard scratch file so the watcher pbcopies without a `/c` round-trip; silent otherwise — opt-in per turn so the clipboard is only touched when the assistant explicitly flags a block as paste-worthy). Wire either by referencing it from `~/.claude/settings.json`; see `devcontainer/hooks/README.md`. All pre-installed under `~/.claude/`, synced on every container start so image rebuilds propagate without clobbering anything you've added yourself.
+- Claude Code in Anthropic's official devcontainer, firewall whitelist in place.
+- One-time Claude **Pro/Max** subscription auth — no API key, no per-token billing.
+- One-time per-repo fine-grained GitHub PAT injected as `$GITHUB_TOKEN`; `git push` just works.
+- SSH out to remote dev machines (Raspberry Pis, lab boxes, anything you've keyed). Host `~/.ssh` is bind-mounted read-only; a sanitised writable copy lives inside the container.
+- Opt-in cross-org learning library via `vibe learn --init` — you pick where it lives, public or private. Capture is manual; auto-promotion is planned. **Security note:** the bind-mount is read-write on macOS regardless of the `readonly` flag (Docker Desktop / OrbStack `fakeowner` quirk), so a PreToolUse hook gates writes — every Write, Edit, or MultiEdit touching `/learnings` prompts for confirmation. Bash redirects, `tee`, `cp`, `mv`, `rm` etc. are hooked too as defense-in-depth (acknowledged bypass classes in `devcontainer/guard-bash.sh`).
+- Slash commands, subagents, and Stop hooks pre-installed. Type `/help` once inside to discover them; `/sp` applies Superpowers methodology, `/vs` runs an adversarial coding harness (see below), `/vss` and `/vsss` automate it. Anything unfamiliar surfaces a one-liner when you first hit it.
+- Two house rules baked into every Claude session via a managed `~/.claude/CLAUDE.md` block: try WebSearch before declaring a URL unreachable, and don't SSH/scp/rsync out of the container without explicit per-turn user approval.
 
 ## Adversarial coding mode `/vs`
 
-To maximise Pro/Max plan usage efficiency and minimise user input on complex tasks, `/vs <prompt>` runs the request through an adversarial harness. An Opus director plays Planner and Evaluator, dispatching independent subagents:
-1. a Sonnet Spec Critic that audits the spec before any code is written, 
-2. a Sonnet Generator that writes the feature
-3. a Haiku Tester that writes immutable tests, or 
-4. a Sonnet Reviewer with `/vs --fuzzy` for tasks without mechanical acceptance criteria
-Generator never sees Tester's output and vice versa – that separation is the point by having independent adversarial agents none of them over-value the work of the others, and you get a completed feature that passes all tests.
+`/vs <prompt>` runs the request through an adversarial harness so a Pro/Max plan does more per session with less back-and-forth. An Opus director plays Planner and Evaluator, dispatching independent subagents (Sonnet Spec Critic before any code, Sonnet Generator, Haiku Tester writing immutable tests, or a Sonnet Reviewer when you pass `--fuzzy` for non-mechanical criteria). Generator never sees Tester's tests and vice versa — independence is the point.
 
-`/vs` extends Claude Code's canonical Software Architect / Code Writer / Code Reviewer pattern – the Architect role splits into Planner + Spec Critic (adversarial spec review before any code), and the Reviewer role splits into Tester (mechanical, Haiku) or Reviewer (judgment-based, `--fuzzy`) plus Evaluator (Opus, final verdict). See [`devcontainer/commands/vs.md`](devcontainer/commands/vs.md) § Modes for the mapping table.
-
-Flags: `--max N` (limits number of iterations), `--fuzzy` (Reviewer instead of Tester), `--cost` (opt-in token-spend logging). See full protocol in [`devcontainer/commands/vs.md`](devcontainer/commands/vs.md).
+`/vs` extends Claude Code's canonical Software Architect / Code Writer / Code Reviewer pattern: Architect splits into Planner + Spec Critic, Reviewer splits into Tester (mechanical) or Reviewer (`--fuzzy`) + Evaluator. Full mapping and flag reference in [`devcontainer/commands/vs.md`](devcontainer/commands/vs.md).
 
 ## Prerequisites
 
-- macOS 13+ or Linux (not yet tested on Linux) add an issue if you need other platforms
+- macOS 13+ or Linux (Linux untested; open an issue if you hit anything)
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) or [OrbStack](https://orbstack.dev)
 - Node.js, then `npm install -g @devcontainers/cli`
-- [GitHub CLI](https://cli.github.com) – `gh auth login`
+- [GitHub CLI](https://cli.github.com) — `gh auth login`
 - A Claude **Pro or Max** subscription
 
 ## Install
@@ -43,53 +34,21 @@ bash <(curl -fsSL https://raw.githubusercontent.com/Aqueum/vibe/main/install.sh)
 
 The installer clones vibe to `~/.vibe-src`, symlinks `~/bin/vibe`, and prompts for your projects directory. `vibe` reads the devcontainer definition straight from the clone, so `git -C ~/.vibe-src pull` (or re-running the installer) is all you need to update.
 
-**Hacking on vibe itself?** Clone the repo anywhere you like and run `./install.sh` from inside the clone – the installer detects the in-place checkout and points `~/bin/vibe` at it directly, so your edits take effect with no separate pull step.
+**Hacking on vibe itself?** Clone the repo anywhere and run `./install.sh` from inside the clone — the installer detects the in-place checkout and points `~/bin/vibe` at it directly, so your edits take effect with no separate pull step.
 
 ## Usage
 
-```bash
-# From inside a project folder
-cd ~/Projects/my-app
-vibe
+`cd` into a project and run `vibe`. First-run teaching happens interactively: GitHub repo detection, fine-grained PAT creation, `git init` for empty folders, the Pro/Max login URL. Nothing to read up on in advance.
 
-# By project name from anywhere (uses VIBE_PROJECTS_DIR)
-vibe my-app
+`vibe --help` shows the full flag list. Common ones:
 
-# Force rebuild of the container image
-vibe --rebuild
+- `vibe my-app` — launch a named project from anywhere (uses `VIBE_PROJECTS_DIR`)
+- `vibe --rebuild` — force rebuild of the container image
+- `vibe --continue` — resume the most recent Claude conversation in this project
+- `vibe --resume <uuid>` — resume a specific past conversation
+- `vibe learn --init` — one-time setup of the cross-org learning library
 
-# Resume the most recent Claude conversation in this project
-vibe --continue
-
-# Interactively pick a past Claude conversation to resume
-vibe --resume
-
-# Resume a specific Claude conversation by session id
-vibe --resume 12345678-1234-1234-1234-123456789abc
-
-# List available projects
-vibe --list
-
-# Cross-org learning library (host-side, opt-in)
-vibe learn --init                    # one-time setup; choose location + visibility
-vibe learn "pattern worth keeping"   # capture from your projects, with confirm
-vibe learn --exclude                 # opt this project out
-vibe learn --include                 # opt this project back in
-```
-
-`vibe` starts a fresh Claude conversation by default – durable cross-session memory lives in `TODO.md`, `CLAUDE.md`, and Claude's auto-memory, not in resumed conversations (which accumulate compaction debt). `--continue`/`--resume` are opt-in for short-horizon pickup (mid-task resumption, debugging a prior session).
-
-## Authentication
-
-vibe uses your **Claude Pro/Max subscription** – no API key required, no per-token billing.
-
-On the first run Claude Code will print a URL in the terminal; open it in your browser and log in. Credentials are stored in a named Docker volume (`vibe-claude-config`) that is shared across all projects, so you log in **once**, not once per project.
-
-> **Note:** if `ANTHROPIC_API_KEY` is set in your environment, vibe prints a warning. The container still forces subscription auth via `forceLoginMethod: "claudeai"`, but you should unset the variable on the host for good measure.
-
-## First-run flows
-
-First-time setup is interactive – vibe walks you through GitHub repo detection, fine-grained PAT creation, and `git init` as needed. Existing GitHub repos: it'll find them. New projects: it offers to create the repo for you. Empty folders: it'll `git init` first.
+Fresh conversation is the default — durable memory lives in `TODO.md`, `CLAUDE.md`, and Claude's auto-memory, not in resumed conversations (which accumulate compaction debt). `--continue` / `--resume` are opt-in for short-horizon pickup.
 
 ## Host-side state
 
@@ -98,27 +57,26 @@ First-time setup is interactive – vibe walks you through GitHub repo detection
 | `~/bin/vibe` | Symlink to the launcher |
 | `~/.vibe-src/` | Clone of this repo |
 | `~/.vibe/config` | `VIBE_PROJECTS_DIR` |
-| `~/.vibe/tokens` | GitHub PATs (`owner/repo=ghp_...`), `chmod 600` – never commit or sync to the cloud |
+| `~/.vibe/tokens` | GitHub PATs (`owner/repo=ghp_...`), `chmod 600` — never commit or sync to the cloud |
 | `~/.vibe/skipped` | Projects opted out of GitHub |
-| `~/.vibe/learning.config` | Learning library location + visibility (created by `vibe learn --init`) |
+| `~/.vibe/learning.config` | Learning library location + visibility |
 
 ## Security model
 
-- **Network:** iptables firewall allows only npm, GitHub, Claude API, DNS, SSH. No other outbound traffic.
-- **GitHub:** fine-grained PAT scoped to one repo – if Claude goes rogue, blast radius is one repo.
+- **Network:** iptables firewall allows only npm, GitHub, Claude API, DNS, SSH.
+- **GitHub:** fine-grained PAT scoped to one repo — if Claude goes rogue, blast radius is one repo.
 - **Host FS:** only the project folder, `~/.ssh` (ro), and `~/.gitconfig` (ro) are mounted in.
-- **Claude Pro credentials:** sit in a named Docker volume (`vibe-claude-config`), not bind-mounted from the host – a compromised container can't leak host credentials unless the firewall is breached.
+- **Claude Pro credentials:** in a named Docker volume (`vibe-claude-config`), not bind-mounted from the host — a compromised container can't leak host credentials unless the firewall is breached.
 - **Built on Anthropic's [reference devcontainer for Claude Code](https://github.com/anthropics/claude-code/tree/main/.devcontainer)**, lightly patched (shared Claude auth across projects; read-only `~/.ssh` and `~/.gitconfig`; per-repo PAT via a git credential helper). Launches via [`@devcontainers/cli`](https://github.com/devcontainers/cli) with `--override-config` so you never commit `.devcontainer/` into each project.
 
 ## Coming soon
 
 In flight or specced; no firm dates.
 
-- **Language-profile presets** – `vibe --profile python` or auto-detect from `pyproject.toml` / `package.json` / `Cargo.toml`, so the container ships with the toolchain your project needs already in place rather than relying on host installs.
-- **`vibe --TDD` session mode** – enforces test-driven discipline across the whole project: implementation edits are blocked unless a newer test edit with a recently-observed failing assertion exists. Composes with `/vs`.
-- **Green-AI backend option** – a route to a transparent-carbon model (GreenPT, Mistral, or self-hosted) for users who'd rather see published mWh-per-100-tokens than nothing. Subject to a workable tool-calling shape that keeps the agent loop intact.
-- **Plain-English `/vs` output** – a `--plain` flag and a 0–9 verbosity knob for spec / tests / verdict, so review passes are skim-friendly without losing the techy mode for power users.
-- **Per-repo Ghostty window titles** – so several vibe windows don't all read "Claude Code". Mac-host wrapper fix in flight; in-repo OSC-intercept fallback if needed.
+- **Language-profile presets** — `vibe --profile python` or auto-detect from `pyproject.toml` / `package.json` / `Cargo.toml`, so the container ships with the toolchain your project needs already in place.
+- **`vibe --TDD` session mode** — enforces test-driven discipline across the whole project. Composes with `/vs`. Part of an XP-as-umbrella direction (TDD and spec-first as in-scope subsets).
+- **Green-AI backend option** — a route to a transparent-carbon model (GreenPT, Mistral, or self-hosted) for users who'd rather see published mWh-per-100-tokens than nothing.
+- **Per-repo Ghostty window titles** — so several vibe windows don't all read "Claude Code".
 
 ## License
 
