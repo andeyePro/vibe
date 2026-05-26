@@ -40,6 +40,7 @@ SSH_DISCIPLINE_MD = REPO / "devcontainer" / "claude-md" / "ssh-discipline.md"
 FEEDBACK_AUTO_PROMOTE_MD = REPO / "devcontainer" / "claude-md" / "feedback-auto-promote.md"
 TODO_CHANGELOG_MD = REPO / "devcontainer" / "claude-md" / "todo-changelog.md"
 PROJECT_HYGIENE_MD = REPO / "devcontainer" / "claude-md" / "project-hygiene.md"
+CONVERSATION_HISTORY_MD = REPO / "devcontainer" / "claude-md" / "conversation-history.md"
 CHANGELOG_MD = REPO / "CHANGELOG.md"
 VS_MD = REPO / "devcontainer" / "commands" / "vs.md"
 SP_MD = REPO / "devcontainer" / "commands" / "sp.md"
@@ -4893,6 +4894,38 @@ def test_vss_md_audit_trail_and_push_policy() -> None:
           "**Committed.**" in content and ".vss/sessions" in content, "")
 
 
+def test_conversation_history_fragment() -> None:
+    """devcontainer/claude-md/conversation-history.md teaches Claude to search
+    ~/.claude/projects/<slug>/*.jsonl transcripts when memory misses a user
+    reference to past conversation. Regression dropping the fragment, the
+    JSONL path, the schema crib, or the jq recipes silently breaks the
+    "search before saying I have no record" behavior."""
+    print("\n[conversation-history: fragment shape]")
+    check("[conv-history] fragment file exists",
+          CONVERSATION_HISTORY_MD.exists(), str(CONVERSATION_HISTORY_MD))
+    if not CONVERSATION_HISTORY_MD.exists():
+        return
+    content = CONVERSATION_HISTORY_MD.read_text()
+    check("[conv-history] names the JSONL path glob",
+          "~/.claude/projects/" in content and ".jsonl" in content, "")
+    check("[conv-history] names the -workspace slug",
+          "-workspace" in content, "")
+    check("[conv-history] documents user-prompt schema (string content)",
+          'type: "user"' in content and "string" in content, "")
+    check("[conv-history] documents assistant-text schema",
+          'type: "assistant"' in content and 'type: "text"' in content, "")
+    check("[conv-history] mentions skipping thinking and tool_use blocks",
+          "thinking" in content and "tool_use" in content, "")
+    check("[conv-history] ships a jq recipe",
+          "jq -r" in content, "")
+    check("[conv-history] tells Claude to filter tool_result entries",
+          "tool_result" in content, "")
+    check("[conv-history] mentions Docker volume single-machine limit",
+          "vibe-claude-config" in content or "Docker volume" in content, "")
+    check("[conv-history] warns against duplicating into a parallel file",
+          "duplicate" in content.lower() or "duplicating" in content.lower(), "")
+
+
 def test_install_extras_ssh_discipline_opt_in() -> None:
     """install-claude-extras.sh omits ssh-discipline.md from CLAUDE.md when
     VIBE_SSH_AUTO=1; includes it (alongside other fragments) when unset."""
@@ -5149,6 +5182,7 @@ def main() -> int:
     test_vs_md_multi_task_archive_convention()
     test_vsss_md_inherits_escalate_and_budget()
     test_install_extras_syncs_hooks()
+    test_conversation_history_fragment()
     test_install_extras_ssh_discipline_opt_in()
     test_task010_smart_capture()
 
