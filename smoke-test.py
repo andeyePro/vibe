@@ -4893,6 +4893,58 @@ def test_vss_md_audit_trail_and_push_policy() -> None:
           "**Committed.**" in content and ".vss/sessions" in content, "")
 
 
+def test_install_extras_ssh_discipline_opt_in() -> None:
+    """install-claude-extras.sh omits ssh-discipline.md from CLAUDE.md when
+    VIBE_SSH_AUTO=1; includes it (alongside other fragments) when unset."""
+    print("\n[ssh-opt-in: install-claude-extras.sh honours VIBE_SSH_AUTO]")
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        # Real source dir so we exercise the actual ssh-discipline.md + siblings.
+        env_base = os.environ.copy()
+        env_base["VIBE_EXTRAS_SRC_ROOT"] = str(REPO / "devcontainer")
+
+        # Pass 1: opt-in OFF — ssh-discipline content should be present.
+        dest_off = tmp_path / "off"
+        dest_off.mkdir()
+        env_off = env_base.copy()
+        env_off["CLAUDE_CONFIG_DIR"] = str(dest_off)
+        env_off.pop("VIBE_SSH_AUTO", None)
+        r_off = subprocess.run(
+            ["bash", str(INSTALL_EXTRAS)],
+            env=env_off, capture_output=True, text=True,
+        )
+        check("[ssh-opt-in] install exits 0 with VIBE_SSH_AUTO unset",
+              r_off.returncode == 0, f"rc={r_off.returncode} err={r_off.stderr[:200]}")
+        md_off = (dest_off / "CLAUDE.md").read_text()
+        check("[ssh-opt-in] ssh-discipline.md marker present when opt-in unset",
+              "<!-- vibe-md: ssh-discipline.md -->" in md_off, "marker missing")
+        check("[ssh-opt-in] ssh-discipline.md body present when opt-in unset",
+              "SSH Discipline" in md_off, "body missing")
+        # Sanity: another fragment should also be present (proves the loop ran).
+        check("[ssh-opt-in] other fragments still installed (sanity)",
+              "<!-- vibe-md: web-research.md -->" in md_off, "web-research absent")
+
+        # Pass 2: opt-in ON via env — ssh-discipline content should be absent.
+        dest_on = tmp_path / "on"
+        dest_on.mkdir()
+        env_on = env_base.copy()
+        env_on["CLAUDE_CONFIG_DIR"] = str(dest_on)
+        env_on["VIBE_SSH_AUTO"] = "1"
+        r_on = subprocess.run(
+            ["bash", str(INSTALL_EXTRAS)],
+            env=env_on, capture_output=True, text=True,
+        )
+        check("[ssh-opt-in] install exits 0 with VIBE_SSH_AUTO=1",
+              r_on.returncode == 0, f"rc={r_on.returncode} err={r_on.stderr[:200]}")
+        md_on = (dest_on / "CLAUDE.md").read_text()
+        check("[ssh-opt-in] ssh-discipline.md marker ABSENT with VIBE_SSH_AUTO=1",
+              "<!-- vibe-md: ssh-discipline.md -->" not in md_on,
+              "marker still present despite opt-in")
+        check("[ssh-opt-in] other fragments still present with opt-in",
+              "<!-- vibe-md: web-research.md -->" in md_on,
+              "opt-in dropped unrelated fragments")
+
+
 def test_install_extras_syncs_hooks() -> None:
     """install-claude-extras.sh installs hooks/*.sh with +x into $DEST_ROOT/hooks/."""
     print("\n[hooks: install-claude-extras.sh syncs every shipped hook]")
@@ -5097,6 +5149,7 @@ def main() -> int:
     test_vs_md_multi_task_archive_convention()
     test_vsss_md_inherits_escalate_and_budget()
     test_install_extras_syncs_hooks()
+    test_install_extras_ssh_discipline_opt_in()
     test_task010_smart_capture()
 
     print()

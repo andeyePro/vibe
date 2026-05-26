@@ -89,11 +89,21 @@ install_claude_md_fragments() {
   ' "$target")
 
   # Collect sorted fragment files (LC_ALL=C for POSIX byte-order).
+  # ssh-discipline.md is omitted when the user has opted into autonomous SSH
+  # for this project, either via VIBE_SSH_AUTO=1 in ~/.vibe/config (plumbed
+  # in through devcontainer.json's remoteEnv/containerEnv) or by touching
+  # /workspace/.vibe-allow-ssh in the project root.
   local fragments=()
   if [ -d "$src_dir" ]; then
     local f
     while IFS= read -r f; do
-      [ -e "$f" ] && fragments+=("$f")
+      [ -e "$f" ] || continue
+      if [ "$(basename "$f")" = "ssh-discipline.md" ]; then
+        if [ "${VIBE_SSH_AUTO:-0}" = "1" ] || [ -f /workspace/.vibe-allow-ssh ]; then
+          continue
+        fi
+      fi
+      fragments+=("$f")
     done < <(
       for mdfile in "$src_dir"/*.md; do
         [ -e "$mdfile" ] && printf '%s\n' "$(basename "$mdfile")"

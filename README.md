@@ -10,7 +10,7 @@ A single-command containerised Claude Code environment. `cd my-project && vibe` 
 - SSH out to remote dev machines (Raspberry Pis, lab boxes, anything you've keyed). Host `~/.ssh` is bind-mounted read-only; a sanitised writable copy lives inside the container.
 - Opt-in cross-org learning library via `vibe learn --init` — you pick where it lives, public or private. Capture is manual; auto-promotion is planned. **Security note:** the bind-mount is read-write on macOS regardless of the `readonly` flag (Docker Desktop / OrbStack `fakeowner` quirk), so a PreToolUse hook gates writes — every Write, Edit, or MultiEdit touching `/learnings` prompts for confirmation. Bash redirects, `tee`, `cp`, `mv`, `rm` etc. are hooked too as defense-in-depth (acknowledged bypass classes in `devcontainer/guard-bash.sh`).
 - Slash commands, subagents, and Stop hooks pre-installed. Type `/help` once inside to discover them; `/sp` applies Superpowers methodology, `/vs` runs an adversarial coding harness (see below), `/vss` and `/vsss` automate it. Anything unfamiliar surfaces a one-liner when you first hit it.
-- Two house rules baked into every Claude session via a managed `~/.claude/CLAUDE.md` block: try WebSearch before declaring a URL unreachable, and don't SSH/scp/rsync out of the container without explicit per-turn user approval.
+- Two house rules baked into every Claude session via a managed `~/.claude/CLAUDE.md` block: try WebSearch before declaring a URL unreachable, and ask before SSHing out of the container (set `VIBE_SSH_AUTO=1` in `~/.vibe/config`, or `touch .vibe-allow-ssh` in a project, to opt into autonomous SSH per project).
 
 ## Adversarial coding mode `/vs`
 
@@ -56,7 +56,7 @@ Fresh conversation is the default — durable memory lives in `TODO.md`, `CLAUDE
 |---|---|
 | `~/bin/vibe` | Symlink to the launcher |
 | `~/.vibe-src/` | Clone of this repo |
-| `~/.vibe/config` | `VIBE_PROJECTS_DIR` |
+| `~/.vibe/config` | `VIBE_PROJECTS_DIR`, `VIBE_SSH_AUTO` (opt-in: `=1` skips the per-action SSH ask in all projects) |
 | `~/.vibe/tokens` | GitHub PATs (`owner/repo=ghp_...`), `chmod 600` — never commit or sync to the cloud |
 | `~/.vibe/skipped` | Projects opted out of GitHub |
 | `~/.vibe/learning.config` | Learning library location + visibility |

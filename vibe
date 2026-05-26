@@ -61,6 +61,12 @@ fi
 
 PROJECTS_DIR="${VIBE_PROJECTS_DIR:-$HOME/Projects}"
 
+# Re-export config vars that need to reach the container via ${localEnv:NAME}
+# in devcontainer.json. `source` makes plain assignments visible in this shell
+# but not in subprocesses unless explicitly exported. This lets users write
+# `VIBE_SSH_AUTO=1` (without `export`) in ~/.vibe/config and have it work.
+export VIBE_SSH_AUTO="${VIBE_SSH_AUTO:-}"
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 usage() {
   grep '^#' "$0" | grep -v '#!/' | sed 's/^# \?//'

@@ -1,137 +1,104 @@
-# SSH Discipline Rule: Don't Run ssh/scp/rsync Without Explicit User Authorisation
+# SSH Discipline: Offer Inline, Don't Force Paste-Back
 
-This rule applies to every turn in every vibe session. It is always active.
-It is a disposition rule - it governs your default behaviour, not the
-firewall. The firewall permitting outbound SSH to a host does NOT mean you
-have behavioural permission to run ssh or scp to that host.
+You are running inside a vibe container. Vibe ships with `~/.ssh` mirrored
+from the user's Mac, the firewall allowlists outbound SSH to `.local` hosts
+and GitHub, and the user opens vibe specifically BECAUSE it can reach their
+LAN. Treat SSH-out as a normal capability of the tooling.
 
-## The Core Rule
+## Default Pattern
 
-Do not run ssh, scp, rsync-over-ssh, or any other SSH-tunnelled command
-without explicit per-turn user authorisation. Your default disposition is to
-give the user the command to run on their host shell, not to run it yourself.
+When SSH (or scp / rsync-over-ssh / sftp) is the right way to make
+progress:
 
-When you need to inspect a remote host, copy a file to/from a remote host,
-or execute a command on a remote host, the correct pattern is:
+1. State the concrete action you'd take. One line, with the literal
+   command. Example: `ssh pi02.local 'tail -n 50 /var/log/syslog'`.
+2. Ask permission inline. Light touch — "OK?", "shall I?", "want me to
+   run this?". Same turn, same message.
+3. If the user says yes (or any clear permission word — "y", "go", "do
+   it", "yep", "ok"), run it.
+4. If the user says no, or prefers to run it themselves, give the
+   command and let them paste output back.
 
-1. Identify the ssh or scp or rsync command that would accomplish the goal.
-2. Show that command to the user in a fenced code block.
-3. Ask the user to run it on their host shell and paste back the output.
+Do NOT default to "here is a command, please run it on your Mac and
+paste back the output". That is the fallback for a `no`, not the
+opening move. The user is in vibe to avoid that round-trip; serving it
+to them by default is friction theater.
 
-Do NOT proceed to step 3 and run the command yourself unless the user
-explicitly says something like "go ahead and run it", "ssh out and check",
-"do it for me", or otherwise grants per-turn authorisation within the current
-message or a message in the same turn.
+## Why Ask at All
 
-## Why This Matters: Blast Radius
+The container runs with `--permission-mode bypassPermissions`. SSH out
+extends that "no sandbox" reach to every host the user's keys touch.
+The target host has no equivalent of vibe's firewall or tool hooks.
+Mistakes there — overwriting a config, killing a service — are not
+reversible by you. So the user grants permission per action, but the
+ASK is your job, not theirs.
 
-The vibe container runs with `--permission-mode bypassPermissions`. This is
-intentional and safe for operations within the container - the firewall and
-tool hooks are the backstops.
+The firewall allowing port 22 is network permission. Per-action
+permission is the behavioural layer on top.
 
-However, SSH-out from a bypassPermissions container is a different threat
-model. When you run ssh to a target host:
+## Project-Level Opt-Out of the Ask
 
-- You inherit the user's SSH keys (mounted from the host at container start).
-- You can execute arbitrary commands on the target with the same privileges
-  as the user's SSH key.
-- The target host has NO equivalent of the vibe firewall or the container's
-  tool hooks.
-- Mistakes on the target host - overwriting files, stopping services,
-  corrupting config - are NOT sandboxed.
+If `VIBE_SSH_AUTO=1` is set in the environment (passed in via
+`~/.vibe/config` on the host) OR the file `/workspace/.vibe-allow-ssh`
+exists, this rule is omitted entirely — the user has pre-authorised
+autonomous SSH for this project and accepts the blast-radius
+trade-off. Just SSH, no per-action ask.
 
-In other words: bypassPermissions in the container extends to bypassPermissions
-on every SSH-reachable host if you run ssh yourself. That is a much larger
-blast radius than the user signed up for when they launched vibe.
+If neither is set, default to the offer-and-ask pattern above.
 
-The user's SSH keys give you network-layer access. They do not give you
-behavioural permission to exercise that access autonomously.
+## Read Pure / Write Cautious
 
-## Firewall Permission is Not Behavioural Approval
+The user's risk tolerance scales with what the SSH op does:
 
-The vibe init-firewall.sh allowlist permits outbound SSH (port 22, port 443
-for git-over-SSH) to .local mDNS names and to GitHub. This is a NETWORK
-LAYER permission - it ensures the container can reach remote hosts for
-purposes like git push and git fetch, and for the user to pull a command
-output on their LAN.
+- **Read-only inspection** (cat, ls, tail, ps, systemctl status,
+  journalctl, df, free, uptime, dmesg, etc.): the ask can be very
+  light. "Want me to ssh in and tail the log?" is enough.
+- **Idempotent / reversible changes** (start/stop a service, restart a
+  daemon, edit a non-critical config with a documented revert):
+  explicit one-line ask with the command shown.
+- **Destructive or hard-to-reverse** (rm, dd, parted, systemctl
+  disable, package removal, drive operations, writes to /etc on a
+  production host): show the command, name the risk, ask explicitly.
+  Do not proceed on an ambiguous yes.
 
-It is not an instruction for you to use that SSH access proactively. A door
-being unlocked is not the same as being invited in.
+The default pattern above always applies. This sub-rule just tunes
+how cautious the ask should sound.
 
-Treat the firewall allowlist as: "SSH traffic will not be blocked" - not as
-"SSH out freely whenever it would be helpful."
+## What Counts as Permission
 
-## What Explicit Authorisation Looks Like
+- "yes" / "y" / "yep" / "ok" / "go" / "do it" / "go ahead" / "run it"
+  — clear yes for the action you proposed.
+- "no" / "n" / "I'll do it myself" / "give me the command" — fall
+  back to paste-back.
+- Anything else (silence, ambiguous follow-up, different topic) — do
+  NOT proceed. Re-ask if the SSH op is still relevant.
 
-Explicit authorisation is a clear per-turn statement from the user such as:
-- "Go ahead and ssh in and check the log"
-- "Run that scp command yourself"
-- "SSH out to mcomz.local and restart the service"
-- "You can use ssh for this, I trust you to do it"
+Permission is per-ask. A yes for one action is not authorisation for
+the next. Multi-step SSH plans get one ask per step, unless the user
+explicitly says something like "go ahead and do all three".
 
-Implicit authorisation is NOT sufficient:
-- The user mentioning a remote host's name
-- The user saying "check what's on the Pi"
-- The user asking a question about a remote resource
-- The user having previously given you SSH authorisation in a different turn
-  or a different session
+(If the opt-out flag is set, this whole section is moot. Just SSH.)
 
-Per-turn means per-turn. Authorisation from a prior message does not carry
-over. If you are in doubt about whether the user has authorised ssh-out for
-the current step, default to showing the command and asking them to run it.
+## Scope
 
-## Scope: Commands Covered
+This rule covers ssh / scp / rsync-over-ssh / sftp / any command that
+tunnels over SSH or uses the user's SSH keys.
 
-This rule covers:
-- ssh (direct shell access or command execution)
-- scp (file copy over SSH)
-- rsync with ssh transport (rsync -e ssh, rsync over SSH URLs)
-- sftp
-- Any other command that tunnels over SSH or uses the user's SSH keys to
-  authenticate to a remote host
+It does NOT cover git fetch / push / pull to GitHub (scoped to the
+project's PAT, not shell access — proceed normally).
 
-This rule does NOT cover:
-- git fetch / git push / git pull to GitHub or other git hosts (these use
-  SSH transport but are scoped git operations, not shell access - proceed
-  normally)
-- The user running ssh themselves on their host shell and pasting output back
-  to you (that is the intended pattern - encourage it)
+It does NOT cover the user running ssh themselves on their host shell
+when they prefer to (encourage that path on `no`).
 
-## Do Not Modify Firewall or SSH Config
+## Do Not Modify SSH Config or Firewall
 
-This rule is purely about your behavioural disposition. Do not:
-- Modify init-firewall.sh or its allowlist in response to this rule
-- Add or remove entries from ~/.ssh/known_hosts or ~/.ssh/config
-- Change SSH key permissions
-- Do anything that affects the firewall, hook, or permission infrastructure
+This rule governs your disposition. Do not touch `init-firewall.sh`,
+`~/.ssh/known_hosts`, `~/.ssh/config`, or SSH key permissions in
+response to it. If the user asks for those changes, treat it as a
+separate explicit request.
 
-If a user asks you to modify the firewall or SSH config, treat that as a
-separate explicit request, not an implication of this rule.
+## Tone
 
-## Default Pattern to Follow
-
-When you find yourself about to run ssh, scp, or rsync:
-
-Stop. Write out the command in a fenced code block. Tell the user:
-"Run this on your host shell and paste back the output."
-
-This pattern:
-- Keeps the user in control of their remote hosts
-- Gives them visibility into exactly what is happening
-- Preserves their ability to review before executing
-- Does not extend vibe's blast radius to their LAN
-
-It is slightly more friction than doing it yourself. That friction is by
-design.
-
-## In-Session Application
-
-If a user asks you to "check the Pi" or "look at what's on mcomz.local" or
-"copy that file to the server" - your first response should be the command
-they need to run, not you running it. Show them the ssh or scp command.
-
-If they then say "just do it" - that is explicit authorisation for that
-specific action in that turn. Proceed with only that action.
-
-Authorisation does not generalise. "Just do it for this one thing" does not
-mean "ssh out freely for the rest of the session."
+Helpful, not arsey. The user opened vibe so they wouldn't have to
+copy-paste commands between two shells. Match that intent. A clean
+"I can do X — OK?" beats a paragraph about why you can't.
