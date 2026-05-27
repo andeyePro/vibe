@@ -847,6 +847,65 @@ _learning_build_override_config() {
   echo "$dst"
 }
 
+# ── Image-drift detection ─────────────────────────────────────────────────────
+# Defined here, ABOVE the VIBE_SOURCE_ONLY guard, so smoke-test.py can
+# unit-test them by sourcing with VIBE_SOURCE_ONLY=1 and a stubbed docker().
+
+# image_drift_needs_recreate <workspace> <image_tag>
+# Emits "1" on stdout iff the existing devcontainer for <workspace> was built
+# from an image that differs from the current <image_tag> image (drift).
+# Emits nothing when there is no container, or the container is current.
+# All docker calls are fail-safe: non-zero exit or empty output degrades to a
+# defined verdict rather than aborting the script (set -euo pipefail safe).
+# The --remove-existing-container flag (drift trigger) is appended by the
+# caller via remove_existing_flag; this function only detects the condition.
+image_drift_needs_recreate() {
+  # Step 1: find a container for this workspace via its devcontainer label.
+  # Capture ALL ids then take the first line with parameter expansion to
+  # avoid a | head pipe (which causes SIGPIPE / exit 141 under pipefail).
+  local cids cid
+  cids=$(docker ps -aq --filter "label=devcontainer.local_folder=$1" 2>/dev/null) || cids=""
+  cid="${cids%%$'\n'*}"
+  [ -z "$cid" ] && return 0  # no container - nothing to recreate
+
+  # Step 2: container's image reference (a digest or repo:tag string).
+  local container_ref
+  container_ref=$(docker inspect --format '{{.Image}}' "$cid" 2>/dev/null) || container_ref=""
+  [ -z "$container_ref" ] && return 0  # anomalous - can't determine
+
+  # Step 3: canonical config id of the CURRENT image tag.
+  local current_id
+  current_id=$(docker image inspect --format '{{.Id}}' "$2" 2>/dev/null) || current_id=""
+  [ -z "$current_id" ] && return 0  # no current image to recreate from
+
+  # Step 4: normalise the container's image reference to a config id.
+  # Re-resolving via image inspect unifies classic Docker (config digest) and
+  # containerd image store (which may return a manifest digest in {{.Image}}).
+  # If the container's source image has been pruned/superseded and is no
+  # longer resolvable, that IS drift - emit 1 so the container is recreated.
+  local container_id
+  container_id=$(docker image inspect --format '{{.Id}}' "$container_ref" 2>/dev/null) || container_id=""
+  if [ -z "$container_id" ]; then
+    echo 1  # source image gone - superseded; recreate from current image
+    return 0
+  fi
+
+  # Step 5: compare normalised ids; emit 1 only on drift.
+  [ "$container_id" != "$current_id" ] && echo 1
+  return 0
+}
+
+# remove_existing_flag <rebuild_bool> <drift_marker>
+# Pure decision function (no docker). Echoes "--remove-existing-container"
+# exactly once when $1 is "true" (--rebuild) OR $2 is non-empty (drift).
+# Echoes nothing when neither condition holds. The at-most-once guarantee
+# satisfies AC4 regardless of both inputs being set simultaneously.
+remove_existing_flag() {
+  if [ "$1" = "true" ] || [ -n "$2" ]; then
+    echo "--remove-existing-container"
+  fi
+}
+
 # ── Argv parser ───────────────────────────────────────────────────────────────
 # parse_vibe_args "$@" - parse flags and an optional project positional in any
 # order. Sets globals REBUILD / CONTINUE / RESUME / RESUME_UID / PROJECT_ARG.
@@ -1131,7 +1190,16 @@ UP_BASE_ARGS=(
   --override-config "$OVERRIDE_CONFIG"
 )
 UP_ARGS=("${UP_BASE_ARGS[@]}")
-[ "$REBUILD" = true ] && UP_ARGS+=(--remove-existing-container)
+# Detect image drift (container built from a superseded image) and fold in the
+# --rebuild flag so the flag is appended exactly once via remove_existing_flag.
+drift_marker="$(image_drift_needs_recreate "$WORKSPACE" "$IMAGE_TAG")"
+extra_flag="$(remove_existing_flag "$REBUILD" "$drift_marker")"
+[ -n "$extra_flag" ] && UP_ARGS+=("$extra_flag")
+# Print a distinct status line when drift (not --rebuild) triggered the recreate.
+if [ -n "$drift_marker" ] && [ "$REBUILD" != true ]; then
+  echo "  image moved on since this project's container was built - recreating it."
+  echo ""
+fi
 
 # If `devcontainer up` fails, the postStartCommand likely died mid-way (e.g.
 # init-firewall.sh bombed out), leaving a container that's running but only

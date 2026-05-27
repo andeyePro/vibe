@@ -98,5 +98,14 @@
     "assigned_to": "planner",
     "mode": "rigorous",
     "last_modified": "2026-04-29T00:00:00Z"
+  },
+  {
+    "id": "task_015",
+    "description": "Auto-recreate a project's container when it was built from a superseded vibe-dev:latest (image-drift detection before devcontainer up); fixes silent stale-container env claude ENOENT",
+    "implementation_status": "complete",
+    "test_status": "passing",
+    "assigned_to": "generator",
+    "mode": "rigorous",
+    "last_modified": "2026-05-27T00:00:00Z"
   }
 ]

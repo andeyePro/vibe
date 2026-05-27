@@ -500,6 +500,49 @@ that `settings.local.json` lists `"Write|Edit|MultiEdit"` as a matcher.
 
 ---
 
+### Test 26: Auto-recreate on image drift (task_015)
+
+Verify that a container built from a superseded `vibe-dev:latest` is
+automatically recreated on the next `vibe` launch, with no `--rebuild` flag
+needed.
+
+**Setup:** two project directories — project A (the one whose container will
+drift) and project B (used to force the image to move on).
+
+1. Build the image and launch project A so its container exists:
+   ```bash
+   cd ~/Projects/project-a && vibe
+   # wait for Claude to start, then exit
+   ```
+   - [ ] Container for project A is created (visible via `docker ps -a`)
+
+2. Force `vibe-dev:latest` to move on by triggering a rebuild from project B:
+   ```bash
+   cd ~/Projects/project-b && vibe --rebuild
+   # wait for image rebuild + Claude, then exit
+   ```
+   - [ ] `vibe-dev:latest` image id has changed (`docker image inspect vibe-dev:latest --format '{{.Id}}'`)
+   - [ ] Project A's container still exists but was built from the old image id
+
+3. Launch project A again **with no flags**:
+   ```bash
+   cd ~/Projects/project-a && vibe
+   ```
+   - [ ] Banner prints `image moved on since this project's container was built - recreating it.`
+   - [ ] Container is removed and recreated (the line above appears before `devcontainer up`)
+   - [ ] Claude starts successfully inside the fresh container
+
+4. **Containerd false-positive guard:** launch project A immediately a second time, with no image change:
+   ```bash
+   cd ~/Projects/project-a && vibe
+   ```
+   - [ ] The drift status line does NOT appear (container is reused, not recreated)
+   - [ ] `devcontainer up` completes without `--remove-existing-container`
+   - [ ] Claude starts normally
+   - [ ] This confirms the normalised-id compare reports equal on the current image under whichever image store Docker Desktop / OrbStack uses (containerd or classic)
+
+---
+
 ## Troubleshooting
 
 ### Docker not found
