@@ -229,3 +229,35 @@ Files changed in cycle 1 (subset of AC18 allowlist):
   test_status=passing)
 - .vs/cycle-1/* (artifacts)
 
+
+---
+
+## task_015 — auto-recreate containers built from a superseded image — cycle 1: PASS
+
+Spec converged after Spec Critic iter 3 (iter-1: 3 BLOCKING + 6 lesser closed;
+iter-2: 1 BLOCKING correctly rejected with production-precedent evidence
+[vibe:119/191/619 ship the same `var=$(cmd)||var=""` idiom under set -euo
+pipefail on macOS bash 3.2] + 2 MEDIUM fixed; iter-3 clean).
+
+Generator (Sonnet): added two helpers above the VIBE_SOURCE_ONLY guard —
+`image_drift_needs_recreate` (docker-touching, 5-step fail-safe detector,
+normalises both image ids through `docker image inspect` to neutralise the
+containerd manifest-vs-config false-positive, emits 1 on deleted source image)
+and `remove_existing_flag` (pure, at-most-once). Launch path folds the old
+REBUILD-only append into both helpers; distinct drift status line. Retry block
+unchanged. CHANGELOG + MANUAL-TESTS Test 26 added.
+
+Tester (Haiku): 14 mechanical checks for AC1-AC6 + AC8, docker stubbed via a
+shell-function shadow. total 14 / passed 14 / failed 0. Regressions: none.
+
+Evaluator (Opus): independently re-ran code-check.py (clean, 14 files) and
+smoke-test.py (green); read the vibe diff against the spec (matches exactly);
+AC7/AC11 verified by inspection (retry block byte-unchanged; wiring idempotent
+with distinct ASCII-hyphen status line). No scope creep, no invariant touched.
+Verdict: PASS.
+
+Commit DEFERRED: working tree also carries a pre-existing, unrelated, complete
+piece of work (the /learn-docs host-stage-all footgun fix: CHANGELOG 2026-05-26
+entry + learn.md + learn-hook.md + smoke-test footgun test, "SHA pending
+commit"). Entangled with task_015 in CHANGELOG.md and smoke-test.py. Awaiting
+user decision on commit structure before landing.

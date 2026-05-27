@@ -829,6 +829,288 @@ def test_parse_args_unknown_flag_rejected() -> None:
     check("error mentions unknown", "Unknown flag" in r.stderr, r.stderr)
 
 
+# ── Image drift detection tests (task_015 AC1-AC6, AC8) ─────────────────────────
+
+def _image_drift_call_with_docker_stub(
+    workspace: str,
+    image_tag: str,
+    ps_output: str,
+    ps_rc: int,
+    cref_output: str,
+    cref_rc: int,
+    tag_id_output: str,
+    tag_id_rc: int,
+    ref_id_output: str,
+    ref_id_rc: int,
+) -> subprocess.CompletedProcess:
+    """
+    Source vibe with a stubbed docker() function and call image_drift_needs_recreate.
+    Returns CompletedProcess with the function's output/exit code.
+    """
+    env = {
+        **os.environ,
+        "VIBE_CONFIG": "/tmp/vibe-no-config-for-tests",
+        "VIBE_SOURCE_ONLY": "1",
+    }
+    # Bash script that defines a docker() stub shadowing PATH, then calls the helper.
+    # The stub branches on $1 (ps/inspect/image) and distinguishes the two
+    # docker image inspect calls by the target argument (${@: -1}).
+    script = f"""
+set -euo pipefail
+source {shlex.quote(str(VIBE))}
+
+docker() {{
+  case "$1" in
+    ps)
+      printf '%s\\n' {shlex.quote(ps_output)}
+      return {ps_rc}
+      ;;
+    inspect)
+      # docker inspect --format '{{{{.Image}}}}' <cid>
+      printf '%s\\n' {shlex.quote(cref_output)}
+      return {cref_rc}
+      ;;
+    image)
+      # docker image inspect --format '{{{{.Id}}}}' <target>
+      # Distinguish by the target argument (last arg)
+      case "${{@: -1}}" in
+        {shlex.quote(image_tag)})
+          printf '%s\\n' {shlex.quote(tag_id_output)}
+          return {tag_id_rc}
+          ;;
+        *)
+          # container ref target
+          printf '%s\\n' {shlex.quote(ref_id_output)}
+          return {ref_id_rc}
+          ;;
+      esac
+      ;;
+  esac
+}}
+
+image_drift_needs_recreate {shlex.quote(workspace)} {shlex.quote(image_tag)}
+"""
+    return run(["bash", "-c", script], env=env)
+
+
+def test_ac1_no_container() -> None:
+    """AC1: No container → no-op."""
+    print("\n[task_015 AC1: no container → no-op]")
+    r = _image_drift_call_with_docker_stub(
+        workspace="/workspace",
+        image_tag="vibe-dev:latest",
+        ps_output="",  # empty - no containers
+        ps_rc=0,
+        cref_output="",
+        cref_rc=0,
+        tag_id_output="sha256:abc123",
+        tag_id_rc=0,
+        ref_id_output="",
+        ref_id_rc=0,
+    )
+    check("AC1 exits 0", r.returncode == 0, r.stderr)
+    check("AC1 emits nothing", r.stdout.strip() == "", f"output: {r.stdout}")
+
+
+def test_ac2_matching_image() -> None:
+    """AC2: Matching image → no-op."""
+    print("\n[task_015 AC2: matching image → no-op]")
+    # Both normalised ids are the same
+    shared_id = "sha256:abc123def456"
+    r = _image_drift_call_with_docker_stub(
+        workspace="/workspace",
+        image_tag="vibe-dev:latest",
+        ps_output="container-id-xyz",
+        ps_rc=0,
+        cref_output="sha256:abc123def456",  # container ref
+        cref_rc=0,
+        tag_id_output=shared_id,  # tag normalised id
+        tag_id_rc=0,
+        ref_id_output=shared_id,  # container ref normalised to same id
+        ref_id_rc=0,
+    )
+    check("AC2 exits 0", r.returncode == 0, r.stderr)
+    check("AC2 emits nothing", r.stdout.strip() == "", f"output: {r.stdout}")
+
+
+def test_ac3_drifted_image() -> None:
+    """AC3: Drifted image → emit '1'."""
+    print("\n[task_015 AC3: drifted image → emit '1']")
+    r = _image_drift_call_with_docker_stub(
+        workspace="/workspace",
+        image_tag="vibe-dev:latest",
+        ps_output="container-id-xyz",
+        ps_rc=0,
+        cref_output="sha256:old-image-digest",
+        cref_rc=0,
+        tag_id_output="sha256:new-image-digest",  # current image is different
+        tag_id_rc=0,
+        ref_id_output="sha256:old-image-digest",  # container's old image normalised
+        ref_id_rc=0,
+    )
+    check("AC3 exits 0", r.returncode == 0, r.stderr)
+    check("AC3 emits '1'", r.stdout.strip() == "1", f"output: {r.stdout}")
+
+
+def test_ac4_remove_existing_flag_rebuild_true_drift_marker() -> None:
+    """AC4a: (true, "1") → exactly one --remove-existing-container."""
+    print("\n[task_015 AC4a: (true, '1') → one token]")
+    r = _source_vibe_call({}, 'remove_existing_flag "true" "1"')
+    check("AC4a exits 0", r.returncode == 0, r.stderr)
+    lines = r.stdout.strip().split('\n')
+    lines = [l for l in lines if l]  # filter empty lines
+    check("AC4a emits exactly one line", len(lines) == 1, f"lines: {lines}")
+    if len(lines) == 1:
+        check("AC4a token is --remove-existing-container",
+              lines[0] == "--remove-existing-container", f"got: {lines[0]}")
+
+
+def test_ac4_remove_existing_flag_rebuild_true_no_drift() -> None:
+    """AC4b: (true, "") → exactly one --remove-existing-container."""
+    print("\n[task_015 AC4b: (true, '') → one token]")
+    r = _source_vibe_call({}, 'remove_existing_flag "true" ""')
+    check("AC4b exits 0", r.returncode == 0, r.stderr)
+    lines = r.stdout.strip().split('\n')
+    lines = [l for l in lines if l]
+    check("AC4b emits exactly one line", len(lines) == 1, f"lines: {lines}")
+    if len(lines) == 1:
+        check("AC4b token is --remove-existing-container",
+              lines[0] == "--remove-existing-container", f"got: {lines[0]}")
+
+
+def test_ac4_remove_existing_flag_no_rebuild_drift_marker() -> None:
+    """AC4c: (false, "1") → exactly one --remove-existing-container."""
+    print("\n[task_015 AC4c: (false, '1') → one token]")
+    r = _source_vibe_call({}, 'remove_existing_flag "false" "1"')
+    check("AC4c exits 0", r.returncode == 0, r.stderr)
+    lines = r.stdout.strip().split('\n')
+    lines = [l for l in lines if l]
+    check("AC4c emits exactly one line", len(lines) == 1, f"lines: {lines}")
+    if len(lines) == 1:
+        check("AC4c token is --remove-existing-container",
+              lines[0] == "--remove-existing-container", f"got: {lines[0]}")
+
+
+def test_ac4_remove_existing_flag_no_rebuild_no_drift() -> None:
+    """AC4d: (false, "") → empty."""
+    print("\n[task_015 AC4d: (false, '') → empty]")
+    r = _source_vibe_call({}, 'remove_existing_flag "false" ""')
+    check("AC4d exits 0", r.returncode == 0, r.stderr)
+    check("AC4d emits nothing", r.stdout.strip() == "", f"output: {r.stdout}")
+
+
+def test_ac5a_docker_all_fail() -> None:
+    """AC5a: All docker calls fail → emit nothing, no abort."""
+    print("\n[task_015 AC5a: all docker calls fail → emit nothing]")
+    r = _image_drift_call_with_docker_stub(
+        workspace="/workspace",
+        image_tag="vibe-dev:latest",
+        ps_output="",
+        ps_rc=1,  # docker ps fails
+        cref_output="",
+        cref_rc=1,  # docker inspect fails
+        tag_id_output="",
+        tag_id_rc=1,  # tag inspect fails
+        ref_id_output="",
+        ref_id_rc=1,  # ref inspect fails
+    )
+    check("AC5a exits 0 (no abort)", r.returncode == 0, r.stderr)
+    check("AC5a emits nothing", r.stdout.strip() == "", f"output: {r.stdout}")
+
+
+def test_ac5b_ps_ok_inspect_fails() -> None:
+    """AC5b: docker ps ok, docker inspect fails → emit nothing."""
+    print("\n[task_015 AC5b: ps ok, inspect fails → emit nothing]")
+    r = _image_drift_call_with_docker_stub(
+        workspace="/workspace",
+        image_tag="vibe-dev:latest",
+        ps_output="container-id-xyz",
+        ps_rc=0,
+        cref_output="",  # inspect (container ref) returns empty
+        cref_rc=1,
+        tag_id_output="sha256:abc",
+        tag_id_rc=0,
+        ref_id_output="",
+        ref_id_rc=0,
+    )
+    check("AC5b exits 0", r.returncode == 0, r.stderr)
+    check("AC5b emits nothing", r.stdout.strip() == "", f"output: {r.stdout}")
+
+
+def test_ac5c_ps_inspect_ok_tag_fails() -> None:
+    """AC5c: ps+inspect ok, tag image inspect fails → emit nothing."""
+    print("\n[task_015 AC5c: ps+inspect ok, tag inspect fails → emit nothing]")
+    r = _image_drift_call_with_docker_stub(
+        workspace="/workspace",
+        image_tag="vibe-dev:latest",
+        ps_output="container-id-xyz",
+        ps_rc=0,
+        cref_output="sha256:old-digest",
+        cref_rc=0,
+        tag_id_output="",  # tag inspect returns empty
+        tag_id_rc=1,
+        ref_id_output="sha256:old-digest",
+        ref_id_rc=0,
+    )
+    check("AC5c exits 0", r.returncode == 0, r.stderr)
+    check("AC5c emits nothing", r.stdout.strip() == "", f"output: {r.stdout}")
+
+
+def test_ac5d_ps_inspect_ok_ref_inspect_fails() -> None:
+    """AC5d: ps+inspect ok, current tag ok, but container ref inspect fails → emit '1'."""
+    print("\n[task_015 AC5d: ref inspect fails (image pruned) → emit '1']")
+    r = _image_drift_call_with_docker_stub(
+        workspace="/workspace",
+        image_tag="vibe-dev:latest",
+        ps_output="container-id-xyz",
+        ps_rc=0,
+        cref_output="sha256:old-digest",
+        cref_rc=0,
+        tag_id_output="sha256:new-digest",
+        tag_id_rc=0,
+        ref_id_output="",  # ref inspect returns empty - source image pruned
+        ref_id_rc=1,
+    )
+    check("AC5d exits 0", r.returncode == 0, r.stderr)
+    check("AC5d emits '1'", r.stdout.strip() == "1", f"output: {r.stdout}")
+
+
+def test_ac6_multiple_containers_uses_first() -> None:
+    """AC6: Multiple containers → uses first line only."""
+    print("\n[task_015 AC6: multiple containers uses first]")
+    r = _image_drift_call_with_docker_stub(
+        workspace="/workspace",
+        image_tag="vibe-dev:latest",
+        ps_output="container-1\ncontainer-2\ncontainer-3",  # multiple lines
+        ps_rc=0,
+        cref_output="sha256:old-image",  # inspecting first container
+        cref_rc=0,
+        tag_id_output="sha256:new-image",
+        tag_id_rc=0,
+        ref_id_output="sha256:old-image",
+        ref_id_rc=0,
+    )
+    check("AC6 exits 0", r.returncode == 0, r.stderr)
+    check("AC6 emits '1' (drifted, uses first)", r.stdout.strip() == "1",
+          f"output: {r.stdout}")
+
+
+def test_ac8_comment_present() -> None:
+    """AC8: Comment containing 'drift' or 'superseded' present in vibe source."""
+    print("\n[task_015 AC8: comment mentions drift/superseded]")
+    content = VIBE.read_text()
+    # Look for a comment line (first non-space char is #) containing drift or superseded
+    has_drift_comment = False
+    for line in content.split('\n'):
+        stripped = line.lstrip()
+        if stripped.startswith('#'):
+            if 'drift' in stripped.lower() or 'superseded' in stripped.lower():
+                has_drift_comment = True
+                break
+    check("AC8 comment present", has_drift_comment,
+          "no comment with 'drift' or 'superseded' found in vibe source")
+
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 
@@ -5068,6 +5350,19 @@ def main() -> int:
     test_parse_args_project_then_rebuild()
     test_parse_args_two_positionals_rejected()
     test_parse_args_unknown_flag_rejected()
+    test_ac1_no_container()
+    test_ac2_matching_image()
+    test_ac3_drifted_image()
+    test_ac4_remove_existing_flag_rebuild_true_drift_marker()
+    test_ac4_remove_existing_flag_rebuild_true_no_drift()
+    test_ac4_remove_existing_flag_no_rebuild_drift_marker()
+    test_ac4_remove_existing_flag_no_rebuild_no_drift()
+    test_ac5a_docker_all_fail()
+    test_ac5b_ps_ok_inspect_fails()
+    test_ac5c_ps_inspect_ok_tag_fails()
+    test_ac5d_ps_inspect_ok_ref_inspect_fails()
+    test_ac6_multiple_containers_uses_first()
+    test_ac8_comment_present()
     test_learning_config_format()
     test_learning_strict_parser_no_injection()
     test_learning_init_interactive()
