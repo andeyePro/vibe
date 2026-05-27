@@ -72,9 +72,14 @@ inside the container. It:
 3. Previews the proposed entry to the user.
 4. Issues a Write tool call, which triggers the hook prompt.
 
-Pushing the new entry to git is host-only. Run `vibe learn --push` on your
-Mac shell, or `cd $VIBE_LEARNING_PATH && git add . && git commit && git push`
-manually.
+Pushing the new entry to git is host-only, and only matters for a git-backed
+(public-mode) library - an auto-syncing library (Dropbox/iCloud/network share)
+needs nothing further. The dedicated path is `vibe learn --push` on your Mac
+shell (not built yet). Until it lands, push by hand from the library's own
+directory, staging only the new entry file - not the whole tree. Do not paste a
+`VIBE_LEARNING_PATH` variable into your shell: it is a container/config value,
+unset in an interactive Mac shell, so it would expand to nothing and `cd` you
+into `$HOME`.
 
 ## Why this is strictly stronger than before
 

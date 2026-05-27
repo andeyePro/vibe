@@ -58,19 +58,28 @@ When `/learn <pattern>` is invoked, the model:
    the formatted body. The PreToolUse hook fires at this point and prompts you
    to confirm the write.
 
-7. **After the Write succeeds**, informs you that the entry is saved locally.
-   Pushing to git (for public-mode libraries) is host-only - run:
+7. **After the Write succeeds**, informs you that the entry is saved locally,
+   then tells you what (if anything) is needed to propagate it:
+
+   - **If your library auto-syncs** (Dropbox, iCloud, a network share - the
+     common private-mode setup): nothing to do. The file is already syncing.
+   - **If your library is a git repo** (public visibility mode): pushing is
+     host-only. The dedicated path is `vibe learn --push` on your Mac shell
+     (note: `--push` is not built yet; it is a separate upcoming task that will
+     resolve the library path and stage only the new entry for you).
+
+   Until `--push` exists, push a git-backed library by hand from its own
+   directory, staging only the new entry shown in the preview above:
 
    ```bash
-   vibe learn --push
+   cd /path/to/your/learning-library && git add <new-entry-filename>.md && git commit -m "learn: <pattern>" && git push
    ```
 
-   on your Mac shell when ready (note: `--push` is not yet built; it is a
-   separate upcoming task). Alternatively, push manually:
-
-   ```bash
-   cd $VIBE_LEARNING_PATH && git add . && git commit -m "learn: <pattern>" && git push
-   ```
+   Stage only that one file - never the whole tree - and substitute the real
+   library path. Do not paste a `VIBE_LEARNING_PATH` variable here: it is a
+   container/config value, unset in your interactive Mac shell, so it would
+   expand to nothing and `cd` you into `$HOME` (where a bare add-everything
+   would stage your entire home directory).
 
 ## Semantic check
 

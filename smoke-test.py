@@ -3536,6 +3536,29 @@ def test_task009_learn_hook_md_exists() -> None:
           "host-only" in content, "")
 
 
+def test_learn_docs_no_host_stage_all_footgun() -> None:
+    """Regression: /learn docs must not tell the host to `cd $VIBE_LEARNING_PATH
+    && git add .`. VIBE_LEARNING_PATH is a container/config var, unset in the
+    user's interactive Mac shell, so `cd $VIBE_LEARNING_PATH` becomes `cd ~`
+    and `git add .` stages all of $HOME (observed 2026-05-26, one `&&` from a
+    secret-leaking push). Host-side push must go through `vibe learn --push`,
+    and any manual fallback must use a literal placeholder path + a specific
+    filename, never the container var and never `git add .`."""
+    print("\n[regression: /learn docs have no host stage-all footgun]")
+    for path in (LEARN_MD, LEARN_HOOK_MD):
+        if not path.exists():
+            check(f"[learn-footgun] {path.name} exists", False, str(path))
+            continue
+        content = path.read_text()
+        check(f"[learn-footgun] {path.name} has no 'git add .' (stages $HOME)",
+              "git add ." not in content,
+              "found dangerous stage-all 'git add .' in host instructions")
+        check(f"[learn-footgun] {path.name} does not reference $VIBE_LEARNING_PATH "
+              "in host instructions (container-only var)",
+              "$VIBE_LEARNING_PATH" not in content and "${VIBE_LEARNING_PATH" not in content,
+              "container/config var leaked into host-side instructions")
+
+
 def test_task009_readme_updated() -> None:
     """AC8: README.md contains PreToolUse hook gates writes sentinel."""
     print("\n[task_009/AC8: README.md updated]")
@@ -5133,6 +5156,7 @@ def main() -> int:
     test_task009_dockerfile_updated()
     test_task009_learn_md_exists()
     test_task009_learn_hook_md_exists()
+    test_learn_docs_no_host_stage_all_footgun()
     test_task009_readme_updated()
     test_task009_code_check_clean()
     test_task009_hardening_notebookedit_not_in_matcher()
