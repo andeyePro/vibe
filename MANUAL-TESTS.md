@@ -509,6 +509,12 @@ needed.
 **Setup:** two project directories — project A (the one whose container will
 drift) and project B (used to force the image to move on).
 
+**Leaner one-project variant (verified 2026-05-28):** skip project B. After step 1, supersede `vibe-dev:latest` in place with a trivial child build, then jump to step 3:
+```bash
+printf 'FROM vibe-dev:latest\nRUN true\n' | docker build -t vibe-dev:latest -
+```
+The child build moves the tag to a new id without a full rebuild, so steps 3 and 4 exercise the same drift-detect and containerd false-positive guard with no second project. Confirmed both halves: the next launch printed the drift line and recreated the container (new id), and an immediate third launch reused it with no drift line.
+
 1. Build the image and launch project A so its container exists:
    ```bash
    cd ~/Projects/project-a && vibe
