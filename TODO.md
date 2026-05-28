@@ -8,26 +8,11 @@ Markers: `[ ]` open · `[!]` failed/abandoned (note what was tried)
 
 **This section is the boot-time checklist Martin reviews when he comes back to vibe.** Items here are blocked on Martin's hands or judgement and CANNOT be progressed autonomously. CLAUDE.md instructs Claude to surface this section on every session start — if you're reading this as Claude, list the unticked items in your opening response and offer to walk Martin through them.
 
-### Push and CI
-
-- [ ] **Push the local commits ahead of `origin/main`.** Run `git rev-list --count origin/main..main` to see the current count, `git log --oneline origin/main..main` to review. The 2026-05-07 batch fixed three red CI runs (commit `fae64b3`); the 2026-05-18 batch closed all four For-Martin "Small bounded items I can ship without further input" plus the clipboard / launcher-pbcopy / /expaste-retirement cleanup. `git push` lands them and unblocks the first green CI run since 2026-04-25.
-
-### GreenPT (17-day deadline from 2026-05-07 — confirm what)
+### GreenPT (€5 credits acquired 2026-05-28; integration work now on a branch)
 
 - [ ] **Run `GreenPT/main.py` on your Mac** (outside the vibe container) to confirm the Vibe001 key works and the carbon telemetry shape matches what's documented. Expected output is in `GreenPT/README.md`. The script is committed; the key file `GreenPT/greenpt.key` is gitignored and lives only on disk.
-- [ ] **Confirm the 17-day deadline meaning.** Trial credits expiring? Beta-access window? Something else? Knowing this sharpens priority on the rest of the GreenPT track.
-- [ ] **Top up Vibe001 with EUR credits** (https://greenpt.com or wherever the user portal lives). Without this the chat-completion `impact` schema can't be empirically confirmed (it's assumed identical to embeddings/rerank but that's untested for chat).
 - [ ] **Spot-check at GreenPT account portal** for: subscription tier availability (probe found none — confirm), embeddings-pricing-vs-chat-pricing (probe suggests embeddings are free; confirm), whether the EUR balance is per-key or per-account.
 - [ ] **Decide on Green-AI integration shape**: Shape 1 (full backend swap), Shape 2 (split-brain — chat on Anthropic, embeddings/rerank on GreenPT), or Shape 3 (documentation-only). Audit recommends Shape 2; needs your call. See `.vs/audits/green-ai-probe.md` for the full reasoning.
-
-### AEP-Plugin PR #16 (your plugin repo, not vibe — but vibe-rules now ship to prevent recurrence)
-
-- [ ] **Reply to gniezen's review comments on amy-bo/electroPioreactor PR #16.** Vibe-side rules now exist (commit 953db1a) but the actual PR still needs YOUR replies and changes. Specifically:
-  - LED channel D / PWM channel 4 hardcoded — make configurable in the plugin's config schema (reviewer: "What if PWM 4 is set to something else?")
-  - `apply-pr615-patch.sh` patches Pioreactor without consent — reviewer's suggestion: require Pioreactor 26.5.0 as a minimum instead of patching. Decide: keep with consent flow added, or replace with version requirement.
-  - `pi02-setup-notes.md` is too specific to your setup — gitignore it or move to a personal-notes path outside the repo. (Vibe's new `project-hygiene.md` fragment will warn future-Claude about this pattern.)
-  - `revert-pr615-patch.sh` only needed if you keep the patch. If you take the version-requirement route, delete both patch scripts.
-  - `.claude/settings.local.json` and `.vibe/copy-latest.txt` were committed — fix retroactively in the PR by adding them to that repo's `.gitignore` and removing from git tracking. Vibe's new `ensure_project_gitignore()` (commit 953db1a) will auto-add the gitignore block in future containers.
 
 ### Mac-side empirical work (can't do autonomously inside a fresh container)
 
@@ -43,8 +28,6 @@ Markers: `[ ]` open · `[!]` failed/abandoned (note what was tried)
 - [ ] **TODO Open's bigger items** (TDD/spec-first modes under the XP-as-umbrella framing, language-profile presets, Green-AI backend, etc.) all need a priority decision before autonomous work can start — name a queue when you're ready.
 
 ## Open
-
-- [ ] **task_015 MANUAL-TEST before relying on it** — the image-drift auto-recreate fix landed via `/vs` cycle 1 (see CHANGELOG 2026-05-27; helpers unit-tested with stubbed docker, but the end-to-end recreate needs real Docker). Run MANUAL-TESTS.md Test 26 on the Mac: (1) build image + launch project A, (2) move the image on (rebuild from another project), (3) relaunch A no-flags → expect recreate + the "image moved on" status line, (4) relaunch A again no change → expect REUSE not recreate (containerd false-positive guard). Only after this passes is the fix proven on real Docker.
 
 - [ ] **vibe + /vsss: host-launcher auto-resume after token-exhaustion halts (2026-05-07 user-raised)** — `/vsss` Resumption protocol shipped 2026-05-07 covers the manual case (`vibe --continue` then `/vsss --resume` resumes from `.vss/sessions/<ISO>.md`). The user wants automatic continuation across N out-of-tokens halts without any manual step. Requires host-side launcher work: (a) `/vsss --auto-resume N <args>` writes `.vss/auto-resume.json` with `{ "active": true, "remaining_halts": N, "session_file": "<path>" }`; (b) `/workspace/vibe` checks the marker on every container start and if `active && remaining_halts > 0` invokes `claude --continue` automatically and decrements; (c) exhaustion-vs-clean-exit detection — distinguish "session ran out of 5h" from "user typed /exit" via claude's exit code or last-stderr signal (heuristic — needs probing); (d) clear marker on clean exit, optimiser stop, hard-escalate, or budget cap; (e) Mac-host wrapper integration (the zshrc wrapper that opens Ghostty with `--title=<folder>` would need to forward auto-resume state to the inner vibe). Likely a `/vs` task with multi-cycle scope. Spec'd canonically as out-of-scope-for-the-slash-command in `vsss.md` § Auto-resume across halts.
 
