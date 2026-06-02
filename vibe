@@ -509,29 +509,51 @@ learning_commit_message() {
   printf 'learn: %s\n' "${collapsed:0:60}"
 }
 
-# learning_render_devcontainer_config <src_json_path> <dst_json_path>
-# <library_abs_path> — reads src JSON, adds learning mount entry to mounts
-# array (creating it if absent), writes dst. Uses python3 for JSON safety.
-learning_render_devcontainer_config() {
-  local src="$1" dst="$2" lib="$3"
-  python3 - "$src" "$dst" "$lib" << 'PY'
+# render_devcontainer_with_mounts <src_json> <dst_json> [<source> <target> <ro>]...
+# Reads src JSON, appends one bind-mount entry per (source, target, ro) triple
+# to the mounts array (creating it if absent), writes dst. ro is "1" for
+# readonly, anything else for read-write. Paths are passed as argv (not
+# interpolated into JSON text) so sources with spaces/quotes are safe.
+render_devcontainer_with_mounts() {
+  local src="$1" dst="$2"
+  shift 2
+  python3 - "$src" "$dst" "$@" << 'PY'
 import json, sys
-src, dst, lib = sys.argv[1], sys.argv[2], sys.argv[3]
+src, dst = sys.argv[1], sys.argv[2]
+rest = sys.argv[3:]
 with open(src) as f:
     cfg = json.load(f)
-mount_entry = {
-    "source": lib,
-    "target": "/learnings",
-    "type": "bind",
-    "readonly": True
-}
-if "mounts" not in cfg or not isinstance(cfg["mounts"], list):
+if not isinstance(cfg.get("mounts"), list):
     cfg["mounts"] = []
-cfg["mounts"].append(mount_entry)
+for i in range(0, len(rest), 3):
+    source, target, ro = rest[i], rest[i + 1], rest[i + 2]
+    entry = {"source": source, "target": target, "type": "bind"}
+    if ro == "1":
+        entry["readonly"] = True
+    cfg["mounts"].append(entry)
 with open(dst, "w") as f:
     json.dump(cfg, f, indent=2)
     f.write("\n")
 PY
+}
+
+# _brain_source / _zotero_source — echo the resolved host path for the shared
+# second-brain (read-write at /brain) and Zotero store (read-only at /zotero)
+# mounts, or nothing when disabled. Path comes from ~/.vibe/config
+# (VIBE_BRAIN_PATH / VIBE_ZOTERO_PATH), defaulting to ~/brain2 and
+# ~/Zotero/storage. Set the var to "off" to disable even if the dir exists.
+# The mount is only injected when the resolved dir actually exists (see
+# _build_override_config), so a generic vibe user without these dirs gets
+# nothing — the feature is a silent no-op rather than a hard requirement.
+_brain_source() {
+  local p="${VIBE_BRAIN_PATH:-$HOME/brain2}"
+  [ "$p" = "off" ] && return 0
+  printf '%s' "$p"
+}
+_zotero_source() {
+  local p="${VIBE_ZOTERO_PATH:-$HOME/Zotero/storage}"
+  [ "$p" = "off" ] && return 0
+  printf '%s' "$p"
 }
 
 # ── Learning subcommand internals ─────────────────────────────────────────────
@@ -819,16 +841,53 @@ _learning_include_project() {
 
 # ── Learning mount helper ─────────────────────────────────────────────────────
 
-# _learning_build_override_config <workspace_abs_path> — if learning should
-# mount for this workspace, generates the per-session override JSON under
-# $HOME/.vibe/run/ and echoes its path. If not, echoes the default
-# $DEVCONTAINER_DIR/devcontainer.json path. Always exits 0.
-_learning_build_override_config() {
+# _build_override_config <workspace_abs_path> — collects the bind mounts that
+# apply to this workspace (learning library at /learnings, shared brain at
+# /brain rw, Zotero store at /zotero ro) and, if any apply, generates the
+# per-session override JSON under $HOME/.vibe/run/ and echoes its path. If none
+# apply, echoes the default $DEVCONTAINER_DIR/devcontainer.json path unchanged.
+# Always exits 0.
+_build_override_config() {
   local workspace="$1"
   local default_cfg="$DEVCONTAINER_DIR/devcontainer.json"
 
   learning_load
-  if ! learning_should_mount "$workspace"; then
+
+  # Collect (source, target, ro) triples for every mount that applies.
+  local mount_args=()
+
+  # Learning library — read-only at /learnings (gated by learning.config +
+  # per-project .no-learn, same as before).
+  if learning_should_mount "$workspace"; then
+    mount_args+=("$VIBE_LEARNING_PATH" "/learnings" "1")
+  fi
+
+  # Shared second brain — read-write at /brain. Only when the resolved dir
+  # exists. Skip when the workspace IS the brain repo (the gardener): /workspace
+  # already binds it, so a /brain mount would be a redundant self-mount.
+  local brain
+  brain="$(_brain_source)"
+  if [ -n "$brain" ] && [ -d "$brain" ]; then
+    local canon_ws canon_brain
+    canon_ws="$(cd "$workspace" 2>/dev/null && pwd -P || echo "$workspace")"
+    canon_brain="$(cd "$brain" 2>/dev/null && pwd -P || echo "$brain")"
+    if [ "$canon_ws" != "$canon_brain" ]; then
+      mount_args+=("$brain" "/brain" "0")
+    fi
+  fi
+
+  # Zotero store — read-only at /zotero. Only when the resolved dir exists.
+  # Keep this a standalone mount (not nested under another bind) to dodge the
+  # Docker Desktop VirtioFS nested-mount regression.
+  local zotero
+  zotero="$(_zotero_source)"
+  if [ -n "$zotero" ] && [ -d "$zotero" ]; then
+    mount_args+=("$zotero" "/zotero" "1")
+  fi
+
+  # Nothing to inject → use the base config untouched (preserves prior
+  # behaviour for projects with no learning/brain/zotero).
+  if [ "${#mount_args[@]}" -eq 0 ]; then
     echo "$default_cfg"
     return 0
   fi
@@ -843,7 +902,7 @@ _learning_build_override_config() {
   mkdir -p "$run_dir"
   local dst="$run_dir/devcontainer-${sha1}.json"
 
-  learning_render_devcontainer_config "$default_cfg" "$dst" "$VIBE_LEARNING_PATH"
+  render_devcontainer_with_mounts "$default_cfg" "$dst" "${mount_args[@]}"
   echo "$dst"
 }
 
@@ -1152,14 +1211,14 @@ export GITHUB_TOKEN
 
 # Load learning config into THIS shell before the subshell below, so the
 # banner check at the end of this block sees the same state that
-# _learning_build_override_config sees. (Exports from inside $(...) die with
-# the subshell, so without this the banner never prints even when /learnings
+# _build_override_config sees. (Exports from inside $(...) die with the
+# subshell, so without this the banner never prints even when /learnings
 # is mounted.)
 learning_load
 
-# Resolve the override config: use the generated per-session JSON if learning
-# is opted in and the project is not opted out; fall back to the source config.
-OVERRIDE_CONFIG=$(_learning_build_override_config "$WORKSPACE")
+# Resolve the override config: a generated per-session JSON with the learning /
+# brain / zotero mounts injected if any apply, else the source config.
+OVERRIDE_CONFIG=$(_build_override_config "$WORKSPACE")
 
 echo ""
 if [ "$CONTINUE" = true ]; then
@@ -1187,6 +1246,22 @@ case "$(learning_banner_state "$WORKSPACE")" in
     echo "     learn   : excluded"
     ;;
 esac
+# Brain / Zotero mount banners — mirror the gating in _build_override_config so
+# the line only prints when the mount is actually injected.
+_brain_banner="$(_brain_source)"
+if [ -n "$_brain_banner" ] && [ -d "$_brain_banner" ]; then
+  _canon_ws="$(cd "$WORKSPACE" 2>/dev/null && pwd -P || echo "$WORKSPACE")"
+  _canon_brain="$(cd "$_brain_banner" 2>/dev/null && pwd -P || echo "$_brain_banner")"
+  if [ "$_canon_ws" = "$_canon_brain" ]; then
+    echo "     brain   : this workspace (gardener) @ ${_brain_banner}"
+  else
+    echo "     brain   : /brain (rw) @ ${_brain_banner}"
+  fi
+fi
+_zotero_banner="$(_zotero_source)"
+if [ -n "$_zotero_banner" ] && [ -d "$_zotero_banner" ]; then
+  echo "     zotero  : /zotero (ro) @ ${_zotero_banner}"
+fi
 echo ""
 
 UP_BASE_ARGS=(
