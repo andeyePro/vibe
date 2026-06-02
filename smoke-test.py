@@ -37,7 +37,7 @@ COPY_MD_OLD = REPO / "devcontainer" / "commands" / "copy.md"
 VIBE_COPY_WATCHER = REPO / "vibe-copy-watcher.sh"
 WEB_RESEARCH_MD = REPO / "devcontainer" / "claude-md" / "web-research.md"
 SSH_DISCIPLINE_MD = REPO / "devcontainer" / "claude-md" / "ssh-discipline.md"
-BRAIN_MD = REPO / "devcontainer" / "claude-md" / "brain.md"
+BRAIN2_MD = REPO / "devcontainer" / "claude-md" / "brain2.md"
 FEEDBACK_AUTO_PROMOTE_MD = REPO / "devcontainer" / "claude-md" / "feedback-auto-promote.md"
 TODO_CHANGELOG_MD = REPO / "devcontainer" / "claude-md" / "todo-changelog.md"
 PROJECT_HYGIENE_MD = REPO / "devcontainer" / "claude-md" / "project-hygiene.md"
@@ -1268,8 +1268,8 @@ def test_learning_learn_without_init() -> None:
               r.stderr)
 
 
-def test_learning_render_devcontainer_config() -> None:
-    """AC5/AC6: Generated override config has readonly mount."""
+def test_render_devcontainer_with_mounts_learning() -> None:
+    """AC5/AC6: Generated override config has readonly /learnings mount."""
     print("\n[learning AC5: mount via override config]")
     with tempfile.TemporaryDirectory() as td:
         home = Path(td)
@@ -5312,38 +5312,38 @@ def test_install_extras_syncs_hooks() -> None:
               not readme_installed.exists(), str(readme_installed))
 
 
-def test_brain_zotero_source_resolution() -> None:
-    """_brain_source / _zotero_source: default, override, and 'off' disable."""
-    print("\n[brain: _brain_source / _zotero_source resolution]")
+def test_brain2_zotero_source_resolution() -> None:
+    """_brain2_source / _zotero_source: default, override, and 'off' disable."""
+    print("\n[brain2: _brain2_source / _zotero_source resolution]")
     # Default derives from HOME.
     r = _source_vibe_call({"HOME": "/tmp/vibetesthome"},
-                          'echo "OUT=[$(_brain_source)]"')
-    check("[brain] default brain path is $HOME/brain2",
+                          'echo "OUT=[$(_brain2_source)]"')
+    check("[brain2] default brain2 path is $HOME/brain2",
           "OUT=[/tmp/vibetesthome/brain2]" in r.stdout, r.stdout)
     r = _source_vibe_call({"HOME": "/tmp/vibetesthome"},
                           'echo "OUT=[$(_zotero_source)]"')
-    check("[brain] default zotero path is $HOME/Zotero/storage",
+    check("[brain2] default zotero path is $HOME/Zotero/storage",
           "OUT=[/tmp/vibetesthome/Zotero/storage]" in r.stdout, r.stdout)
     # Explicit override.
-    r = _source_vibe_call({"VIBE_BRAIN_PATH": "/foo/bar"},
-                          'echo "OUT=[$(_brain_source)]"')
-    check("[brain] VIBE_BRAIN_PATH override honoured",
+    r = _source_vibe_call({"VIBE_BRAIN2_PATH": "/foo/bar"},
+                          'echo "OUT=[$(_brain2_source)]"')
+    check("[brain2] VIBE_BRAIN2_PATH override honoured",
           "OUT=[/foo/bar]" in r.stdout, r.stdout)
     # 'off' disables (echoes nothing).
-    r = _source_vibe_call({"VIBE_BRAIN_PATH": "off"},
-                          'echo "OUT=[$(_brain_source)]"')
-    check("[brain] VIBE_BRAIN_PATH=off disables (empty)",
+    r = _source_vibe_call({"VIBE_BRAIN2_PATH": "off"},
+                          'echo "OUT=[$(_brain2_source)]"')
+    check("[brain2] VIBE_BRAIN2_PATH=off disables (empty)",
           "OUT=[]" in r.stdout, r.stdout)
     r = _source_vibe_call({"VIBE_ZOTERO_PATH": "off"},
                           'echo "OUT=[$(_zotero_source)]"')
-    check("[brain] VIBE_ZOTERO_PATH=off disables (empty)",
+    check("[brain2] VIBE_ZOTERO_PATH=off disables (empty)",
           "OUT=[]" in r.stdout, r.stdout)
 
 
 def test_render_devcontainer_with_mounts() -> None:
     """render_devcontainer_with_mounts appends rw/ro bind mounts, preserves
     existing mounts, and handles sources containing spaces."""
-    print("\n[brain: render_devcontainer_with_mounts]")
+    print("\n[brain2: render_devcontainer_with_mounts]")
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "src.json"
         src.write_text(json.dumps(
@@ -5351,24 +5351,24 @@ def test_render_devcontainer_with_mounts() -> None:
         dst = Path(tmp) / "dst.json"
         call = (f"render_devcontainer_with_mounts {shlex.quote(str(src))} "
                 f"{shlex.quote(str(dst))} "
-                f"/host/brain /brain 0 "
+                f"/host/brain2 /brain2 0 "
                 f"{shlex.quote('/host/zot store')} /zotero 1")
         r = _source_vibe_call({}, call)
-        check("[brain] render exits 0", r.returncode == 0, r.stderr)
+        check("[brain2] render exits 0", r.returncode == 0, r.stderr)
         cfg = json.loads(dst.read_text())
         mounts = cfg["mounts"]
-        check("[brain] existing mount preserved",
+        check("[brain2] existing mount preserved",
               "source=keep,target=/keep,type=volume" in mounts, str(mounts))
-        brain = [m for m in mounts if isinstance(m, dict) and m.get("target") == "/brain"]
+        brain2 = [m for m in mounts if isinstance(m, dict) and m.get("target") == "/brain2"]
         zot = [m for m in mounts if isinstance(m, dict) and m.get("target") == "/zotero"]
-        check("[brain] /brain mount appended", len(brain) == 1, str(mounts))
-        check("[brain] /brain is read-write (no readonly key)",
-              brain and "readonly" not in brain[0], str(brain))
-        check("[brain] /brain source correct",
-              brain and brain[0]["source"] == "/host/brain", str(brain))
-        check("[brain] /zotero mount appended read-only",
+        check("[brain2] /brain2 mount appended", len(brain2) == 1, str(mounts))
+        check("[brain2] /brain2 is read-write (no readonly key)",
+              brain2 and "readonly" not in brain2[0], str(brain2))
+        check("[brain2] /brain2 source correct",
+              brain2 and brain2[0]["source"] == "/host/brain2", str(brain2))
+        check("[brain2] /zotero mount appended read-only",
               zot and zot[0].get("readonly") is True, str(zot))
-        check("[brain] /zotero source with space preserved",
+        check("[brain2] /zotero source with space preserved",
               zot and zot[0]["source"] == "/host/zot store", str(zot))
 
 
@@ -5377,48 +5377,48 @@ def _read_override_out(r: subprocess.CompletedProcess) -> str:
     return m.group(1) if m else ""
 
 
-def test_build_override_config_brain_and_zotero() -> None:
-    """_build_override_config injects /brain (rw) and /zotero (ro) when the
-    dirs exist, skips the brain self-mount in the gardener, and falls back to
+def test_build_override_config_brain2_and_zotero() -> None:
+    """_build_override_config injects /brain2 (rw) and /zotero (ro) when the
+    dirs exist, skips the brain2 self-mount in the gardener, and falls back to
     the base config when nothing applies."""
-    print("\n[brain: _build_override_config gating]")
+    print("\n[brain2: _build_override_config gating]")
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         ws = tmp_path / "ws"; ws.mkdir()
-        brain = tmp_path / "brain"; brain.mkdir()
+        brain2 = tmp_path / "brain2"; brain2.mkdir()
         zot = tmp_path / "zot"; zot.mkdir()
         home = tmp_path / "home"; home.mkdir()
 
-        # Case 1: brain + zotero dirs exist, workspace is a different dir.
+        # Case 1: brain2 + zotero dirs exist, workspace is a different dir.
         env = {"HOME": str(home),
-               "VIBE_BRAIN_PATH": str(brain),
+               "VIBE_BRAIN2_PATH": str(brain2),
                "VIBE_ZOTERO_PATH": str(zot)}
         r = _source_vibe_call(
             env, f'echo "OUT=[$(_build_override_config {shlex.quote(str(ws))})]"')
-        check("[brain] _build_override_config exits 0", r.returncode == 0, r.stderr)
+        check("[brain2] _build_override_config exits 0", r.returncode == 0, r.stderr)
         out = _read_override_out(r)
-        check("[brain] generated override under HOME/.vibe/run",
+        check("[brain2] generated override under HOME/.vibe/run",
               out.startswith(str(home / ".vibe" / "run")), out)
         if out and Path(out).exists():
             cfg = json.loads(Path(out).read_text())
             tgts = [m.get("target") for m in cfg["mounts"] if isinstance(m, dict)]
-            check("[brain] /brain injected (non-gardener)", "/brain" in tgts, str(tgts))
-            check("[brain] /zotero injected", "/zotero" in tgts, str(tgts))
+            check("[brain2] /brain2 injected (non-gardener)", "/brain2" in tgts, str(tgts))
+            check("[brain2] /zotero injected", "/zotero" in tgts, str(tgts))
 
-        # Case 2: gardener — workspace IS the brain dir → no /brain self-mount,
+        # Case 2: gardener — workspace IS the brain2 dir → no /brain2 self-mount,
         # zotero disabled → nothing applies → base config returned unchanged.
         env_g = {"HOME": str(home),
-                 "VIBE_BRAIN_PATH": str(brain),
+                 "VIBE_BRAIN2_PATH": str(brain2),
                  "VIBE_ZOTERO_PATH": "off"}
         r = _source_vibe_call(
-            env_g, f'echo "OUT=[$(_build_override_config {shlex.quote(str(brain))})]"')
+            env_g, f'echo "OUT=[$(_build_override_config {shlex.quote(str(brain2))})]"')
         out_g = _read_override_out(r)
-        check("[brain] gardener+no-zotero falls back to base devcontainer.json",
+        check("[brain2] gardener+no-zotero falls back to base devcontainer.json",
               out_g.endswith("devcontainer/devcontainer.json"), out_g)
 
         # Case 3: zotero only.
         env_z = {"HOME": str(home),
-                 "VIBE_BRAIN_PATH": "off",
+                 "VIBE_BRAIN2_PATH": "off",
                  "VIBE_ZOTERO_PATH": str(zot)}
         r = _source_vibe_call(
             env_z, f'echo "OUT=[$(_build_override_config {shlex.quote(str(ws))})]"')
@@ -5426,14 +5426,14 @@ def test_build_override_config_brain_and_zotero() -> None:
         if out_z and Path(out_z).exists():
             cfg = json.loads(Path(out_z).read_text())
             tgts = [m.get("target") for m in cfg["mounts"] if isinstance(m, dict)]
-            check("[brain] zotero-only: /zotero present, /brain absent",
-                  "/zotero" in tgts and "/brain" not in tgts, str(tgts))
+            check("[brain2] zotero-only: /zotero present, /brain2 absent",
+                  "/zotero" in tgts and "/brain2" not in tgts, str(tgts))
 
 
-def test_install_extras_brain_md_gated() -> None:
-    """install-claude-extras.sh includes brain.md only when the brain mount
-    dir exists; omits it otherwise (keeps shared CLAUDE.md brain-free upstream)."""
-    print("\n[brain: install-claude-extras.sh gates brain.md on the mount]")
+def test_install_extras_brain2_md_gated() -> None:
+    """install-claude-extras.sh includes brain2.md only when the brain2 mount
+    dir exists; omits it otherwise (keeps shared CLAUDE.md brain2-free upstream)."""
+    print("\n[brain2: install-claude-extras.sh gates brain2.md on the mount]")
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         env_base = os.environ.copy()
@@ -5443,45 +5443,45 @@ def test_install_extras_brain_md_gated() -> None:
         dest_off = tmp_path / "off"; dest_off.mkdir()
         env_off = env_base.copy()
         env_off["CLAUDE_CONFIG_DIR"] = str(dest_off)
-        env_off["VIBE_BRAIN_MOUNT_DIR"] = str(tmp_path / "nope")
+        env_off["VIBE_BRAIN2_MOUNT_DIR"] = str(tmp_path / "nope")
         r_off = subprocess.run(["bash", str(INSTALL_EXTRAS)],
                                env=env_off, capture_output=True, text=True)
-        check("[brain] install exits 0 (no mount)",
+        check("[brain2] install exits 0 (no mount)",
               r_off.returncode == 0, r_off.stderr[:200])
         md_off = (dest_off / "CLAUDE.md").read_text()
-        check("[brain] brain.md ABSENT when mount dir missing",
-              "<!-- vibe-md: brain.md -->" not in md_off, "brain.md leaked upstream")
-        check("[brain] other fragments still present (sanity)",
+        check("[brain2] brain2.md ABSENT when mount dir missing",
+              "<!-- vibe-md: brain2.md -->" not in md_off, "brain2.md leaked upstream")
+        check("[brain2] other fragments still present (sanity)",
               "<!-- vibe-md: web-research.md -->" in md_off, "loop didn't run")
 
-        # Pass 2: mount dir exists → brain.md present.
-        mount_dir = tmp_path / "brainmount"; mount_dir.mkdir()
+        # Pass 2: mount dir exists → brain2.md present.
+        mount_dir = tmp_path / "brain2mount"; mount_dir.mkdir()
         dest_on = tmp_path / "on"; dest_on.mkdir()
         env_on = env_base.copy()
         env_on["CLAUDE_CONFIG_DIR"] = str(dest_on)
-        env_on["VIBE_BRAIN_MOUNT_DIR"] = str(mount_dir)
+        env_on["VIBE_BRAIN2_MOUNT_DIR"] = str(mount_dir)
         r_on = subprocess.run(["bash", str(INSTALL_EXTRAS)],
                               env=env_on, capture_output=True, text=True)
-        check("[brain] install exits 0 (mount present)",
+        check("[brain2] install exits 0 (mount present)",
               r_on.returncode == 0, r_on.stderr[:200])
         md_on = (dest_on / "CLAUDE.md").read_text()
-        check("[brain] brain.md PRESENT when mount dir exists",
-              "<!-- vibe-md: brain.md -->" in md_on, "brain.md missing")
-        check("[brain] brain.md mentions the credential boundary",
-              "CANNOT" in md_on and "/brain" in md_on, "body missing")
+        check("[brain2] brain2.md PRESENT when mount dir exists",
+              "<!-- vibe-md: brain2.md -->" in md_on, "brain2.md missing")
+        check("[brain2] brain2.md mentions the credential boundary",
+              "CANNOT" in md_on and "/brain2" in md_on, "body missing")
 
 
-def test_brain_md_fragment_content() -> None:
-    """brain.md ships and states the non-negotiables: credential boundary,
+def test_brain2_md_fragment_content() -> None:
+    """brain2.md ships and states the non-negotiables: credential boundary,
     zotero read-only, and the authorised-field trust rule."""
-    print("\n[brain: brain.md fragment content]")
-    check("[brain] brain.md exists", BRAIN_MD.exists(), str(BRAIN_MD))
-    body = BRAIN_MD.read_text()
-    check("[brain] documents no-push credential boundary",
+    print("\n[brain2: brain2.md fragment content]")
+    check("[brain2] brain2.md exists", BRAIN2_MD.exists(), str(BRAIN2_MD))
+    body = BRAIN2_MD.read_text()
+    check("[brain2] documents no-push credential boundary",
           "push" in body.lower() and "gardener" in body.lower(), "boundary missing")
-    check("[brain] documents zotero read-only + DOI queue",
+    check("[brain2] documents zotero read-only + DOI queue",
           "/zotero" in body and "zotero-queue" in body, "zotero guidance missing")
-    check("[brain] documents authorised-field trust rule",
+    check("[brain2] documents authorised-field trust rule",
           "authorised" in body, "trust rule missing")
 
 
@@ -5544,7 +5544,7 @@ def main() -> int:
     test_learning_init_reinit_path()
     test_learning_default_off_no_config()
     test_learning_learn_without_init()
-    test_learning_render_devcontainer_config()
+    test_render_devcontainer_with_mounts_learning()
     test_learning_dispatch_no_docker_required()
     test_learning_capture_confirm_flow()
     test_learning_capture_eof_cancel()
@@ -5677,11 +5677,11 @@ def main() -> int:
     test_install_extras_syncs_hooks()
     test_conversation_history_fragment()
     test_install_extras_ssh_discipline_opt_in()
-    test_brain_zotero_source_resolution()
+    test_brain2_zotero_source_resolution()
     test_render_devcontainer_with_mounts()
-    test_build_override_config_brain_and_zotero()
-    test_install_extras_brain_md_gated()
-    test_brain_md_fragment_content()
+    test_build_override_config_brain2_and_zotero()
+    test_install_extras_brain2_md_gated()
+    test_brain2_md_fragment_content()
     test_task010_smart_capture()
 
     print()

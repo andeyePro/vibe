@@ -537,16 +537,16 @@ with open(dst, "w") as f:
 PY
 }
 
-# _brain_source / _zotero_source — echo the resolved host path for the shared
-# second-brain (read-write at /brain) and Zotero store (read-only at /zotero)
+# _brain2_source / _zotero_source — echo the resolved host path for the shared
+# second-brain (read-write at /brain2) and Zotero store (read-only at /zotero)
 # mounts, or nothing when disabled. Path comes from ~/.vibe/config
-# (VIBE_BRAIN_PATH / VIBE_ZOTERO_PATH), defaulting to ~/brain2 and
+# (VIBE_BRAIN2_PATH / VIBE_ZOTERO_PATH), defaulting to ~/brain2 and
 # ~/Zotero/storage. Set the var to "off" to disable even if the dir exists.
 # The mount is only injected when the resolved dir actually exists (see
 # _build_override_config), so a generic vibe user without these dirs gets
 # nothing — the feature is a silent no-op rather than a hard requirement.
-_brain_source() {
-  local p="${VIBE_BRAIN_PATH:-$HOME/brain2}"
+_brain2_source() {
+  local p="${VIBE_BRAIN2_PATH:-$HOME/brain2}"
   [ "$p" = "off" ] && return 0
   printf '%s' "$p"
 }
@@ -842,8 +842,8 @@ _learning_include_project() {
 # ── Learning mount helper ─────────────────────────────────────────────────────
 
 # _build_override_config <workspace_abs_path> — collects the bind mounts that
-# apply to this workspace (learning library at /learnings, shared brain at
-# /brain rw, Zotero store at /zotero ro) and, if any apply, generates the
+# apply to this workspace (learning library at /learnings, shared brain2 at
+# /brain2 rw, Zotero store at /zotero ro) and, if any apply, generates the
 # per-session override JSON under $HOME/.vibe/run/ and echoes its path. If none
 # apply, echoes the default $DEVCONTAINER_DIR/devcontainer.json path unchanged.
 # Always exits 0.
@@ -862,17 +862,18 @@ _build_override_config() {
     mount_args+=("$VIBE_LEARNING_PATH" "/learnings" "1")
   fi
 
-  # Shared second brain — read-write at /brain. Only when the resolved dir
-  # exists. Skip when the workspace IS the brain repo (the gardener): /workspace
-  # already binds it, so a /brain mount would be a redundant self-mount.
-  local brain
-  brain="$(_brain_source)"
-  if [ -n "$brain" ] && [ -d "$brain" ]; then
-    local canon_ws canon_brain
+  # Shared second brain — read-write at /brain2. Only when the resolved dir
+  # exists. Skip when the workspace IS the brain2 repo (the gardener):
+  # /workspace already binds it, so a /brain2 mount would be a redundant
+  # self-mount.
+  local brain2
+  brain2="$(_brain2_source)"
+  if [ -n "$brain2" ] && [ -d "$brain2" ]; then
+    local canon_ws canon_brain2
     canon_ws="$(cd "$workspace" 2>/dev/null && pwd -P || echo "$workspace")"
-    canon_brain="$(cd "$brain" 2>/dev/null && pwd -P || echo "$brain")"
-    if [ "$canon_ws" != "$canon_brain" ]; then
-      mount_args+=("$brain" "/brain" "0")
+    canon_brain2="$(cd "$brain2" 2>/dev/null && pwd -P || echo "$brain2")"
+    if [ "$canon_ws" != "$canon_brain2" ]; then
+      mount_args+=("$brain2" "/brain2" "0")
     fi
   fi
 
@@ -886,7 +887,7 @@ _build_override_config() {
   fi
 
   # Nothing to inject → use the base config untouched (preserves prior
-  # behaviour for projects with no learning/brain/zotero).
+  # behaviour for projects with no learning/brain2/zotero).
   if [ "${#mount_args[@]}" -eq 0 ]; then
     echo "$default_cfg"
     return 0
@@ -1248,14 +1249,14 @@ case "$(learning_banner_state "$WORKSPACE")" in
 esac
 # Brain / Zotero mount banners — mirror the gating in _build_override_config so
 # the line only prints when the mount is actually injected.
-_brain_banner="$(_brain_source)"
-if [ -n "$_brain_banner" ] && [ -d "$_brain_banner" ]; then
+_brain2_banner="$(_brain2_source)"
+if [ -n "$_brain2_banner" ] && [ -d "$_brain2_banner" ]; then
   _canon_ws="$(cd "$WORKSPACE" 2>/dev/null && pwd -P || echo "$WORKSPACE")"
-  _canon_brain="$(cd "$_brain_banner" 2>/dev/null && pwd -P || echo "$_brain_banner")"
-  if [ "$_canon_ws" = "$_canon_brain" ]; then
-    echo "     brain   : this workspace (gardener) @ ${_brain_banner}"
+  _canon_brain2="$(cd "$_brain2_banner" 2>/dev/null && pwd -P || echo "$_brain2_banner")"
+  if [ "$_canon_ws" = "$_canon_brain2" ]; then
+    echo "     brain2  : this workspace (gardener) @ ${_brain2_banner}"
   else
-    echo "     brain   : /brain (rw) @ ${_brain_banner}"
+    echo "     brain2  : /brain2 (rw) @ ${_brain2_banner}"
   fi
 fi
 _zotero_banner="$(_zotero_source)"

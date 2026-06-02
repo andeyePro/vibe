@@ -103,11 +103,11 @@ install_claude_md_fragments() {
           continue
         fi
       fi
-      # brain.md describes the /brain + /zotero mounts; only relevant when the
-      # brain is actually mounted. Generic vibe users without the mount never
-      # see it (keeps the shared CLAUDE.md free of brain-specific noise).
-      # VIBE_BRAIN_MOUNT_DIR is an override for tests; defaults to the real /brain.
-      if [ "$(basename "$f")" = "brain.md" ] && [ ! -d "${VIBE_BRAIN_MOUNT_DIR:-/brain}" ]; then
+      # brain2.md describes the /brain2 + /zotero mounts; only relevant when the
+      # brain2 repo is actually mounted. Generic vibe users without the mount
+      # never see it (keeps the shared CLAUDE.md free of brain2-specific noise).
+      # VIBE_BRAIN2_MOUNT_DIR is an override for tests; defaults to real /brain2.
+      if [ "$(basename "$f")" = "brain2.md" ] && [ ! -d "${VIBE_BRAIN2_MOUNT_DIR:-/brain2}" ]; then
         continue
       fi
       fragments+=("$f")
