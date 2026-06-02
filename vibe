@@ -975,12 +975,17 @@ fi
 
 # ── Resolve workspace ─────────────────────────────────────────────────────────
 if [ -z "$PROJECT_ARG" ]; then
-  WORKSPACE="$(pwd)"
+  # pwd -P (not plain pwd): getcwd() returns the kernel's canonical on-disk
+  # path, fixing case (e.g. /users vs /Users on case-insensitive-but-preserving
+  # APFS) and symlinks. Docker bind-mount source validation is case-sensitive,
+  # so a logically-lowercased $PWD would fail with "bind source path does not
+  # exist" on every run, including --rebuild.
+  WORKSPACE="$(pwd -P)"
   PROJECT_NAME="$(basename "$WORKSPACE")"
 else
   PROJECT_NAME="$PROJECT_ARG"
   if [ -d "$PROJECT_NAME" ]; then
-    WORKSPACE="$(cd "$PROJECT_NAME" && pwd)"
+    WORKSPACE="$(cd "$PROJECT_NAME" && pwd -P)"
     PROJECT_NAME="$(basename "$WORKSPACE")"
   else
     WORKSPACE="$PROJECTS_DIR/$PROJECT_NAME"
