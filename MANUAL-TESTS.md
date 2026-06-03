@@ -575,6 +575,26 @@ grep -i zotero ~/.claude/CLAUDE.md                      # → the env-hint disco
 
 ---
 
+### Test 28: Firewall fails CLOSED (init-firewall.sh)
+
+Regression guard for the fail-open bug where one unresolvable allowlist domain (`statsig.anthropic.com`, now decommissioned) left the container with **no firewall**. Run inside a freshly `--rebuild`ed container.
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' --connect-timeout 5 https://example.com        # blocked
+curl -s -o /dev/null -w '%{http_code}\n' --connect-timeout 5 https://api.github.com/zen  # 200 (allowlisted)
+curl -s -o /dev/null -w '%{http_code}\n' --connect-timeout 6 https://api.zotero.org/     # 200 (allowlisted for the Zotero feature)
+curl -s -o /dev/null -w '%{http_code}\n' --connect-timeout 5 http://[redacted-ip]/        # blocked (direct OpenProject is intentionally NOT allowlisted)
+```
+
+**Expected:**
+- [ ] `example.com` and the raw LAN OpenProject IP are BLOCKED (egress actually enforces)
+- [ ] `api.github.com` and `api.zotero.org` are reachable (allowlisted)
+- [ ] postStart log shows `Firewall configuration complete`; if any domain failed to resolve it shows `WARNING: could not resolve <domain> - skipping` rather than aborting
+- [ ] Fault injection (optional): temporarily add a bogus unresolvable domain to the `for domain` list, `vibe --rebuild`, and confirm the container still comes up firewalled (example.com still blocked) — one dead domain no longer disables the firewall
+- [ ] `statsig.anthropic.com` is no longer in the domain list
+
+---
+
 ## Troubleshooting
 
 ### Docker not found

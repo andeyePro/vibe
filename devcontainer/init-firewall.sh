@@ -2,6 +2,26 @@
 set -euo pipefail  # Exit on error, undefined vars, and pipeline failures
 IFS=$'\n\t'       # Stricter word splitting
 
+# Fail CLOSED, never open. A network backstop must lock the box down if it
+# cannot finish wiring the allowlist - the opposite of the historic bug where a
+# single unresolvable domain hit `exit 1` BEFORE the DROP policy further down,
+# leaving the container at the kernel default (OUTPUT ACCEPT = wide open). This
+# trap guarantees that ANY non-zero exit, from any line, ends with egress
+# DROP-by-default - only the DNS/SSH/loopback ACCEPT rules added at the top
+# survive, which is deliberate (SSH stays open for recovery; no arbitrary
+# internet). On a clean exit (rc=0) the body has already set DROP + the allow
+# rules, so the handler is a harmless no-op.
+fail_closed() {
+  local rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "init-firewall: exiting rc=$rc before completion - failing CLOSED (egress DROP, only DNS/SSH/loopback remain)"
+    iptables -P INPUT DROP   || true
+    iptables -P FORWARD DROP || true
+    iptables -P OUTPUT DROP  || true
+  fi
+}
+trap fail_closed EXIT
+
 # 1. Extract Docker DNS info BEFORE any flushing
 DOCKER_DNS_RULES=$(iptables-save -t nat | grep "127\.0\.0\.11" || true)
 
@@ -64,26 +84,36 @@ while read -r cidr; do
 done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git)[]' | aggregate -q)
 
 # Resolve and add other allowed domains
+# NOTE: statsig.anthropic.com was removed - it has no A record (decommissioned)
+# and was the exact domain whose resolution failure tripped the old fail-open
+# bug every boot. statsig.com (Claude Code telemetry) is kept. api.zotero.org is
+# allowlisted so vibe's direct Zotero web-API access keeps working now that the
+# firewall actually enforces (it only worked before because the box was open).
 for domain in \
     "registry.npmjs.org" \
     "api.anthropic.com" \
+    "api.zotero.org" \
     "sentry.io" \
-    "statsig.anthropic.com" \
     "statsig.com" \
     "marketplace.visualstudio.com" \
     "vscode.blob.core.windows.net" \
     "update.code.visualstudio.com"; do
     echo "Resolving $domain..."
-    ips=$(dig +noall +answer A "$domain" | awk '$4 == "A" {print $5}')
+    # Non-fatal: a single domain that fails to resolve (e.g. a decommissioned
+    # endpoint) must NOT abort the whole allowlist build - skip it and carry on,
+    # so the rest of the firewall is still configured and the script still
+    # reaches the DROP policy. `|| true` stops pipefail from tripping `set -e`;
+    # the empty-check below handles the miss.
+    ips=$(dig +noall +answer A "$domain" | awk '$4 == "A" {print $5}') || true
     if [ -z "$ips" ]; then
-        echo "ERROR: Failed to resolve $domain"
-        exit 1
+        echo "WARNING: could not resolve $domain - skipping (not allowlisted this run)"
+        continue
     fi
-    
+
     while read -r ip; do
         if [[ ! "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-            echo "ERROR: Invalid IP from DNS for $domain: $ip"
-            exit 1
+            echo "WARNING: invalid IP '$ip' from DNS for $domain - skipping"
+            continue
         fi
         echo "Adding $ip for $domain"
         ipset -exist add allowed-domains "$ip"
