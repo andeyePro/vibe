@@ -156,6 +156,50 @@ install_claude_md_fragments() {
   mv "$target.tmp" "$target"
 }
 
+# surfaces_has_vibe <path-to-SKILL.md> — exit 0 iff the skill declares it can
+# run on vibe. Reads the `surfaces:` frontmatter line (e.g. `surfaces: [desktop,
+# vibe]`); falls back to a `## Surfaces` body line (the loader-safe form the
+# skills-sync canary switches to if the frontmatter key trips claude.ai's
+# parser). Either form containing the word `vibe` counts.
+surfaces_has_vibe() {
+  local skillmd="$1" line
+  line=$(grep -m1 -iE '^[[:space:]]*surfaces:' "$skillmd" 2>/dev/null || true)
+  if [ -z "$line" ]; then
+    line=$(awk 'tolower($0) ~ /^##[[:space:]]+surfaces/ { getline; print; exit }' "$skillmd" 2>/dev/null || true)
+  fi
+  printf '%s' "$line" | grep -qiE '\bvibe\b'
+}
+
+# Sync brain2's canonical skills into $DEST_ROOT/skills/. Source is the MOUNTED
+# brain2 repo (not SRC_ROOT) — skills are canonical in brain2, shared with
+# Claude Desktop; vibe just mirrors the vibe-runnable subset into containers.
+# Only skills whose `surfaces:` includes `vibe` are copied (desktop/excel-only
+# skills like triage/email-triage can't function in a container and would only
+# confuse the agent). Gated on the brain2 mount existing, like the brain2.md
+# fragment. Overwrites only the canonical skills it copies; user-authored skills
+# and skills installed by another path (e.g. md/script, persisted in the
+# vibe-claude-config volume) are left untouched.
+install_brain2_skills() {
+  local brain2="${VIBE_BRAIN2_MOUNT_DIR:-/brain2}"
+  local src="$brain2/.claude/skills"
+  local dest="$DEST_ROOT/skills"
+
+  [ -d "$src" ] || return 0
+  mkdir -p "$dest"
+
+  local skilldir name md
+  for skilldir in "$src"/*/; do
+    [ -d "$skilldir" ] || continue
+    md="$skilldir/SKILL.md"
+    [ -f "$md" ] || continue
+    surfaces_has_vibe "$md" || continue
+    name=$(basename "$skilldir")
+    # Replace only this one canonical skill dir; never touch siblings.
+    rm -rf "${dest:?}/$name"
+    cp -rf "$skilldir" "$dest/$name"
+  done
+}
+
 # Detect whether Superpowers is installed (user-scope) and surface a one-line
 # banner + install command if not. Auto-install via direct file write into
 # ~/.claude/plugins/ is the long-term goal but requires empirical layout
@@ -231,5 +275,6 @@ install_dir agents
 install_dir commands
 install_hooks
 install_claude_md_fragments
+install_brain2_skills
 check_superpowers
 ensure_project_gitignore

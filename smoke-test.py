@@ -5471,6 +5471,76 @@ def test_install_extras_brain2_md_gated() -> None:
               "CANNOT" in md_on and "/brain2" in md_on, "body missing")
 
 
+def test_install_extras_brain2_skills_synced() -> None:
+    """install-claude-extras.sh syncs brain2 skills whose `surfaces:` includes
+    `vibe` into ~/.claude/skills; excludes desktop/excel-only and untagged
+    skills; honours the body-line `## Surfaces` fallback; leaves pre-existing
+    (volume-persisted) skills untouched; and does nothing without the mount."""
+    print("\n[brain2: install-claude-extras.sh syncs vibe-tagged skills]")
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        env_base = os.environ.copy()
+        env_base["VIBE_EXTRAS_SRC_ROOT"] = str(REPO / "devcontainer")
+
+        # Fake brain2 mount with a skills dir of mixed surface tags.
+        mount = tmp_path / "brain2mount"
+        skills = mount / ".claude" / "skills"
+
+        def write_skill(name: str, frontmatter_surfaces=None,
+                        body_surfaces: bool = False) -> None:
+            d = skills / name
+            d.mkdir(parents=True)
+            lines = ["---", f"title: {name}"]
+            if frontmatter_surfaces is not None:
+                lines.append(f"surfaces: {frontmatter_surfaces}")
+            lines += ["---", f"# {name}"]
+            if body_surfaces:
+                lines += ["## Surfaces", "[desktop, vibe]"]
+            (d / "SKILL.md").write_text("\n".join(lines) + "\n")
+
+        write_skill("ol", "[desktop, vibe]")                 # included (frontmatter)
+        write_skill("triage", "[desktop]")                   # excluded (desktop-only)
+        write_skill("bodyform", None, body_surfaces=True)    # included (body fallback)
+        write_skill("md", None)                              # excluded (untagged)
+
+        dest = tmp_path / "dest"; dest.mkdir()
+        # Pre-existing volume-persisted skill that must survive the sync.
+        (dest / "skills" / "script").mkdir(parents=True)
+        (dest / "skills" / "script" / "SKILL.md").write_text("original-script\n")
+
+        env = env_base.copy()
+        env["CLAUDE_CONFIG_DIR"] = str(dest)
+        env["VIBE_BRAIN2_MOUNT_DIR"] = str(mount)
+        r = subprocess.run(["bash", str(INSTALL_EXTRAS)],
+                           env=env, capture_output=True, text=True)
+        check("[brain2] install exits 0 (mount present)",
+              r.returncode == 0, r.stderr[:200])
+        dskills = dest / "skills"
+        check("[brain2] vibe-tagged 'ol' synced (frontmatter)",
+              (dskills / "ol" / "SKILL.md").exists(), "ol missing")
+        check("[brain2] body-line '## Surfaces' fallback 'bodyform' synced",
+              (dskills / "bodyform" / "SKILL.md").exists(), "bodyform missing")
+        check("[brain2] desktop-only 'triage' excluded",
+              not (dskills / "triage").exists(), "triage leaked into vibe")
+        check("[brain2] untagged 'md' excluded",
+              not (dskills / "md").exists(), "untagged md synced")
+        check("[brain2] pre-existing 'script' left untouched",
+              (dskills / "script" / "SKILL.md").read_text() == "original-script\n",
+              "volume-persisted skill clobbered")
+
+        # No brain2 mount → skills sync is a no-op (generic vibe users unaffected).
+        dest2 = tmp_path / "dest2"; dest2.mkdir()
+        env2 = env_base.copy()
+        env2["CLAUDE_CONFIG_DIR"] = str(dest2)
+        env2["VIBE_BRAIN2_MOUNT_DIR"] = str(tmp_path / "nope")
+        r2 = subprocess.run(["bash", str(INSTALL_EXTRAS)],
+                            env=env2, capture_output=True, text=True)
+        check("[brain2] install exits 0 (no mount)",
+              r2.returncode == 0, r2.stderr[:200])
+        check("[brain2] no skills synced without the mount",
+              not (dest2 / "skills" / "ol").exists(), "synced without a mount")
+
+
 def test_brain2_md_fragment_content() -> None:
     """brain2.md ships and states the non-negotiables: credential boundary,
     zotero read-only, and the authorised-field trust rule."""
@@ -5681,6 +5751,7 @@ def main() -> int:
     test_render_devcontainer_with_mounts()
     test_build_override_config_brain2_and_zotero()
     test_install_extras_brain2_md_gated()
+    test_install_extras_brain2_skills_synced()
     test_brain2_md_fragment_content()
     test_task010_smart_capture()
 

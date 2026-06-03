@@ -595,6 +595,25 @@ curl -s -o /dev/null -w '%{http_code}\n' --connect-timeout 5 http://192.168.0.35
 
 ---
 
+### Test 29: brain2 skills sync into the container
+
+Verifies `install-claude-extras.sh` mirrors brain2's vibe-runnable skills into `~/.claude/skills/`. Run inside a container with `/brain2` mounted (a non-brain2 project that has `~/brain2`).
+
+```bash
+ls ~/.claude/skills/                 # expect: er is ol op  (+ md, script if already present)
+grep -i '^surfaces:' /brain2/.claude/skills/triage/SKILL.md   # [desktop] — desktop-only
+ls ~/.claude/skills/triage 2>&1      # should NOT exist (desktop-only, excluded)
+```
+
+**Expected:**
+- [ ] `er`, `is`, `ol`, `op` present in `~/.claude/skills/` (the `surfaces: [desktop, vibe]` set), loadable as `/er` `/is` `/ol` `/op`
+- [ ] `email-triage`, `triage`, `accounts-check`, `monthly-finance`, `instructions-builder`, `sync-brain2` are ABSENT (desktop/excel-only)
+- [ ] pre-existing `md`/`script` still present and not clobbered
+- [ ] In a project WITHOUT `~/brain2` mounted, the sync is a no-op (no brain2 skills appear) — generic vibe users unaffected
+- [ ] `/op` loads but reports OpenProject unreachable until the OP MCP is deployed (expected — its `[desktop, vibe]` tag's caveat)
+
+---
+
 ## Troubleshooting
 
 ### Docker not found
