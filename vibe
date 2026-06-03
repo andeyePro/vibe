@@ -1210,6 +1210,15 @@ fi
 # export so ${localEnv:GITHUB_TOKEN} in devcontainer.json resolves in this env.
 export GITHUB_TOKEN
 
+# Zotero web-API key (optional). Stored alongside the GitHub PATs in
+# ~/.vibe/tokens (chmod 600) under the reserved, slash-free key
+# `ZOTERO_API_KEY` — it can't collide with an `owner/repo` PAT entry. Exported
+# so ${localEnv:ZOTERO_API_KEY} resolves; passed via remoteEnv only (never
+# containerEnv), mirroring GITHUB_TOKEN so the secret never reaches the
+# firewall/postStart layer. Empty when unset — harmless.
+ZOTERO_API_KEY=$(lookup_token "ZOTERO_API_KEY")
+export ZOTERO_API_KEY
+
 # Load learning config into THIS shell before the subshell below, so the
 # banner check at the end of this block sees the same state that
 # _build_override_config sees. (Exports from inside $(...) die with the

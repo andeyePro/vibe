@@ -549,6 +549,32 @@ The child build moves the tag to a new id without a full rebuild, so steps 3 and
 
 ---
 
+### Test 27: Zotero API key reaches the container (remoteEnv only)
+
+Verifies the optional `ZOTERO_API_KEY` plumbing: tokens-file → launcher `export` → `${localEnv:ZOTERO_API_KEY}` → in-container `$ZOTERO_API_KEY`, exposed where Claude runs (remoteEnv) but NOT to the firewall/postStart layer (containerEnv).
+
+```bash
+# On host: add a throwaway key to the secrets file (slash-free key = no repo collision)
+printf 'ZOTERO_API_KEY=TESTKEY0001testkey0002zz\n' >> ~/.vibe/tokens
+chmod 600 ~/.vibe/tokens
+cd ~/Projects/vibe-test && vibe   # first run after this change triggers ONE image rebuild
+```
+
+Inside the container:
+```bash
+echo "$ZOTERO_API_KEY"                                  # → TESTKEY0001testkey0002zz
+grep -i zotero ~/.claude/CLAUDE.md                      # → the env-hint discovery line is present
+```
+
+**Expected:**
+- [ ] `$ZOTERO_API_KEY` in the Claude shell equals the value from `~/.vibe/tokens`
+- [ ] The `~/.claude/CLAUDE.md` env-hint mentions `$ZOTERO_API_KEY` + `api.zotero.org`
+- [ ] `sudo cat /proc/1/environ | tr '\0' '\n' | grep -c ZOTERO_API_KEY` is `0` — PID 1 (postStart/firewall layer) never saw the key (remoteEnv-only, like `GITHUB_TOKEN`)
+- [ ] With NO `ZOTERO_API_KEY` line in `~/.vibe/tokens`, `$ZOTERO_API_KEY` is empty in-container and nothing breaks (silent no-op for users who don't opt in)
+- [ ] Cleanup: remove the test line from `~/.vibe/tokens`
+
+---
+
 ## Troubleshooting
 
 ### Docker not found

@@ -47,6 +47,7 @@
   },
   "remoteEnv": {
     "GITHUB_TOKEN": "${localEnv:GITHUB_TOKEN}",
+    "ZOTERO_API_KEY": "${localEnv:ZOTERO_API_KEY}",
     "NODE_OPTIONS": "--max-old-space-size=4096",
     "CLAUDE_CONFIG_DIR": "/home/node/.claude",
     "POWERLEVEL9K_DISABLE_GITSTATUS": "true",

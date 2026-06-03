@@ -13,6 +13,7 @@ END="<!-- END vibe env -->"
 BLOCK="$START
 # vibe container environment
 You are running in a vibe container on the user's Mac. Outbound SSH is allowed and ~/.ssh is populated from the host (sanitised for Linux) — \`ssh\`, \`scp\`, and rsync-over-ssh work for any host the user already has keys for, including \`.local\` mDNS names on the Mac's LAN. Other outbound traffic is restricted to an allowlist (GitHub, npm, Anthropic, VS Code marketplace); arbitrary HTTP to other sites will fail by design, not by accident.
+If \`\$ZOTERO_API_KEY\` is set in your environment, \`api.zotero.org\` is reachable from here: read the key straight from that env var (never ask the user to paste it) and call the Zotero web API directly — there is no Zotero MCP server in the container, and you do not need one.
 $END"
 
 mkdir -p "$(dirname "$TARGET")"
