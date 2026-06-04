@@ -38,6 +38,10 @@ TOKENS_FILE="$HOME/.vibe/tokens"
 SKIPPED_FILE="$HOME/.vibe/skipped"
 IMAGE_MARKER="$HOME/.vibe/.image-built"
 IMAGE_TAG="vibe-dev:latest"
+# Loopback port for the OpenProject MCP forwarder (Mac-side TCP passthrough to
+# the tailnet-only sidecar). Single source of truth: exported to the container
+# as OPENPROJECT_MCP_FWD_PORT so register-op-mcp.sh builds the matching URL.
+OP_MCP_FWD_PORT=18443
 
 # Resolve DEVCONTAINER_DIR from this script's real location, following symlinks.
 # ~/bin/vibe is a symlink that install.sh points at either ~/.vibe-src (curl
@@ -521,7 +525,7 @@ render_devcontainer_with_mounts() {
   local src="$1" dst="$2"
   shift 2
   python3 - "$src" "$dst" "$@" << 'PY'
-import json, sys
+import json, os, sys
 src, dst = sys.argv[1], sys.argv[2]
 rest = sys.argv[3:]
 with open(src) as f:
@@ -534,6 +538,15 @@ for i in range(0, len(rest), 3):
     if ro == "1":
         entry["readonly"] = True
     cfg["mounts"].append(entry)
+# OpenProject MCP: map the sidecar's real hostname to the host gateway so the
+# container reaches the Mac-side forwarder while keeping TLS/SNI/cert valid.
+op_host = os.environ.get("VIBE_OP_ADDHOST", "")
+if op_host:
+    if not isinstance(cfg.get("runArgs"), list):
+        cfg["runArgs"] = []
+    flag = "--add-host=%s:host-gateway" % op_host
+    if flag not in cfg["runArgs"]:
+        cfg["runArgs"].append(flag)
 with open(dst, "w") as f:
     json.dump(cfg, f, indent=2)
     f.write("\n")
@@ -850,6 +863,39 @@ _learning_include_project() {
 # per-session override JSON under $HOME/.vibe/run/ and echoes its path. If none
 # apply, echoes the default $DEVCONTAINER_DIR/devcontainer.json path unchanged.
 # Always exits 0.
+# Hostname (no scheme/port/path) of the OpenProject MCP, derived from the staged
+# OPENPROJECT_MCP_URL. Empty when the OP MCP isn't configured. Used both to start
+# the forwarder and to inject the container's --add-host.
+_op_mcp_host() {
+  local url="${OPENPROJECT_MCP_URL:-}"
+  [ -n "$url" ] && [ -n "${OPENPROJECT_MCP_BEARER:-}" ] || return 0
+  local rest="${url#*://}"
+  local host="${rest%%/*}"
+  printf '%s' "${host%%:*}"
+}
+
+# Start the Mac-side TCP forwarder (127.0.0.1:$OP_MCP_FWD_PORT -> <op-host>:443)
+# so the non-tailnet container can reach the tailnet-only sidecar via --add-host.
+# Unprivileged, lifecycle-detached, and idempotent: the forwarder self-exits if
+# the port is already bound, so repeated/concurrent vibe launches are safe. A
+# missing creds / missing python3 just no-ops (the in-container registration is
+# reachability-gated, so nothing breaks when the forwarder isn't up).
+_ensure_op_forwarder() {
+  local host
+  host="$(_op_mcp_host)"
+  [ -n "$host" ] || return 0
+  command -v python3 >/dev/null 2>&1 || {
+    echo "  note: python3 not found - OP MCP forwarder not started (/op unavailable)"
+    return 0
+  }
+  local fwd="$VIBE_REPO_DIR/op-mcp-forwarder.py"
+  [ -f "$fwd" ] || return 0
+  mkdir -p "$HOME/.vibe"
+  nohup python3 "$fwd" "$OP_MCP_FWD_PORT" "$host" 443 \
+    >>"$HOME/.vibe/op-mcp-forwarder.log" 2>&1 &
+  disown 2>/dev/null || true
+}
+
 _build_override_config() {
   local workspace="$1"
   local default_cfg="$DEVCONTAINER_DIR/devcontainer.json"
@@ -889,9 +935,15 @@ _build_override_config() {
     mount_args+=("$zotero" "/zotero" "1")
   fi
 
+  # OpenProject MCP: the container resolves the sidecar's real hostname to the
+  # Mac forwarder via --add-host (so TLS/SNI/cert stay valid end-to-end). Empty
+  # unless the OP MCP is configured.
+  local op_host
+  op_host="$(_op_mcp_host)"
+
   # Nothing to inject → use the base config untouched (preserves prior
-  # behaviour for projects with no learning/brain2/zotero).
-  if [ "${#mount_args[@]}" -eq 0 ]; then
+  # behaviour for projects with no learning/brain2/zotero AND no OP MCP).
+  if [ "${#mount_args[@]}" -eq 0 ] && [ -z "$op_host" ]; then
     echo "$default_cfg"
     return 0
   fi
@@ -906,7 +958,8 @@ _build_override_config() {
   mkdir -p "$run_dir"
   local dst="$run_dir/devcontainer-${sha1}.json"
 
-  render_devcontainer_with_mounts "$default_cfg" "$dst" "${mount_args[@]}"
+  VIBE_OP_ADDHOST="$op_host" \
+    render_devcontainer_with_mounts "$default_cfg" "$dst" "${mount_args[@]}"
   echo "$dst"
 }
 
@@ -1228,13 +1281,16 @@ export ZOTERO_API_KEY
 # `OPENPROJECT_MCP_URL` / `OPENPROJECT_MCP_BEARER`. Exported so the matching
 # ${localEnv:...} resolve; passed via remoteEnv only, mirroring GITHUB_TOKEN so
 # the bearer never reaches the firewall/postStart layer. Empty when unset.
-# NOTE: staging these does NOT by itself make /op work in-container — the
-# container is not on the tailnet, so reaching the sidecar still needs a
-# Mac-side host-routed forwarder + an MCP registration (see TODO / brain2
-# _OP-MCP-WIRING.md). This is the credential half only.
+# The container is not on the tailnet, so reaching the tailnet-only sidecar is
+# bridged by a Mac-side forwarder (_ensure_op_forwarder, below) plus an
+# in-container registration (register-op-mcp.sh). OPENPROJECT_MCP_FWD_PORT is the
+# loopback port both sides agree on. Staging creds with no live sidecar is
+# harmless — the in-container registration is reachability-gated.
 OPENPROJECT_MCP_URL=$(lookup_token "OPENPROJECT_MCP_URL")
 OPENPROJECT_MCP_BEARER=$(lookup_token "OPENPROJECT_MCP_BEARER")
-export OPENPROJECT_MCP_URL OPENPROJECT_MCP_BEARER
+OPENPROJECT_MCP_FWD_PORT="$OP_MCP_FWD_PORT"
+export OPENPROJECT_MCP_URL OPENPROJECT_MCP_BEARER OPENPROJECT_MCP_FWD_PORT
+_ensure_op_forwarder
 
 # Load learning config into THIS shell before the subshell below, so the
 # banner check at the end of this block sees the same state that

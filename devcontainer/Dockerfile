@@ -117,6 +117,7 @@ COPY write-env-hint.sh /usr/local/bin/
 COPY guard-bash.sh /usr/local/bin/
 COPY guard-fs.sh /usr/local/bin/
 COPY install-claude-extras.sh /usr/local/bin/
+COPY register-op-mcp.sh /usr/local/bin/
 COPY credential-helper.sh /usr/local/bin/vibe-credential-helper
 COPY vibe-copy.sh /usr/local/bin/vibe-copy
 # Curated Claude Code agents + slash commands. Staged under /usr/local/share
@@ -128,7 +129,7 @@ COPY commands/ /usr/local/share/vibe/commands/
 COPY claude-md /usr/local/share/vibe/claude-md/
 COPY hooks/ /usr/local/share/vibe/hooks/
 USER root
-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/guard-bash.sh /usr/local/bin/guard-fs.sh /usr/local/bin/install-claude-extras.sh /usr/local/bin/vibe-credential-helper /usr/local/bin/vibe-copy && \
+RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/guard-bash.sh /usr/local/bin/guard-fs.sh /usr/local/bin/install-claude-extras.sh /usr/local/bin/register-op-mcp.sh /usr/local/bin/vibe-credential-helper /usr/local/bin/vibe-copy && \
   echo "node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/node-firewall && \
   echo "node ALL=(root) NOPASSWD: /usr/sbin/avahi-daemon" >> /etc/sudoers.d/node-firewall && \
   chmod 0440 /etc/sudoers.d/node-firewall
