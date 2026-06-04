@@ -302,6 +302,39 @@ def test_token_helpers() -> None:
               "PERMS=600" in r.stdout, r.stdout)
 
 
+def test_op_mcp_creds_lookup() -> None:
+    """lookup_token returns OPENPROJECT_MCP_URL/BEARER whole — including a
+    bearer with a trailing '=' (base64 padding), via the `cut -d= -f2-` fix —
+    and slash-free OP keys don't collide with `owner/repo` PAT lines."""
+    print("\n[vibe: OpenProject MCP creds lookup]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        env = {
+            **os.environ,
+            "HOME": str(tmp),
+            "VIBE_CONFIG": f"{tmp}/no-config",
+            "VIBE_SOURCE_ONLY": "1",
+        }
+        script = f"""
+        set -e
+        source {shlex.quote(str(VIBE))}
+        save_token "amybo/vibe" "ghp_repo"
+        save_token "OPENPROJECT_MCP_URL" "https://openproject-mcp.tail09c06e.ts.net"
+        save_token "OPENPROJECT_MCP_BEARER" "YmFzZTY0dG9rZW4="
+        echo "URL=$(lookup_token OPENPROJECT_MCP_URL)"
+        echo "BEARER=$(lookup_token OPENPROJECT_MCP_BEARER)"
+        echo "REPO=$(lookup_token amybo/vibe)"
+        """
+        r = run(["bash", "-c", script], env=env)
+        check("helpers run cleanly", r.returncode == 0, r.stderr)
+        check("OP URL resolves whole (keeps ://)",
+              "URL=https://openproject-mcp.tail09c06e.ts.net" in r.stdout, r.stdout)
+        check("bearer keeps trailing '=' (cut -f2- fix)",
+              "BEARER=YmFzZTY0dG9rZW4=" in r.stdout, r.stdout)
+        check("repo PAT still resolves (no slash-free collision)",
+              "REPO=ghp_repo" in r.stdout, r.stdout)
+
+
 # ── code-check.py --json tests ─────────────────────────────────────────────────
 
 CODE_CHECK = REPO / "code-check.py"
@@ -5498,6 +5531,7 @@ def main() -> int:
     test_install_detects_local_clone()
     test_install_falls_back_to_vibe_src()
     test_token_helpers()
+    test_op_mcp_creds_lookup()
     test_code_check_json_clean_exit_and_valid_json()
     test_code_check_json_top_level_keys()
     test_code_check_json_finding_schema()
