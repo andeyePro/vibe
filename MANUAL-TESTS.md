@@ -595,6 +595,23 @@ curl -s -o /dev/null -w '%{http_code}\n' --connect-timeout 5 http://192.168.0.35
 
 ---
 
+### Test 30: OpenProject MCP creds reach the container (remoteEnv only)
+
+Verifies the `OPENPROJECT_MCP_URL` / `OPENPROJECT_MCP_BEARER` passthrough (Test 29 is reserved for the brain2-skills-sync PR). Add the values to `~/.vibe/tokens` (the deploy session already staged them) and `vibe --rebuild`.
+
+```bash
+echo "$OPENPROJECT_MCP_URL"      # → https://openproject-mcp.tail09c06e.ts.net
+echo "${OPENPROJECT_MCP_BEARER:0:6}…(${#OPENPROJECT_MCP_BEARER} chars)"   # non-empty, untruncated
+```
+
+**Expected:**
+- [ ] `$OPENPROJECT_MCP_URL` + `$OPENPROJECT_MCP_BEARER` present in the Claude shell, values whole (a trailing `=` on the bearer is preserved)
+- [ ] `sudo cat /proc/1/environ | tr '\0' '\n' | grep -c OPENPROJECT_MCP` is `0` — PID 1 (firewall/postStart) never saw them (remoteEnv-only, like `GITHUB_TOKEN`)
+- [ ] With no `OPENPROJECT_MCP_*` lines in `~/.vibe/tokens`, both are empty in-container and nothing breaks
+- [ ] NOTE: `/op` does NOT yet function in-container — reaching the tailnet-only sidecar needs the Mac-side host-routed forwarder (parked TODO). This test only covers credential staging.
+
+---
+
 ## Troubleshooting
 
 ### Docker not found
