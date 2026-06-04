@@ -5405,6 +5405,48 @@ def test_render_devcontainer_with_mounts() -> None:
               zot and zot[0]["source"] == "/host/zot store", str(zot))
 
 
+def test_op_mcp_addhost_injection() -> None:
+    """render_devcontainer_with_mounts appends the OpenProject MCP --add-host to
+    runArgs when VIBE_OP_ADDHOST is set, leaves runArgs untouched when it isn't,
+    and never duplicates an entry already present."""
+    print("\n[op-mcp: add-host injection]")
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "src.json"
+        src.write_text(json.dumps({"image": "x", "runArgs": ["--cap-add=NET_ADMIN"]}))
+
+        dst1 = Path(tmp) / "with.json"
+        call1 = (f"render_devcontainer_with_mounts {shlex.quote(str(src))} "
+                 f"{shlex.quote(str(dst1))}")
+        r1 = _source_vibe_call({"VIBE_OP_ADDHOST": "op.example.ts.net"}, call1)
+        check("[op-mcp] render (with host) exits 0", r1.returncode == 0, r1.stderr)
+        ra1 = json.loads(dst1.read_text()).get("runArgs", [])
+        check("[op-mcp] --add-host appended",
+              "--add-host=op.example.ts.net:host-gateway" in ra1, str(ra1))
+        check("[op-mcp] existing runArgs preserved",
+              "--cap-add=NET_ADMIN" in ra1, str(ra1))
+
+        dst2 = Path(tmp) / "without.json"
+        call2 = (f"render_devcontainer_with_mounts {shlex.quote(str(src))} "
+                 f"{shlex.quote(str(dst2))}")
+        r2 = _source_vibe_call({"VIBE_OP_ADDHOST": ""}, call2)
+        check("[op-mcp] render (no host) exits 0", r2.returncode == 0, r2.stderr)
+        ra2 = json.loads(dst2.read_text()).get("runArgs", [])
+        check("[op-mcp] no add-host when unset",
+              not any("add-host" in a for a in ra2), str(ra2))
+
+        # Already-present entry must not be duplicated.
+        src2 = Path(tmp) / "src2.json"
+        src2.write_text(json.dumps(
+            {"image": "x", "runArgs": ["--add-host=op.example.ts.net:host-gateway"]}))
+        dst3 = Path(tmp) / "dup.json"
+        call3 = (f"render_devcontainer_with_mounts {shlex.quote(str(src2))} "
+                 f"{shlex.quote(str(dst3))}")
+        _source_vibe_call({"VIBE_OP_ADDHOST": "op.example.ts.net"}, call3)
+        ra3 = json.loads(dst3.read_text()).get("runArgs", [])
+        check("[op-mcp] add-host not duplicated",
+              ra3.count("--add-host=op.example.ts.net:host-gateway") == 1, str(ra3))
+
+
 def _read_override_out(r: subprocess.CompletedProcess) -> str:
     m = re.search(r"OUT=\[(.*)\]", r.stdout)
     return m.group(1) if m else ""
@@ -5713,6 +5755,7 @@ def main() -> int:
     test_install_extras_ssh_discipline_opt_in()
     test_brain2_zotero_source_resolution()
     test_render_devcontainer_with_mounts()
+    test_op_mcp_addhost_injection()
     test_build_override_config_brain2_and_zotero()
     test_install_extras_brain2_md_gated()
     test_brain2_md_fragment_content()

@@ -134,6 +134,29 @@ echo "Host network detected as: $HOST_NETWORK"
 iptables -A INPUT -s "$HOST_NETWORK" -j ACCEPT
 iptables -A OUTPUT -d "$HOST_NETWORK" -j ACCEPT
 
+# OpenProject MCP forwarder reachability (optional). The tailnet-only OP MCP is
+# reached via a Mac-side forwarder the container hits through
+# `host.docker.internal` (mapped with --add-host). On Docker Desktop / OrbStack
+# that host-gateway frequently sits OUTSIDE the default-route /24 ACCEPTed above
+# (observed: 192.168.65.254), so without an explicit allow it would be DROPped.
+# Non-fatal, exactly like the per-domain loop earlier: a resolution miss must
+# NOT abort before the DROP policy below — warn and carry on, so /op simply
+# stays unavailable rather than the firewall being left half-built (fail-closed).
+HOST_INTERNAL_IP=$(getent hosts host.docker.internal 2>/dev/null | awk '{print $1; exit}') || true
+if [ -z "$HOST_INTERNAL_IP" ]; then
+    echo "Note: host.docker.internal did not resolve - OP MCP forwarder path not allowlisted (harmless unless using /op)"
+elif [[ "$HOST_INTERNAL_IP" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+    if [ "${HOST_INTERNAL_IP%.*}" = "${HOST_NETWORK%.0/24}" ]; then
+        echo "host.docker.internal ($HOST_INTERNAL_IP) already within $HOST_NETWORK - no extra rule needed"
+    else
+        echo "Allowing host.docker.internal at $HOST_INTERNAL_IP (host-gateway outside $HOST_NETWORK)"
+        iptables -A INPUT  -s "$HOST_INTERNAL_IP" -j ACCEPT
+        iptables -A OUTPUT -d "$HOST_INTERNAL_IP" -j ACCEPT
+    fi
+else
+    echo "WARNING: host.docker.internal resolved to non-IPv4 '$HOST_INTERNAL_IP' - skipping (OP MCP forwarder path not allowlisted)"
+fi
+
 # Set default policies to DROP first
 iptables -P INPUT DROP
 iptables -P FORWARD DROP

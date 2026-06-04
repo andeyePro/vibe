@@ -50,6 +50,7 @@
     "ZOTERO_API_KEY": "${localEnv:ZOTERO_API_KEY}",
     "OPENPROJECT_MCP_URL": "${localEnv:OPENPROJECT_MCP_URL}",
     "OPENPROJECT_MCP_BEARER": "${localEnv:OPENPROJECT_MCP_BEARER}",
+    "OPENPROJECT_MCP_FWD_PORT": "${localEnv:OPENPROJECT_MCP_FWD_PORT}",
     "NODE_OPTIONS": "--max-old-space-size=4096",
     "CLAUDE_CONFIG_DIR": "/home/node/.claude",
     "POWERLEVEL9K_DISABLE_GITSTATUS": "true",
@@ -57,6 +58,6 @@
   },
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
   "workspaceFolder": "/workspace",
-  "postStartCommand": "sudo /usr/local/bin/init-firewall.sh && sudo /usr/sbin/avahi-daemon --daemonize --no-drop-root 2>/dev/null || true && /usr/local/bin/setup-ssh.sh && /usr/local/bin/setup-git.sh && /usr/local/bin/write-env-hint.sh && /usr/local/bin/install-claude-extras.sh",
+  "postStartCommand": "sudo /usr/local/bin/init-firewall.sh && sudo /usr/sbin/avahi-daemon --daemonize --no-drop-root 2>/dev/null || true && /usr/local/bin/setup-ssh.sh && /usr/local/bin/setup-git.sh && /usr/local/bin/write-env-hint.sh && /usr/local/bin/install-claude-extras.sh && /usr/local/bin/register-op-mcp.sh",
   "waitFor": "postStartCommand"
 }

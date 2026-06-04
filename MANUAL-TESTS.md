@@ -651,6 +651,30 @@ claude --version
 
 ---
 
+## OpenProject MCP (`/op`) — live in-container path
+
+Only runs end-to-end against a real Docker daemon (firewall + `--add-host` +
+registration must execute together in the container). Prerequisites: OP MCP
+sidecar live (`curl https://openproject-mcp.tail09c06e.ts.net/healthz` → `{"status":"ok"}`)
+and creds staged (`grep OPENPROJECT_MCP ~/.vibe/tokens` shows URL + bearer).
+
+```bash
+# 1. Rebuild a project's container so the new postStart + Dockerfile land.
+cd <some-project> && vibe --rebuild
+```
+
+Inside the container, confirm:
+
+- [ ] **Forwarder up on the host** — on the Mac: `pgrep -af op-mcp-forwarder` shows one process; `cat ~/.vibe/op-mcp-forwarder.log` ends with `127.0.0.1:18443 -> openproject-mcp.tail09c06e.ts.net:443`.
+- [ ] **Firewall allowed the gateway** — postStart log shows `Allowing host.docker.internal at <ip>` (or `already within …` if inside the /24). A resolution miss must print the `Note:` line and NOT abort (firewall still reaches `Firewall configuration complete`).
+- [ ] **Registration succeeded** — postStart log shows `register-op-mcp: registered OpenProject MCP (HTTP) → …:18443`.
+- [ ] **MCP connected** — `claude mcp list` shows `openproject … ✓`.
+- [ ] **Tool works** — `/op` (or ask Claude to list OpenProject work packages) returns real WPs.
+- [ ] **Negative: forwarder down** — kill the host forwarder, `vibe --rebuild`; postStart logs `OP MCP not reachable … leaving /op unregistered`, container still starts clean, `claude mcp list` has no broken `openproject` entry.
+- [ ] **Negative: no creds** — in a shell with `OPENPROJECT_MCP_URL` unset, postStart skips registration silently; no forwarder spawned; container unaffected.
+
+---
+
 ## Test Summary
 
 After completing all tests, check:
