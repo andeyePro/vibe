@@ -211,7 +211,10 @@ create_github_repo() {
 lookup_token() {
   local repo="$1"
   [ -f "$TOKENS_FILE" ] || return 0
-  grep "^${repo}=" "$TOKENS_FILE" 2>/dev/null | cut -d= -f2 || true
+  # `-f2-` (not `-f2`) so a value containing `=` (e.g. a base64 bearer with
+  # padding) is returned whole, not truncated at the first `=`. Keys never
+  # contain `=`, so splitting on the first `=` still isolates the value.
+  grep "^${repo}=" "$TOKENS_FILE" 2>/dev/null | cut -d= -f2- || true
 }
 
 save_token() {
@@ -1218,6 +1221,20 @@ export GITHUB_TOKEN
 # firewall/postStart layer. Empty when unset — harmless.
 ZOTERO_API_KEY=$(lookup_token "ZOTERO_API_KEY")
 export ZOTERO_API_KEY
+
+# OpenProject MCP (optional). The self-hosted OP MCP is deployed as a
+# tailnet-only HTTPS sidecar; its endpoint URL + bearer are staged in
+# ~/.vibe/tokens (chmod 600) under the reserved, slash-free keys
+# `OPENPROJECT_MCP_URL` / `OPENPROJECT_MCP_BEARER`. Exported so the matching
+# ${localEnv:...} resolve; passed via remoteEnv only, mirroring GITHUB_TOKEN so
+# the bearer never reaches the firewall/postStart layer. Empty when unset.
+# NOTE: staging these does NOT by itself make /op work in-container — the
+# container is not on the tailnet, so reaching the sidecar still needs a
+# Mac-side host-routed forwarder + an MCP registration (see TODO / brain2
+# _OP-MCP-WIRING.md). This is the credential half only.
+OPENPROJECT_MCP_URL=$(lookup_token "OPENPROJECT_MCP_URL")
+OPENPROJECT_MCP_BEARER=$(lookup_token "OPENPROJECT_MCP_BEARER")
+export OPENPROJECT_MCP_URL OPENPROJECT_MCP_BEARER
 
 # Load learning config into THIS shell before the subshell below, so the
 # banner check at the end of this block sees the same state that
