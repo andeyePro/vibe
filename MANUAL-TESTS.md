@@ -595,9 +595,28 @@ curl -s -o /dev/null -w '%{http_code}\n' --connect-timeout 5 http://[redacted-ip
 
 ---
 
+### Test 29: brain2 skills sync into the container
+
+Verifies `install-claude-extras.sh` mirrors brain2's vibe-runnable skills into `~/.claude/skills/`. Run inside a container with `/brain2` mounted (a non-brain2 project that has `~/brain2`).
+
+```bash
+ls ~/.claude/skills/                 # expect: er is ol op email-triage triage  (+ md, script if already present)
+grep -i '^surfaces:' /brain2/.claude/skills/triage/SKILL.md   # [desktop, vibe]
+ls ~/.claude/skills/triage 2>&1      # should exist (vibe-tagged)
+```
+
+**Expected:**
+- [ ] `er`, `is`, `ol`, `op`, `email-triage`, `triage` present in `~/.claude/skills/` (the `surfaces: [desktop, vibe]` set), loadable as `/er` `/is` `/ol` `/op` `/email-triage` `/triage`
+- [ ] `accounts-check`, `monthly-finance`, `instructions-builder`, `sync-brain2`, `garden` are ABSENT (excel/desktop-only or untagged)
+- [ ] pre-existing `md`/`script` still present and not clobbered
+- [ ] In a project WITHOUT `~/brain2` mounted, the sync is a no-op (no brain2 skills appear) — generic vibe users unaffected
+- [ ] `/op` loads but reports OpenProject unreachable until the OP MCP is deployed (expected — its `[desktop, vibe]` tag's caveat)
+
+---
+
 ### Test 30: OpenProject MCP creds reach the container (remoteEnv only)
 
-Verifies the `OPENPROJECT_MCP_URL` / `OPENPROJECT_MCP_BEARER` passthrough (Test 29 is reserved for the brain2-skills-sync PR). Add the values to `~/.vibe/tokens` (the deploy session already staged them) and `vibe --rebuild`.
+Verifies the `OPENPROJECT_MCP_URL` / `OPENPROJECT_MCP_BEARER` passthrough. Add the values to `~/.vibe/tokens` (the deploy session already staged them) and `vibe --rebuild`.
 
 ```bash
 echo "$OPENPROJECT_MCP_URL"      # → https://openproject-mcp.tail09c06e.ts.net
