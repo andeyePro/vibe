@@ -774,7 +774,8 @@ def _parse_args_probe(argv: list[str]) -> subprocess.CompletedProcess:
         'echo "CONTINUE=[$CONTINUE]"; '
         'echo "RESUME=[$RESUME]"; '
         'echo "RESUME_UID=[$RESUME_UID]"; '
-        'echo "PROJECT_ARG=[$PROJECT_ARG]"'
+        'echo "PROJECT_ARG=[$PROJECT_ARG]"; '
+        'echo "MODEL_ARG=[$MODEL_ARG]"'
     )
     return _source_vibe_call({}, call)
 
@@ -861,6 +862,105 @@ def test_parse_args_unknown_flag_rejected() -> None:
     r = _parse_args_probe(["vibe", "--bogus"])
     check("exits 1", r.returncode == 1, r.stdout + r.stderr)
     check("error mentions unknown", "Unknown flag" in r.stderr, r.stderr)
+
+
+# ── Model selection tests (--fable / --model / billing gate helpers) ──────────
+
+
+def test_parse_args_fable() -> None:
+    print("\n[parse_vibe_args: vibe --fable → MODEL_ARG=claude-fable-5]")
+    r = _parse_args_probe(["vibe", "--fable"])
+    check("exits 0", r.returncode == 0, r.stderr)
+    check("PROJECT_ARG=vibe", "PROJECT_ARG=[vibe]" in r.stdout, r.stdout)
+    check("MODEL_ARG=claude-fable-5",
+          "MODEL_ARG=[claude-fable-5]" in r.stdout, r.stdout)
+
+
+def test_parse_args_model_explicit() -> None:
+    print("\n[parse_vibe_args: --model claude-opus-4-8]")
+    r = _parse_args_probe(["--model", "claude-opus-4-8", "vibe"])
+    check("exits 0", r.returncode == 0, r.stderr)
+    check("MODEL_ARG=claude-opus-4-8",
+          "MODEL_ARG=[claude-opus-4-8]" in r.stdout, r.stdout)
+    check("PROJECT_ARG=vibe", "PROJECT_ARG=[vibe]" in r.stdout, r.stdout)
+
+
+def test_parse_args_model_missing_value_rejected() -> None:
+    print("\n[parse_vibe_args: --model with no value rejected]")
+    r = _parse_args_probe(["--model"])
+    check("exits 1", r.returncode == 1, r.stdout + r.stderr)
+    check("error mentions model id", "model id" in r.stderr, r.stderr)
+
+
+def test_parse_args_model_injection_rejected() -> None:
+    print("\n[parse_vibe_args: --model with shell metachars rejected]")
+    for bad in ["claude; rm -rf /", "a b", "$(whoami)", "claude`x`", "--continue"]:
+        r = _parse_args_probe(["--model", bad])
+        check(f"--model {bad!r} exits 1", r.returncode == 1,
+              r.stdout + r.stderr)
+
+
+def test_vibe_is_model_id() -> None:
+    print("\n[vibe is_model_id]")
+    cases = [
+        ("claude-fable-5", True, "fable id"),
+        ("claude-opus-4-8", True, "opus id"),
+        ("claude-3-5-haiku-20241022", True, "dated id"),
+        ("opus", True, "alias"),
+        ("", False, "empty"),
+        ("a b", False, "space"),
+        ("a;b", False, "semicolon"),
+        ("$(x)", False, "command substitution"),
+        ("a`b`", False, "backticks"),
+        ("a'b", False, "quote"),
+    ]
+    for value, expected, label in cases:
+        r = _source_vibe_call({}, f'is_model_id {shlex.quote(value)} && echo Y || echo N')
+        observed = "Y" in r.stdout
+        check(f"is_model_id '{value}' → {expected} ({label})",
+              observed == expected, r.stdout + r.stderr)
+
+
+def test_vibe_model_args_fresh() -> None:
+    print("\n[vibe build_claude_model_args: no model → empty]")
+    r = _source_vibe_call({}, 'echo "OUT=[$(build_claude_model_args)]"')
+    check("exits 0", r.returncode == 0, r.stderr)
+    check("emits empty fragment", "OUT=[]" in r.stdout, r.stdout)
+
+
+def test_vibe_model_args_set() -> None:
+    print("\n[vibe build_claude_model_args: MODEL_ARG set]")
+    r = _source_vibe_call({"MODEL_ARG": "claude-fable-5"},
+                          'echo "OUT=[$(build_claude_model_args)]"')
+    check("exits 0", r.returncode == 0, r.stderr)
+    check("emits '--model claude-fable-5'",
+          "OUT=[--model claude-fable-5]" in r.stdout, r.stdout)
+
+
+def test_vibe_fable_billing_phase() -> None:
+    print("\n[vibe fable_billing_phase: free until 22 Jun 2026, credits after]")
+    cases = [
+        ("20260609", "free", "launch day"),
+        ("20260622", "free", "last free day"),
+        ("20260623", "credits", "cutover day"),
+        ("20270101", "credits", "well after"),
+    ]
+    for date, expected, label in cases:
+        r = _source_vibe_call({}, f'echo "OUT=[$(fable_billing_phase {date})]"')
+        check(f"{date} → {expected} ({label})",
+              f"OUT=[{expected}]" in r.stdout, r.stdout + r.stderr)
+
+
+def test_vibe_help_mentions_fable_and_model() -> None:
+    print("\n[vibe --help mentions --fable and --model]")
+    with tempfile.TemporaryDirectory() as td:
+        env = {**os.environ, "HOME": td, "VIBE_CONFIG": f"{td}/no-config"}
+        r = run(["bash", str(VIBE), "--help"], env=env)
+    check("--help exits 0", r.returncode == 0, r.stderr)
+    check("help mentions --fable", "--fable" in r.stdout, r.stdout[:800])
+    check("help mentions --model", "--model" in r.stdout, r.stdout[:800])
+    check("help mentions the credits cutover",
+          "23 Jun" in r.stdout, r.stdout)
 
 
 # ── Image drift detection tests (task_015 AC1-AC6, AC8) ─────────────────────────
@@ -5670,6 +5770,15 @@ def main() -> int:
     test_parse_args_project_then_rebuild()
     test_parse_args_two_positionals_rejected()
     test_parse_args_unknown_flag_rejected()
+    test_parse_args_fable()
+    test_parse_args_model_explicit()
+    test_parse_args_model_missing_value_rejected()
+    test_parse_args_model_injection_rejected()
+    test_vibe_is_model_id()
+    test_vibe_model_args_fresh()
+    test_vibe_model_args_set()
+    test_vibe_fable_billing_phase()
+    test_vibe_help_mentions_fable_and_model()
     test_ac1_no_container()
     test_ac2_matching_image()
     test_ac3_drifted_image()

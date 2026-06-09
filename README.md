@@ -46,9 +46,22 @@ The installer clones vibe to `~/.vibe-src`, symlinks `~/bin/vibe`, and prompts f
 - `vibe --rebuild` — force rebuild of the container image
 - `vibe --continue` — resume the most recent Claude conversation in this project
 - `vibe --resume <uuid>` — resume a specific past conversation
+- `vibe --fable` — launch this session on Claude Fable 5 (billing-aware, see below)
+- `vibe --model <id>` — launch this session on any Claude model id
 - `vibe learn --init` — one-time setup of the cross-org learning library
 
 Fresh conversation is the default — durable memory lives in `TODO.md`, `CLAUDE.md`, and Claude's auto-memory, not in resumed conversations (which accumulate compaction debt). `--continue` / `--resume` are opt-in for short-horizon pickup.
+
+### Model selection and Fable 5
+
+`--fable` and `--model <id>` apply per-launch; they don't change the default model Claude Code has persisted in its shared config volume. Set a standing default with `VIBE_MODEL="<id>"` in `~/.vibe/config` (flags win over config). Inside a session, `/model` still works as usual.
+
+Fable 5 is billing-aware because its subscription status changes on 23 Jun 2026:
+
+- **Until 22 Jun 2026** it is included on Pro/Max at no extra cost — `vibe --fable` just launches (with a one-line reminder of the free window).
+- **From 23 Jun 2026** Fable 5 bills usage credits at API list rates ($10/MTok in, $50/MTok out) on top of your subscription. That collides with vibe's subscription-only-spend default, so `--fable` asks before launching (default No, falling back to your default model). Standing opt-in: `VIBE_FABLE_CREDITS_OK=1` in `~/.vibe/config`. Anthropic has said it intends to fold Fable 5 back into subscriptions once capacity allows — when that happens the gate date can be revisited.
+
+Getting the most from Fable 5 on a subscription: run the **main loop** on Fable (planning, architecture, review, long-horizon agentic work — where the frontier model earns its cost) and let vibe's shipped subagents do the mechanical work — `code-writer` and `shellcheck-fixer` pin Sonnet, `Explore`-style scans run on cheaper models. `/diet` composes well with a Fable session for the same reason.
 
 ## Host-side state
 
@@ -56,7 +69,7 @@ Fresh conversation is the default — durable memory lives in `TODO.md`, `CLAUDE
 |---|---|
 | `~/bin/vibe` | Symlink to the launcher |
 | `~/.vibe-src/` | Clone of this repo |
-| `~/.vibe/config` | `VIBE_PROJECTS_DIR`, `VIBE_SSH_AUTO` (opt-in: `=1` skips the per-action SSH ask in all projects), `VIBE_BRAIN2_PATH` / `VIBE_ZOTERO_PATH` (shared brain2 at `/brain2` rw + Zotero at `/zotero` ro; default `~/brain2` / `~/Zotero/storage`, mounted into every container when the dir exists, `=off` to disable) |
+| `~/.vibe/config` | `VIBE_PROJECTS_DIR`, `VIBE_SSH_AUTO` (opt-in: `=1` skips the per-action SSH ask in all projects), `VIBE_BRAIN2_PATH` / `VIBE_ZOTERO_PATH` (shared brain2 at `/brain2` rw + Zotero at `/zotero` ro; default `~/brain2` / `~/Zotero/storage`, mounted into every container when the dir exists, `=off` to disable), `VIBE_MODEL` (default model id for every launch; flags win), `VIBE_FABLE_CREDITS_OK` (`=1` skips the Fable 5 usage-credits confirm after 22 Jun 2026) |
 | `~/.vibe/tokens` | GitHub PATs (`owner/repo=ghp_...`); optional `ZOTERO_API_KEY=...` line (slash-free key → no collision with a repo entry) surfaced in-container as `$ZOTERO_API_KEY` for direct Zotero web-API calls. `chmod 600` — never commit or sync to the cloud |
 | `~/.vibe/skipped` | Projects opted out of GitHub |
 | `~/.vibe/learning.config` | Learning library location + visibility |
