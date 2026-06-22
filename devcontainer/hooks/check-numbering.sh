@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # check-numbering.sh - Stop hook: warn if the most recent assistant turn
-# mixes numbered (1./2./3.) and lettered (a./b./c.) lists in the same reply.
+# mixes numbered (1./2./3.) and lettered (a./b./c.) lists in the same reply,
+# or restarts numbering with more than one top-level "1." (several separate
+# numbered lists, which makes a bare "1" reply from the user ambiguous).
 #
 # Why: Martin's numbering rule (auto-memory feedback_numbering.md) is
 #   "1,2,3 = collaborative working list across turns; a,b,c = per-response
@@ -49,5 +51,14 @@ printf '%s' "$stripped" | grep -qE '^[[:space:]]*[a-z]\.[[:space:]]'  && has_let
 
 if [ "$has_num" -eq 1 ] && [ "$has_let" -eq 1 ]; then
   printf 'vibe: numbering warning - last reply mixed 1./2./3. with a./b./c. (see feedback_numbering.md - working list vs per-reply action picks)\n' >&2
+fi
+
+# Also warn when a reply restarts numbering: more than one top-level "1."
+# marker outside code fences means several separate numbered lists, so a
+# bare "1" from the user is ambiguous (feedback_numbering.md - one working
+# list per reply; output-consolidation.md - one ordered list per reply).
+num_ones="$(printf '%s' "$stripped" | grep -cE '^[[:space:]]*1\.[[:space:]]' || true)"
+if [ "$num_ones" -gt 1 ]; then
+  printf 'vibe: numbering warning - last reply had %s separate numbered lists (multiple "1."s); use one ordered list per reply so a bare number is unambiguous\n' "$num_ones" >&2
 fi
 exit 0

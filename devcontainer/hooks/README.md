@@ -2,7 +2,7 @@
 
 vibe ships two opt-in Stop hooks under `/home/node/.claude/hooks/`:
 
-- **`check-numbering.sh`** — warns when an assistant turn mixes 1./2./3. and a./b./c. lists.
+- **`check-numbering.sh`** — warns when an assistant turn mixes 1./2./3. and a./b./c. lists, or restarts numbering with more than one top-level `1.` (several separate numbered lists in one reply).
 - **`copy-last-block.sh`** — when the assistant's reply contains the literal sentinel `<!-- vibe: copy -->`, extracts the LAST fenced code block of that reply into `/workspace/.vibe/copy-latest.txt` so the host-side `vibe-copy-watcher.sh` can `pbcopy` it to the Mac clipboard with no slash-command round-trip. Silent on replies without the sentinel — the assistant must explicitly flag a block as paste-worthy for the clipboard to be touched.
 
 Both ship to every vibe container by default (`install-claude-extras.sh` syncs them) but are silent until you wire them up in `~/.claude/settings.json`. Vibe does not auto-edit user settings.
@@ -39,6 +39,16 @@ vibe: numbering warning - last reply mixed 1./2./3. with a./b./c. (see feedback_
 
 to stderr. Claude Code surfaces this to the user. The hook always exits 0 so
 the warning is non-blocking.
+
+It also counts top-level `1.` markers (after the same code-fence strip). More
+than one means the reply restarted numbering — several separate numbered lists
+— so a bare "1" from the user is ambiguous. The hook then writes:
+
+```
+vibe: numbering warning - last reply had 3 separate numbered lists (multiple "1."s); use one ordered list per reply so a bare number is unambiguous
+```
+
+This pairs with `output-consolidation.md` (one ordered list per reply).
 
 ## How the hook is enabled
 
