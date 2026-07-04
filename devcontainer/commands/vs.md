@@ -1,10 +1,12 @@
 ---
-description: Adversarial agentic harness — Planner + Evaluator (Opus) orchestrate independent Spec Critic, Generator (Sonnet), and Tester (Haiku) subagents against a spec. `--fuzzy` swaps Tester for an independent Reviewer (Sonnet) so tasks without mechanical acceptance criteria still get adversarial review. Pass the task prompt after the command.
+description: Adversarial agentic harness — Planner + Evaluator (session model) orchestrate independent Spec Critic, Generator, and Tester subagents against a spec, on a per-task Model plan with a capability-gated escalation ladder (haiku→sonnet→opus→ask-before-Fable). `--fuzzy` swaps Tester for an independent Reviewer so tasks without mechanical acceptance criteria still get adversarial review. Pass the task prompt after the command.
 ---
 
 # /vs — adversarial harness
 
-You (top-level, Opus) play two roles across the run: **Planner** (Step 1–2, plus revision in Step 3) and **Evaluator** (Step 6–7). Between them, you dispatch independent subagents: a Sonnet **Spec Critic** that audits the spec before any code runs, a Sonnet **Generator** that writes the feature, and — depending on mode — either a Haiku 4.5 **Tester** (default rigorous mode) or a Sonnet **Reviewer** (`--fuzzy` mode). Generator never sees Tester's / Reviewer's output; Tester / Reviewer never sees Generator's report. That separation is the point.
+You (top-level, whatever model this session launched on — Opus by default, Fable 5 via `vibe --fable` for genuinely huge/ambiguous tasks) play two roles across the run: **Planner** (Step 1–2, plus revision in Step 3) and **Evaluator** (Step 6–7). Between them, you dispatch independent subagents: a Sonnet **Spec Critic** that audits the spec before any code runs, a **Generator** that writes the feature (tier per the Model plan, Sonnet default), and — depending on mode — either a Haiku 4.5 **Tester** (default rigorous mode) or a Sonnet **Reviewer** (`--fuzzy` mode). Generator never sees Tester's / Reviewer's output; Tester / Reviewer never sees Generator's report. That separation is the point.
+
+Model choice is part of the plan, not a constant — see § Model economy. Always pass `model:` explicitly in every `Agent(...)` dispatch: per-agent `model:` frontmatter is broken upstream (claude-code issue #44385), so the dispatch parameter is the only reliable routing.
 
 Chronological flow per cycle:
 
@@ -30,11 +32,44 @@ Claude Code's welcome banner suggests creating Software Architect, Code Writer, 
 | Code Writer        | Generator                                                       |
 | Code Reviewer      | Tester (rigorous) or Reviewer (`--fuzzy`) + Evaluator           |
 
+## Model economy
+
+Two principles (Martin, 2026-07-04):
+
+- **Route by task class, not role prestige.** Fable 5's edge concentrates in long-horizon, complex work — big well-specified builds, ambiguous multi-cycle tasks. On small scoped calls Opus is near-parity and credits buy nothing. The manager keeps expensive models away from admin.
+- **Subscription models everywhere by default.** Credit-billed models (Fable 5 from 8 Jul 2026) run only with explicit per-task user consent, per `CLAUDE.md § Non-goals`.
+
+### Role defaults
+
+| Role | Default | Why |
+| --- | --- | --- |
+| Planner + Evaluator | session model (Opus chair normally; `vibe --fable` only for huge/ambiguous tasks) | judgment interleaved with admin — mid-tier chair, expensive consultants |
+| Spec Critic | sonnet | adversarial reading, scoped |
+| Generator | sonnet, tier per Model plan | bulk tokens — cheapest tier that passes |
+| Tester | haiku | mechanical test-writing |
+| Reviewer (`--fuzzy`) | sonnet | judgment from a diff |
+
+### Model plan (lives in spec.md)
+
+Step 2's spec includes a **Model plan**: Planner estimates task difficulty and proposes a starting tier and escalation ceiling per role — e.g. `Generator: sonnet, ceiling opus; Fable rung: not pre-authorised`. The user approves it with the spec, which is also the moment they pre-authorise or withhold the credit-billed rung for this task. **Absent an explicit statement, the Fable rung is NOT pre-authorised.** A hard task should start at the tier the difficulty estimate demands — don't burn two cycles proving Sonnet can't do it.
+
+### Escalation ladder (capability-gated)
+
+Tier bumps happen on the Step-7 fail path, and ONLY when the Evaluator diagnoses a **capability failure** — reasonable approach, execution fell short. Spec ambiguity, brittle tests, scope creep, and wrong-approach failures do NOT escalate (they route to spec revision / plateau handling as before — a model bump can't fix a bad spec).
+
+- **Generator**: sonnet → opus after 2 consecutive capability-fails → **Fable 5 on the locked spec**, only with user consent (Model-plan pre-auth, or a fresh ask quoting est. credits). The Fable rung re-dispatches the *Generator*, not the chair: compact brief (spec + failure history + repo access), fresh context — Fable's one-shot strength on well-specified builds at minimum credit spend.
+- **Tester**: haiku → sonnet when the Evaluator flags test *quality* (shallow tests, ACs unmapped) rather than test results.
+- No de-escalation mid-task; new tasks start back at defaults.
+
+Log every escalation in `.vs/progress.md` (`escalated generator sonnet→opus: <one-line diagnosis>`) and, under `--cost`, in `cost.json`. Record the tier that finally passed in the pass verdict — over time that calibrates Planner's starting-tier estimates.
+
 ## Flags
 
+- `/vs --gen <haiku|sonnet|opus> <prompt>` — override the Generator's starting tier for this run.
+- `/vs --fable-gen <prompt>` — pre-authorise the Fable rung AND start the Generator there. The user is explicitly spending credits; still quote the estimated credit cost in the spec-approval message.
 - `/vs --max N <prompt>` — override the cycle ceiling. Default is whatever Planner proposes.
 - `/vs --fuzzy <prompt>` — run in fuzzy mode (Reviewer replaces Tester). Combinable with `--max`.
-- `/vs --cost <prompt>` — opt in to token-spend logging for this run only. Off by default. See Token-spend logging section for the trade-off (subagent tokens auto-captured; Opus Director/Evaluator tokens are NOT trackable from inside a session and require manual entry via `/cost`).
+- `/vs --cost <prompt>` — opt in to token-spend logging for this run only. Off by default. Subagent tokens auto-captured per dispatch; chair (Planner/Evaluator) tokens summed from the session's own transcript JSONL; `/budget` gives the month-to-date view without this flag.
 - `/vs --max-iter N <prompt>` — cap the Spec Critic loop at N iterations. Distinct from `--max` (which is the cycle ceiling); `--max-iter` controls only the Spec Critic loop. If the cap fires before convergence, Planner escalates to the user — does not silently auto-pass.
 - `/vs --plain <prompt>` (default ON) — output mode. Spec Critic critiques, Tester summaries, and Evaluator verdicts written in clear concise English with minimal under-the-hood terminology. Reviewable by readers who don't already have the harness vocabulary loaded. Inverse: `--techy`.
 - `/vs --techy <prompt>` — opt out of `--plain`. Spec Critic / Tester / Evaluator output uses terse technical shorthand assuming full context (e.g. "AC8 fails: lit-substring `2-5k tokens` absent from §SC body" rather than "the Semantic check section doesn't mention the expected token cost in the form the spec required").
@@ -81,7 +116,7 @@ Created at repo root.
   - **Fuzzy mode:** `cycle-N/reviewer-verdict.md` (Reviewer's written verdict with rationale) + `cycle-N/summary.md` (3-line summary: verdict line + concerns count + key concern).
   - `cycle-N/cost.json` — token-spend log. JSON array, one record per subagent dispatch, schema:
     ```json
-    {"role": "spec_critic|generator|tester|reviewer", "model": "sonnet|haiku|opus",
+    {"role": "spec_critic|generator|tester|reviewer", "model": "haiku|sonnet|opus|fable",
      "iteration": 1, "total_tokens": 0, "tool_uses": 0, "duration_ms": 0,
      "timestamp": "<ISO8601>"}
     ```
@@ -151,6 +186,7 @@ Write a first draft of `.vs/spec.md` with:
   - Rigorous: the detected/proposed test directory or file. Tester writes tests here. **Once Tester commits, tests are immutable — Generator cannot edit them.**
   - Fuzzy: a short bulleted list of what Reviewer should scrutinize hardest (e.g. "secret-handling paths", "error-swallowing silence"). No immutability rule because there's no test file.
 - **Proposed budget** — `N cycles` with a one-line rationale. If user passed `--max`, honor that.
+- **Model plan** — starting tier + escalation ceiling per role, with a one-line difficulty rationale, and an explicit `Fable rung: pre-authorised / not pre-authorised` line (see § Model economy). Honor `--gen` / `--fable-gen` if passed.
 
 Rigorous mode detects the repo's test convention (`tests/`, `test/`, `__tests__/`, `spec/`); if none, proposes `tests/`. Fuzzy mode skips this step.
 
@@ -188,11 +224,12 @@ Do NOT auto-pass on a plateau. Escalate.
 
 On `pass` (by any rule path): append task to `TODO.md` Open, show final spec + `spec critic: pass after N iteration(s)` note to user. Wait for approval. In fuzzy mode the user note also includes `mode: --fuzzy`.
 
-## Step 4 — Generate (Sonnet Generator subagent)
+## Step 4 — Generate (Generator subagent — tier per Model plan)
 
-Spawn `Agent(subagent_type: "general-purpose", model: "sonnet")`:
+Spawn `Agent(subagent_type: "general-purpose", model: "<Model plan tier>")` — `"sonnet"` unless the Model plan or the escalation ladder says otherwise; `"fable"` only when that rung is user-authorised:
 
 - Read `.vs/spec.md`. Source of truth.
+- Follow `superpowers:test-driven-development` when implementing against testable ACs — scratch red/green tests under `.vs/cycle-<N>/scratch-tests/` (gitignored with the rest of cycle-N; the spec's test directory stays Tester-only and immutable). Use `superpowers:systematic-debugging` on any bug-shaped AC before proposing a fix.
 - Implement to satisfy every acceptance criterion.
 - Rigorous mode: **do not touch files under the test directory named in spec.md.** Fuzzy mode: this rule doesn't apply (no test dir).
 - Do not guess what Tester / Reviewer will do. Build to the spec.
@@ -203,7 +240,7 @@ Spawn `Agent(subagent_type: "general-purpose", model: "sonnet")`:
 
 ### Step 5a — Test (Haiku 4.5 Tester) — RIGOROUS MODE ONLY
 
-Spawn `Agent(subagent_type: "general-purpose", model: "haiku", ...)`. Tester work is largely mechanical — Sonnet reserved for Generator, Opus for Planner/Evaluator, Haiku for this.
+Spawn `Agent(subagent_type: "general-purpose", model: "haiku", ...)` (or `"sonnet"` if the ladder escalated the Tester — see § Model economy). Tester work is largely mechanical — Sonnet reserved for Generator, the session model for Planner/Evaluator, Haiku for this. The Tester's brief includes `superpowers:verification-before-completion` discipline: no pass/fail claims without the fresh command output that backs them landing in `test-output.log`.
 
 Independence rule: Tester sees only `.vs/spec.md`, the test-dir layout, and the current source tree — NOT Generator's diff or report.
 
@@ -216,7 +253,7 @@ Tester's brief:
 
 ### Step 5b — Review (Sonnet Reviewer) — FUZZY MODE ONLY
 
-Spawn `Agent(subagent_type: "general-purpose", model: "sonnet")`. Reviewer needs judgment, not mechanical execution — Sonnet tier, same as Generator.
+Spawn `Agent(subagent_type: "code-reviewer", model: "sonnet")`. Reviewer needs judgment, not mechanical execution — Sonnet tier. The `code-reviewer` agent type is deliberate: its toolset is read-only (Bash/Read/Grep, no Edit/Write), so reviewer independence is structural, not just instructed.
 
 Independence rule: Reviewer sees only `.vs/spec.md`, the original user prompt (pasted into the Reviewer brief by Planner), and `.vs/cycle-<N>/diff.patch` — NOT Generator's report or reasoning.
 
@@ -238,7 +275,7 @@ Reviewer's brief:
 Read in this order, stopping as early as a clear verdict emerges:
 
 1. `.vs/cycle-<N>/summary.md` — quick pulse. Check for `Regressions:` line (rigorous) or verdict line (fuzzy).
-2. Rigorous: `.vs/cycle-<N>/test-output.log` if summary shows failures or you need detail.
+2. Rigorous: `.vs/cycle-<N>/test-output.log` — ALWAYS read this before a pass verdict, not only on failures. Never trust the Tester's summary claim; verify the raw runner output actually shows the passes (structural version of "producer's word is not evidence").
    Fuzzy: `.vs/cycle-<N>/reviewer-verdict.md` — read the per-criterion assessment and concerns.
 3. `.vs/cycle-<N>/diff.patch` — scope creep, dead code, swallowed errors, invariant violations. Check `CLAUDE.md § Invariants`.
 4. `.vs/cycle-<N>/generator-report.md` — only after forming your own view (avoids anchoring).
@@ -257,8 +294,8 @@ Default-fail on ambiguity. Adversarial by design.
 
 ## Step 7 — Iterate, accept, or escalate
 
-- **Pass:** append verdict block to `.vs/progress.md`. Move `TODO.md` entry to `## Done`. Commit with `/vs cycle <N>: pass` (or `/vs --fuzzy cycle <N>: pass`). Report to user: cycle number, key changes, how each criterion was verified (or in fuzzy mode, Reviewer's rationale highlights).
-- **Fail, cycles remaining:** append specifics to `.vs/progress.md`. Re-dispatch Generator as a *fresh* Sonnet subagent. Hand it: the spec, the failure list, and either the test-output.log (rigorous) or the reviewer-verdict.md (fuzzy). Do **not** hand rigorous-mode Tester's test code to Generator. Increment cycle counter, continue from Step 4.
+- **Pass:** append verdict block to `.vs/progress.md` (including the Generator tier that passed). Update `TODO.md` / `CHANGELOG.md` per convention. Commit with `/vs cycle <N>: pass` (or `/vs --fuzzy cycle <N>: pass`). Report to user: cycle number, key changes, how each criterion was verified (or in fuzzy mode, Reviewer's rationale highlights), and the final tier if the ladder escalated.
+- **Fail, cycles remaining:** first classify the failure cause — `capability | spec | test | scope`. Then apply § Model economy's ladder: `capability` twice in a row at the same tier → escalate the Generator one rung (asking the user first if the next rung is credit-billed and not pre-authorised); `spec` → spec revision path (restart cycle 1 by rule); `test` → Tester quality escalation or test regeneration; `scope` → re-brief, same tier. Append the classification + any escalation to `.vs/progress.md`. Re-dispatch Generator as a *fresh* subagent at the resolved tier. Hand it: the spec, the failure list, and either the test-output.log (rigorous) or the reviewer-verdict.md (fuzzy). Do **not** hand rigorous-mode Tester's test code to Generator. Increment cycle counter, continue from Step 4.
 - **Fail, ceiling hit:** compare summaries across cycles. Failure count trending down? New failures appearing? Report trajectory to user; ask whether to continue, abandon, or switch strategy.
 - **Plateau detection:** if three consecutive cycles show the same failure / concern set, flag proactively before the ceiling. Plateaus usually mean spec or approach is wrong, not effort.
 
@@ -266,7 +303,7 @@ Default-fail on ambiguity. Adversarial by design.
 
 **Default: OFF.** Without `--cost`, no `cost.json` is written, no `cost-summary.json` is computed, no cost line appears in the pass verdict — `/vs` runs identically to today's behavior with no observability overhead.
 
-**Why opt-in:** the token-spend tracker is structurally limited. Subagent dispatches (Spec Critic, Generator, Tester, Reviewer) each return a `<usage>` block with `total_tokens`, `tool_uses`, `duration_ms` — those Planner / Evaluator can capture mechanically. **The top-level Opus session (Planner + Evaluator — me) has no programmatic way to read its own token usage** (verified 2026-04-23 via Claude Code docs: no hook field, no env var, no CLI flag, no documented JSONL schema). So a "free" cost report would silently undercount the Opus contribution and give a misleading total. Opt-in keeps the harness honest about what it can and can't measure.
+**Why opt-in:** observability overhead. Subagent dispatches (Spec Critic, Generator, Tester, Reviewer) each return a `<usage>` block with `total_tokens`, `tool_uses`, `duration_ms` — captured mechanically. The chair's own tokens ARE now readable (superseding the 2026-04-23 "not trackable" finding): every session appends `message.usage` blocks to its own transcript at `~/.claude/projects/<slug>/<session-uuid>.jsonl`, so Planner/Evaluator usage is summed by parsing that file — the same mechanism `/budget` uses. Run `/budget` for the month-to-date rollup regardless of `--cost`.
 
 ### When `--cost` IS passed
 
@@ -274,22 +311,21 @@ At cycle 1 start, before launching Spec Critic, Planner prints to the user:
 
 ```
 cost logging enabled for this /vs run.
-  • Subagent tokens (Sonnet, Haiku) — auto-captured per dispatch.
-  • Opus tokens (Director + Evaluator) — NOT auto-trackable from inside a session.
-    To include them in the final report: run /cost in your terminal at any
-    point and tell me the number — I'll fold it in. Otherwise the report
-    will list Opus tokens as 'unknown'.
+  • Subagent tokens (per tier) — auto-captured per dispatch.
+  • Chair tokens (Planner + Evaluator) — summed from this session's own
+    transcript JSONL at rollup time (also visible any time via /budget).
+  • Credit-billed tokens (fable) — priced at $10/$50 per MTok in the report.
 ```
 
 Then for every `Agent(...)` call, parse the `<usage>` block and append to `/workspace/.vs/cycle-<N>/cost.json`. Schema:
 ```json
-{"role": "spec_critic|generator|tester|reviewer", "model": "sonnet|haiku|opus",
+{"role": "spec_critic|generator|tester|reviewer", "model": "haiku|sonnet|opus|fable",
  "iteration": 1, "total_tokens": 0, "tool_uses": 0, "duration_ms": 0,
  "timestamp": "<ISO8601>"}
 ```
 If the file doesn't exist, create it with an empty array first. If a result lacks a parseable `<usage>` block, log `total_tokens: null` + a `note` field; don't fail the cycle.
 
-If at any point the user volunteers an Opus token count (e.g. "I just ran /cost, it's 14823 tokens"), Evaluator records it in `/workspace/.vs/cycle-<N>/cost.json` with `role: "director_evaluator"`, `model: "opus"`, `total_tokens: <user-provided>`, `note: "user-provided via /cost"`.
+At rollup time, Evaluator sums the chair's own tokens by parsing the current session's transcript (`~/.claude/projects/<slug>/<session-uuid>.jsonl` — most-recently-modified file; sum `message.usage` input+output over the task's wall-clock span) and records the result in `cost.json` with `role: "director_evaluator"`, `model: "<session model>"`, `note: "transcript-summed"`.
 
 On Step-7 pass, Evaluator computes `/workspace/.vs/cost-summary.json` by reading every `cycle-N/cost.json` for this task. Schema:
 ```json
@@ -297,22 +333,28 @@ On Step-7 pass, Evaluator computes `/workspace/.vs/cost-summary.json` by reading
   "task_id": "...",
   "cycles": <N>,
   "subagent_calls": <count>,
-  "subagent_tokens_sonnet": <int>,
   "subagent_tokens_haiku": <int>,
+  "subagent_tokens_sonnet": <int>,
+  "subagent_tokens_opus": <int>,
+  "subagent_tokens_fable": <int>,
   "subagent_tokens_total": <int>,
-  "opus_tokens": <int or null>,
-  "opus_tokens_source": "user-provided" | "unknown",
+  "chair_tokens": <int or null>,
+  "chair_model": "<session model>",
+  "chair_tokens_source": "transcript-summed" | "unknown",
+  "est_credits_usd": <float or 0>,
   "wall_time_ms": <int>
 }
 ```
 Commit alongside the pass commit. The pass-verdict report to the user includes:
 ```
 cost: <N> cycles, <M> subagent calls, wall <Ts>
-  Sonnet (subagent): <S> tokens
   Haiku  (subagent): <H> tokens
-  Opus   (director + evaluator): <O> tokens   OR   unknown — run /cost to include
+  Sonnet (subagent): <S> tokens
+  Opus   (subagent): <O> tokens          (only if the ladder escalated)
+  Fable  (subagent): <F> tokens ≈ $<X>   (only if the Fable rung ran — credits)
+  Chair  (planner + evaluator, <model>): <C> tokens
 ```
-Sonnet and Haiku are kept on separate lines because their real per-token costs differ; aggregating them hides that.
+Tiers stay on separate lines because their real per-token costs differ; aggregating hides that. Fable is the only line that is money rather than quota — always show its $ estimate.
 
 No dollar estimates — Pro/Max is flat-rate; tokens are a rate-limit-pressure proxy, not money. If a future Anthropic billing model makes per-token cost meaningful for subscribers, revisit.
 
@@ -320,8 +362,19 @@ No dollar estimates — Pro/Max is flat-rate; tokens are a rate-limit-pressure p
 
 Skip everything in this section. No file writes under `.vs/cycle-N/cost.json` or `.vs/cost-summary.json`. No cost line in the pass verdict. The token-spend logging is purely opt-in observability.
 
+## Superpowers integration
+
+Superpowers is complementary discipline, not a rival harness — `/vs` supplies the adversarial structure, superpowers supplies per-role craft. Planner folds these into the subagent briefs (subagents invoke them via the Skill tool):
+
+- **Planner (you)**: ambiguous brief → `superpowers:brainstorming` BEFORE Step 2; a spec spanning multiple tasks → shape it with `superpowers:writing-plans`.
+- **Generator brief**: `superpowers:test-driven-development` for testable ACs (scratch tests only — never the spec's test dir); `superpowers:systematic-debugging` for bug-shaped ACs.
+- **Tester brief**: `superpowers:verification-before-completion` — claims require fresh command output.
+- **Evaluator (you)**: `superpowers:verification-before-completion` before any pass verdict; read `diff.patch` with `superpowers:requesting-code-review` heuristics.
+- Whole-task worktree isolation when the working tree must stay clean: `superpowers:using-git-worktrees`.
+
 ## Rules
 
+- **Ask before credits** — no credit-billed dispatch (Fable 5 from 8 Jul 2026), ever, without user consent: Model-plan pre-authorisation or a fresh ask quoting estimated credits. Inherited by `/vss` / `/vsss` as a hard-escalate item.
 - **Immutable tests (rigorous only)** — once Tester lands tests, nobody edits or removes them. If acceptance criteria change, Planner writes a revised spec and restarts cycle 1. Does not apply in fuzzy mode (no tests).
 - **Status-field mutations only** on `tasks.json`. No unstructured edits.
 - **Fresh subagents per cycle** — context reset over compaction. Continuity via `.vs/` files only.

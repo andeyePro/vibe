@@ -61,7 +61,15 @@ Fable 5 is billing-aware because its subscription status changed on 8 Jul 2026:
 - **Through 7 Jul 2026** it is included on Pro/Max at no extra cost — `vibe --fable` just launches (with a one-line reminder of the free window).
 - **From 8 Jul 2026** Fable 5 bills usage credits at API list rates ($10/MTok in, $50/MTok out) on top of your subscription. That collides with vibe's subscription-only-spend default, so `--fable` asks before launching (default No, falling back to your default model). Standing opt-in: `VIBE_FABLE_CREDITS_OK=1` in `~/.vibe/config`. Anthropic has said it intends to fold Fable 5 back into subscriptions once capacity allows — when that happens the gate date can be revisited.
 
-Getting the most from Fable 5 on a subscription: run the **main loop** on Fable (planning, architecture, review, long-horizon agentic work — where the frontier model earns its cost) and let vibe's shipped subagents do the mechanical work — `code-writer` and `shellcheck-fixer` pin Sonnet, `Explore`-style scans run on cheaper models. `/diet` composes well with a Fable session for the same reason.
+Getting the most from Fable 5 on a subscription: reserve it for genuinely huge or ambiguous tasks — its edge concentrates in long-horizon complex work, and on small scoped calls Opus is near-parity at zero extra cost. Two placements pay: `vibe --fable` as the session lead for a big ambiguous run, or the `/vs` escalation ladder's top rung (Fable as Generator on a locked spec — compact brief, fresh context, one-shot strength). Either way the mechanical work stays on subscription tiers — `/vs` pins Sonnet/Haiku for its worker roles, `code-writer` and `shellcheck-fixer` pin Sonnet. `/diet` composes well with a Fable session for the same reason.
+
+### Overnight auto-resume
+
+`/vsss --auto-resume N` (inside a session) writes a `.vss/auto-resume` marker. If the session later dies — typically 5-hour-window credit exhaustion — the launcher notices the active marker after `claude` exits, counts down to the estimated window reset (Ctrl-C cancels; deleting the marker deactivates), then relaunches `claude --continue "/vsss --resume"`, up to N times. The `/vsss` loop clears the marker whenever it exits cleanly, so finished runs never relaunch.
+
+### Budget visibility
+
+`/budget` (inside any session) reports month-to-date tokens per model across all vibe sessions on this machine, with estimated Fable 5 credit spend at list rates. Estimates, not invoices — the authoritative credit balance is the Anthropic console.
 
 ## Host-side state
 

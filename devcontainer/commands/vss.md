@@ -4,7 +4,7 @@ description: Versus Solo — autonomous one-shot. No args = pick from TODO.md (o
 
 # /vss — versus solo
 
-You are top-level Opus. `/vss` runs autonomously: no mid-flow approvals from the user except when an item on the **hard-escalate list** is hit. The point is one bounded unit of work end-to-end without back-and-forth.
+You are the top-level session model (Opus by default; Fable 5 if launched via `vibe --fable`). `/vss` runs autonomously: no mid-flow approvals from the user except when an item on the **hard-escalate list** is hit. The point is one bounded unit of work end-to-end without back-and-forth.
 
 `$ARGUMENTS` may be empty (Mode A) or a task brief (Mode B).
 
@@ -18,6 +18,7 @@ Stop and surface to the user — do NOT autonomously proceed when:
 - **Destructive git.** Force-push, branch-delete, `git reset --hard`, hook bypass (`--no-verify`, `--no-gpg-sign`).
 - **`/learnings` writes.** The write-confirm hook will block these anyway; don't fight it. Tell the user to run `vibe learn` host-side.
 - **Firewall / hook / settings perms.** Edits to `init-firewall.sh`, `guard-bash.sh`, `guard-fs.sh`, `settings.local.json` permission lists.
+- **Credit-billed model dispatch.** Any Fable 5 (or other usage-credit) subagent dispatch or `/vs` Fable rung that was not pre-authorised by the user in an approved Model plan. Subscription tiers (haiku/sonnet/opus) never need this.
 - **Scope creep beyond the announced plan.** If execution reveals the task is materially bigger than planned, stop and re-plan with the user.
 - **Anything explicitly flagged in `~/.claude/CLAUDE.md` or `/workspace/CLAUDE.md`** as needing user authorisation per turn.
 
@@ -84,7 +85,10 @@ Dispatch `Agent(subagent_type: "general-purpose", model: "opus")` with this brie
 > - `/vs --fuzzy` — adversarial review needed but no test gate possible. Reviewer judgment, not mechanical.
 > - A specific Superpowers skill (name it from the current set: `using-superpowers`, `brainstorming`, `writing-plans`, `executing-plans`, `subagent-driven-development`, `dispatching-parallel-agents`, `test-driven-development`, `systematic-debugging`, `requesting-code-review`, `receiving-code-review`, `verification-before-completion`, `finishing-a-development-branch`, `using-git-worktrees`, `writing-skills`) — when the task fits a Superpowers methodology cleanly. Run `bash devcontainer/check-sp-current.sh` if uncertain whether the upstream list has drifted.
 > - `/sp` — when broad Superpowers discipline applies but no single skill dominates.
+> - `/loop <interval> <cmd>` — the task is recurring or polling-shaped (watch a deploy, re-run a check) rather than one-shot.
 > - **Direct in-session edit** — task is small, concrete, mechanically bounded. Most documentation, single-file changes, and config updates fall here.
+>
+> Also choose the `/vs` Generator tier (`--gen haiku|sonnet|opus`) from the task's difficulty per `/vs § Model economy`; never pick a credit-billed tier — that is hard-escalate territory.
 >
 > Output: chosen mode, one-line rationale, and the literal command or flow the executor will run. Read `MEMORY.md` and apply Martin's preferences (intelligent caveman brevity, robust-100%-solutions-pre-alpha, no em dashes, concrete commands).
 >
