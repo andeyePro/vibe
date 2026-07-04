@@ -399,6 +399,46 @@ fable_billing_phase() {
   fi
 }
 
+# ── Auto-resume helpers (marker-driven relaunch after credit exhaustion) ──────
+# /vsss --auto-resume N writes .vss/auto-resume in the project as KEY=VALUE
+# lines: active (1/0), remaining (relaunches left), resume_at (epoch estimate
+# of the 5h-window reset), session_file. When claude exits while the marker is
+# active with relaunches remaining, the launcher waits until resume_at and
+# relaunches `claude --continue "/vsss --resume"`. The skill sets active=0 at
+# any clean Final-state exit, so finished loops never relaunch. Manual
+# override: delete .vss/auto-resume, or Ctrl-C during the countdown.
+
+# auto_resume_field <file> <key> — echoes the last value for key, digits only
+# (missing file, missing key, or non-numeric value → echoes nothing). Keeping
+# the charset numeric makes the arithmetic and relaunch logic injection-proof.
+auto_resume_field() {
+  local file="$1" key="$2" val
+  [ -f "$file" ] || return 0
+  val=$(grep -E "^${key}=" "$file" 2>/dev/null | tail -1 | cut -d= -f2)
+  case "$val" in
+    ''|*[!0-9]*) ;;
+    *) echo "$val" ;;
+  esac
+}
+
+# auto_resume_pending <file> — true when the marker asks for a relaunch:
+# active=1 and remaining >= 1. Fails safe: any malformed field means no loop.
+auto_resume_pending() {
+  local file="$1" active remaining
+  active=$(auto_resume_field "$file" active)
+  remaining=$(auto_resume_field "$file" remaining)
+  [ "$active" = "1" ] && [ -n "$remaining" ] && [ "$remaining" -ge 1 ]
+}
+
+# auto_resume_decrement <file> — rewrite the marker with remaining reduced by
+# one. awk-to-temp instead of sed -i (BSD/GNU sed -i syntax differs).
+auto_resume_decrement() {
+  local file="$1" tmp
+  tmp="${file}.tmp.$$"
+  awk -F= 'BEGIN{OFS="="} $1=="remaining" && $2 ~ /^[0-9]+$/ {$2=$2-1} {print}' \
+    "$file" > "$tmp" && mv "$tmp" "$file"
+}
+
 # ── Learning library helpers ──────────────────────────────────────────────────
 # All helpers are defined here, BEFORE the VIBE_SOURCE_ONLY guard, so that
 # smoke-test.py can unit-test them via VIBE_SOURCE_ONLY=1.
@@ -1515,7 +1555,47 @@ fi
 # to [A-Za-z0-9._-] by is_model_id, so embedding it is injection-safe.
 CLAUDE_RESUME_ARGS=$(build_claude_resume_args)
 CLAUDE_MODEL_ARGS=$(build_claude_model_args)
-devcontainer exec \
-  --workspace-folder "$WORKSPACE" \
-  --override-config "$OVERRIDE_CONFIG" \
-  /bin/bash --noprofile --norc -c "exec env SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 claude ${CLAUDE_RESUME_ARGS:+$CLAUDE_RESUME_ARGS }${CLAUDE_MODEL_ARGS:+$CLAUDE_MODEL_ARGS }--permission-mode bypassPermissions"
+
+# launch_claude <resume-args> <initial-prompt>
+#   $1 — "" / "--continue" / "--resume" / "--resume <uuid>" (parser-validated)
+#   $2 — optional initial prompt. Only ever a FIXED LITERAL from this script
+#        (currently "/vsss --resume") — never user input — so single-quoting
+#        it into the container command string is injection-safe.
+launch_claude() {
+  devcontainer exec \
+    --workspace-folder "$WORKSPACE" \
+    --override-config "$OVERRIDE_CONFIG" \
+    /bin/bash --noprofile --norc -c "exec env SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 claude ${1:+$1 }${CLAUDE_MODEL_ARGS:+$CLAUDE_MODEL_ARGS }--permission-mode bypassPermissions${2:+ '$2'}"
+}
+
+# `|| true`: claude's exit status must not kill the launcher under set -e —
+# the auto-resume loop below is exactly for the died-mid-run case.
+launch_claude "$CLAUDE_RESUME_ARGS" "" || true
+
+# ── Auto-resume loop ──────────────────────────────────────────────────────────
+# Engages only when /vsss --auto-resume N left an active marker (see the
+# auto_resume_* helpers above). Waits out the 5h-window reset, then relaunches
+# the conversation with a literal "/vsss --resume" prompt. Ctrl-C during the
+# countdown cancels; deleting .vss/auto-resume deactivates permanently.
+AUTO_RESUME_MARKER="$WORKSPACE/.vss/auto-resume"
+while auto_resume_pending "$AUTO_RESUME_MARKER"; do
+  _ar_remaining=$(auto_resume_field "$AUTO_RESUME_MARKER" remaining)
+  _ar_resume_at=$(auto_resume_field "$AUTO_RESUME_MARKER" resume_at)
+  _ar_now=$(date +%s)
+  # No usable reset estimate → 30 min default; estimate already past → 2 min
+  # grace. Both bound a tight relaunch loop if the window hasn't really reset.
+  _ar_wait=1800
+  if [ -n "$_ar_resume_at" ]; then
+    if [ "$_ar_resume_at" -gt "$_ar_now" ]; then
+      _ar_wait=$(( _ar_resume_at - _ar_now + 120 ))
+    else
+      _ar_wait=120
+    fi
+  fi
+  echo ""
+  echo "  ◆ auto-resume: /vsss marker active, ${_ar_remaining} relaunch(es) left."
+  echo "    Relaunching claude --continue in $(( _ar_wait / 60 ))m $(( _ar_wait % 60 ))s — Ctrl-C to cancel, or delete .vss/auto-resume."
+  sleep "$_ar_wait"
+  auto_resume_decrement "$AUTO_RESUME_MARKER"
+  launch_claude "--continue" "/vsss --resume" || true
+done

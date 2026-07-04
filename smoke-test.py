@@ -951,6 +951,35 @@ def test_vibe_fable_billing_phase() -> None:
               f"OUT=[{expected}]" in r.stdout, r.stdout + r.stderr)
 
 
+def test_vibe_auto_resume_helpers() -> None:
+    print("\n[vibe auto-resume marker helpers]")
+    snippet = (
+        'm="${TMPDIR:-/tmp}/vibe-ar-test.$$"; '
+        "printf 'active=1\\nremaining=2\\nresume_at=1751600000\\n' > \"$m\"; "
+        'echo "FIELD=[$(auto_resume_field "$m" remaining)]"; '
+        'echo "BADKEY=[$(auto_resume_field "$m" nope)]"; '
+        'if auto_resume_pending "$m"; then echo "PENDING=[yes]"; else echo "PENDING=[no]"; fi; '
+        'auto_resume_decrement "$m"; auto_resume_decrement "$m"; '
+        'echo "AFTER=[$(auto_resume_field "$m" remaining)]"; '
+        'if auto_resume_pending "$m"; then echo "PENDING2=[yes]"; else echo "PENDING2=[no]"; fi; '
+        "printf 'active=1\\nremaining=evil; rm -rf /\\n' > \"$m\"; "
+        'echo "EVIL=[$(auto_resume_field "$m" remaining)]"; '
+        'if auto_resume_pending "$m"; then echo "PENDING3=[yes]"; else echo "PENDING3=[no]"; fi; '
+        'if auto_resume_pending "$m.missing"; then echo "PENDING4=[yes]"; else echo "PENDING4=[no]"; fi; '
+        'rm -f "$m"'
+    )
+    r = _source_vibe_call({}, snippet)
+    check("exits 0", r.returncode == 0, r.stderr)
+    check("numeric field read", "FIELD=[2]" in r.stdout, r.stdout)
+    check("missing key → empty", "BADKEY=[]" in r.stdout, r.stdout)
+    check("pending when active + remaining", "PENDING=[yes]" in r.stdout, r.stdout)
+    check("decrement twice → 0", "AFTER=[0]" in r.stdout, r.stdout)
+    check("not pending at remaining=0", "PENDING2=[no]" in r.stdout, r.stdout)
+    check("non-numeric value rejected", "EVIL=[]" in r.stdout, r.stdout)
+    check("not pending on malformed marker", "PENDING3=[no]" in r.stdout, r.stdout)
+    check("not pending on missing file", "PENDING4=[no]" in r.stdout, r.stdout)
+
+
 def test_vibe_help_mentions_fable_and_model() -> None:
     print("\n[vibe --help mentions --fable and --model]")
     with tempfile.TemporaryDirectory() as td:
@@ -2561,8 +2590,12 @@ def test_vibe_final_line_no_exec() -> None:
     check("[/c] vibe does not have 'exec devcontainer exec'", len(exec_prefix_lines) == 0,
           f"found {len(exec_prefix_lines)} lines with 'exec devcontainer exec'")
 
-    # Check: at least one line matches "^devcontainer exec " (without exec prefix)
-    no_exec_lines = [l for l in lines if l.startswith('devcontainer exec ')]
+    # Check: at least one line invokes "devcontainer exec" without an exec
+    # prefix (since 2026-07-04 it lives indented inside launch_claude(), so
+    # match on the stripped line).
+    no_exec_lines = [l for l in lines
+                     if l.strip().startswith('devcontainer exec')
+                     and not l.strip().startswith('exec ')]
     check("[/c] vibe has 'devcontainer exec' (without exec prefix)", len(no_exec_lines) > 0,
           "no 'devcontainer exec' line found")
 
@@ -5101,10 +5134,12 @@ def test_vsss_md_inherits_escalate_and_budget() -> None:
           "`/vsss --resume`" in content, "")
     check("[vsss] resume budget arithmetic documented",
           "Resume budget arithmetic" in content or "Resumption budget" in content or "remaining budget" in content.lower(), "")
-    check("[vsss] auto-resume marked out-of-scope (host-launcher)",
-          "host-launcher" in content.lower() or "host-side launcher" in content.lower(), "")
-    check("[vsss] auto-resume marker file path proposed",
-          ".vss/auto-resume.json" in content or ".vss/auto-resume" in content, "")
+    check("[vsss] auto-resume flag + launcher integration documented",
+          "--auto-resume" in content and "Launcher side" in content, "")
+    check("[vsss] auto-resume marker cleared on clean exit",
+          "active=0" in content, "")
+    check("[vsss] auto-resume marker file path named",
+          ".vss/auto-resume" in content, "")
     check("[vsss] no stale .vss/loop.md references",
           ".vss/loop.md" not in content,
           "found .vss/loop.md - per-session audit replaced loop.md 2026-05-07")
@@ -5778,6 +5813,7 @@ def main() -> int:
     test_vibe_model_args_fresh()
     test_vibe_model_args_set()
     test_vibe_fable_billing_phase()
+    test_vibe_auto_resume_helpers()
     test_vibe_help_mentions_fable_and_model()
     test_ac1_no_container()
     test_ac2_matching_image()
