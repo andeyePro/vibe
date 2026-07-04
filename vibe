@@ -9,6 +9,7 @@
 #   vibe --continue          # resume the most recent Claude conversation in this dir
 #   vibe --resume            # interactively pick a Claude conversation to resume
 #   vibe --resume <uuid>     # resume a specific Claude conversation by id
+#   vibe --fable             # launch on Claude Fable 5 (frontier model; billing-aware)
 #   vibe --model <id>        # launch on a specific Claude model id
 #   vibe --list              # list available projects
 #   vibe --help              # show this help
@@ -31,9 +32,12 @@
 # handover lives in TODO.md, CLAUDE.md, and Claude's auto-memory, not in
 # resumed conversations (which accumulate compaction debt over weeks).
 #
-# Model selection: --model applies per-launch (it does not change the model
-# Claude Code has persisted as your default). A default can be set in
-# ~/.vibe/config with VIBE_MODEL="claude-opus-4-8"; flags win over config.
+# Model selection: --fable / --model apply per-launch (they do not change the
+# model Claude Code has persisted as your default). A default can be set in
+# ~/.vibe/config with VIBE_MODEL="claude-fable-5"; flags win over config.
+# Fable 5 is included in Pro/Max subscriptions until 7 Jul 2026; from 8 Jul
+# it bills usage credits at API rates, so vibe asks before launching it then
+# (skip the ask with VIBE_FABLE_CREDITS_OK=1 in ~/.vibe/config).
 
 set -euo pipefail
 
@@ -355,9 +359,14 @@ is_uuid() {
   [[ "${1:-}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]
 }
 
-# ── Model selection (--model / VIBE_MODEL) ───────────────────────────────────
+# ── Model selection (--fable / --model / VIBE_MODEL) ──────────────────────────
 # All defined above the VIBE_SOURCE_ONLY guard so smoke-test.py can unit-test
 # them. MODEL_ARG is set by parse_vibe_args (flags) or from VIBE_MODEL (config).
+
+FABLE_MODEL_ID="claude-fable-5"
+# Fable 5 is included in Pro/Max subscriptions 9 Jun – 7 Jul 2026; from 8 Jul it
+# bills usage credits at API list rates instead (per Anthropic's launch notice).
+FABLE_CREDITS_FROM="20260708"
 
 # Model ids are embedded into the bash -c command string passed to the
 # container, so restrict them to a safe charset (letters, digits, dot, dash,
@@ -374,6 +383,19 @@ is_model_id() {
 build_claude_model_args() {
   if [ -n "${MODEL_ARG:-}" ]; then
     echo "--model $MODEL_ARG"
+  fi
+}
+
+# fable_billing_phase [yyyymmdd] — echoes "free" before the credits cutover
+# date, "credits" from it onward. Date injectable for tests; defaults to the
+# host's local date (day-level precision is enough for a billing notice).
+# shellcheck disable=SC2120  # the optional date arg is passed only by tests
+fable_billing_phase() {
+  local today="${1:-$(date +%Y%m%d)}"
+  if [ "$today" -lt "$FABLE_CREDITS_FROM" ]; then
+    echo "free"
+  else
+    echo "credits"
   fi
 }
 
@@ -1067,10 +1089,11 @@ parse_vibe_args() {
     case "$1" in
       --rebuild) REBUILD=true; shift ;;
       --continue) CONTINUE=true; shift ;;
+      --fable) MODEL_ARG="$FABLE_MODEL_ID"; shift ;;
       --model)
         shift
         if ! is_model_id "${1:-}"; then
-          echo "--model needs a model id (e.g. claude-opus-4-8), got: '${1:-}'" >&2
+          echo "--model needs a model id (e.g. claude-fable-5), got: '${1:-}'" >&2
           exit 1
         fi
         MODEL_ARG="$1"; shift
@@ -1126,7 +1149,7 @@ if [ "$CONTINUE" = true ] && [ "$RESUME" = true ]; then
   exit 1
 fi
 
-# ── Model selection: config default ──────────────────────────────────────────
+# ── Model selection: config default + Fable billing gate ─────────────────────
 # Flags win over the VIBE_MODEL config default. An invalid VIBE_MODEL is
 # ignored with a warning rather than blocking the launch.
 if [ -z "$MODEL_ARG" ] && [ -n "${VIBE_MODEL:-}" ]; then
@@ -1134,6 +1157,28 @@ if [ -z "$MODEL_ARG" ] && [ -n "${VIBE_MODEL:-}" ]; then
     MODEL_ARG="$VIBE_MODEL"
   else
     echo "  ⚠ Ignoring invalid VIBE_MODEL in config: '$VIBE_MODEL'" >&2
+  fi
+fi
+
+# Fable 5 left Pro/Max subscription cover on 8 Jul 2026 (usage credits at API
+# list rates from then on). vibe's default posture is subscription-only spend,
+# so from the cutover the launch needs a per-run confirm or a standing opt-in
+# (VIBE_FABLE_CREDITS_OK=1 in ~/.vibe/config). Before the cutover it's free.
+if [ "$MODEL_ARG" = "$FABLE_MODEL_ID" ]; then
+  if [ "$(fable_billing_phase)" = "free" ]; then
+    echo "  ◆ Fable 5: included in your Pro/Max subscription at no extra cost until 7 Jul 2026."
+  elif [ "${VIBE_FABLE_CREDITS_OK:-}" = "1" ]; then
+    echo "  ◆ Fable 5: billing usage credits at API rates (VIBE_FABLE_CREDITS_OK=1)."
+  else
+    echo "  ⚠ Fable 5 is no longer included in Pro/Max subscriptions (since 8 Jul 2026)."
+    echo "    Sessions bill usage credits at API list rates (\$10/MTok in, \$50/MTok out)"
+    echo "    ON TOP of your subscription. vibe's default is subscription-only spend."
+    if ask_yes_no "Launch with Fable 5 anyway?" n; then
+      echo "  ◆ Launching on Fable 5 (usage credits). Set VIBE_FABLE_CREDITS_OK=1 in ~/.vibe/config to skip this ask."
+    else
+      MODEL_ARG=""
+      echo "  ◆ Launching on your default model instead."
+    fi
   fi
 fi
 
