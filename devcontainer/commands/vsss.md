@@ -24,6 +24,7 @@ At the very start of `/vsss`, before any work:
    - `/vsss --hours N <args>` — canonical. `N` is a positive integer or decimal (e.g. `2`, `2.5`, `0.5`). Sets the budget cap to `N` hours from `START_TIME`.
    - `/vsss --budget Nh <args>` — backward-compatible alias. Same semantics; `Nh` parsed as a positive integer or decimal followed by literal `h`.
    - `/vsss --budget Nm <args>` — minutes form, for short-runs (e.g. `--budget 30m`).
+   - `/vsss --auto-resume N <args>` — combinable with the budget flags; opts in to automatic relaunch across up to N credit-exhaustion halts (see § Auto-resume across halts).
    - No flag → 5h default. Intended to consume a full Pro/Max session when `/vsss` is invoked at session start.
 
    There is no graceful-shutdown cushion — if the loop is approaching the cap, the optimiser should bias toward "stop the loop" (perfection gate) so pending work is committed cleanly before the cap rather than mid-iteration. If you want a softer cap, pass `--hours 4` explicitly.
@@ -69,15 +70,26 @@ If remaining budget is negative (clock-wall exceeded the original cap during the
 4. Append a new `## Resumption — <ISO>` block to the session file noting: timestamp of resumption, hours-elapsed-during-halt, budget-remaining, the iter we're picking up at.
 5. Continue the loop from the next iter per the original priority queue / optimiser logic.
 
-### Auto-resume across halts (host-launcher feature, NOT in this spec)
+### Auto-resume across halts (`--auto-resume N` — shipped 2026-07-04)
 
-The user's stated long-term goal: automatic continuation across N out-of-session-tokens halts without manual `vibe --continue` invocation. This requires host-side launcher integration:
+`/vsss --auto-resume N <args>` opts in to automatic continuation across up to N out-of-session-credit halts. Skill side (this spec) and launcher side (`/workspace/vibe`) split the work:
 
-- A marker file (e.g. `.vss/auto-resume.json` containing `{ "active": true, "remaining_halts": N, "session_file": "<path>" }`) written by `/vsss --auto-resume N`.
-- The vibe launcher (`/workspace/vibe`) checking the marker on every container start. If `active: true` and `remaining_halts > 0`, the launcher invokes `claude --continue` automatically and decrements the counter.
-- Exhaustion detection: when claude session ends, the launcher distinguishes "session ran out of tokens" (auto-resume eligible) from "user typed /exit" (do not auto-resume; clear marker). Heuristic: if claude's exit code or last-stderr indicates 5h-cap-hit, treat as token exhaustion.
+**Skill side — you maintain the marker.** At session start, write `.vss/auto-resume` (KEY=VALUE lines, digits only — the launcher rejects anything else):
 
-This requires changes to `/workspace/vibe` (host-side bash) and possibly to the Mac-side `~/.zshrc` wrapper. **Out of scope for the `/vsss` slash-command body.** Tracked as a separate TODO entry.
+```
+active=1
+remaining=<N>
+resume_at=<START_TIME + 5*3600, epoch seconds>
+session_file=.vss/sessions/<start-ISO>.md
+```
+
+- `resume_at` is the best estimate of the 5h-window reset (the window may have opened before `/vsss` did, so it can be late — the launcher pads it). Refresh the whole marker at the top of every iteration (cheap, atomic: write to `.vss/auto-resume.tmp`, `mv` over).
+- **On ANY clean exit** (perfection gate, budget cap, hard-escalate abort, three no-op iterations — anything that writes `## Final state`), rewrite the marker with `active=0`. A finished loop must never relaunch. This is part of the atomic exit write; do not skip it on aborts.
+- Without `--auto-resume`, never write the marker (and set `active=0` in any stale one you find at start).
+
+**Launcher side (already implemented in `/workspace/vibe`).** When claude exits while the marker says `active=1` and `remaining>=1`, the launcher counts down to `resume_at` (+2 min pad; 30 min fallback if the field is unusable; Ctrl-C cancels), decrements `remaining`, and relaunches `claude --continue "/vsss --resume"` — which lands in this spec's Resumption protocol above. The relaunch cost is one halt from the N budget, whatever the halt cause was — the launcher cannot reliably distinguish credit exhaustion from a crash, and both are legitimate resume cases; a user-typed `/exit` mid-run also triggers the countdown, which is why the countdown is loud and cancellable.
+
+**Budget arithmetic under auto-resume.** Overriding the resume-budget rule above for this mode only: each auto-resumed window gets a FRESH `BUDGET_HOURS` allowance (the whole point is spanning multiple 5h windows); `remaining` is what bounds total run length. `--hours` still caps each window individually.
 
 ## Loop structure
 
