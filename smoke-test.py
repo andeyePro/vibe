@@ -5917,6 +5917,28 @@ def test_contributor_onboarding_artifacts() -> None:
         check("[onboard] PR template cites CHANGELOG + MANUAL-TESTS conventions",
               "CHANGELOG.md" in p and "MANUAL-TESTS.md" in p, "")
 
+    onboarding = REPO / "ONBOARDING.md"
+    check("[onboard] ONBOARDING.md exists", onboarding.exists(), str(onboarding))
+    if onboarding.exists():
+        o = onboarding.read_text()
+        check("[onboard] ONBOARDING.md addresses the assisting Claude",
+              "assisting Claude" in o, "")
+        check("[onboard] ONBOARDING.md installs from andeyePro/vibe",
+              "andeyePro/vibe/main/install.sh" in o, "")
+        check("[onboard] ONBOARDING.md verifies with vibe --version",
+              "vibe --version" in o, "")
+
+    contributors = REPO / "CONTRIBUTORS.md"
+    check("[onboard] CONTRIBUTORS.md exists", contributors.exists(), str(contributors))
+    if contributors.exists():
+        c = contributors.read_text()
+        check("[onboard] CONTRIBUTORS.md carries the revenue-share ledger framing",
+              "revenue" in c.lower() and "ledger" in c.lower(), "")
+
+    claude_md = REPO / "CLAUDE.md"
+    check("[onboard] CLAUDE.md routes arriving Claudes to ONBOARDING.md",
+          claude_md.exists() and "ONBOARDING.md" in claude_md.read_text(), "")
+
 
 def main() -> int:
     test_help()
