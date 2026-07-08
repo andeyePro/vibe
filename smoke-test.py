@@ -5245,8 +5245,10 @@ def test_vsss_md_inherits_escalate_and_budget() -> None:
           "`/vsss --resume`" in content, "")
     check("[vsss] resume budget arithmetic documented",
           "Resume budget arithmetic" in content or "Resumption budget" in content or "remaining budget" in content.lower(), "")
-    check("[vsss] auto-resume flag + launcher integration documented",
-          "--auto-resume" in content and "Launcher side" in content, "")
+    check("[vsss] --sessions flag + launcher integration documented",
+          "--sessions X" in content and "Launcher side" in content, "")
+    check("[vsss] --sessions semantics are total windows (X-1 relaunches)",
+          "X-1" in content, "")
     check("[vsss] auto-resume marker cleared on clean exit",
           "active=0" in content, "")
     check("[vsss] auto-resume marker file path named",
