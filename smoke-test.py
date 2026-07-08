@@ -299,12 +299,26 @@ def test_docker_hints_non_dict_features() -> None:
               data.get("features") == {"hints": "false"}, cfg.read_text())
 
 
+def _stub_dep_bin(tmp: Path) -> str:
+    """A bin dir of no-op stubs for vibe's runtime deps, prepended to PATH so
+    install.sh's dependency preflight passes regardless of what the host has
+    installed. For tests that exercise post-preflight behaviour (clone
+    detection, symlink) rather than the preflight itself."""
+    stub = tmp / "stubbin"
+    stub.mkdir()
+    for cmd in ("git", "docker", "node", "devcontainer", "gh"):
+        p = stub / cmd
+        p.write_text("#!/bin/sh\nexit 0\n")
+        p.chmod(0o755)
+    return f"{stub}:{os.environ.get('PATH', '')}"
+
+
 def test_install_detects_local_clone() -> None:
     """install.sh run from a real clone should use it in-place, not touch ~/.vibe-src."""
     print("\n[install.sh: detects local clone]")
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
-        env = {**os.environ, "HOME": str(tmp)}
+        env = {**os.environ, "HOME": str(tmp), "PATH": _stub_dep_bin(tmp)}
         # Pre-seed config so the installer doesn't prompt for a projects dir.
         (tmp / ".vibe").mkdir()
         (tmp / ".vibe" / "config").write_text(f'VIBE_PROJECTS_DIR="{tmp}/Projects"\n')
@@ -332,7 +346,7 @@ def test_install_falls_back_to_vibe_src() -> None:
         tmp = Path(td)
         standalone = tmp / "install.sh"
         standalone.write_text(INSTALL.read_text())
-        env = {**os.environ, "HOME": str(tmp)}
+        env = {**os.environ, "HOME": str(tmp), "PATH": _stub_dep_bin(tmp)}
         (tmp / ".vibe").mkdir()
         (tmp / ".vibe" / "config").write_text(f'VIBE_PROJECTS_DIR="{tmp}/Projects"\n')
         r = run(["bash", str(standalone)], env=env, cwd=tmp)
