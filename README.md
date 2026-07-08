@@ -10,7 +10,7 @@ A single-command containerised Claude Code environment. `cd my-project && vibe` 
 - SSH out to remote dev machines (Raspberry Pis, lab boxes, anything you've keyed). Host `~/.ssh` is bind-mounted read-only; a sanitised writable copy lives inside the container.
 - Opt-in cross-org learning library via `vibe learn --init` — you pick where it lives, public or private. Capture is manual; auto-promotion is planned. **Security note:** the bind-mount is read-write on macOS regardless of the `readonly` flag (Docker Desktop / OrbStack `fakeowner` quirk), so a PreToolUse hook gates writes — every Write, Edit, or MultiEdit touching `/learnings` prompts for confirmation. Bash redirects, `tee`, `cp`, `mv`, `rm` etc. are hooked too as defense-in-depth (acknowledged bypass classes in `devcontainer/guard-bash.sh`).
 - Slash commands, subagents, and Stop hooks pre-installed. Type `/help` once inside to discover them; `/sp` applies Superpowers methodology, `/vs` runs an adversarial coding harness (see below), `/vss` and `/vsss` automate it. Anything unfamiliar surfaces a one-liner when you first hit it.
-- Two house rules baked into every Claude session via a managed `~/.claude/CLAUDE.md` block: try WebSearch before declaring a URL unreachable, and ask before SSHing out of the container (set `VIBE_SSH_AUTO=1` in `~/.vibe/config`, or `touch .vibe-allow-ssh` in a project, to opt into autonomous SSH per project).
+- House rules baked into every Claude session via a managed `~/.claude/CLAUDE.md` block — among them: try WebSearch before declaring a URL unreachable, and ask before SSHing out of the container (set `VIBE_SSH_AUTO=1` in `~/.vibe/config`, or `touch .vibe-allow-ssh` in a project, to opt into autonomous SSH per project).
 
 ## Adversarial coding mode `/vs`
 
@@ -56,10 +56,7 @@ Fresh conversation is the default — durable memory lives in `TODO.md`, `CLAUDE
 
 `--fable` and `--model <id>` apply per-launch; they don't change the default model Claude Code has persisted in its shared config volume. Set a standing default with `VIBE_MODEL="<id>"` in `~/.vibe/config` (flags win over config). Inside a session, `/model` still works as usual.
 
-Fable 5 is billing-aware because its subscription status changed on 8 Jul 2026:
-
-- **Through 7 Jul 2026** it is included on Pro/Max at no extra cost — `vibe --fable` just launches (with a one-line reminder of the free window).
-- **From 8 Jul 2026** Fable 5 bills usage credits at API list rates ($10/MTok in, $50/MTok out) on top of your subscription. That collides with vibe's subscription-only-spend default, so `--fable` asks before launching (default No, falling back to your default model). Standing opt-in: `VIBE_FABLE_CREDITS_OK=1` in `~/.vibe/config`. Anthropic has said it intends to fold Fable 5 back into subscriptions once capacity allows — when that happens the gate date can be revisited.
+Fable 5 is billing-aware: since 8 Jul 2026 it bills usage credits at API list rates ($10/MTok in, $50/MTok out) on top of your subscription. That collides with vibe's subscription-only-spend default, so `--fable` asks before launching (default No, falling back to your default model). Standing opt-in: `VIBE_FABLE_CREDITS_OK=1` in `~/.vibe/config`. Anthropic has said it intends to fold Fable 5 back into subscriptions once capacity allows — the gate can be revisited then.
 
 Getting the most from Fable 5 on a subscription: reserve it for genuinely huge or ambiguous tasks — its edge concentrates in long-horizon complex work, and on small scoped calls Opus is near-parity at zero extra cost. Two placements pay: `vibe --fable` as the session lead for a big ambiguous run, or the `/vs` escalation ladder's top rung (Fable as Generator on a locked spec — compact brief, fresh context, one-shot strength). Either way the mechanical work stays on subscription tiers — `/vs` pins Sonnet/Haiku for its worker roles, `code-writer` and `shellcheck-fixer` pin Sonnet. `/diet` composes well with a Fable session for the same reason.
 
@@ -84,7 +81,7 @@ Getting the most from Fable 5 on a subscription: reserve it for genuinely huge o
 
 ## Security model
 
-- **Network:** iptables firewall allows only npm, GitHub, Claude API, DNS, SSH.
+- **Network:** iptables firewall allows only an allowlist of hosts a coding session needs (GitHub, npm, Anthropic, VS Code marketplace, a few opt-in extras — the list is `devcontainer/init-firewall.sh`), plus DNS and outbound SSH.
 - **GitHub:** fine-grained PAT scoped to one repo — if Claude goes rogue, blast radius is one repo.
 - **Host FS:** only the project folder, `~/.ssh` (ro), and `~/.gitconfig` (ro) are mounted in.
 - **Claude Pro credentials:** in a named Docker volume (`vibe-claude-config`), not bind-mounted from the host — a compromised container can't leak host credentials unless the firewall is breached.
@@ -96,7 +93,6 @@ In flight or specced; no firm dates.
 
 - **Language-profile presets** — `vibe --profile python` or auto-detect from `pyproject.toml` / `package.json` / `Cargo.toml`, so the container ships with the toolchain your project needs already in place.
 - **`vibe --TDD` session mode** — enforces test-driven discipline across the whole project. Composes with `/vs`. Part of an XP-as-umbrella direction (TDD and spec-first as in-scope subsets).
-- **Green-AI backend option** — a route to a transparent-carbon model (GreenPT, Mistral, or self-hosted) for users who'd rather see published mWh-per-100-tokens than nothing.
 - **Per-repo Ghostty window titles** — so several vibe windows don't all read "Claude Code".
 
 ## Versioning and releases
@@ -105,11 +101,13 @@ In flight or specced; no firm dates.
 
 ## Contributing
 
-Contribute to vibe using vibe — clone it, `./install.sh` (or symlink `~/bin/vibe` at the clone), then `vibe` in the repo and open PRs against `main`. Run `python3 code-check.py` and `python3 smoke-test.py` before a PR. Full guide in [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Contribute to vibe using vibe — clone it, `./install.sh` (or symlink `~/bin/vibe` at the clone), then `vibe` in the repo and open PRs against `main`. Run `python3 code-check.py` and `python3 smoke-test.py` before a PR. Full guide in [`CONTRIBUTING.md`](CONTRIBUTING.md); merged contributors are recorded in [`CONTRIBUTORS.md`](CONTRIBUTORS.md), the ledger andeye's revenue-share promise operates on.
+
+**Not a developer?** Ask your Claude to look at [our CLAUDE.md](https://github.com/andeyePro/vibe/blob/main/CLAUDE.md) and take you through the vibe onboarding process.
 
 ## License
 
-[MIT](LICENSE) today. An AGPL-3.0 + CLA move is under consideration; see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+[MIT](LICENSE) today. We've settled on moving to AGPL-3.0 + CLA (drafts staged in-repo as `LICENSE-AGPL3-DRAFT` / `CLA-DRAFT.md`, not yet in force); until the swap lands there's nothing extra to sign. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ---
 
