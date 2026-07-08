@@ -43,6 +43,10 @@ TODO_CHANGELOG_MD = REPO / "devcontainer" / "claude-md" / "todo-changelog.md"
 PROJECT_HYGIENE_MD = REPO / "devcontainer" / "claude-md" / "project-hygiene.md"
 CONVERSATION_HISTORY_MD = REPO / "devcontainer" / "claude-md" / "conversation-history.md"
 CHANGELOG_MD = REPO / "CHANGELOG.md"
+SECURITY_MD = REPO / "SECURITY.md"
+BUG_TEMPLATE = REPO / ".github" / "ISSUE_TEMPLATE" / "bug_report.md"
+FEATURE_TEMPLATE = REPO / ".github" / "ISSUE_TEMPLATE" / "feature_request.md"
+PR_TEMPLATE = REPO / ".github" / "PULL_REQUEST_TEMPLATE.md"
 VS_MD = REPO / "devcontainer" / "commands" / "vs.md"
 SP_MD = REPO / "devcontainer" / "commands" / "sp.md"
 VSS_MD = REPO / "devcontainer" / "commands" / "vss.md"
@@ -5874,6 +5878,46 @@ def test_brain2_md_fragment_content() -> None:
           "authorised" in body, "trust rule missing")
 
 
+def test_contributor_onboarding_artifacts() -> None:
+    """FOSS onboarding artifacts for outside contributors: SECURITY.md
+    (disclosure policy aligned with the container threat model), the two
+    .github issue templates, and the PR template. Grep-level presence +
+    key-content checks — the files carry no logic to unit-test."""
+    print("\n[FOSS contributor onboarding artifacts]")
+
+    check("[onboard] SECURITY.md exists", SECURITY_MD.exists(), str(SECURITY_MD))
+    if SECURITY_MD.exists():
+        s = SECURITY_MD.read_text()
+        check("[onboard] SECURITY.md points at the repo Security tab",
+              "Security tab" in s, "reporting path must survive the repo transfer")
+        check("[onboard] SECURITY.md marks Claude Code + Docker out-of-scope upstream",
+              "Claude Code" in s and "Docker" in s and "upstream" in s.lower(), "")
+        check("[onboard] SECURITY.md names the in-scope classes",
+              all(k in s.lower() for k in ("firewall bypass", "hook bypass", "credential", "pat")), "")
+
+    check("[onboard] bug_report.md template exists", BUG_TEMPLATE.exists(), str(BUG_TEMPLATE))
+    if BUG_TEMPLATE.exists():
+        b = BUG_TEMPLATE.read_text()
+        check("[onboard] bug template asks for vibe --version",
+              "vibe --version" in b, "")
+        check("[onboard] bug template asks OS + container runtime",
+              "OrbStack" in b and "Docker" in b, "")
+
+    check("[onboard] feature_request.md template exists", FEATURE_TEMPLATE.exists(), str(FEATURE_TEMPLATE))
+    if FEATURE_TEMPLATE.exists():
+        f = FEATURE_TEMPLATE.read_text()
+        check("[onboard] feature template points at CONTRIBUTING.md",
+              "CONTRIBUTING.md" in f, "")
+
+    check("[onboard] PULL_REQUEST_TEMPLATE.md exists", PR_TEMPLATE.exists(), str(PR_TEMPLATE))
+    if PR_TEMPLATE.exists():
+        p = PR_TEMPLATE.read_text()
+        check("[onboard] PR template names both gate scripts",
+              "code-check.py" in p and "smoke-test.py" in p, "")
+        check("[onboard] PR template cites CHANGELOG + MANUAL-TESTS conventions",
+              "CHANGELOG.md" in p and "MANUAL-TESTS.md" in p, "")
+
+
 def main() -> int:
     test_help()
     test_version()
@@ -6090,6 +6134,7 @@ def main() -> int:
     test_install_extras_brain2_skills_synced()
     test_brain2_md_fragment_content()
     test_task010_smart_capture()
+    test_contributor_onboarding_artifacts()
 
     print()
     if FAILURES:
