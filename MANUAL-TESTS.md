@@ -11,7 +11,7 @@ Before running integration tests, ensure:
 - [ ] `gh` CLI is installed and authenticated: `gh auth login`
 - [ ] Run the vibe installer:
   ```bash
-  bash <(curl -fsSL https://raw.githubusercontent.com/Aqueum/vibe/main/install.sh)
+  bash <(curl -fsSL https://raw.githubusercontent.com/andeyePro/vibe/main/install.sh)
   ```
 - [ ] Verify installation: `which vibe` (should be in ~/bin or on PATH)
 - [ ] Create a test project: `mkdir -p ~/Projects/vibe-test && cd ~/Projects/vibe-test`
