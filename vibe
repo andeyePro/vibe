@@ -1651,7 +1651,7 @@ launch_claude() {
 launch_claude "$CLAUDE_RESUME_ARGS" "" || true
 
 # ── Auto-resume loop ──────────────────────────────────────────────────────────
-# Engages only when /vsss --auto-resume N left an active marker (see the
+# Engages only when /vsss --sessions X left an active marker (see the
 # auto_resume_* helpers above). Waits out the 5h-window reset, then relaunches
 # the conversation with a literal "/vsss --resume" prompt. Ctrl-C during the
 # countdown cancels; deleting .vss/auto-resume deactivates permanently.
