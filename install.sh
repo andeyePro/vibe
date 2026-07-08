@@ -19,6 +19,32 @@ BIN_DIR="$HOME/bin"
 echo "vibe installer"
 echo ""
 
+# ── Preflight: required dependencies ──────────────────────────────────────────
+# Check everything a vibe session needs BEFORE cloning or touching ~/bin, so a
+# fresh machine gets one actionable list instead of a half-finished install and
+# a launcher that can't run. No-op (silent) when every dependency is present.
+preflight_deps() {
+  local cmd missing=0
+  for cmd in git docker node devcontainer gh; do
+    command -v "$cmd" >/dev/null 2>&1 && continue
+    missing=1
+    case "$cmd" in
+      git)          echo "  ✗ git missing — xcode-select --install" ;;
+      docker)       echo "  ✗ docker missing — brew install --cask orbstack  (or Docker Desktop: https://www.docker.com/products/docker-desktop/)" ;;
+      node)         echo "  ✗ node missing — brew install node" ;;
+      devcontainer) echo "  ✗ devcontainer missing — npm install -g @devcontainers/cli" ;;
+      gh)           echo "  ✗ gh missing — brew install gh  (then: gh auth login)" ;;
+    esac
+  done
+  if [ "$missing" -ne 0 ]; then
+    echo ""
+    echo "  Install the missing dependencies above, then re-run this installer."
+    echo "  (A Claude Pro or Max subscription is also required to launch a session.)"
+    exit 1
+  fi
+}
+preflight_deps
+
 # Detect whether we're being run from a real vibe clone. If so, use it
 # in-place instead of maintaining a separate ~/.vibe-src. A "real" clone
 # has install.sh sitting next to vibe + devcontainer/devcontainer.json

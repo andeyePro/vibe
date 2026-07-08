@@ -120,6 +120,40 @@ def test_version() -> None:
         check("VERSION matches --version output", out == f"vibe {ver}", f"{out!r} vs vibe {ver}")
 
 
+def test_vibe_andeye_page_draft() -> None:
+    print("\n[web/vibe-andeye.md]")
+    check("page exists", WEB_VIBE_ANDEYE_MD.is_file(), str(WEB_VIBE_ANDEYE_MD))
+    if not WEB_VIBE_ANDEYE_MD.is_file():
+        return
+    txt = WEB_VIBE_ANDEYE_MD.read_text()
+    first = txt.splitlines()[0] if txt.splitlines() else ""
+    check("first line is a DRAFT sentinel comment",
+          first.startswith("<!--") and "DRAFT" in first, first)
+    check("sentinel says not for publication",
+          "not for publication" in first.lower(), first)
+
+
+def test_install_preflight() -> None:
+    print("\n[install.sh preflight]")
+    src = INSTALL.read_text()
+    check("preflight_deps function present", "preflight_deps()" in src, "")
+    check("preflight invoked before clone",
+          re.search(r"\npreflight_deps\n", src) is not None
+          and src.index("preflight_deps\n") < src.index("git clone"), "")
+    # Functional: strip PATH so every dep is absent -> exit 1, no clone/link.
+    # /bin/bash is absolute so the outer invocation works with an empty PATH.
+    with tempfile.TemporaryDirectory() as td:
+        empty = Path(td) / "emptybin"
+        empty.mkdir()
+        env = {**os.environ, "HOME": td, "PATH": str(empty)}
+        r = run(["/bin/bash", str(INSTALL)], env=env)
+    out = r.stdout + r.stderr
+    check("preflight exits non-zero when deps missing", r.returncode != 0, out)
+    check("preflight prints the re-run guidance",
+          "Install the missing dependencies" in out, out)
+    check("preflight did not reach the symlink step", "Linked" not in out, out)
+
+
 def test_env_hint_fresh() -> None:
     print("\n[write-env-hint.sh: fresh file]")
     with tempfile.TemporaryDirectory() as td:
@@ -5814,6 +5848,8 @@ def test_brain2_md_fragment_content() -> None:
 def main() -> int:
     test_help()
     test_version()
+    test_vibe_andeye_page_draft()
+    test_install_preflight()
     test_env_hint_fresh()
     test_env_hint_idempotent()
     test_env_hint_preserves_user_content()
