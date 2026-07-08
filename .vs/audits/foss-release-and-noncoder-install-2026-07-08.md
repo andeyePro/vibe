@@ -74,3 +74,21 @@ A is a reasonable low-cost middle rung (developer-adjacent reach) and composes w
 - Non-coder installer path: approve B-now + C-later, or pick a different rung.
 - Brand/disclosure prominence: how loudly vibe.andeye.com says andeye apps are "vibe coded" (brain2 records Pro's take — transparent everywhere, headlined to customers nowhere; open on the dev surface always paired with the rigor). Not yet Martin-decided.
 - "vibe" naming: fight for the word (reclaim "vibe coding done right") vs rebrand while keeping a short CLI verb. Open in brain2, undecided.
+
+## Addendum 2026-07-08 – Martin's monetisation framing for non-coder vibe
+
+Martin (in-session, 2026-07-08): three things non-coders may be worth paying for:
+
+1. **A vibe app** – which coders would otherwise be less inclined to build, since they prefer the terminal. (His observation: Anthropic's own developers living in Claude Code/terminal is plausibly why Claude Desktop is comparatively buggy – the builders don't feel the GUI pain.)
+2. **Training.**
+3. **Support.**
+
+Interim zero-build onboarding path shipped the same day: the public copy tells non-coders to "ask your Claude to look at our CLAUDE.md and take you through the vibe onboarding process"; CLAUDE.md routes an arriving Claude to ONBOARDING.md, a step-by-step agent-facing guide. This makes every user's existing Claude the onboarding surface until a packaged app exists – and doubles as a live experiment in whether agent-led onboarding is good enough to defer the app.
+
+Open: start a public GitHub Discussion on non-coder vibe (app/training/support) – draft below, posting is Martin's call.
+
+### Draft discussion post (not posted)
+
+Title: Non-coder vibe – what would it take, and what's worth paying for?
+
+vibe currently assumes a terminal and a working dev setup. We want domain experts who don't code to get the same reviewed, tested output. Today there's an interim path: ask your Claude to read our CLAUDE.md and take you through onboarding (see ONBOARDING.md). Longer term we see three candidate paid offerings around the free core: a packaged app, training, and support – the core stays FOSS and free, per the andeye ethos (no per-customer extraction, no enshittification). If you're a non-coder who's tried (or bounced off) the onboarding, or a coder with opinions on what a non-coder app must and mustn't be: tell us here.
