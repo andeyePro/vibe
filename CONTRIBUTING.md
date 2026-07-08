@@ -36,4 +36,4 @@ Don't put done items in `TODO.md`, and don't put open items in `CHANGELOG.md` �
 
 ## Licence
 
-vibe is MIT today. An AGPL-3.0 + CLA move is under consideration (so contributors aren't surprised if it lands), but the CLA is not yet in force — nothing extra to sign right now. Contributions today are under MIT. If the relicence goes ahead, existing contributors will be asked before their work is carried over.
+vibe is MIT, and there is nothing extra to sign. We looked at an AGPL-3.0 + CLA move and set it aside — MIT's freedom to adopt, embed and contribute is worth more to a dev tool than copyleft protection. If that position ever changes it will be announced here first, and existing contributors will be asked before their work is carried over.
