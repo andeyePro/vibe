@@ -4543,6 +4543,27 @@ def test_check_sp_current_unknown_arg_errors() -> None:
           "--bogus" in r.stderr, r.stderr[:200])
 
 
+def test_check_sp_current_wired_into_container_start() -> None:
+    """Drift check ships in the image and runs from install-claude-extras.sh."""
+    print("\n[check-sp-current: container-start wiring]")
+    dockerfile = DOCKERFILE.read_text()
+    check("[sp-wire] Dockerfile COPYs check-sp-current.sh to /usr/local/bin",
+          "COPY check-sp-current.sh /usr/local/bin/" in dockerfile, "")
+    check("[sp-wire] Dockerfile chmods the checker",
+          "/usr/local/bin/check-sp-current.sh" in dockerfile, "")
+    extras = INSTALL_EXTRAS.read_text()
+    check("[sp-wire] extras script defines check_sp_drift",
+          "check_sp_drift()" in extras, "")
+    check("[sp-wire] check_sp_drift is invoked",
+          re.search(r"^check_sp_drift$", extras, re.MULTILINE) is not None, "")
+    check("[sp-wire] honours VIBE_PLUGINS=0 opt-out",
+          'VIBE_PLUGINS:-1' in extras.split("check_sp_drift()")[1].split("}")[0], "")
+    check("[sp-wire] guards on checker executable (old-image safe)",
+          '[ -x "$checker" ] || return 0' in extras, "")
+    check("[sp-wire] points SP_MD at the synced commands dir",
+          'SP_MD="$DEST_ROOT/commands/sp.md"' in extras, "")
+
+
 # ── /sp slash command tests ────────────────────────────────────────────────────
 
 
@@ -5932,6 +5953,7 @@ def main() -> int:
     test_check_sp_current_fixture_extra_skill()
     test_check_sp_current_fixture_nonexistent_errors()
     test_check_sp_current_unknown_arg_errors()
+    test_check_sp_current_wired_into_container_start()
     test_sp_md_present_and_complete()
     test_sp_md_referenced_from_readme()
     test_skipped_marker_round_trip()

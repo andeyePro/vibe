@@ -4,6 +4,10 @@ vibe's done-work audit log. Each entry is a closed task — either successful (`
 
 Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion between TODO and CHANGELOG. Before this date, closed items lived in `TODO.md ## Done`; they migrated here verbatim. New closed items append to this file.
 
+## 2026-07-08
+
+- [x] **check-sp-current.sh wired into container start** — the superpowers-drift probe (sp.md's hardcoded skill list vs upstream obra/superpowers `skills/`) previously only ran manually or in smoke tests; a renamed/added upstream skill would drift silently. Now the Dockerfile ships it to `/usr/local/bin/` and `install-claude-extras.sh` runs it at the end of every container start via a new `check_sp_drift()` — informational only (always exit 0, 10s network cap, silent when upstream unreachable), `SP_MD` pointed at the synced `~/.claude/commands/sp.md`, guarded `[ -x ]` so mixed old-image/new-script states skip quietly, and sharing the existing `VIBE_PLUGINS=0` opt-out. Plugin-freshness context that motivated it: superpowers itself auto-updates via the claude-plugins-official marketplace on session start (verified 6.0.3→6.1.0→6.1.1 in the plugin cache), so the sp.md list was the one unmonitored drift surface. 7 new smoke checks (`[sp-wire]`); shellcheck clean; the one smoke failure (`[brain2] gardener+no-zotero`) pre-exists on clean main.
+
 ## 2026-07-04
 
 - [x] **vibe: revive `--fable` + billing gate, cutover corrected to 8 Jul** (632d3f1) — the archive/fable-5 implementation restored verbatim (flag, `fable_billing_phase()`, ask-before-credits gate, `VIBE_FABLE_CREDITS_OK`, README section, 9 smoke tests) with the cutover date moved 23 Jun → 8 Jul 2026 (Anthropic extended the free window; from 8 Jul Fable bills usage credits at $10/$50 per MTok on top of Pro/Max). CLAUDE.md non-goals amended per Martin's decision: credit-billed features are allowed when off-by-default behind explicit per-launch consent.

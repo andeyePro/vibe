@@ -235,6 +235,21 @@ check_superpowers() {
 EOF
 }
 
+# Report drift between sp.md's hardcoded Superpowers skill list and the
+# upstream obra/superpowers skills/ directory, so a renamed/added upstream
+# skill surfaces in the boot log instead of drifting silently. Informational
+# only: check-sp-current.sh always exits 0, caps its network wait at 10s,
+# and stays silent when upstream is unreachable. Shares the VIBE_PLUGINS=0
+# opt-out with the plugin banner above.
+check_sp_drift() {
+  if [ "${VIBE_PLUGINS:-1}" = "0" ]; then
+    return 0
+  fi
+  local checker="/usr/local/bin/check-sp-current.sh"
+  [ -x "$checker" ] || return 0  # image predates the checker; skip quietly
+  SP_MD="$DEST_ROOT/commands/sp.md" "$checker" || true
+}
+
 # Ensure /workspace/.gitignore excludes vibe's runtime files. Without this,
 # downstream projects using vibe risk committing .claude/settings.local.json
 # (an inside-container runtime file) and .vibe/copy-latest.txt (clipboard
@@ -277,4 +292,5 @@ install_hooks
 install_claude_md_fragments
 install_brain2_skills
 check_superpowers
+check_sp_drift
 ensure_project_gitignore
