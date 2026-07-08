@@ -11,7 +11,7 @@ status: draft
 
 Vibe coding done right.
 
-One command opens a sandboxed Claude Code session on your project. Adversarial review, real tests and a security pass are baked in, so what comes out is code you can actually ship.
+One command opens a sandboxed Claude Code session on your project. Adversarial review, real tests and a security pass are baked in, so what comes out is code you can actually ship – not slop.
 
 vibe is the tool every andeye app is built and assured with. We ship it because we use it.
 
@@ -30,6 +30,8 @@ The container runs wide open on the inside so Claude never stops to ask permissi
 andeye apps handle people's money, time and data. That bar doesn't leave room for guessed-at code.
 
 Vibe leads with rigor. `/vs` runs your request through an adversarial harness – an independent critic checks the spec before a line is written, a generator and a tester work without seeing each other's output, and an evaluator has to read the real test log before it calls anything done. Producer and judge are never the same agent. That's how "vibe coded" stops meaning "hope for the best" and starts meaning "reviewed, tested and signed off".
+
+We're fighting for the reputation of the vibe verb. You don't know every nuance of how your car drives – that doesn't make you a sloppy driver. You haven't reviewed every binary digit of your machine code – that doesn't make you a sloppy coder. Working at a higher level of abstraction was never the problem; shipping unreviewed guesses was. Vibe keeps the abstraction and deletes the guessing.
 
 We're open about the method. Vibe was open sourced and public from day one. We openly invite input and contributions – start a [discussion](https://github.com/andeyePro/vibe/discussions), raise an [issue](https://github.com/andeyePro/vibe/issues), or read the [contributor guide](https://github.com/andeyePro/vibe/blob/main/CONTRIBUTING.md).
 
@@ -64,7 +66,7 @@ vibe is built with vibe, and you're welcome to help build it the same way. Clone
 
 ## Licence
 
-vibe is MIT today. We've settled on moving it to AGPL-3.0 with a contributor licence agreement – so the FOSS core stays free and anyone building a competing cloud service on our code has to give their changes back – but that move and the repo's new home under the andeye org aren't done yet. Until then it's MIT, and there's nothing extra to sign.
+vibe is MIT. Use it, embed it, fork it, ship it – nothing to sign. We looked at AGPL plus a contributor licence agreement and set it aside: for a dev tool, the freedom to adopt matters more than the protection.
 
 ---
 

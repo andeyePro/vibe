@@ -158,19 +158,17 @@ def test_install_preflight() -> None:
     check("preflight did not reach the symlink step", "Linked" not in out, out)
 
 
-def test_licence_drafts() -> None:
-    print("\n[licence drafts]")
-    agpl = REPO / "LICENSE-AGPL3-DRAFT"
-    cla = REPO / "CLA-DRAFT.md"
+def test_licence_state() -> None:
+    """Martin never confirmed the AGPL move (brain2 misrecording, corrected
+    2026-07-08); the drafts are gone and vibe is plainly MIT."""
+    print("\n[licence state]")
     lic = REPO / "LICENSE"
-    check("LICENSE-AGPL3-DRAFT exists", agpl.is_file(), str(agpl))
-    check("CLA-DRAFT.md exists", cla.is_file(), str(cla))
-    if agpl.is_file():
-        check("AGPL draft marked NOT IN FORCE", "NOT IN FORCE" in agpl.read_text(), "")
-    if cla.is_file():
-        check("CLA draft marked not in force", "not in force" in cla.read_text().lower(), "")
-    # The active licence must stay MIT — drafts do not relicence anything.
-    check("active LICENSE still MIT", lic.is_file() and "MIT License" in lic.read_text(), "")
+    check("active LICENSE is MIT", lic.is_file() and "MIT License" in lic.read_text(), "")
+    check("AGPL draft removed", not (REPO / "LICENSE-AGPL3-DRAFT").exists(), "")
+    check("CLA draft removed", not (REPO / "CLA-DRAFT.md").exists(), "")
+    for name in ("README.md", "CONTRIBUTING.md", "web/vibe-andeye.md"):
+        check(f"{name} does not announce an AGPL move",
+              "settled on moving" not in (REPO / name).read_text(), name)
 
 
 def test_env_hint_fresh() -> None:
@@ -5712,8 +5710,16 @@ def test_build_override_config_brain2_and_zotero() -> None:
         zot = tmp_path / "zot"; zot.mkdir()
         home = tmp_path / "home"; home.mkdir()
 
+        # OP MCP creds leak in from the host env of an OP-configured vibe
+        # container (staged via remoteEnv since 2026-06-04) and make
+        # _build_override_config emit an override for the --add-host alone,
+        # breaking the nothing-applies fallback case. Blank them: this test
+        # is about mount gating, not OP wiring.
+        no_op = {"OPENPROJECT_MCP_URL": "", "OPENPROJECT_MCP_BEARER": ""}
+
         # Case 1: brain2 + zotero dirs exist, workspace is a different dir.
-        env = {"HOME": str(home),
+        env = {**no_op,
+               "HOME": str(home),
                "VIBE_BRAIN2_PATH": str(brain2),
                "VIBE_ZOTERO_PATH": str(zot)}
         r = _source_vibe_call(
@@ -5730,7 +5736,8 @@ def test_build_override_config_brain2_and_zotero() -> None:
 
         # Case 2: gardener — workspace IS the brain2 dir → no /brain2 self-mount,
         # zotero disabled → nothing applies → base config returned unchanged.
-        env_g = {"HOME": str(home),
+        env_g = {**no_op,
+                 "HOME": str(home),
                  "VIBE_BRAIN2_PATH": str(brain2),
                  "VIBE_ZOTERO_PATH": "off"}
         r = _source_vibe_call(
@@ -5740,7 +5747,8 @@ def test_build_override_config_brain2_and_zotero() -> None:
               out_g.endswith("devcontainer/devcontainer.json"), out_g)
 
         # Case 3: zotero only.
-        env_z = {"HOME": str(home),
+        env_z = {**no_op,
+                 "HOME": str(home),
                  "VIBE_BRAIN2_PATH": "off",
                  "VIBE_ZOTERO_PATH": str(zot)}
         r = _source_vibe_call(
@@ -5991,7 +5999,7 @@ def main() -> int:
     test_vibe_andeye_page_draft()
     test_repo_owner_selection()
     test_install_preflight()
-    test_licence_drafts()
+    test_licence_state()
     test_env_hint_fresh()
     test_env_hint_idempotent()
     test_env_hint_preserves_user_content()

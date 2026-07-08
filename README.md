@@ -107,7 +107,7 @@ Contribute to vibe using vibe — clone it, `./install.sh` (or symlink `~/bin/vi
 
 ## License
 
-[MIT](LICENSE) today. We've settled on moving to AGPL-3.0 + CLA (drafts staged in-repo as `LICENSE-AGPL3-DRAFT` / `CLA-DRAFT.md`, not yet in force); until the swap lands there's nothing extra to sign. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+[MIT](LICENSE). We considered AGPL-3.0 + CLA and set it aside — for a dev tool, MIT's freedom to adopt and contribute wins. Nothing extra to sign. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ---
 
