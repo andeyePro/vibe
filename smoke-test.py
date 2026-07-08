@@ -95,6 +95,31 @@ def test_help() -> None:
     check("usage section present", "Usage:" in r.stdout, r.stdout[:200])
 
 
+VERSION_FILE = REPO / "VERSION"
+WEB_VIBE_ANDEYE_MD = REPO / "web" / "vibe-andeye.md"
+
+
+def test_version() -> None:
+    print("\n[vibe --version]")
+    with tempfile.TemporaryDirectory() as td:
+        env = {**os.environ, "HOME": td, "VIBE_CONFIG": f"{td}/no-config"}
+        r = run(["bash", str(VIBE), "--version"], env=env)
+    check("--version exit 0", r.returncode == 0, r.stderr)
+    out = r.stdout.strip()
+    check("--version prints 'vibe <semver>' single line",
+          re.fullmatch(r"vibe \d+\.\d+\.\d+", out) is not None, repr(r.stdout))
+    with tempfile.TemporaryDirectory() as td:
+        env = {**os.environ, "HOME": td, "VIBE_CONFIG": f"{td}/no-config"}
+        r2 = run(["bash", str(VIBE), "-V"], env=env)
+    check("-V exit 0", r2.returncode == 0, r2.stderr)
+    check("-V matches --version", r2.stdout.strip() == out, r2.stdout)
+    check("VERSION file exists", VERSION_FILE.is_file(), str(VERSION_FILE))
+    if VERSION_FILE.is_file():
+        ver = VERSION_FILE.read_text().strip()
+        check("VERSION file is bare semver", re.fullmatch(r"\d+\.\d+\.\d+", ver) is not None, ver)
+        check("VERSION matches --version output", out == f"vibe {ver}", f"{out!r} vs vibe {ver}")
+
+
 def test_env_hint_fresh() -> None:
     print("\n[write-env-hint.sh: fresh file]")
     with tempfile.TemporaryDirectory() as td:
@@ -5788,6 +5813,7 @@ def test_brain2_md_fragment_content() -> None:
 
 def main() -> int:
     test_help()
+    test_version()
     test_env_hint_fresh()
     test_env_hint_idempotent()
     test_env_hint_preserves_user_content()

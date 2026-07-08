@@ -99,9 +99,17 @@ In flight or specced; no firm dates.
 - **Green-AI backend option** — a route to a transparent-carbon model (GreenPT, Mistral, or self-hosted) for users who'd rather see published mWh-per-100-tokens than nothing.
 - **Per-repo Ghostty window titles** — so several vibe windows don't all read "Claude Code".
 
+## Versioning and releases
+
+`vibe --version` prints the current version, read from the `VERSION` file at the repo root. Releases are source-only for now (install via `install.sh` or a git clone). Maintainer release steps are in [`RELEASING.md`](RELEASING.md).
+
+## Contributing
+
+Contribute to vibe using vibe — clone it, `./install.sh` (or symlink `~/bin/vibe` at the clone), then `vibe` in the repo and open PRs against `main`. Run `python3 code-check.py` and `python3 smoke-test.py` before a PR. Full guide in [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) today. An AGPL-3.0 + CLA move is under consideration; see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ---
 

@@ -12,6 +12,7 @@
 #   vibe --fable             # launch on Claude Fable 5 (frontier model; billing-aware)
 #   vibe --model <id>        # launch on a specific Claude model id
 #   vibe --list              # list available projects
+#   vibe --version           # print the vibe version and exit
 #   vibe --help              # show this help
 #
 # Flags and the project name can appear in any order, so e.g.
@@ -81,8 +82,25 @@ PROJECTS_DIR="${VIBE_PROJECTS_DIR:-$HOME/Projects}"
 export VIBE_SSH_AUTO="${VIBE_SSH_AUTO:-}"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+# Version string. Read from the VERSION file next to the resolved script
+# (VIBE_REPO_DIR is derived from the script's realpath, so this works whether
+# vibe is invoked via the ~/bin/vibe symlink or an in-place dev clone, and from
+# any project directory). Missing/empty VERSION → 0.0.0-dev, never an error.
+_vibe_version() {
+  local vfile="$VIBE_REPO_DIR/VERSION" ver=""
+  [ -f "$vfile" ] && ver="$(head -n1 "$vfile" | tr -d '[:space:]')"
+  echo "${ver:-0.0.0-dev}"
+}
+
+print_version() {
+  echo "vibe $(_vibe_version)"
+  exit 0
+}
+
 usage() {
   grep '^#' "$0" | grep -v '#!/' | sed 's/^# \?//'
+  echo ""
+  echo "vibe $(_vibe_version)"
   exit 0
 }
 
@@ -1149,6 +1167,7 @@ parse_vibe_args() {
         ls "$PROJECTS_DIR"
         exit 0
         ;;
+      --version|-V) print_version ;;
       --help|-h) usage ;;
       --*)
         echo "Unknown flag: $1" >&2
