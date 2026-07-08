@@ -93,6 +93,7 @@ for domain in \
     "registry.npmjs.org" \
     "api.anthropic.com" \
     "api.zotero.org" \
+    "download.swift.org" \
     "sentry.io" \
     "statsig.com" \
     "marketplace.visualstudio.com" \
