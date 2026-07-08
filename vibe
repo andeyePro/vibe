@@ -193,6 +193,58 @@ ensure_initial_commit() {
   fi
 }
 
+# Default owner for a new repo: VIBE_GITHUB_OWNER from ~/.vibe/config wins,
+# else the logged-in gh user ($1).
+default_repo_owner() {
+  if [ -n "${VIBE_GITHUB_OWNER:-}" ]; then
+    echo "$VIBE_GITHUB_OWNER"
+  else
+    echo "$1"
+  fi
+}
+
+# True if <owner> exists on GitHub. The /users/ endpoint resolves both user
+# accounts and orgs, so one check covers either kind of owner.
+owner_exists_on_github() {
+  gh api "users/$1" --jq '.login' >/dev/null 2>&1
+}
+
+# Prompt for the owner (personal account or org) a new repo goes under.
+# Echoes the chosen owner. A short org hint is shown when the user belongs
+# to any (informational — a full picker is unwieldy for many-org accounts).
+# Typo'd owners are caught by an existence check with re-prompt; after 3
+# misses the user may proceed unvalidated, since the check itself can fail
+# on a blocked network while the name is actually fine.
+choose_repo_owner() {
+  local gh_user="$1" owner_default owner orgs attempts=0
+
+  orgs=$(gh api user/orgs --jq '.[].login' 2>/dev/null | head -8 | paste -sd ', ' -) || orgs=""
+  [ -n "$orgs" ] && echo "  Your orgs: $orgs" >&2
+
+  owner_default=$(default_repo_owner "$gh_user")
+  while :; do
+    read -rp "  Owner (account or org) [$owner_default]: " owner
+    owner="${owner:-$owner_default}"
+    if [ "$owner" = "$gh_user" ] || owner_exists_on_github "$owner"; then
+      break
+    fi
+    attempts=$((attempts + 1))
+    if [ "$attempts" -ge 3 ]; then
+      if ask_yes_no "Proceed with '$owner' unvalidated? (the check may be failing, not the name)" n; then
+        break
+      fi
+      attempts=0
+    else
+      echo "  ✗ '$owner' not found on GitHub — check the spelling and try again." >&2
+    fi
+  done
+
+  if [ "$owner" != "$owner_default" ]; then
+    echo "  Tip: VIBE_GITHUB_OWNER=\"$owner\" in ~/.vibe/config makes this the default." >&2
+  fi
+  echo "$owner"
+}
+
 create_github_repo() {
   echo ""
   echo "  No GitHub repo found for this project."
@@ -206,9 +258,18 @@ create_github_repo() {
     no)    echo "  Skipping — launching without GitHub."; return ;;
   esac
 
+  local gh_user
+  gh_user=$(gh api user --jq '.login' 2>/dev/null) || {
+    echo "  ✗ Not logged in to GitHub CLI. Run: gh auth login"
+    return
+  }
+
   local repo_name
   read -rp "  Repo name [$PROJECT_NAME]: " repo_name
   repo_name="${repo_name:-$PROJECT_NAME}"
+
+  local owner
+  owner=$(choose_repo_owner "$gh_user")
 
   local visibility="private"
   ask_yes_no "Make it public?" n && visibility="public"
@@ -218,22 +279,20 @@ create_github_repo() {
 
   ensure_initial_commit
 
-  local gh_user
-  gh_user=$(gh api user --jq '.login' 2>/dev/null) || {
-    echo "  ✗ Not logged in to GitHub CLI. Run: gh auth login"
-    return
-  }
+  local full_name="$owner/$repo_name"
+  echo "  Creating $visibility repo $full_name on GitHub..."
 
-  echo "  Creating $visibility repo $gh_user/$repo_name on GitHub..."
-
-  local create_args=("$repo_name" "--$visibility" "--source=." "--push")
+  local create_args=("$full_name" "--$visibility" "--source=." "--push")
   [ -n "$description" ] && create_args+=("--description=$description")
 
   if gh repo create "${create_args[@]}"; then
-    GITHUB_REPO="$gh_user/$repo_name"
+    GITHUB_REPO="$full_name"
     echo "  ✓ Repo created: https://github.com/$GITHUB_REPO"
   else
     echo "  ✗ Repo creation failed — launching without GitHub."
+    if [ "$owner" != "$gh_user" ]; then
+      echo "    If '$owner' is an org, check you have repo-creation permission there."
+    fi
   fi
 }
 

@@ -5940,10 +5940,56 @@ def test_contributor_onboarding_artifacts() -> None:
           claude_md.exists() and "ONBOARDING.md" in claude_md.read_text(), "")
 
 
+def test_repo_owner_selection() -> None:
+    """Repo creation lets the user pick the GitHub owner (account or org):
+    default_repo_owner() precedence unit-tested via VIBE_SOURCE_ONLY sourcing;
+    the interactive flow + validation + docs checked at grep level."""
+    print("\n[repo owner selection]")
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        env = {
+            **os.environ,
+            "HOME": str(tmp),
+            "VIBE_CONFIG": f"{tmp}/no-config",
+            "VIBE_SOURCE_ONLY": "1",
+        }
+        script = f"""
+        set -e
+        source {shlex.quote(str(VIBE))}
+        echo "FALLBACK=$(default_repo_owner someuser)"
+        VIBE_GITHUB_OWNER="my-org" ; echo "CONFIGURED=$(default_repo_owner someuser)"
+        VIBE_GITHUB_OWNER="" ; echo "EMPTY=$(default_repo_owner someuser)"
+        """
+        r = run(["bash", "-c", script], env=env)
+        check("[owner] helper runs cleanly", r.returncode == 0, r.stderr)
+        check("[owner] falls back to gh user when unset",
+              "FALLBACK=someuser" in r.stdout, r.stdout)
+        check("[owner] VIBE_GITHUB_OWNER wins when set",
+              "CONFIGURED=my-org" in r.stdout, r.stdout)
+        check("[owner] empty VIBE_GITHUB_OWNER falls back",
+              "EMPTY=someuser" in r.stdout, r.stdout)
+
+    src = VIBE.read_text()
+    check("[owner] create flow prompts for owner (account or org)",
+          "Owner (account or org)" in src, "")
+    check("[owner] owner existence validated via gh api users/",
+          "owner_exists_on_github" in src and 'gh api "users/' in src, "")
+    check("[owner] mistyped owner gets a retry message",
+          "not found on GitHub" in src, "")
+    check("[owner] unvalidatable owner offers proceed-anyway (network-down path)",
+          "Proceed with" in src, "")
+    check("[owner] failure hint mentions org repo-creation permission",
+          "repo-creation permission" in src, "")
+    check("[owner] README documents VIBE_GITHUB_OWNER",
+          "VIBE_GITHUB_OWNER" in (REPO / "README.md").read_text(), "")
+
+
 def main() -> int:
     test_help()
     test_version()
     test_vibe_andeye_page_draft()
+    test_repo_owner_selection()
     test_install_preflight()
     test_licence_drafts()
     test_env_hint_fresh()
