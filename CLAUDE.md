@@ -63,9 +63,9 @@ Convention reasoning: this split was adopted 2026-05-08 after an upstream mainta
 - The container must run with `--permission-mode bypassPermissions` safely — firewall in `init-firewall.sh` is the network backstop, hooks in `guard-bash.sh` + `settings.local.json` are the tool-call backstop. Don't weaken either.
 - Fine-grained PATs are scoped to **one repo**; don't suggest workflows that need broader scopes.
 
-## Non-goals
+## Non-goals and boundaries
 
-- Windows support (WSL is fine if Docker is installed, but no native Windows).
-- Running containers on remote hosts (local container; Claude SSHes out if needed).
-- Managing multiple parallel Claude sessions per project (dropped with claudebox).
-- **Anything that bills against API rates or extended credits separately from the user's Pro/Max subscription — unless it is off by default and gated behind explicit per-launch consent.** If a feature requires the Anthropic API (e.g. Claude Agent SDK, cloud/async agent runners as they exist today), it stays out of vibe core — the project is for Pro/Max subscribers who do not want to pay extra. The one sanctioned exception (2026-07-04, Martin's decision): optional credit-billed model launches like `vibe --fable`, which warn, quote the rates, and default to No; the `/vs` escalation ladder must likewise ask before any credit-billed rung. Everything else defers until Anthropic ships a path that runs against subscription quota. See `TODO.md` Done block for the cloud-runner dismissal record.
+- **Nothing that spends beyond the user's Pro/Max subscription by default.** Credit-billed features are allowed only off-by-default behind explicit per-launch consent — `vibe --fable` is the shipped pattern (quotes the rates, defaults to No, `VIBE_FABLE_CREDITS_OK=1` is the standing opt-in), and the `/vs` escalation ladder asks before any credit-billed rung. Features that need an API key with no consent gate stay out of core.
+- **Windows support is unmaintained, not unwelcome.** The maintainer has no Windows machine to test on; WSL2 + Docker already works. A contributor who wants to build and own native Windows support is welcome, provided it doesn't complicate the macOS/Linux path.
+
+(Older scoping notes listed remote-host containers and parallel-session management as non-goals; removed 2026-07-08 — they were early claudebox-era decisions, and contributions there are fair game if they keep the invariants above.)
