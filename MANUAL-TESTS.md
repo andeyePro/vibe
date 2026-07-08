@@ -694,6 +694,20 @@ Inside the container, confirm:
 
 ---
 
+### Test 31: repo creation owner selection (org support)
+
+In a fresh folder with no GitHub repo, run `vibe` and accept "Create a GitHub repo?".
+
+**Expected:**
+- [ ] If you belong to orgs, a one-line `Your orgs: ...` hint appears (max 8, informational)
+- [ ] `Owner (account or org) [<you>]:` — Enter accepts the default; typing an org name creates the repo there
+- [ ] With `VIBE_GITHUB_OWNER="<org>"` in `~/.vibe/config`, that org is the offered default
+- [ ] A mistyped owner gets `not found on GitHub` and a re-prompt; after 3 misses you're offered proceed-unvalidated (covers the checker-blocked-by-network case)
+- [ ] Choosing an owner other than the default prints the `VIBE_GITHUB_OWNER` config tip
+- [ ] A failed create against an org adds the repo-creation-permission hint and still launches without GitHub
+
+---
+
 ## Test Summary
 
 After completing all tests, check:
