@@ -2,7 +2,7 @@
 # vibe installer.
 #
 # End users (install fresh from GitHub):
-#   bash <(curl -fsSL https://raw.githubusercontent.com/Aqueum/vibe/main/install.sh)
+#   bash <(curl -fsSL https://raw.githubusercontent.com/andeyePro/vibe/main/install.sh)
 #   → clones vibe to ~/.vibe-src and symlinks ~/bin/vibe into it.
 #
 # Developers (running install.sh from inside an existing clone):
@@ -11,7 +11,7 @@
 #     working tree, so edits take effect immediately with no git pull.
 set -euo pipefail
 
-REPO_URL="https://github.com/Aqueum/vibe.git"
+REPO_URL="https://github.com/andeyePro/vibe.git"
 DEFAULT_SRC_DIR="$HOME/.vibe-src"
 CONFIG_DIR="$HOME/.vibe"
 BIN_DIR="$HOME/bin"

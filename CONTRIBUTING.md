@@ -5,7 +5,7 @@ The pitch is dogfooding: contribute to vibe using vibe. Clone it, point your `vi
 ## Set up a dev clone
 
 ```bash
-git clone https://github.com/Aqueum/vibe.git
+git clone https://github.com/andeyePro/vibe.git
 cd vibe
 ./install.sh
 ```

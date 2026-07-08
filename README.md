@@ -29,7 +29,7 @@ A single-command containerised Claude Code environment. `cd my-project && vibe` 
 ## Install
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/Aqueum/vibe/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/andeyePro/vibe/main/install.sh)
 ```
 
 The installer clones vibe to `~/.vibe-src`, symlinks `~/bin/vibe`, and prompts for your projects directory. `vibe` reads the devcontainer definition straight from the clone, so `git -C ~/.vibe-src pull` (or re-running the installer) is all you need to update.
@@ -113,4 +113,4 @@ Contribute to vibe using vibe — clone it, `./install.sh` (or symlink `~/bin/vi
 
 ---
 
-[Martin](https://github.com/Aqueum)'s input, lovingly crafted in Scotland with [vibe](https://github.com/Aqueum/vibe).
+[Martin](https://github.com/Aqueum)'s input, lovingly crafted in Scotland with [vibe](https://github.com/andeyePro/vibe).

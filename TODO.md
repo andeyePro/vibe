@@ -31,7 +31,6 @@ Markers: `[ ]` open · `[!]` failed/abandoned (note what was tried)
 
 ## Open
 
-- [ ] **Martin-gated: transfer repo `Aqueum/vibe` → `andeyePro/vibe`** (2026-07-08) — confirmed in brain2 coordination.md 2026-07-07 (vibe = shared dev tool for all app-andeye contributors) but not executed. Repo transfer + PAT re-scope is Martin's hands.
 - [ ] **Martin-gated: relicence vibe MIT → AGPL-3.0 + CLA** (2026-07-08) — confirmed in brain2 (Martin 2026-07-07, "tidy-up/consistency, not a strategic protect-move"), but the repo's LICENSE + README still say MIT. Needs the actual LICENSE swap and a CLA in force. Draft AGPL/CLA text staged at `LICENSE-AGPL3-DRAFT`/`CLA-DRAFT.md` if slice 3 landed; see CHANGELOG.
 - [ ] **Martin-gated: approve + deploy vibe.andeye.com** (2026-07-08) — page copy drafted at `web/vibe-andeye.md` (DRAFT sentinel, pending review). Needs Martin's copy approval, then DNS + deploy. Also open in brain2: how prominently to disclose "vibe coded" on the dev surface, and the fight-vs-rebrand "vibe" naming decision.
 - [ ] **Martin-gated: non-coder installer path** (2026-07-08) — design doc at `.vs/audits/foss-release-and-noncoder-install-2026-07-08.md`. Preflight dependency check shipped in `install.sh` (safe slice). Recommendation is B-now (done) + a Mac `.app` wrapper later (gated on the Apple Developer org conversion to andeye Ltd). Needs Martin's call on the rung.
