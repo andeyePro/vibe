@@ -154,6 +154,21 @@ def test_install_preflight() -> None:
     check("preflight did not reach the symlink step", "Linked" not in out, out)
 
 
+def test_licence_drafts() -> None:
+    print("\n[licence drafts]")
+    agpl = REPO / "LICENSE-AGPL3-DRAFT"
+    cla = REPO / "CLA-DRAFT.md"
+    lic = REPO / "LICENSE"
+    check("LICENSE-AGPL3-DRAFT exists", agpl.is_file(), str(agpl))
+    check("CLA-DRAFT.md exists", cla.is_file(), str(cla))
+    if agpl.is_file():
+        check("AGPL draft marked NOT IN FORCE", "NOT IN FORCE" in agpl.read_text(), "")
+    if cla.is_file():
+        check("CLA draft marked not in force", "not in force" in cla.read_text().lower(), "")
+    # The active licence must stay MIT — drafts do not relicence anything.
+    check("active LICENSE still MIT", lic.is_file() and "MIT License" in lic.read_text(), "")
+
+
 def test_env_hint_fresh() -> None:
     print("\n[write-env-hint.sh: fresh file]")
     with tempfile.TemporaryDirectory() as td:
@@ -5850,6 +5865,7 @@ def main() -> int:
     test_version()
     test_vibe_andeye_page_draft()
     test_install_preflight()
+    test_licence_drafts()
     test_env_hint_fresh()
     test_env_hint_idempotent()
     test_env_hint_preserves_user_content()

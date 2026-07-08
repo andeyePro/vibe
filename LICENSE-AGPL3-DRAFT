@@ -1,0 +1,37 @@
+DRAFT — NOT IN FORCE. This file is a placeholder for a planned relicence of
+vibe from MIT to the GNU Affero General Public License v3.0 (AGPL-3.0). It does
+NOT change vibe's licence. Until Martin executes the relicence, the active
+licence remains MIT (see the LICENSE file). See CONTRIBUTING.md and TODO.md for
+the gated decision, and CLA-DRAFT.md for the companion contributor agreement.
+
+Why AGPL-3.0 + CLA (recorded rationale): keep the FOSS core free and open, but
+require anyone running a modified vibe as a network/cloud service to publish
+their changes back — a permissive licence lets a competitor absorb the work
+into a closed service without reciprocity. The CLA lets andeye Ltd hold the
+rights needed to relicence and to offer paid add-ons alongside the AGPL core.
+
+When the relicence is executed, replace this entire file with:
+  1. The canonical, unmodified AGPL-3.0 text from
+     https://www.gnu.org/licenses/agpl-3.0.txt (do not hand-transcribe legal
+     text — copy the FSF's canonical file verbatim), renamed to LICENSE.
+  2. The copyright line below at the top, per the FSF "how to apply" notice.
+
+Copyright (C) 2026 andeye Ltd (SC665704).
+
+Recommended per-source-file notice (FSF standard, for reference at execution):
+
+    vibe — single-command containerised Claude Code sessions
+    Copyright (C) 2026 andeye Ltd
+
+    This program is free software: you can redistribute it and/or modify it
+    under the terms of the GNU Affero General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or (at your
+    option) any later version.
+
+    This program is distributed in the hope that it will be useful, but WITHOUT
+    ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+    FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+    for more details.
+
+    You should have received a copy of the GNU Affero General Public License
+    along with this program. If not, see <https://www.gnu.org/licenses/>.
