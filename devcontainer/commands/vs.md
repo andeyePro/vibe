@@ -11,8 +11,10 @@ Model choice is part of the plan, not a constant — see § Model economy. Alway
 Chronological flow per cycle:
 
 ```
-default:   Planner → Spec Critic → (revise) → Generator → Tester   → Evaluator → (iterate or accept)
---fuzzy:   Planner → Spec Critic → (revise) → Generator → Reviewer → Evaluator → (iterate or accept)
+default:           Planner → Spec Critic → (revise) → Generator → Tester             → Evaluator → (iterate or accept)
+--fuzzy:           Planner → Spec Critic → (revise) → Generator → Reviewer           → Evaluator → (iterate or accept)
+--fuzzy --panel:   Planner → Spec Critic → (revise) → Generator → Panel (N blind)    → Evaluator → (iterate or accept)
+--panel (rigorous): Planner → Spec Critic → (revise) → Generator → Tester ∥ Panel    → Evaluator → (iterate or accept)
 ```
 
 Spec Critic runs **once at task start**, before user approval. It does not re-run on cycle iteration — the spec is locked after user approval (changing it restarts at cycle 1 by rule).
@@ -48,6 +50,7 @@ Two principles (Martin, 2026-07-04):
 | Generator | sonnet, tier per Model plan | bulk tokens — cheapest tier that passes |
 | Tester | haiku | mechanical test-writing |
 | Reviewer (`--fuzzy`) | sonnet | judgment from a diff |
+| Panellists (`--panel`) | sonnet ×N (default 3) | blind fan-out of the review role; the upstream pattern runs all-Opus — deliberately re-tiered, N Sonnets beat 1 Opus here because the mechanism's value is INDEPENDENCE, not depth; one Opus depth-probe is the chair's optional extra on correlated consensus |
 
 ### Model plan (lives in spec.md)
 
@@ -69,6 +72,7 @@ Log every escalation in `.vs/progress.md` (`escalated generator sonnet→opus: <
 - `/vs --fable-gen <prompt>` — pre-authorise the Fable rung AND start the Generator there. The user is explicitly spending credits; still quote the estimated credit cost in the spec-approval message.
 - `/vs --max N <prompt>` — override the cycle ceiling. Default is whatever Planner proposes.
 - `/vs --fuzzy <prompt>` — run in fuzzy mode (Reviewer replaces Tester). Combinable with `--max`.
+- `/vs --panel [N] <prompt>` — fan the review out to N blind, independent panellists (default 3; keep it odd; Sonnet tier). In `--fuzzy` mode the panel REPLACES the single Reviewer; in rigorous mode it ADDS a judgment layer beside the Tester (the mechanical test gate still governs pass/fail — a green suite with a dissenting panel is a chair adjudication, not an automatic pass). See § Step 5c. Orthogonal to `--plain`/`--techy`/`--verbosity` (each panellist honours them) and to `--cost` (each panellist logs as `role: "panel_reviewer"`). Panel disagreement is a spec/approach signal, NOT a capability signal — it never triggers the escalation ladder by itself.
 - `/vs --cost <prompt>` — opt in to token-spend logging for this run only. Off by default. Subagent tokens auto-captured per dispatch; chair (Planner/Evaluator) tokens summed from the session's own transcript JSONL; `/budget` gives the month-to-date view without this flag.
 - `/vs --max-iter N <prompt>` — cap the Spec Critic loop at N iterations. Distinct from `--max` (which is the cycle ceiling); `--max-iter` controls only the Spec Critic loop. If the cap fires before convergence, Planner escalates to the user — does not silently auto-pass.
 - `/vs --plain <prompt>` (default ON) — output mode. Spec Critic critiques, Tester summaries, and Evaluator verdicts written in clear concise English with minimal under-the-hood terminology. Reviewable by readers who don't already have the harness vocabulary loaded. Inverse: `--techy`.
@@ -114,9 +118,10 @@ Created at repo root.
   - `cycle-N/diff.patch` — what Generator changed this cycle
   - **Rigorous mode:** `cycle-N/test-output.log` (full Tester output) + `cycle-N/summary.md` (3-line pass/fail summary).
   - **Fuzzy mode:** `cycle-N/reviewer-verdict.md` (Reviewer's written verdict with rationale) + `cycle-N/summary.md` (3-line summary: verdict line + concerns count + key concern).
+  - **`--panel` runs:** `cycle-N/panel/reviewer-<k>.md` (one per panellist, k = 1..N) + `cycle-N/panel/summary.md` (chair's aggregation: verdict tally, correlation classification, adjudication one-liners). Gitignored with the rest of `cycle-N/`.
   - `cycle-N/cost.json` — token-spend log. JSON array, one record per subagent dispatch, schema:
     ```json
-    {"role": "spec_critic|generator|tester|reviewer", "model": "haiku|sonnet|opus|fable",
+    {"role": "spec_critic|generator|tester|reviewer|panel_reviewer", "model": "haiku|sonnet|opus|fable",
      "iteration": 1, "total_tokens": 0, "tool_uses": 0, "duration_ms": 0,
      "timestamp": "<ISO8601>"}
     ```
@@ -253,6 +258,8 @@ Tester's brief:
 
 ### Step 5b — Review (Sonnet Reviewer) — FUZZY MODE ONLY
 
+**Skip this step entirely when `--panel` is set** — the panel (Step 5c) REPLACES the singular Reviewer in fuzzy mode; never run both.
+
 Spawn `Agent(subagent_type: "code-reviewer", model: "sonnet")`. Reviewer needs judgment, not mechanical execution — Sonnet tier. The `code-reviewer` agent type is deliberate: its toolset is read-only (Bash/Read/Grep, no Edit/Write), so reviewer independence is structural, not just instructed.
 
 Independence rule: Reviewer sees only `.vs/spec.md`, the original user prompt (pasted into the Reviewer brief by Planner), and `.vs/cycle-<N>/diff.patch` — NOT Generator's report or reasoning.
@@ -270,6 +277,28 @@ Reviewer's brief:
 - Update `.vs/tasks.json` (`test_status: passing|failing` — map verdict: pass → passing, revise/fail → failing).
 - No immutability rule. Reviewer's verdict is per-cycle, not frozen.
 
+### Step 5c — Panel review (`--panel [N]`, optional amplifier)
+
+Ported 2026-07-10 from the agent-review-panel pattern (blind verdicts + correlated-agreement detection) per `.vs/audits/harness-landscape-2026-07.md`; re-tiered for vibe's model economy (Sonnet panellists, never all-Opus) and re-sized (upstream runs 4–6 panellists; default 3 here — odd for tie-avoidance, and the marginal independence value of panellists 4+ rarely justifies the extra Sonnet spend at vibe's scale).
+
+Sequencing: in fuzzy mode the panel occupies 5b's slot (5b itself is skipped). In rigorous mode the panel dispatches in the same batch position — after the Generator, alongside or immediately after the Tester (5a); the Evaluator reads both. Verdict interaction in rigorous mode: a red test suite fails the cycle regardless of panel opinion (mechanical gate governs); a green suite + panel dissent goes to chair adjudication per the check below — the panel can sink a green cycle, it can never rescue a red one.
+
+N validation (parse-time, before any dispatch): N must be an odd integer between 3 and 7. Even N → round UP to the next odd and say so in the announce. N < 3 → use 3. N > 7 → clamp to 7 (note it). Non-numeric → refuse the flag with a one-line usage note.
+
+Dispatch N `Agent(subagent_type: "code-reviewer", model: "sonnet")` panellists — ALL IN ONE MESSAGE, a single parallel batch. Blindness is structural, three layers deep: the `code-reviewer` toolset is read-only (no Edit/Write escape hatch); the briefs are identical apart from the one substituted output-path token (no seeded differentiation — genuine disagreement must come from the model, not the prompt); and the batch is concurrent, so no panellist's verdict exists for another to read during its run. Each brief additionally instructs: do not read any file under `.vs/cycle-<N>/panel/`.
+
+Each panellist gets exactly what the 5b Reviewer gets — `.vs/spec.md`, the original user prompt (pasted by Planner), `.vs/cycle-<N>/diff.patch` — and NOT the Generator's report, NOT the Tester's output, NOT any other verdict. Each writes `.vs/cycle-<N>/panel/reviewer-<k>.md` (k = 1..N) with the same three sections as 5b (per-criterion assessment / concerns / verdict `pass`|`revise`|`fail`), honouring the run's `--plain`/`--techy` and resolved verbosity. Panellists do NOT touch `tasks.json` — with N concurrent writers that's a race; the chair updates it once after adjudication (Step 6).
+
+### Correlated-agreement (sycophancy) check — Evaluator-side, mandatory under `--panel`
+
+After reading all N verdicts, and BEFORE forming the final judgment, compare them pairwise on three axes: verdict tally, concern sets (same defects found?), and rationale texture (same arguments in the same order, near-identical phrasing?).
+
+- **Correlated consensus** (all N agree AND concern sets + rationale texture are near-duplicates): treat the panel as ONE reviewer's worth of signal, not N× confidence — unanimous-and-identical usually means the diff's surface steered every panellist down the same path, exactly the failure mode the panel exists to catch. Log `panel: correlated consensus — low-information` in `.vs/progress.md`. For a high-blast-radius diff (security-adjacent files, launcher process control, anything in `CLAUDE.md § Invariants` territory) the chair MAY dispatch ONE additional Opus panellist as a depth probe before deciding; otherwise proceed but weight the panel accordingly.
+- **Independent consensus** (all N agree but arrive by visibly different routes — different concern emphases, different evidence): the strong case. N× confidence is earned; say so in the verdict block.
+- **Split verdicts**: the panel's real product. Every named disagreement dimension gets explicit chair adjudication in the `.vs/progress.md` verdict block — quote the dissent, refute it or accept it in writing. No averaging, no majority-rules shortcut: a majority `pass` with an unrefuted BLOCKING dissent from any single panellist is NOT a pass (default-fail discipline extends to dissent). Deadlock is impossible by construction — the chair adjudicates and owns the call.
+
+The chair then writes `.vs/cycle-<N>/panel/summary.md` (verdict tally, correlation classification, adjudication one-liners) and updates `tasks.json` `test_status` from the ADJUDICATED outcome (rigorous runs: the mechanical gate must ALSO be green).
+
 ## Step 6 — Evaluate (Evaluator = you, Opus)
 
 Read in this order, stopping as early as a clear verdict emerges:
@@ -277,6 +306,7 @@ Read in this order, stopping as early as a clear verdict emerges:
 1. `.vs/cycle-<N>/summary.md` — quick pulse. Check for `Regressions:` line (rigorous) or verdict line (fuzzy).
 2. Rigorous: `.vs/cycle-<N>/test-output.log` — ALWAYS read this before a pass verdict, not only on failures. Never trust the Tester's summary claim; verify the raw runner output actually shows the passes (structural version of "producer's word is not evidence").
    Fuzzy: `.vs/cycle-<N>/reviewer-verdict.md` — read the per-criterion assessment and concerns.
+   Under `--panel` (either mode): EVERY `.vs/cycle-<N>/panel/reviewer-<k>.md`, all N of them — then run the correlated-agreement check (§ Step 5c) and write `panel/summary.md` before moving on. Reading a subset, or skipping the correlation pass, silently defeats the panel; the check is mandatory, not optional reading.
 3. `.vs/cycle-<N>/diff.patch` — scope creep, dead code, swallowed errors, invariant violations. Check `CLAUDE.md § Invariants`.
 4. `.vs/cycle-<N>/generator-report.md` — only after forming your own view (avoids anchoring).
 
@@ -319,7 +349,7 @@ cost logging enabled for this /vs run.
 
 Then for every `Agent(...)` call, parse the `<usage>` block and append to `/workspace/.vs/cycle-<N>/cost.json`. Schema:
 ```json
-{"role": "spec_critic|generator|tester|reviewer", "model": "haiku|sonnet|opus|fable",
+{"role": "spec_critic|generator|tester|reviewer|panel_reviewer", "model": "haiku|sonnet|opus|fable",
  "iteration": 1, "total_tokens": 0, "tool_uses": 0, "duration_ms": 0,
  "timestamp": "<ISO8601>"}
 ```
@@ -379,6 +409,7 @@ Superpowers is complementary discipline, not a rival harness — `/vs` supplies 
 - **Status-field mutations only** on `tasks.json`. No unstructured edits.
 - **Fresh subagents per cycle** — context reset over compaction. Continuity via `.vs/` files only.
 - **No cross-subagent context sharing** — Generator never sees Tester's / Reviewer's output; Tester / Reviewer never sees Generator's report. Spec Critic sees only the spec.
+- **No cross-panellist context sharing (`--panel`)** — panellists never read each other's verdicts or `.vs/cycle-<N>/panel/` at all; blindness is structural (read-only agent type, byte-identical briefs, one concurrent batch). A panellist brief that individuates panellists ("you are the security reviewer") breaks the mechanism — differentiation must emerge, not be assigned.
 - **Per-cycle commits** after pass or at escalation points.
 - **Regression gate (rigorous only)** — Tester runs pre-existing test suite; failure caused by Generator's diff is automatic cycle fail. Fuzzy mode cannot enforce this automatically — Reviewer is asked to flag suspected regressions in the diff, but Evaluator should run pre-existing tests manually before declaring pass if there is a test suite at all.
 

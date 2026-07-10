@@ -5425,6 +5425,64 @@ def test_vs_md_plain_techy_verbosity_flags() -> None:
           "propagate" in content.lower() and "subagent" in content.lower(), "")
 
 
+def test_vs_md_panel_flag() -> None:
+    """vs.md spec'd --panel 2026-07-10 (blind independent panellists +
+    correlated-agreement/sycophancy check, ported from the agent-review-panel
+    pattern per the 2026-07 harness-landscape audit, re-tiered to Sonnet).
+    Guards the mechanism's load-bearing properties: structural blindness,
+    identical briefs, the sycophancy check's direction (correlated consensus
+    weakens confidence), dissent handling, and the Sonnet tiering."""
+    print("\n[/vs: --panel blind review panel]")
+    if not VS_MD.exists():
+        check("[vs-panel] vs.md exists", False, "missing")
+        return
+    content = VS_MD.read_text()
+    check("[vs-panel] --panel flag named",
+          "`/vs --panel [N] " in content, "")
+    check("[vs-panel] default 3, odd", "default 3" in content and "odd" in content, "")
+    check("[vs-panel] Step 5c section present", "Step 5c" in content, "")
+    check("[vs-panel] panellists dispatched in one parallel batch",
+          "IN ONE MESSAGE" in content or "one concurrent batch" in content, "")
+    check("[vs-panel] read-only code-reviewer panellist dispatch",
+          'Dispatch N `Agent(subagent_type: "code-reviewer", model: "sonnet")` panellists' in content, "")
+    check("[vs-panel] briefs identical except output-path token",
+          "identical apart from the one substituted output-path token" in content, "")
+    check("[vs-panel] no assigned personas (differentiation must emerge)",
+          "differentiation must emerge" in content, "")
+    check("[vs-panel] per-panellist artifact path",
+          "panel/reviewer-<k>.md" in content, "")
+    check("[vs-panel] chair aggregation artifact",
+          "panel/summary.md" in content, "")
+    check("[vs-panel] sycophancy/correlated-agreement check named",
+          "sycophancy" in content and "orrelated" in content, "")
+    check("[vs-panel] correlated consensus = low-information (weakens, not strengthens)",
+          "low-information" in content, "")
+    check("[vs-panel] unrefuted blocking dissent blocks pass",
+          "NOT a pass" in content, "")
+    check("[vs-panel] Sonnet panellists (not all-Opus)",
+          "sonnet ×N" in content, "")
+    check("[vs-panel] panellists never touch tasks.json",
+          "do NOT touch `tasks.json`" in content, "")
+    check("[vs-panel] rigorous mode keeps mechanical gate",
+          "mechanical test gate still governs" in content, "")
+    check("[vs-panel] cost role panel_reviewer",
+          "panel_reviewer" in content, "")
+    check("[vs-panel] panel disagreement never escalates ladder by itself",
+          "never triggers the escalation ladder by itself" in content, "")
+    check("[vs-panel] 5b explicitly skipped under --panel",
+          "Skip this step entirely when `--panel` is set" in content, "")
+    check("[vs-panel] rigorous interaction: sink green, never rescue red",
+          "it can never rescue a red one" in content, "")
+    check("[vs-panel] N validated: odd integer between 3 and 7",
+          "odd integer between 3 and 7" in content, "")
+    check("[vs-panel] Step 6 mandates reading all N panel verdicts",
+          "all N of them" in content, "")
+    check("[vs-panel] flow diagram shows panel variants",
+          "--fuzzy --panel:" in content, "")
+    check("[vs-panel] upstream 4-6 divergence annotated",
+          "upstream runs 4–6 panellists" in content, "")
+
+
 def test_vs_md_multi_task_archive_convention() -> None:
     """vs.md spec'd a multi-task archive convention 2026-05-07. The convention
     distinguishes per-task state (overwritten -> must archive) from repo-wide
@@ -6665,6 +6723,7 @@ def main() -> int:
     test_install_extras_ensures_project_gitignore()
     test_feedback_auto_promote_fragment()
     test_vs_md_plain_techy_verbosity_flags()
+    test_vs_md_panel_flag()
     test_vs_md_multi_task_archive_convention()
     test_vsss_md_inherits_escalate_and_budget()
     test_install_extras_syncs_hooks()
