@@ -18,6 +18,7 @@ __pycache__/
 # /vss + /vsss ephemeral state (.vss/sessions/*.md is the committed audit trail)
 .vss/last-plan.md
 .vss/auto-resume
+.vss/heartbeat*
 
 # >>> vibe-managed runtime exclusions (auto-added; do not edit body) >>>
 # Files vibe writes to /workspace at runtime. Committing them

@@ -1,111 +1,120 @@
 [
-  {
-    "id": "task_001",
-    "description": "Add --json output to code-check.py emitting machine-readable shellcheck findings",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "evaluator",
-    "mode": "rigorous",
-    "last_modified": "2026-04-23T01:00:00Z"
-  },
-  {
-    "id": "task_003",
-    "description": "Prize-worthy haiku about vibe \u2192 HAIKU.md (fuzzy mode)",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "evaluator",
-    "mode": "fuzzy",
-    "last_modified": "2026-04-23T05:00:00Z"
-  },
-  {
-    "id": "task_004",
-    "description": "Cross-org learning library (opt-in, host-only capture, public/private)",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "evaluator",
-    "mode": "rigorous",
-    "last_modified": "2026-04-23T09:15:00Z"
-  },
-  {
-    "id": "task_005",
-    "description": "OSC 52 clipboard bridge: vibe-copy shell helper + /copy slash command",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-04-23T19:57:00Z"
-  },
-  {
-    "id": "task_006",
-    "description": "/c (renamed from /copy) + host-side clipboard watcher (vibe-copy-watcher.sh)",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-04-23T22:00:00Z"
-  },
-  {
-    "id": "task_007",
-    "description": "Ship two operational rules (WebSearch-before-refusing + no-SSH-out-without-explicit-OK) to all vibe users via inline-prose CLAUDE.md fragments synced from devcontainer/claude-md/ by install-claude-extras.sh",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-04-25T14:32:00Z"
-  },
-  {
-    "id": "task_008",
-    "description": "vibe: drain clipboard scratch on exit (race fix in EXIT trap)",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "evaluator",
-    "mode": "rigorous",
-    "last_modified": "2026-04-25T17:00:00Z"
-  },
-  {
-    "id": "task_009",
-    "description": "In-container /learn slash command + /learnings write-confirm PreToolUse hook (Write/Edit/Bash all gated)",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "evaluator",
-    "mode": "rigorous",
-    "last_modified": "2026-04-26T18:30:00Z"
-  },
-  {
-    "id": "task_013",
-    "description": "/vs intelligent Spec Critic iteration cap (convergence/plateau/divergence + --max-iter flag, replaces hardcoded max 2)",
-    "implementation_status": "complete",
-    "test_status": "failing",
-    "assigned_to": "parked",
-    "mode": "rigorous",
-    "last_modified": "2026-04-27T00:00:00Z",
-    "parked_note": "Cycle 1 Step 6 escalation: AC10 spec defect (diff.patch from git diff includes Planner bookkeeping in .vs/spec.md + .vs/tasks.json, which AC10 didn't whitelist). 18/19 task_013 checks pass; only AC10 fails. Resume options documented in TODO.md task_013 entry."
-  },
-  {
-    "id": "task_010",
-    "description": "/learn smart-capture: semantic check phase (contradiction detection, quality gate, option scheme Z1/Z2/N)",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-05-07T00:00:00Z"
-  },
-  {
-    "id": "task_014",
-    "description": "Per-project Claude projects/ bind: each host project gets its own /home/node/.claude/projects/ inside the container so vibe X --continue scopes by project, not globally",
-    "implementation_status": "pending",
-    "test_status": "pending",
-    "assigned_to": "planner",
-    "mode": "rigorous",
-    "last_modified": "2026-04-29T00:00:00Z"
-  },
-  {
-    "id": "task_015",
-    "description": "Auto-recreate a project's container when it was built from a superseded vibe-dev:latest (image-drift detection before devcontainer up); fixes silent stale-container env claude ENOENT",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-05-27T00:00:00Z"
-  }
+ {
+  "id": "task_001",
+  "description": "Add --json output to code-check.py emitting machine-readable shellcheck findings",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-04-23T01:00:00Z"
+ },
+ {
+  "id": "task_003",
+  "description": "Prize-worthy haiku about vibe \u2192 HAIKU.md (fuzzy mode)",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "evaluator",
+  "mode": "fuzzy",
+  "last_modified": "2026-04-23T05:00:00Z"
+ },
+ {
+  "id": "task_004",
+  "description": "Cross-org learning library (opt-in, host-only capture, public/private)",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-04-23T09:15:00Z"
+ },
+ {
+  "id": "task_005",
+  "description": "OSC 52 clipboard bridge: vibe-copy shell helper + /copy slash command",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-04-23T19:57:00Z"
+ },
+ {
+  "id": "task_006",
+  "description": "/c (renamed from /copy) + host-side clipboard watcher (vibe-copy-watcher.sh)",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-04-23T22:00:00Z"
+ },
+ {
+  "id": "task_007",
+  "description": "Ship two operational rules (WebSearch-before-refusing + no-SSH-out-without-explicit-OK) to all vibe users via inline-prose CLAUDE.md fragments synced from devcontainer/claude-md/ by install-claude-extras.sh",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-04-25T14:32:00Z"
+ },
+ {
+  "id": "task_008",
+  "description": "vibe: drain clipboard scratch on exit (race fix in EXIT trap)",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-04-25T17:00:00Z"
+ },
+ {
+  "id": "task_009",
+  "description": "In-container /learn slash command + /learnings write-confirm PreToolUse hook (Write/Edit/Bash all gated)",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-04-26T18:30:00Z"
+ },
+ {
+  "id": "task_013",
+  "description": "/vs intelligent Spec Critic iteration cap (convergence/plateau/divergence + --max-iter flag, replaces hardcoded max 2)",
+  "implementation_status": "complete",
+  "test_status": "failing",
+  "assigned_to": "parked",
+  "mode": "rigorous",
+  "last_modified": "2026-04-27T00:00:00Z",
+  "parked_note": "Cycle 1 Step 6 escalation: AC10 spec defect (diff.patch from git diff includes Planner bookkeeping in .vs/spec.md + .vs/tasks.json, which AC10 didn't whitelist). 18/19 task_013 checks pass; only AC10 fails. Resume options documented in TODO.md task_013 entry."
+ },
+ {
+  "id": "task_010",
+  "description": "/learn smart-capture: semantic check phase (contradiction detection, quality gate, option scheme Z1/Z2/N)",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-05-07T00:00:00Z"
+ },
+ {
+  "id": "task_014",
+  "description": "Per-project Claude projects/ bind: each host project gets its own /home/node/.claude/projects/ inside the container so vibe X --continue scopes by project, not globally",
+  "implementation_status": "pending",
+  "test_status": "pending",
+  "assigned_to": "planner",
+  "mode": "rigorous",
+  "last_modified": "2026-04-29T00:00:00Z"
+ },
+ {
+  "id": "task_015",
+  "description": "Auto-recreate a project's container when it was built from a superseded vibe-dev:latest (image-drift detection before devcontainer up); fixes silent stale-container env claude ENOENT",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-05-27T00:00:00Z"
+ },
+ {
+  "id": "task_016",
+  "description": "--sessions auto-resume survives the out-of-credits block: heartbeat hooks + host-side stall watchdog (3-part gate), countdown Ctrl-C deactivate, claude exit-status propagation",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-07-10T12:22:14Z"
+ }
 ]

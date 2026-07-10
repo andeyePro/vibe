@@ -261,3 +261,27 @@ piece of work (the /learn-docs host-stage-all footgun fix: CHANGELOG 2026-05-26
 entry + learn.md + learn-hook.md + smoke-test footgun test, "SHA pending
 commit"). Entangled with task_015 in CHANGELOG.md and smoke-test.py. Awaiting
 user decision on commit structure before landing.
+
+## task_016 — --sessions auto-resume survives the out-of-credits block (2026-07-10)
+
+Cycle 1 start. Spec locked after 4 Spec Critic iterations (concerns 12 -> 6 -> 3 -> 1;
+final concern — "hooks don't fire for subagent tool calls" — refuted by direct experiment
+in-container: headless claude -p probe hook logged the subagent's internal Bash PTU event;
+resolution note in .vs/cycle-1/spec-critique-iter4.md). Spec approval: self-approved under
+/vss acts-as-user authority (autonomous run; Fable rung NOT pre-authorised; Generator sonnet,
+Tester haiku). Dispatching Generator.
+
+Cycle 1 evaluation: FAIL — classification: test (not capability). Generator diff faithful
+to spec (all 13 ACs implemented; gates green). Tester negatives T2/T3/T4 are vacuous:
+0.5s fake claude + 1s poll + ALIVE=[no] asserted AFTER natural death — a gate bug would
+produce identical output (watchdog would kill an already-dead PID). Deviates from the
+spec's pinned shape (sleep 5, alive-at-~2-3s mid-life assertion). Escalated Tester
+haiku→sonnet per Model-economy ladder ("test quality"); Generator NOT re-dispatched.
+
+Cycle 2 evaluation: PASS. Tester (sonnet) rewrote only test_vibe_stall_watchdog_functional:
+negatives now stub the kill fn + assert killfile absence + sample a sleep-5 fake claude at
+t=3s (two live gate evaluations); T1 additionally proves the host-PID fallback (DEAD=[yes]).
+Evaluator independently re-ran both gates fresh: smoke 1048/1048, shellcheck clean.
+Tiers that passed: Generator sonnet (cycle 1, one attempt); Tester sonnet (after haiku
+quality fail). Verdict: all 13 ACs delivered; no scope creep; invariants intact (guard
+hooks byte-identical per AC4 structural check; EXIT trap untouched).

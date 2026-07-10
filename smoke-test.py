@@ -5995,6 +5995,420 @@ def test_repo_owner_selection() -> None:
           "VIBE_GITHUB_OWNER" in (REPO / "README.md").read_text(), "")
 
 
+# ── Task 016: auto-resume watchdog + heartbeat (AC1-AC8, AC12) ──────────────────
+
+def test_vibe_auto_resume_deactivate() -> None:
+    print("\n[task_016 AC1: auto_resume_deactivate]")
+    snippet = (
+        'm="${TMPDIR:-/tmp}/vibe-ar-deact.$$"; '
+        'printf "active=1\\nremaining=2\\nresume_at=1751600000\\n" > "$m"; '
+        'auto_resume_deactivate "$m"; '
+        'echo "AFTER=[$(auto_resume_field "$m" active)]"; '
+        'auto_resume_deactivate "$m"; '
+        'echo "IDEMPOTENT=[$(auto_resume_field "$m" active)]"; '
+        'auto_resume_deactivate "$m.missing"; '
+        'if [ -f "$m.missing" ]; then echo "CREATED=[yes]"; else echo "CREATED=[no]"; fi; '
+        'rm -f "$m" "$m.tmp.$$"; '
+        'if [ -f "$m.tmp.$$" ]; then echo "RESIDUE=[yes]"; else echo "RESIDUE=[no]"; fi'
+    )
+    r = _source_vibe_call({}, snippet)
+    check("AC1: deactivate exits 0", r.returncode == 0, r.stderr)
+    check("AC1: sets active=0", "AFTER=[0]" in r.stdout, r.stdout)
+    check("AC1: idempotent", "IDEMPOTENT=[0]" in r.stdout, r.stdout)
+    check("AC1: missing file → no create", "CREATED=[no]" in r.stdout, r.stdout)
+    check("AC1: no .tmp residue", "RESIDUE=[no]" in r.stdout, r.stdout)
+
+
+def test_vibe_auto_resume_heartbeat_write() -> None:
+    print("\n[task_016 AC2: auto_resume_heartbeat_write]")
+    snippet = (
+        'hb="${TMPDIR:-/tmp}/vibe-hb-write.$$"; '
+        'before=$(date +%s); '
+        'auto_resume_heartbeat_write "$hb"; '
+        'after=$(date +%s); '
+        'if [ -f "$hb" ]; then '
+        '  val=$(cat "$hb"); '
+        '  if echo "$val" | grep -qE "^[0-9]+$"; then '
+        '    if [ "$val" -ge "$before" ] && [ "$val" -le "$after" ]; then '
+        '      echo "EPOCH=[ok]"; '
+        '    else '
+        '      echo "EPOCH=[out-of-range:$val]"; '
+        '    fi; '
+        '  else '
+        '    echo "EPOCH=[not-numeric:$val]"; '
+        '  fi; '
+        'else '
+        '  echo "EPOCH=[missing]"; '
+        'fi; '
+        'rm -f "$hb" "$hb.tmp.$$"'
+    )
+    r = _source_vibe_call({}, snippet)
+    check("AC2: exits 0", r.returncode == 0, r.stderr)
+    check("AC2: writes epoch in range", "EPOCH=[ok]" in r.stdout, r.stdout)
+
+
+def test_vibe_auto_resume_stalled() -> None:
+    print("\n[task_016 AC3: auto_resume_stalled]")
+    snippet = (
+        'hb="${TMPDIR:-/tmp}/vibe-ar-stalled.$$"; '
+        'now=$(date +%s); '
+        # Test case 1: gap 1000 vs threshold 900 → stalled (0)
+        'echo "$((now - 1000))" > "$hb"; '
+        'if auto_resume_stalled "$hb" "$now" 900; then echo "T1=[0]"; else echo "T1=[1]"; fi; '
+        # Test case 2: gap 100 vs 900 → not stalled (1)
+        'echo "$((now - 100))" > "$hb"; '
+        'if auto_resume_stalled "$hb" "$now" 900; then echo "T2=[0]"; else echo "T2=[1]"; fi; '
+        # Test case 3: gap exactly 900 vs 900 → not stalled, boundary (1)
+        'echo "$((now - 900))" > "$hb"; '
+        'if auto_resume_stalled "$hb" "$now" 900; then echo "T3=[0]"; else echo "T3=[1]"; fi; '
+        # Test case 4: missing file → not stalled (1)
+        'rm -f "$hb"; '
+        'if auto_resume_stalled "$hb" "$now" 900; then echo "T4=[0]"; else echo "T4=[1]"; fi; '
+        # Test case 5: future epoch → not stalled (1)
+        'echo "$((now + 500))" > "$hb"; '
+        'if auto_resume_stalled "$hb" "$now" 900; then echo "T5=[0]"; else echo "T5=[1]"; fi; '
+        # Test case 6: garbage content → not stalled (1)
+        'echo "evil; rm -rf /" > "$hb"; '
+        'if auto_resume_stalled "$hb" "$now" 900; then echo "T6=[0]"; else echo "T6=[1]"; fi; '
+        'rm -f "$hb"'
+    )
+    r = _source_vibe_call({}, snippet)
+    check("AC3: exits 0", r.returncode == 0, r.stderr)
+    check("AC3: gap > threshold → stalled", "T1=[0]" in r.stdout, r.stdout)
+    check("AC3: gap < threshold → not stalled", "T2=[1]" in r.stdout, r.stdout)
+    check("AC3: gap == threshold (boundary) → not stalled", "T3=[1]" in r.stdout, r.stdout)
+    check("AC3: missing file → not stalled", "T4=[1]" in r.stdout, r.stdout)
+    check("AC3: future epoch → not stalled", "T5=[1]" in r.stdout, r.stdout)
+    check("AC3: garbage content → not stalled", "T6=[1]" in r.stdout, r.stdout)
+
+
+def test_vibe_settings_heartbeat_hooks() -> None:
+    print("\n[task_016 AC4: heartbeat hook entries in settings.local.json]")
+    vibe_src = VIBE.read_text()
+
+    # Extract the settings.local.json heredoc between cat > ... << 'EOF' and closing EOF
+    start_marker = 'cat > "$WORKSPACE/.claude/settings.local.json" << \'EOF\''
+    start_idx = vibe_src.find(start_marker)
+    if start_idx == -1:
+        check("AC4: heredoc found", False, "could not locate settings.local.json heredoc start")
+        return
+
+    start_idx = vibe_src.find('\n', start_idx) + 1
+    end_idx = vibe_src.find('\nEOF', start_idx)
+    if end_idx == -1:
+        check("AC4: heredoc end found", False, "could not locate heredoc end")
+        return
+
+    json_str = vibe_src[start_idx:end_idx]
+    try:
+        config = json.loads(json_str)
+    except json.JSONDecodeError as e:
+        check("AC4: valid JSON", False, f"JSON parse error: {e}")
+        return
+
+    check("AC4: valid JSON", True, "")
+
+    # Verify the pinned heartbeat command
+    heartbeat_cmd = "[ -f /workspace/.vss/auto-resume ] && { date +%s > /workspace/.vss/heartbeat.tmp.$$ && mv /workspace/.vss/heartbeat.tmp.$$ /workspace/.vss/heartbeat; } || true"
+
+    # Check PreToolUse hooks
+    pre_hooks = config.get("hooks", {}).get("PreToolUse", [])
+    pre_heartbeat = any(
+        block.get("matcher") == "" and
+        any(cmd.get("command") == heartbeat_cmd for cmd in block.get("hooks", []))
+        for block in pre_hooks
+    )
+    check("AC4: PreToolUse heartbeat hook present", pre_heartbeat,
+          f"PreToolUse blocks: {len(pre_hooks)}")
+
+    # Check PostToolUse hooks
+    post_hooks = config.get("hooks", {}).get("PostToolUse", [])
+    post_heartbeat = any(
+        block.get("matcher") == "" and
+        any(cmd.get("command") == heartbeat_cmd for cmd in block.get("hooks", []))
+        for block in post_hooks
+    )
+    check("AC4: PostToolUse heartbeat hook present", post_heartbeat,
+          f"PostToolUse blocks: {len(post_hooks)}")
+
+    # Check Stop hooks
+    stop_hooks = config.get("hooks", {}).get("Stop", [])
+    stop_heartbeat = any(
+        block.get("matcher") == "" and
+        any(cmd.get("command") == heartbeat_cmd for cmd in block.get("hooks", []))
+        for block in stop_hooks
+    )
+    check("AC4: Stop heartbeat hook present", stop_heartbeat,
+          f"Stop blocks: {len(stop_hooks)}")
+
+    # Check that guard-bash, guard-fs, bell, etc. are still present
+    has_guard_bash = any(
+        block.get("matcher") == "Bash" and
+        any("/usr/local/bin/guard-bash.sh" in cmd.get("command", "") for cmd in block.get("hooks", []))
+        for block in pre_hooks
+    )
+    check("AC4: guard-bash entry preserved", has_guard_bash, "")
+
+    has_guard_fs = any(
+        block.get("matcher") == "Write|Edit|MultiEdit" and
+        any("/usr/local/bin/guard-fs.sh" in cmd.get("command", "") for cmd in block.get("hooks", []))
+        for block in pre_hooks
+    )
+    check("AC4: guard-fs entry preserved", has_guard_fs, "")
+
+    # Check bell on Stop
+    bell_stop = any(
+        block.get("matcher") == "" and
+        any("printf '\\a'" in cmd.get("command", "") for cmd in block.get("hooks", []))
+        for block in stop_hooks
+    )
+    check("AC4: bell Stop command present", bell_stop, "")
+
+    # Check bell on Notification
+    notif_hooks = config.get("hooks", {}).get("Notification", [])
+    bell_notif = any(
+        block.get("matcher") == "" and
+        any("printf '\\a'" in cmd.get("command", "") for cmd in block.get("hooks", []))
+        for block in notif_hooks
+    )
+    check("AC4: bell Notification entry present", bell_notif, "")
+
+    # Check forceLoginMethod and permissions.defaultMode
+    check("AC4: forceLoginMethod=claudeai",
+          config.get("forceLoginMethod") == "claudeai",
+          f"forceLoginMethod={config.get('forceLoginMethod')}")
+    check("AC4: permissions.defaultMode=bypassPermissions",
+          config.get("permissions", {}).get("defaultMode") == "bypassPermissions",
+          f"permissions.defaultMode={config.get('permissions', {}).get('defaultMode')}")
+
+
+def test_vibe_supervised_launch_text() -> None:
+    print("\n[task_016 AC5/AC7/AC8: supervised launch and trap text]")
+    vibe_src = VIBE.read_text()
+
+    # AC5a: launch_claude has exec devcontainer exec
+    launch_claude_def = re.search(r'^launch_claude\(\) \{(.+?)^}', vibe_src, re.MULTILINE | re.DOTALL)
+    if launch_claude_def:
+        body = launch_claude_def.group(1)
+        has_exec = "exec devcontainer exec" in body
+        check("AC5: launch_claude body has 'exec devcontainer exec'", has_exec, "")
+    else:
+        check("AC5: launch_claude function found", False, "function definition not found")
+
+    # AC5b: At least one bare devcontainer exec line exists (non-exec-prefixed)
+    lines = vibe_src.split('\n')
+    no_exec_lines = [l for l in lines
+                     if l.strip().startswith('devcontainer exec')
+                     and not l.strip().startswith('exec ')]
+    check("AC5: at least one bare 'devcontainer exec' line", len(no_exec_lines) > 0,
+          f"found {len(no_exec_lines)} lines")
+
+    # AC5c: launch_claude_supervised exists
+    check("AC5: launch_claude_supervised function exists",
+          "launch_claude_supervised()" in vibe_src, "")
+
+    # AC5d: VIBE_SESSION_REF is created with mktemp
+    check("AC5: VIBE_SESSION_REF created with mktemp",
+          'VIBE_SESSION_REF=$(mktemp' in vibe_src, "")
+
+    # AC5e: AUTO_RESUME_MARKER defined before first supervised launch
+    check("AC5: AUTO_RESUME_MARKER defined",
+          'AUTO_RESUME_MARKER="$WORKSPACE/.vss/auto-resume"' in vibe_src, "")
+
+    # AC7: INT trap is re-armed every iteration and reset after sleep
+    has_int_trap = "trap 'auto_resume_deactivate" in vibe_src and "INT" in vibe_src
+    check("AC7: INT trap armed for deactivate", has_int_trap, "")
+
+    # AC7: trap reset after sleep
+    has_trap_reset = "trap - INT" in vibe_src
+    check("AC7: trap - INT reset present", has_trap_reset, "")
+
+    # AC8: final exit statement with CLAUDE_EXIT
+    has_exit_statement = re.search(r'^\s*exit "\$CLAUDE_EXIT"', vibe_src, re.MULTILINE)
+    check("AC8: final 'exit \"$CLAUDE_EXIT\"' statement", has_exit_statement is not None, "")
+
+
+def test_vibe_stall_watchdog_functional() -> None:
+    print("\n[task_016 AC6: watchdog functional tests]")
+    # All four cases stub vibe_container_kill_claude to write a killfile marker
+    # instead of asserting on process death alone (a broken kill gate would
+    # otherwise look identical to a correct one: an already-timed-out fake
+    # claude dies "on its own" regardless of whether the gate ever armed).
+    # POLL=1/GRACE=1/SECS=1/KILL_PAUSE=0 per spec AC6's pinned functional-test
+    # env; negatives sample the live PID mid-lifetime (~t=3s, before its
+    # natural 5s death) so the assertion is discriminating, not a race against
+    # natural process exit.
+
+    # Test 1: POSITIVE kill - marker active=1, ref file older (unconditional-
+    # session case), heartbeat stale. Long-lived fake claude (sleep 300) so
+    # any death can only be the watchdog's doing, never natural exit.
+    snippet_t1 = (
+        'set +e; '
+        'marker="${TMPDIR:-/tmp}/marker-t1.$$"; '
+        'hb="${TMPDIR:-/tmp}/hb-t1.$$"; '
+        'ref="${TMPDIR:-/tmp}/ref-t1.$$"; '
+        'killfile="${TMPDIR:-/tmp}/killfile-t1.$$"; '
+        # Stub vibe_container_kill_claude to track invocation (never actually
+        # kills - proves the host-side PID fallback is what finishes the job)
+        'vibe_container_kill_claude() { echo "killed" > "$killfile"; }; '
+        # Backdate ref file first so the marker (written next, "now") is
+        # unambiguously newer - no same-second race.
+        'touch -t 202001010000 "$ref"; '
+        'printf "active=1\\nremaining=2\\nresume_at=1751600000\\n" > "$marker"; '
+        'echo "$(($(date +%s) - 2000))" > "$hb"; '
+        'sleep 300 & fake_pid=$!; '
+        'VIBE_STALL_POLL_SECS=1 VIBE_STALL_GRACE_SECS=1 VIBE_STALL_SECS=1 VIBE_STALL_KILL_PAUSE_SECS=0 vibe_stall_watchdog "$fake_pid" "$marker" "$hb" "$ref" 2>/dev/null & '
+        'wd_pid=$!; '
+        'sleep 2.3; '
+        'if [ -f "$killfile" ]; then echo "KILLED=[yes]"; else echo "KILLED=[no]"; fi; '
+        'sleep 0.7; '
+        'if kill -0 "$fake_pid" 2>/dev/null; then echo "DEAD=[no]"; else echo "DEAD=[yes]"; fi; '
+        'kill "$fake_pid" 2>/dev/null; '
+        'kill "$wd_pid" 2>/dev/null; '
+        'wait "$fake_pid" 2>/dev/null; '
+        'wait "$wd_pid" 2>/dev/null; '
+        'rm -f "$marker" "$hb" "$ref" "$killfile" "$marker.tmp.$$" "$hb.tmp.$$"; '
+        'set -e'
+    )
+    r = _source_vibe_call({}, snippet_t1)
+    check("AC6 T1: positive kill case exits 0", r.returncode == 0, r.stderr)
+    check("AC6 T1: vibe_container_kill_claude invoked", "KILLED=[yes]" in r.stdout, r.stdout)
+    check("AC6 T1: fake claude actually terminated (host-PID fallback)",
+          "DEAD=[yes]" in r.stdout, r.stdout)
+
+    # Test 2: NEGATIVE active=0 - gate condition (1) fails. Short-lived fake
+    # claude (sleep 5) sampled at t=3s (mid-lifetime, well before its natural
+    # death) so "still alive" is evidence the gate declined to arm, not a
+    # coincidence of timing. killfile must not exist: the stub was never called.
+    snippet_t2 = (
+        'set +e; '
+        'marker="${TMPDIR:-/tmp}/marker-t2.$$"; '
+        'hb="${TMPDIR:-/tmp}/hb-t2.$$"; '
+        'ref="${TMPDIR:-/tmp}/ref-t2.$$"; '
+        'killfile="${TMPDIR:-/tmp}/killfile-t2.$$"; '
+        'vibe_container_kill_claude() { echo "killed" > "$killfile"; }; '
+        'printf "active=0\\nremaining=2\\nresume_at=1751600000\\n" > "$marker"; '
+        'echo "$(($(date +%s) - 2000))" > "$hb"; '
+        'touch "$ref"; '
+        'sleep 5 & fake_pid=$!; '
+        'VIBE_STALL_POLL_SECS=1 VIBE_STALL_GRACE_SECS=1 VIBE_STALL_SECS=1 VIBE_STALL_KILL_PAUSE_SECS=0 vibe_stall_watchdog "$fake_pid" "$marker" "$hb" "$ref" 2>/dev/null & '
+        'wd_pid=$!; '
+        'sleep 3; '
+        'if kill -0 "$fake_pid" 2>/dev/null; then echo "ALIVE=[yes]"; else echo "ALIVE=[no]"; fi; '
+        'if [ -f "$killfile" ]; then echo "KILLFILE=[yes]"; else echo "KILLFILE=[no]"; fi; '
+        'kill "$fake_pid" 2>/dev/null; '
+        'kill "$wd_pid" 2>/dev/null; '
+        'wait "$fake_pid" 2>/dev/null; '
+        'wait "$wd_pid" 2>/dev/null; '
+        'rm -f "$marker" "$hb" "$ref" "$killfile" "$marker.tmp.$$" "$hb.tmp.$$"; '
+        'set -e'
+    )
+    r = _source_vibe_call({}, snippet_t2)
+    check("AC6 T2: negative active=0 exits 0", r.returncode == 0, r.stderr)
+    check("AC6 T2: fake claude still alive after two live polls",
+          "ALIVE=[yes]" in r.stdout, r.stdout)
+    check("AC6 T2: kill never invoked", "KILLFILE=[no]" in r.stdout, r.stdout)
+
+    # Test 3: NEGATIVE stale ref gate - gate condition (2) fails: marker
+    # predates ref (crash-left marker from before this launcher session).
+    # Same live-PID-at-t=3s + killfile-absent discrimination as T2.
+    snippet_t3 = (
+        'set +e; '
+        'marker="${TMPDIR:-/tmp}/marker-t3.$$"; '
+        'hb="${TMPDIR:-/tmp}/hb-t3.$$"; '
+        'ref="${TMPDIR:-/tmp}/ref-t3.$$"; '
+        'killfile="${TMPDIR:-/tmp}/killfile-t3.$$"; '
+        'vibe_container_kill_claude() { echo "killed" > "$killfile"; }; '
+        'printf "active=1\\nremaining=2\\nresume_at=1751600000\\n" > "$marker"; '
+        # Backdate the MARKER (crash-left case) then create ref fresh - ref
+        # unambiguously newer than marker, so [ marker -nt ref ] is false.
+        'touch -t 202001010000 "$marker"; '
+        'touch "$ref"; '
+        'echo "$(($(date +%s) - 2000))" > "$hb"; '
+        'sleep 5 & fake_pid=$!; '
+        'VIBE_STALL_POLL_SECS=1 VIBE_STALL_GRACE_SECS=1 VIBE_STALL_SECS=1 VIBE_STALL_KILL_PAUSE_SECS=0 vibe_stall_watchdog "$fake_pid" "$marker" "$hb" "$ref" 2>/dev/null & '
+        'wd_pid=$!; '
+        'sleep 3; '
+        'if kill -0 "$fake_pid" 2>/dev/null; then echo "ALIVE=[yes]"; else echo "ALIVE=[no]"; fi; '
+        'if [ -f "$killfile" ]; then echo "KILLFILE=[yes]"; else echo "KILLFILE=[no]"; fi; '
+        'kill "$fake_pid" 2>/dev/null; '
+        'kill "$wd_pid" 2>/dev/null; '
+        'wait "$fake_pid" 2>/dev/null; '
+        'wait "$wd_pid" 2>/dev/null; '
+        'rm -f "$marker" "$hb" "$ref" "$killfile" "$marker.tmp.$$" "$hb.tmp.$$"; '
+        'set -e'
+    )
+    r = _source_vibe_call({}, snippet_t3)
+    check("AC6 T3: negative stale ref gate exits 0", r.returncode == 0, r.stderr)
+    check("AC6 T3: crash-left marker - fake claude still alive after two live polls",
+          "ALIVE=[yes]" in r.stdout, r.stdout)
+    check("AC6 T3: kill never invoked", "KILLFILE=[no]" in r.stdout, r.stdout)
+
+    # Test 4: NEGATIVE empty ref - gate condition (2) fails via the mktemp-
+    # failure fail-safe (empty ref must never satisfy the sentinel or the
+    # exists-and-newer branch). Same discrimination as T2/T3.
+    snippet_t4 = (
+        'set +e; '
+        'marker="${TMPDIR:-/tmp}/marker-t4.$$"; '
+        'hb="${TMPDIR:-/tmp}/hb-t4.$$"; '
+        'killfile="${TMPDIR:-/tmp}/killfile-t4.$$"; '
+        'vibe_container_kill_claude() { echo "killed" > "$killfile"; }; '
+        'printf "active=1\\nremaining=2\\nresume_at=1751600000\\n" > "$marker"; '
+        'echo "$(($(date +%s) - 2000))" > "$hb"; '
+        'sleep 5 & fake_pid=$!; '
+        'VIBE_STALL_POLL_SECS=1 VIBE_STALL_GRACE_SECS=1 VIBE_STALL_SECS=1 VIBE_STALL_KILL_PAUSE_SECS=0 vibe_stall_watchdog "$fake_pid" "$marker" "$hb" "" 2>/dev/null & '
+        'wd_pid=$!; '
+        'sleep 3; '
+        'if kill -0 "$fake_pid" 2>/dev/null; then echo "ALIVE=[yes]"; else echo "ALIVE=[no]"; fi; '
+        'if [ -f "$killfile" ]; then echo "KILLFILE=[yes]"; else echo "KILLFILE=[no]"; fi; '
+        'kill "$fake_pid" 2>/dev/null; '
+        'kill "$wd_pid" 2>/dev/null; '
+        'wait "$fake_pid" 2>/dev/null; '
+        'wait "$wd_pid" 2>/dev/null; '
+        'rm -f "$marker" "$hb" "$killfile" "$marker.tmp.$$" "$hb.tmp.$$"; '
+        'set -e'
+    )
+    r = _source_vibe_call({}, snippet_t4)
+    check("AC6 T4: negative empty ref exits 0", r.returncode == 0, r.stderr)
+    check("AC6 T4: empty ref - fake claude still alive after two live polls",
+          "ALIVE=[yes]" in r.stdout, r.stdout)
+    check("AC6 T4: empty ref never arms kill", "KILLFILE=[no]" in r.stdout, r.stdout)
+
+
+def test_vibe_gitignore_heartbeat_pattern() -> None:
+    print("\n[task_016 AC12: .gitignore heartbeat pattern]")
+    gitignore_path = REPO / ".gitignore"
+    if not gitignore_path.exists():
+        check("AC12: .gitignore exists", False, "file not found")
+        return
+
+    content = gitignore_path.read_text()
+    has_heartbeat = ".vss/heartbeat*" in content
+    check("AC12: .gitignore contains '.vss/heartbeat*'", has_heartbeat,
+          "pattern not found")
+
+
+def test_vibe_task016_docs() -> None:
+    print("\n[task_016 AC11/AC13: documentation presence]")
+
+    # AC11: MANUAL-TESTS.md gains a --sessions stall watchdog section
+    manual_tests = (REPO / "MANUAL-TESTS.md").read_text()
+    has_stall_section = "--sessions stall watchdog" in manual_tests or "stall watchdog" in manual_tests
+    check("AC11: MANUAL-TESTS.md has stall watchdog section", has_stall_section, "")
+
+    # AC13: vibe auto-resume comment block (around line 479-486)
+    vibe_src = VIBE.read_text()
+    has_heartbeat_docs = "heartbeat" in vibe_src and "stall-watchdog" in vibe_src
+    check("AC13: vibe comment block mentions heartbeat and watchdog", has_heartbeat_docs, "")
+
+    # AC13: devcontainer/commands/vsss.md documents Auto-resume section
+    vsss_md = (REPO / "devcontainer" / "commands" / "vsss.md").read_text()
+    has_auto_resume_docs = "Auto-resume" in vsss_md or "auto-resume" in vsss_md
+    check("AC13: vsss.md documents Auto-resume", has_auto_resume_docs, "")
+    has_stall_secs = "VIBE_STALL_SECS" in vsss_md
+    check("AC13: vsss.md documents VIBE_STALL_SECS", has_stall_secs, "")
+
+
 def main() -> int:
     test_help()
     test_version()
@@ -6049,6 +6463,14 @@ def main() -> int:
     test_vibe_model_args_set()
     test_vibe_fable_billing_phase()
     test_vibe_auto_resume_helpers()
+    test_vibe_auto_resume_deactivate()
+    test_vibe_auto_resume_heartbeat_write()
+    test_vibe_auto_resume_stalled()
+    test_vibe_settings_heartbeat_hooks()
+    test_vibe_supervised_launch_text()
+    test_vibe_stall_watchdog_functional()
+    test_vibe_gitignore_heartbeat_pattern()
+    test_vibe_task016_docs()
     test_vibe_help_mentions_fable_and_model()
     test_ac1_no_container()
     test_ac2_matching_image()

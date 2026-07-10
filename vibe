@@ -484,6 +484,42 @@ fable_billing_phase() {
 # relaunches `claude --continue "/vsss --resume"`. The skill sets active=0 at
 # any clean Final-state exit, so finished loops never relaunch. Manual
 # override: delete .vss/auto-resume, or Ctrl-C during the countdown.
+#
+# Stall watchdog (heartbeat-driven kill of a wedged usage-limit picker):
+# interactive claude does NOT exit when a Pro/Max usage window runs out — it
+# blocks forever at an interactive picker, so the relaunch loop above never
+# runs on its own. settings.local.json's PreToolUse/PostToolUse/Stop hooks
+# (see the heredoc below) write an epoch to .vss/heartbeat while the marker
+# exists; launch_claude_supervised backgrounds claude, captures its PID, and
+# runs vibe_stall_watchdog alongside it. The watchdog's kill gate is THREE
+# conditions, ALL required, so a crash-left marker in an unrelated later
+# interactive session is never mistaken for a live --sessions run: (1) marker
+# active=1 (auto_resume_field, not auto_resume_pending, so the FINAL window —
+# remaining=0 — is still protected from an unwanted kill); (2) the marker was
+# refreshed DURING THIS launcher session — proven portably via
+# `[ marker -nt ref ]` against a session-start reference file (VIBE_SESSION_REF)
+# — OR the call site is a relaunch, which arms unconditionally via the literal
+# sentinel "-" (a freshly relaunched window may be stalled at the picker
+# before the skill gets a chance to refresh anything); an EMPTY ref (e.g.
+# mktemp failure) NEVER arms — fail-safe toward not killing; (3) the
+# heartbeat is provably stale (auto_resume_stalled, default 1800s — 30 min of
+# no hook events, including subagent tool calls, reliably means the picker,
+# not a legitimately long-running command). On trigger: warn, wait a grace
+# period, re-check all three, then kill in-container first
+# (vibe_container_kill_claude), pause for that to land, and fall back to the
+# host client PID. With relaunches remaining this drops straight into the
+# existing countdown/relaunch loop below; on the final window (remaining=0)
+# the loop is simply not entered and the launcher exits cleanly instead of
+# hanging forever. The watchdog's own lifetime is bounded by claude-PID
+# liveness alone (kill -0 in its poll loop) — no EXIT-trap dependency, so the
+# pre-existing clipboard-watcher EXIT trap is untouched; an orphaned watchdog
+# (launcher died mid-wait) notices claude's death within one poll interval.
+# Ctrl-C during the countdown deactivates the marker (auto_resume_deactivate)
+# via a per-iteration INT trap — cancel means cancel, but crash-left markers
+# must still resume, so nothing else touches the marker on any other exit
+# path. Claude's exit status is captured past the old `set -e`-guarding
+# `|| true` swallow and propagated as vibe's own final exit code
+# ($CLAUDE_EXIT).
 
 # auto_resume_field <file> <key> — echoes the last value for key, digits only
 # (missing file, missing key, or non-numeric value → echoes nothing). Keeping
@@ -514,6 +550,117 @@ auto_resume_decrement() {
   tmp="${file}.tmp.$$"
   awk -F= 'BEGIN{OFS="="} $1=="remaining" && $2 ~ /^[0-9]+$/ {$2=$2-1} {print}' \
     "$file" > "$tmp" && mv "$tmp" "$file"
+}
+
+# auto_resume_deactivate <file> — rewrite the marker with active=0, preserving
+# every other line. Same awk-to-temp+mv pattern as auto_resume_decrement.
+# Idempotent (running it twice leaves active=0). Missing file → return 0
+# WITHOUT creating one (cancelling a run that never wrote a marker is a
+# no-op, not an error).
+auto_resume_deactivate() {
+  local file="$1" tmp
+  [ -f "$file" ] || return 0
+  tmp="${file}.tmp.$$"
+  awk -F= 'BEGIN{OFS="="} $1=="active" {$2="0"} {print}' \
+    "$file" > "$tmp" && mv "$tmp" "$file"
+}
+
+# auto_resume_heartbeat_write <file> — atomically writes the current epoch
+# (date +%s) as the file's only content; same temp+mv pattern. Guarded so it
+# can NEVER return non-zero or trip `set -e` — an unwritable .vss dir (or any
+# other failure) is a silent no-op, and the temp file is cleaned up rather
+# than left behind if the write or rename fails partway.
+auto_resume_heartbeat_write() {
+  local file="$1" tmp
+  tmp="${file}.tmp.$$"
+  if ! { date +%s > "$tmp" 2>/dev/null && mv "$tmp" "$file" 2>/dev/null; }; then
+    rm -f "$tmp" 2>/dev/null || true
+  fi
+  return 0
+}
+
+# auto_resume_stalled <hb_file> <now_epoch> <stall_secs> — 0 (stalled) iff
+# the file's first line is a digits-only epoch AND now-epoch > stall_secs
+# (strict). Fail-safe returns 1 (not stalled) for a missing/empty file,
+# non-numeric content, a future epoch, and the exact boundary (gap ==
+# stall_secs) — a malformed or absent heartbeat must never look stale enough
+# to justify a kill.
+auto_resume_stalled() {
+  local file="$1" now="$2" thresh="$3" epoch gap
+  [ -f "$file" ] || return 1
+  epoch=$(head -1 "$file" 2>/dev/null)
+  case "$epoch" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  gap=$(( now - epoch ))
+  [ "$gap" -gt "$thresh" ]
+}
+
+# vibe_container_kill_claude — best-effort SIGTERM to the claude process
+# inside the project's container. A named function (not inlined) so
+# smoke-test can stub it after sourcing, mirroring the existing docker()
+# stub precedent. Every failure mode is swallowed (`|| true`) — the
+# container may already be gone, or claude may have already exited. MUST
+# stay a literal, bare, non-`exec`-prefixed `devcontainer exec` invocation:
+# this is the surviving bare `devcontainer exec` line that keeps
+# test_vibe_final_line_no_exec's assertion (b) passing now that
+# launch_claude's body below is `exec devcontainer exec ...` (assertion a).
+vibe_container_kill_claude() {
+  devcontainer exec --workspace-folder "$WORKSPACE" --override-config "$OVERRIDE_CONFIG" pkill -TERM -x claude || true
+}
+
+# _vibe_stall_armed <marker_file> <ref_file> — kill-gate conditions 1+2 (see
+# vibe_stall_watchdog): marker active=1 AND either the literal relaunch
+# sentinel "-" (unconditional arm) or a non-empty, existing session-start ref
+# file that the marker is newer than (portable POSIX `-nt`, no stat -c/-f).
+# An empty or missing ref never arms (mktemp-failure fail-safe). Split out
+# from auto_resume_stalled (condition 3) so the watchdog can re-check the
+# cheap conditions first without a fresh heartbeat read every retry.
+_vibe_stall_armed() {
+  local marker="$1" ref="$2"
+  [ "$(auto_resume_field "$marker" active)" = "1" ] || return 1
+  [ "$ref" = "-" ] && return 0
+  [ -n "$ref" ] && [ -f "$ref" ] && [ "$marker" -nt "$ref" ]
+}
+
+# vibe_stall_watchdog <claude_pid> <marker_file> <hb_file> <ref_file> —
+# backgrounded by launch_claude_supervised alongside claude. Polls every
+# ${VIBE_STALL_POLL_SECS:-60}s while claude is alive (kill -0). On the first
+# poll where all three kill-gate conditions hold (_vibe_stall_armed plus a
+# stale heartbeat via auto_resume_stalled, default threshold 1800s): prints a
+# loud stderr warning (bell + threshold + cancel instruction), sleeps
+# ${VIBE_STALL_GRACE_SECS:-120}, re-checks all three conditions, and only if
+# STILL met kills in-container first (vibe_container_kill_claude), pauses
+# ${VIBE_STALL_KILL_PAUSE_SECS:-10} for that to land, then falls back to the
+# host client PID (`kill "$claude_pid"`) — never a host-side pkill. Either
+# way the function returns after handling this one escalation. All sleeps
+# are individually guarded so a signal or interrupted syscall can't trip
+# `set -e`; lifetime is bounded solely by claude-PID liveness, so an orphaned
+# watchdog (launcher died mid-wait) exits on its own within one poll interval.
+vibe_stall_watchdog() {
+  local claude_pid="$1" marker="$2" hb="$3" ref="$4"
+  local poll="${VIBE_STALL_POLL_SECS:-60}"
+  local grace="${VIBE_STALL_GRACE_SECS:-120}"
+  local stall_secs="${VIBE_STALL_SECS:-1800}"
+  local kill_pause="${VIBE_STALL_KILL_PAUSE_SECS:-10}"
+
+  while kill -0 "$claude_pid" 2>/dev/null; do
+    sleep "$poll" 2>/dev/null || true
+    if _vibe_stall_armed "$marker" "$ref" \
+       && auto_resume_stalled "$hb" "$(date +%s)" "$stall_secs"; then
+      printf '\n  \a⚠  auto-resume: no activity for over %ss — assuming the usage-limit picker is stuck.\n' "$stall_secs" >&2
+      printf '     Waiting %ss then killing this claude window (delete .vss/auto-resume to cancel).\n' "$grace" >&2
+      sleep "$grace" 2>/dev/null || true
+      if _vibe_stall_armed "$marker" "$ref" \
+         && auto_resume_stalled "$hb" "$(date +%s)" "$stall_secs"; then
+        vibe_container_kill_claude
+        sleep "$kill_pause" 2>/dev/null || true
+        kill "$claude_pid" 2>/dev/null || true
+      fi
+      return 0
+    fi
+  done
+  return 0
 }
 
 # ── Learning library helpers ──────────────────────────────────────────────────
@@ -1423,7 +1570,14 @@ fi
 #                                               force-push; Stop/Notification
 #                                               ring the terminal bell so the
 #                                               outer terminal tab badges when
-#                                               Claude goes idle or needs input
+#                                               Claude goes idle or needs
+#                                               input; PreToolUse/PostToolUse/
+#                                               Stop also refresh
+#                                               .vss/heartbeat while a /vsss
+#                                               --sessions marker is active,
+#                                               feeding the launcher's stall
+#                                               watchdog (see the auto-resume
+#                                               comment block above)
 mkdir -p "$WORKSPACE/.claude"
 cat > "$WORKSPACE/.claude/settings.local.json" << 'EOF'
 {
@@ -1444,13 +1598,28 @@ cat > "$WORKSPACE/.claude/settings.local.json" << 'EOF'
         "hooks": [
           { "type": "command", "command": "/usr/local/bin/guard-fs.sh" }
         ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "[ -f /workspace/.vss/auto-resume ] && { date +%s > /workspace/.vss/heartbeat.tmp.$$ && mv /workspace/.vss/heartbeat.tmp.$$ /workspace/.vss/heartbeat; } || true" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "[ -f /workspace/.vss/auto-resume ] && { date +%s > /workspace/.vss/heartbeat.tmp.$$ && mv /workspace/.vss/heartbeat.tmp.$$ /workspace/.vss/heartbeat; } || true" }
+        ]
       }
     ],
     "Stop": [
       {
         "matcher": "",
         "hooks": [
-          { "type": "command", "command": "printf '\\a' >&2" }
+          { "type": "command", "command": "printf '\\a' >&2" },
+          { "type": "command", "command": "[ -f /workspace/.vss/auto-resume ] && { date +%s > /workspace/.vss/heartbeat.tmp.$$ && mv /workspace/.vss/heartbeat.tmp.$$ /workspace/.vss/heartbeat; } || true" }
         ]
       }
     ],
@@ -1639,23 +1808,72 @@ CLAUDE_MODEL_ARGS=$(build_claude_model_args)
 #   $2 — optional initial prompt. Only ever a FIXED LITERAL from this script
 #        (currently "/vsss --resume") — never user input — so single-quoting
 #        it into the container command string is injection-safe.
+#   Body is `exec devcontainer exec ...`: launch_claude is only ever invoked
+#   backgrounded (from launch_claude_supervised below), so the subshell it
+#   runs in replaces itself with the devcontainer-exec client process, and
+#   `$!` at the call site is that client's real PID — required for the
+#   stall watchdog's `kill -0`/kill-fallback to target the right process.
 launch_claude() {
-  devcontainer exec \
+  exec devcontainer exec \
     --workspace-folder "$WORKSPACE" \
     --override-config "$OVERRIDE_CONFIG" \
     /bin/bash --noprofile --norc -c "exec env SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 claude ${1:+$1 }${CLAUDE_MODEL_ARGS:+$CLAUDE_MODEL_ARGS }--permission-mode bypassPermissions${2:+ '$2'}"
 }
 
-# `|| true`: claude's exit status must not kill the launcher under set -e —
-# the auto-resume loop below is exactly for the died-mid-run case.
-launch_claude "$CLAUDE_RESUME_ARGS" "" || true
+# VIBE_SESSION_REF — a session-start reference file, used solely for its
+# mtime: the stall watchdog only arms its kill for a marker that was
+# (re)written AFTER this launcher session began (portable `[ marker -nt ref ]`
+# — no stat -c/-f). That's what stops a crash-left marker from an earlier
+# --sessions run arming a kill against an unrelated interactive session
+# started later in the same project. On mktemp failure the variable stays
+# EMPTY, and the empty-ref case never arms (fail-safe toward not killing).
+VIBE_SESSION_REF=$(mktemp "${TMPDIR:-/tmp}/vibe-session-ref.XXXXXX" 2>/dev/null) || VIBE_SESSION_REF=""
+
+# AUTO_RESUME_MARKER / AUTO_RESUME_HEARTBEAT — paths the whole auto-resume +
+# stall-watchdog machinery reads/writes, defined once before the first
+# supervised launch.
+AUTO_RESUME_MARKER="$WORKSPACE/.vss/auto-resume"
+AUTO_RESUME_HEARTBEAT="$WORKSPACE/.vss/heartbeat"
+
+# CLAUDE_EXIT — global, holds the exit status of the most recent claude run.
+# Set by launch_claude_supervised; the launcher's final statement propagates
+# it as vibe's own exit code (see the bottom of this script).
+CLAUDE_EXIT=0
+
+# launch_claude_supervised <resume-args> <initial-prompt> <ref-file>
+#   Seeds the heartbeat (if a marker exists), backgrounds launch_claude,
+#   captures its PID, runs vibe_stall_watchdog alongside it, waits for
+#   claude, stores its exit status in CLAUDE_EXIT, then reaps the watchdog.
+#   Every intermediate command that can fail is individually guarded — this
+#   function must be un-trippable under `set -e` and always return 0.
+#   $3 (ref-file): "" (e.g. VIBE_SESSION_REF after a mktemp failure) never
+#   arms the watchdog's kill; the literal sentinel "-" (relaunch call sites)
+#   always arms (a freshly relaunched window may already be stalled at the
+#   picker before the skill can refresh the marker); anything else is a real
+#   ref-file path gated by vibe_stall_watchdog's marker-mtime check.
+launch_claude_supervised() {
+  local resume_args="$1" prompt="$2" ref="$3" claude_pid wd_pid rc=0
+  if [ -f "$AUTO_RESUME_MARKER" ]; then
+    auto_resume_heartbeat_write "$AUTO_RESUME_HEARTBEAT" || true
+  fi
+  launch_claude "$resume_args" "$prompt" &
+  claude_pid=$!
+  vibe_stall_watchdog "$claude_pid" "$AUTO_RESUME_MARKER" "$AUTO_RESUME_HEARTBEAT" "$ref" &
+  wd_pid=$!
+  wait "$claude_pid" || rc=$?
+  CLAUDE_EXIT="$rc"
+  kill "$wd_pid" 2>/dev/null || true
+  wait "$wd_pid" 2>/dev/null || true
+  return 0
+}
+
+launch_claude_supervised "$CLAUDE_RESUME_ARGS" "" "$VIBE_SESSION_REF"
 
 # ── Auto-resume loop ──────────────────────────────────────────────────────────
 # Engages only when /vsss --sessions X left an active marker (see the
 # auto_resume_* helpers above). Waits out the 5h-window reset, then relaunches
 # the conversation with a literal "/vsss --resume" prompt. Ctrl-C during the
 # countdown cancels; deleting .vss/auto-resume deactivates permanently.
-AUTO_RESUME_MARKER="$WORKSPACE/.vss/auto-resume"
 while auto_resume_pending "$AUTO_RESUME_MARKER"; do
   _ar_remaining=$(auto_resume_field "$AUTO_RESUME_MARKER" remaining)
   _ar_resume_at=$(auto_resume_field "$AUTO_RESUME_MARKER" resume_at)
@@ -1673,7 +1891,20 @@ while auto_resume_pending "$AUTO_RESUME_MARKER"; do
   echo ""
   echo "  ◆ auto-resume: /vsss marker active, ${_ar_remaining} relaunch(es) left."
   echo "    Relaunching claude --continue in $(( _ar_wait / 60 ))m $(( _ar_wait % 60 ))s — Ctrl-C to cancel, or delete .vss/auto-resume."
+  # Re-armed at the top of EVERY iteration, immediately before the countdown
+  # sleep; reset right after. Registers ONLY the INT slot — must never touch
+  # the EXIT slot, so the pre-existing clipboard-watcher EXIT trap still
+  # fires on this exit-130 path. Cancel means cancel: deactivate the marker
+  # so a stale "active=1" doesn't linger, but crash paths (no trap fires)
+  # deliberately leave the marker alone so a crash-left marker still resumes.
+  trap 'auto_resume_deactivate "$AUTO_RESUME_MARKER"; echo ""; echo "  ◆ auto-resume: cancelled (Ctrl-C) — marker deactivated."; exit 130' INT
   sleep "$_ar_wait"
+  trap - INT
   auto_resume_decrement "$AUTO_RESUME_MARKER"
-  launch_claude "--continue" "/vsss --resume" || true
+  launch_claude_supervised "--continue" "/vsss --resume" "-"
 done
+
+# Propagate the last claude run's exit status as vibe's own — the old
+# `|| true` swallow is gone, superseded by launch_claude_supervised capturing
+# CLAUDE_EXIT past `set -e`.
+exit "$CLAUDE_EXIT"

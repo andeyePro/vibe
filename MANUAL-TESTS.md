@@ -708,6 +708,59 @@ In a fresh folder with no GitHub repo, run `vibe` and accept "Create a GitHub re
 
 ---
 
+### Test 32: `--sessions` stall watchdog (task_016)
+
+Covers the heartbeat-driven kill of a wedged usage-limit picker. All sub-tests
+use short overrides so they finish in well under a minute:
+`VIBE_STALL_SECS=60 VIBE_STALL_POLL_SECS=5 VIBE_STALL_GRACE_SECS=5`.
+
+**32a — simulated stall, relaunch happens:**
+- [ ] In a project with a fake active marker (`.vss/auto-resume`:
+      `active=1`, `remaining=1`, plus a stale `.vss/heartbeat`), launch
+      `vibe` with the overrides above and let claude sit idle (don't type
+      anything)
+- [ ] After ~60s a loud warning appears (bell + threshold + "delete
+      .vss/auto-resume to cancel")
+- [ ] After the grace period the claude window is killed
+- [ ] The launcher then shows the auto-resume countdown and relaunches with
+      `claude --continue "/vsss --resume"`
+
+**32b — same, but `remaining=0`:**
+- [ ] Same setup with `remaining=0` — after the kill, vibe EXITS instead of
+      hanging or relaunching (the final window is protected from an
+      infinite wait, not from the kill itself)
+
+**32c — crash-left marker, no kill:**
+- [ ] Write `.vss/auto-resume` with `active=1` BEFORE launching vibe (i.e.
+      it predates this launcher session), then start a plain interactive
+      `vibe` session and leave it idle past the stall threshold
+- [ ] No kill occurs — the ref-file mtime gate holds (the marker wasn't
+      refreshed during this session), so an old marker never arms a kill
+      against a session you're actually using
+
+**32d — Ctrl-C during the countdown:**
+- [ ] Trigger the countdown (e.g. via 32a), then press Ctrl-C during the
+      "Relaunching claude --continue in ..." wait
+- [ ] `.vss/auto-resume` now shows `active=0`
+- [ ] The NEXT plain `vibe` launch in that project does NOT re-enter the
+      countdown
+- [ ] The clipboard-flush EXIT trap still ran (Mac only — check
+      `.vibe/copy-latest.txt` handling was unaffected by the Ctrl-C exit)
+
+**32e — exit status propagation:**
+- [ ] Run `vibe; echo $?` and confirm the printed status matches how the
+      session ended (e.g. after an in-container `kill` of claude, `$?` is
+      non-zero, matching claude's own exit status — not silently swallowed
+      to 0)
+
+**32f — heartbeat visibly refreshes:**
+- [ ] With a marker active, run any tool-using prompt in the session and
+      `watch -n1 cat .vss/heartbeat` (or repeatedly `cat` it) from the host
+      — the epoch value advances as tool calls fire (PreToolUse/PostToolUse/
+      Stop hooks), confirming the heartbeat isn't just seeded once at launch
+
+---
+
 ## Test Summary
 
 After completing all tests, check:
