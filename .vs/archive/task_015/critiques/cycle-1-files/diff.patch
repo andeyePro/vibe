@@ -1,0 +1,299 @@
+diff --git a/.vs/tasks.json b/.vs/tasks.json
+index 0922187..dde3c4e 100644
+--- a/.vs/tasks.json
++++ b/.vs/tasks.json
+@@ -98,5 +98,14 @@
+     "assigned_to": "planner",
+     "mode": "rigorous",
+     "last_modified": "2026-04-29T00:00:00Z"
++  },
++  {
++    "id": "task_015",
++    "description": "Auto-recreate a project's container when it was built from a superseded vibe-dev:latest (image-drift detection before devcontainer up); fixes silent stale-container env claude ENOENT",
++    "implementation_status": "in_progress",
++    "test_status": "pending",
++    "assigned_to": "generator",
++    "mode": "rigorous",
++    "last_modified": "2026-05-27T00:00:00Z"
+   }
+ ]
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 35a2ec7..d2315c8 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -4,8 +4,14 @@ vibe's done-work audit log. Each entry is a closed task — either successful (`
+ 
+ Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion between TODO and CHANGELOG. Before this date, closed items lived in `TODO.md ## Done`; they migrated here verbatim. New closed items append to this file.
+ 
++## 2026-05-27
++
++- [x] **vibe launcher: auto-recreate containers built from a superseded image (task_015)** — before this fix, when project A rebuilt `vibe-dev:latest` every other project's existing container kept running from the old image until it happened to `--rebuild` itself. The observed failure mode was `env: 'claude': No such file or directory` on launch because the container's rootfs predated the current claude-code install baked into the image. Fix: two new helper functions defined above the `VIBE_SOURCE_ONLY` guard so they are harness-testable. `image_drift_needs_recreate <workspace> <image_tag>` queries Docker for the workspace's devcontainer, resolves both the container's source image and the current tag to their canonical config ids (using a second `docker image inspect` pass to neutralise the containerd manifest-vs-config digest false-positive), and emits `1` when they differ or when the container's source image has been pruned from the local store. `remove_existing_flag <rebuild_bool> <drift_marker>` is a pure function that echoes `--remove-existing-container` exactly once when either `--rebuild` or drift is active, guaranteeing the flag is never doubled. Launch-path wiring replaces the old single-condition append with calls to both helpers; a distinct status line ("image moved on since this project's container was built - recreating it.") distinguishes drift-triggered recreates from partial-state-retry recreates. shellcheck clean; existing smoke suite green. MANUAL-TESTS auto-recreate path (incl. the containerd false-positive guard, Test 26) must be exercised on real Docker before shipping.
++
+ ## 2026-05-26
+ 
++- [x] **`/learn` docs: remove the host-side `cd $VIBE_LEARNING_PATH && git add .` push footgun** — user-reported (high severity, potential secret exfiltration). The manual push fallback in `devcontainer/commands/learn.md` step 7 (and a duplicate in `devcontainer/claude-md/learn-hook.md`) told the user to paste `cd $VIBE_LEARNING_PATH && git add . && git commit && git push` into their **Mac host** shell. But `VIBE_LEARNING_PATH` is a container/config variable — the `vibe` launcher only sets it by sourcing `~/.vibe/learning.config`; it is **not** present in an interactive host shell. So `cd $VIBE_LEARNING_PATH` silently became `cd ~` and `git add .` staged the entire home directory; with a stray `~/.git` plus a configured remote this would commit and push secrets (`~/.ssh`, tokens). Observed 2026-05-26, interrupted one `&&` before commit. Compounding: in the common private-mode setup the library auto-syncs (Dropbox/iCloud) and is not a git repo at all, so the documented git flow never applied. Fix: dropped the dangerous one-liner from both files. `learn.md` now distinguishes auto-syncing libraries (nothing to do) from git-backed public-mode libraries (push is host-only via the upcoming `vibe learn --push`); the interim manual fallback uses a literal `/path/to/your/learning-library` placeholder and stages only the single new entry file (`git add <new-entry-filename>.md`), never the whole tree, and explicitly warns against pasting the container var. `learn-hook.md` rewritten to match. The *correct* mechanism already exists in the launcher's `learning_save` (stages only `$entry_path` via `git -C`, push only in public mode) — the docs just shouldn't have asked users to hand-roll a worse version. New regression test `test_learn_docs_no_host_stage_all_footgun` asserts neither doc contains `git add .` or `$VIBE_LEARNING_PATH` in host instructions (confirmed RED before the fix, GREEN after). Full smoke suite green, shellcheck clean. SHA pending commit.
++
+ - [x] **conversation-history.md: teach Claude to search past JSONL transcripts before saying "I have no record"** — user-raised: vibe instances frequently say they have no record of things discussed in earlier conversations, even though Claude Code already writes a full JSONL transcript per session at `~/.claude/projects/<slug>/<uuid>.jsonl` (persists in the `vibe-claude-config` Docker volume across container restarts on the same Mac). The gap was that no rule told Claude to look there. Original instinct was to add a parallel committed conversation log; Martin pushed back ("why duplicate data?") and the better answer was just to point at the existing JSONL files. New `devcontainer/claude-md/conversation-history.md` fragment auto-installed into every container's `~/.claude/CLAUDE.md` via the existing managed-block sync. Documents: the JSONL path glob (`~/.claude/projects/-workspace/*.jsonl` inside vibe — note no `sessions/` subdir despite my initial wrong guess); the record-type schema (user prompts have `type:"user"` with string content; tool results are also `type:"user"` but have list content of `tool_result` blocks — filter those out; assistant final text is `type:"assistant"` with text-typed blocks in `message.content[]`, skip `thinking` and `tool_use` blocks); three ready-to-use `jq` recipes (user prompts by keyword, assistant text by keyword, ordered USER/CLAUDE replay of a single file); the single-machine-only caveat (volume scope, not repo-committed); and an explicit "don't duplicate into a parallel file" instruction so future agents don't reinvent the log Martin already vetoed. Both jq recipes verified against a real session file before shipping. 9 new smoke-test sentinels (`test_conversation_history_fragment`) check the fragment exists with the JSONL path, slug, schema cribs, jq recipe, tool_result filter note, Docker-volume caveat, and no-duplication warning. shellcheck clean; full smoke suite green.
+ 
+ - [x] **SSH discipline: rewrite to offer-and-ask default + per-project autonomous-SSH opt-in** — user-raised mid-session: the original `ssh-discipline.md` defaulted to "show command, ask user to paste-back" which created a death-by-copy-paste loop and read as arsey when SSH is a core capability of vibe. Rewrote the fragment so the default is now "I can ssh to <host> and run <command> — OK?" with permission inline; paste-back becomes the fallback only when the user prefers to run it themselves. Kept the bypassPermissions blast-radius rationale in one short section. Added a Read Pure / Write Cautious sub-rule that scales the ask weight by what the SSH op does (read-only inspection → very light; destructive → explicit risk-named ask). New opt-in: `VIBE_SSH_AUTO=1` in `~/.vibe/config` (or `touch /workspace/.vibe-allow-ssh` per-project) skips the per-action ask entirely for projects where the user has pre-authorised autonomous SSH. Plumbed through `devcontainer.json` `containerEnv` + `remoteEnv` from host env, with launcher re-export so plain `VIBE_SSH_AUTO=1` (no explicit `export`) works in the config. `install-claude-extras.sh` omits the `ssh-discipline.md` fragment when either signal is set. README updated. 7 new smoke-test sentinels (`test_install_extras_ssh_discipline_opt_in`) covering both pass/skip paths plus a sanity check that other fragments still install when opt-in is set. Existing `task007/t14` ssh-discipline.md content checks still pass against the rewrite (>=50 non-blank lines, prohibition sentinel present, ssh/scp terms present). Shellcheck clean; smoke tests green.
+diff --git a/MANUAL-TESTS.md b/MANUAL-TESTS.md
+index d5016c3..dccf3e1 100644
+--- a/MANUAL-TESTS.md
++++ b/MANUAL-TESTS.md
+@@ -500,6 +500,49 @@ that `settings.local.json` lists `"Write|Edit|MultiEdit"` as a matcher.
+ 
+ ---
+ 
++### Test 26: Auto-recreate on image drift (task_015)
++
++Verify that a container built from a superseded `vibe-dev:latest` is
++automatically recreated on the next `vibe` launch, with no `--rebuild` flag
++needed.
++
++**Setup:** two project directories — project A (the one whose container will
++drift) and project B (used to force the image to move on).
++
++1. Build the image and launch project A so its container exists:
++   ```bash
++   cd ~/Projects/project-a && vibe
++   # wait for Claude to start, then exit
++   ```
++   - [ ] Container for project A is created (visible via `docker ps -a`)
++
++2. Force `vibe-dev:latest` to move on by triggering a rebuild from project B:
++   ```bash
++   cd ~/Projects/project-b && vibe --rebuild
++   # wait for image rebuild + Claude, then exit
++   ```
++   - [ ] `vibe-dev:latest` image id has changed (`docker image inspect vibe-dev:latest --format '{{.Id}}'`)
++   - [ ] Project A's container still exists but was built from the old image id
++
++3. Launch project A again **with no flags**:
++   ```bash
++   cd ~/Projects/project-a && vibe
++   ```
++   - [ ] Banner prints `image moved on since this project's container was built - recreating it.`
++   - [ ] Container is removed and recreated (the line above appears before `devcontainer up`)
++   - [ ] Claude starts successfully inside the fresh container
++
++4. **Containerd false-positive guard:** launch project A immediately a second time, with no image change:
++   ```bash
++   cd ~/Projects/project-a && vibe
++   ```
++   - [ ] The drift status line does NOT appear (container is reused, not recreated)
++   - [ ] `devcontainer up` completes without `--remove-existing-container`
++   - [ ] Claude starts normally
++   - [ ] This confirms the normalised-id compare reports equal on the current image under whichever image store Docker Desktop / OrbStack uses (containerd or classic)
++
++---
++
+ ## Troubleshooting
+ 
+ ### Docker not found
+diff --git a/TODO.md b/TODO.md
+index 03056bd..db99367 100644
+--- a/TODO.md
++++ b/TODO.md
+@@ -44,6 +44,8 @@ Markers: `[ ]` open · `[!]` failed/abandoned (note what was tried)
+ 
+ ## Open
+ 
++- [ ] **task_015 — auto-recreate a project's container when built from a superseded `vibe-dev:latest`** — 2026-05-27, `/vs` (spec critic passed iter 3). Root-caused live: `vibe --rebuild` only recreates the *current* project's container (`--remove-existing-container` gated on `REBUILD=true`, vibe:1134); the global `~/.vibe/.image-built` marker means every other project keeps running its container built from an older image, and `devcontainer up` reuses it as-is, so they silently drift until they hit `env: 'claude': No such file or directory` (stale rootfs predates current claude install). Fix: a `image_drift_needs_recreate` helper (compares the workspace container's normalised image id vs current `vibe-dev:latest`, above the `VIBE_SOURCE_ONLY` guard so it's unit-testable) + a pure `remove_existing_flag` decision fn; launch path appends `--remove-existing-container` on drift. Spec at `.vs/spec.md`. Awaiting user approval before Generator dispatch.
++
+ - [ ] **vibe + /vsss: host-launcher auto-resume after token-exhaustion halts (2026-05-07 user-raised)** — `/vsss` Resumption protocol shipped 2026-05-07 covers the manual case (`vibe --continue` then `/vsss --resume` resumes from `.vss/sessions/<ISO>.md`). The user wants automatic continuation across N out-of-tokens halts without any manual step. Requires host-side launcher work: (a) `/vsss --auto-resume N <args>` writes `.vss/auto-resume.json` with `{ "active": true, "remaining_halts": N, "session_file": "<path>" }`; (b) `/workspace/vibe` checks the marker on every container start and if `active && remaining_halts > 0` invokes `claude --continue` automatically and decrements; (c) exhaustion-vs-clean-exit detection — distinguish "session ran out of 5h" from "user typed /exit" via claude's exit code or last-stderr signal (heuristic — needs probing); (d) clear marker on clean exit, optimiser stop, hard-escalate, or budget cap; (e) Mac-host wrapper integration (the zshrc wrapper that opens Ghostty with `--title=<folder>` would need to forward auto-resume state to the inner vibe). Likely a `/vs` task with multi-cycle scope. Spec'd canonically as out-of-scope-for-the-slash-command in `vsss.md` § Auto-resume across halts.
+ 
+ - [ ] **GreenPT probe — Vibe001 key top-up + chat impact schema verification + green-aux integration spec (continuation of 2026-04-29 URGENT, partial-ship 2026-05-07, Mistral comparison shipped 2026-05-18)** — original probe shipped at `.vs/audits/green-ai-probe.md`; Mistral codestral comparison audit shipped at `.vs/audits/mistral-codestral-probe.md` 2026-05-18 (verdict: Mistral has best-in-class annual LCA but NO per-request impact field, complementary not substitutive to GreenPT for vibe's carbon-aware tooling story). Confirmed in GreenPT probe: OpenAI-API-compatible, `api.greenpt.ai` works through the vibe firewall without changes, `impact: {version, inferenceTime, energy, emissions}` field on every response, embeddings and rerank free of metered EUR credit, chat-completions metered (Vibe001 had zero credits → HTTP 402). Pricing pay-as-you-go EUR, no subscription tier — collides with vibe's no-extra-spend non-goal. Recommended integration shape: `vibe --green-aux` split-brain — chat stays on Anthropic Pro/Max, free embeddings/rerank routed to GreenPT for `/learn` smart-capture + `/learn --review`. Remaining work: (a) Martin tops up Vibe001 EUR credits so chat `impact` schema can be confirmed empirically; (b) Martin confirms the 17-day deadline (trial expiry? beta window?); (c) sketch the `vibe --green-aux` integration spec as a `/vs` task once chat schema confirmed — see Mistral audit § Implications for codestral addendum option.
+diff --git a/devcontainer/claude-md/learn-hook.md b/devcontainer/claude-md/learn-hook.md
+index 2346b00..c6c49f7 100644
+--- a/devcontainer/claude-md/learn-hook.md
++++ b/devcontainer/claude-md/learn-hook.md
+@@ -72,9 +72,14 @@ inside the container. It:
+ 3. Previews the proposed entry to the user.
+ 4. Issues a Write tool call, which triggers the hook prompt.
+ 
+-Pushing the new entry to git is host-only. Run `vibe learn --push` on your
+-Mac shell, or `cd $VIBE_LEARNING_PATH && git add . && git commit && git push`
+-manually.
++Pushing the new entry to git is host-only, and only matters for a git-backed
++(public-mode) library - an auto-syncing library (Dropbox/iCloud/network share)
++needs nothing further. The dedicated path is `vibe learn --push` on your Mac
++shell (not built yet). Until it lands, push by hand from the library's own
++directory, staging only the new entry file - not the whole tree. Do not paste a
++`VIBE_LEARNING_PATH` variable into your shell: it is a container/config value,
++unset in an interactive Mac shell, so it would expand to nothing and `cd` you
++into `$HOME`.
+ 
+ ## Why this is strictly stronger than before
+ 
+diff --git a/devcontainer/commands/learn.md b/devcontainer/commands/learn.md
+index 4b95aec..605bdde 100644
+--- a/devcontainer/commands/learn.md
++++ b/devcontainer/commands/learn.md
+@@ -58,20 +58,29 @@ When `/learn <pattern>` is invoked, the model:
+    the formatted body. The PreToolUse hook fires at this point and prompts you
+    to confirm the write.
+ 
+-7. **After the Write succeeds**, informs you that the entry is saved locally.
+-   Pushing to git (for public-mode libraries) is host-only - run:
++7. **After the Write succeeds**, informs you that the entry is saved locally,
++   then tells you what (if anything) is needed to propagate it:
+ 
+-   ```bash
+-   vibe learn --push
+-   ```
++   - **If your library auto-syncs** (Dropbox, iCloud, a network share - the
++     common private-mode setup): nothing to do. The file is already syncing.
++   - **If your library is a git repo** (public visibility mode): pushing is
++     host-only. The dedicated path is `vibe learn --push` on your Mac shell
++     (note: `--push` is not built yet; it is a separate upcoming task that will
++     resolve the library path and stage only the new entry for you).
+ 
+-   on your Mac shell when ready (note: `--push` is not yet built; it is a
+-   separate upcoming task). Alternatively, push manually:
++   Until `--push` exists, push a git-backed library by hand from its own
++   directory, staging only the new entry shown in the preview above:
+ 
+    ```bash
+-   cd $VIBE_LEARNING_PATH && git add . && git commit -m "learn: <pattern>" && git push
++   cd /path/to/your/learning-library && git add <new-entry-filename>.md && git commit -m "learn: <pattern>" && git push
+    ```
+ 
++   Stage only that one file - never the whole tree - and substitute the real
++   library path. Do not paste a `VIBE_LEARNING_PATH` variable here: it is a
++   container/config value, unset in your interactive Mac shell, so it would
++   expand to nothing and `cd` you into `$HOME` (where a bare add-everything
++   would stage your entire home directory).
++
+ ## Semantic check
+ 
+ Before issuing the preview or Write, scan all existing /learnings entries to
+diff --git a/smoke-test.py b/smoke-test.py
+index 6f7b611..df94118 100755
+--- a/smoke-test.py
++++ b/smoke-test.py
+@@ -3536,6 +3536,29 @@ def test_task009_learn_hook_md_exists() -> None:
+           "host-only" in content, "")
+ 
+ 
++def test_learn_docs_no_host_stage_all_footgun() -> None:
++    """Regression: /learn docs must not tell the host to `cd $VIBE_LEARNING_PATH
++    && git add .`. VIBE_LEARNING_PATH is a container/config var, unset in the
++    user's interactive Mac shell, so `cd $VIBE_LEARNING_PATH` becomes `cd ~`
++    and `git add .` stages all of $HOME (observed 2026-05-26, one `&&` from a
++    secret-leaking push). Host-side push must go through `vibe learn --push`,
++    and any manual fallback must use a literal placeholder path + a specific
++    filename, never the container var and never `git add .`."""
++    print("\n[regression: /learn docs have no host stage-all footgun]")
++    for path in (LEARN_MD, LEARN_HOOK_MD):
++        if not path.exists():
++            check(f"[learn-footgun] {path.name} exists", False, str(path))
++            continue
++        content = path.read_text()
++        check(f"[learn-footgun] {path.name} has no 'git add .' (stages $HOME)",
++              "git add ." not in content,
++              "found dangerous stage-all 'git add .' in host instructions")
++        check(f"[learn-footgun] {path.name} does not reference $VIBE_LEARNING_PATH "
++              "in host instructions (container-only var)",
++              "$VIBE_LEARNING_PATH" not in content and "${VIBE_LEARNING_PATH" not in content,
++              "container/config var leaked into host-side instructions")
++
++
+ def test_task009_readme_updated() -> None:
+     """AC8: README.md contains PreToolUse hook gates writes sentinel."""
+     print("\n[task_009/AC8: README.md updated]")
+@@ -5133,6 +5156,7 @@ def main() -> int:
+     test_task009_dockerfile_updated()
+     test_task009_learn_md_exists()
+     test_task009_learn_hook_md_exists()
++    test_learn_docs_no_host_stage_all_footgun()
+     test_task009_readme_updated()
+     test_task009_code_check_clean()
+     test_task009_hardening_notebookedit_not_in_matcher()
+diff --git a/vibe b/vibe
+index ac51544..25a93d7 100755
+--- a/vibe
++++ b/vibe
+@@ -847,6 +847,65 @@ _learning_build_override_config() {
+   echo "$dst"
+ }
+ 
++# ── Image-drift detection ─────────────────────────────────────────────────────
++# Defined here, ABOVE the VIBE_SOURCE_ONLY guard, so smoke-test.py can
++# unit-test them by sourcing with VIBE_SOURCE_ONLY=1 and a stubbed docker().
++
++# image_drift_needs_recreate <workspace> <image_tag>
++# Emits "1" on stdout iff the existing devcontainer for <workspace> was built
++# from an image that differs from the current <image_tag> image (drift).
++# Emits nothing when there is no container, or the container is current.
++# All docker calls are fail-safe: non-zero exit or empty output degrades to a
++# defined verdict rather than aborting the script (set -euo pipefail safe).
++# The --remove-existing-container flag (drift trigger) is appended by the
++# caller via remove_existing_flag; this function only detects the condition.
++image_drift_needs_recreate() {
++  # Step 1: find a container for this workspace via its devcontainer label.
++  # Capture ALL ids then take the first line with parameter expansion to
++  # avoid a | head pipe (which causes SIGPIPE / exit 141 under pipefail).
++  local cids cid
++  cids=$(docker ps -aq --filter "label=devcontainer.local_folder=$1" 2>/dev/null) || cids=""
++  cid="${cids%%$'\n'*}"
++  [ -z "$cid" ] && return 0  # no container - nothing to recreate
++
++  # Step 2: container's image reference (a digest or repo:tag string).
++  local container_ref
++  container_ref=$(docker inspect --format '{{.Image}}' "$cid" 2>/dev/null) || container_ref=""
++  [ -z "$container_ref" ] && return 0  # anomalous - can't determine
++
++  # Step 3: canonical config id of the CURRENT image tag.
++  local current_id
++  current_id=$(docker image inspect --format '{{.Id}}' "$2" 2>/dev/null) || current_id=""
++  [ -z "$current_id" ] && return 0  # no current image to recreate from
++
++  # Step 4: normalise the container's image reference to a config id.
++  # Re-resolving via image inspect unifies classic Docker (config digest) and
++  # containerd image store (which may return a manifest digest in {{.Image}}).
++  # If the container's source image has been pruned/superseded and is no
++  # longer resolvable, that IS drift - emit 1 so the container is recreated.
++  local container_id
++  container_id=$(docker image inspect --format '{{.Id}}' "$container_ref" 2>/dev/null) || container_id=""
++  if [ -z "$container_id" ]; then
++    echo 1  # source image gone - superseded; recreate from current image
++    return 0
++  fi
++
++  # Step 5: compare normalised ids; emit 1 only on drift.
++  [ "$container_id" != "$current_id" ] && echo 1
++  return 0
++}
++
++# remove_existing_flag <rebuild_bool> <drift_marker>
++# Pure decision function (no docker). Echoes "--remove-existing-container"
++# exactly once when $1 is "true" (--rebuild) OR $2 is non-empty (drift).
++# Echoes nothing when neither condition holds. The at-most-once guarantee
++# satisfies AC4 regardless of both inputs being set simultaneously.
++remove_existing_flag() {
++  if [ "$1" = "true" ] || [ -n "$2" ]; then
++    echo "--remove-existing-container"
++  fi
++}
++
+ # ── Argv parser ───────────────────────────────────────────────────────────────
+ # parse_vibe_args "$@" - parse flags and an optional project positional in any
+ # order. Sets globals REBUILD / CONTINUE / RESUME / RESUME_UID / PROJECT_ARG.
+@@ -1131,7 +1190,16 @@ UP_BASE_ARGS=(
+   --override-config "$OVERRIDE_CONFIG"
+ )
+ UP_ARGS=("${UP_BASE_ARGS[@]}")
+-[ "$REBUILD" = true ] && UP_ARGS+=(--remove-existing-container)
++# Detect image drift (container built from a superseded image) and fold in the
++# --rebuild flag so the flag is appended exactly once via remove_existing_flag.
++drift_marker="$(image_drift_needs_recreate "$WORKSPACE" "$IMAGE_TAG")"
++extra_flag="$(remove_existing_flag "$REBUILD" "$drift_marker")"
++[ -n "$extra_flag" ] && UP_ARGS+=("$extra_flag")
++# Print a distinct status line when drift (not --rebuild) triggered the recreate.
++if [ -n "$drift_marker" ] && [ "$REBUILD" != true ]; then
++  echo "  image moved on since this project's container was built - recreating it."
++  echo ""
++fi
+ 
+ # If `devcontainer up` fails, the postStartCommand likely died mid-way (e.g.
+ # init-firewall.sh bombed out), leaving a container that's running but only
