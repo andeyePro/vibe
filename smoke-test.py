@@ -6409,6 +6409,49 @@ def test_vibe_task016_docs() -> None:
     check("AC13: vsss.md documents VIBE_STALL_SECS", has_stall_secs, "")
 
 
+def test_vibe_statusline() -> None:
+    """statusLine in the settings heredoc: single-letter model (F/O/S/H),
+    full display name fallback, vibe cue, optional ctx/5h percentage segments.
+    Structural check on the parsed JSON plus a functional run of the actual
+    command string against stdin fixtures (proves the JSON escaping survives
+    the round trip into a real shell)."""
+    print("\n[statusLine: single-letter model in the vibe TUI]")
+    vibe_src = VIBE.read_text()
+
+    start_marker = 'cat > "$WORKSPACE/.claude/settings.local.json" << \'EOF\''
+    start_idx = vibe_src.find(start_marker)
+    check("[status] settings heredoc found", start_idx != -1, "")
+    if start_idx == -1:
+        return
+    start_idx = vibe_src.find('\n', start_idx) + 1
+    end_idx = vibe_src.find('\nEOF', start_idx)
+    config = json.loads(vibe_src[start_idx:end_idx])
+
+    sl = config.get("statusLine", {})
+    check("[status] statusLine.type == command", sl.get("type") == "command", str(sl))
+    cmd = sl.get("command", "")
+    check("[status] command reads model.display_name", ".model.display_name" in cmd, "")
+
+    # Functional fixtures: (stdin JSON, expected exact output)
+    fixtures = [
+        ('{"model":{"display_name":"Fable 5"},"context_window":{"used_percentage":42.7},'
+         '"rate_limits":{"five_hour":{"used_percentage":63}}}',
+         "F · vibe · ctx 42% · 5h 63%"),
+        ('{"model":{"display_name":"Opus 4.8"}}', "O · vibe"),
+        ('{"model":{"display_name":"Sonnet 5"},"context_window":{"used_percentage":3}}',
+         "S · vibe · ctx 3%"),
+        ('{"model":{"display_name":"Haiku 4.5"}}', "H · vibe"),
+        ('{"model":{"display_name":"GPT-9"}}', "GPT-9 · vibe"),  # fallback: full name
+        ('{}', "? · vibe"),  # every field absent (pre-first-response) → no crash
+    ]
+    for stdin_json, expected in fixtures:
+        r = subprocess.run(["sh", "-c", cmd], input=stdin_json,
+                           capture_output=True, text=True, timeout=15)
+        label = expected.split(" ")[0]
+        check(f"[status] {label!r} fixture exact output", r.returncode == 0 and r.stdout == expected,
+              f"rc={r.returncode} out=[{r.stdout}] err=[{r.stderr.strip()[:80]}]")
+
+
 def main() -> int:
     test_help()
     test_version()
@@ -6471,6 +6514,7 @@ def main() -> int:
     test_vibe_stall_watchdog_functional()
     test_vibe_gitignore_heartbeat_pattern()
     test_vibe_task016_docs()
+    test_vibe_statusline()
     test_vibe_help_mentions_fable_and_model()
     test_ac1_no_container()
     test_ac2_matching_image()
