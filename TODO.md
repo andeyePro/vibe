@@ -8,6 +8,16 @@ Markers: `[ ]` open · `[!]` failed/abandoned (note what was tried)
 
 **This section is the boot-time checklist Martin reviews when he comes back to vibe.** Items here are blocked on Martin's hands or judgement and CANNOT be progressed autonomously. CLAUDE.md instructs Claude to surface this section on every session start — if you're reading this as Claude, list the unticked items in your opening response and offer to walk Martin through them.
 
+### ⇒ START HERE on relaunch (2026-07-11 pause for macOS update)
+
+- [ ] **Read the handoff note first**: `/brain2/andeye/vibe-handoff-2026-07-11.md` — full narrative of the 2026-07-11 session + the ordered to-do. Everything below in this sub-section is a one-line echo of it.
+- [ ] **`rm .vss/auto-resume` in moneyandeye AND mailandeye** — stale overnight markers still live (timeandeye's was cleared); they'll re-trigger the unwanted resume countdown otherwise. Those two projects also need one plain `vibe` relaunch to recreate onto the new image (no `--rebuild` — already built; pushed at c1c3df3).
+- [ ] **Time&I is the priority** (closest to public launch) — do its launch-gating work before the vibe security pass.
+- [ ] **Add andeyePro to Time&I**: `vibe repos add andeyePro/andeyePro <path>` — RO FIRST, verify mount+seam+fetch, THEN `--rw`. Never make the first live credential-routing test an rw mount on the paid repo.
+- [ ] **Run MANUAL-TESTS 32-34** (~30 min, Mac-side) before trusting the watchdog/locks/credential routing overnight — unrun against real Docker.
+- [ ] **One focused vibe Fable trust pass** — prompt at `/brain2/andeye/vibe-fable-security-pass.md`, run AFTER Time&I, in Fable (Opus chair). Fable rationing is ON (80% weekly used).
+- [ ] **Async-input protocol build** — synthesis at `.vs/audits/async-input-2026-07-11.md`; say "go" to start as a /vsss task.
+
 ### GreenPT (€5 credits acquired 2026-05-28; integration work now on a branch)
 
 - [ ] **Run `GreenPT/main.py` on your Mac** (outside the vibe container) to confirm the Vibe001 key works and the carbon telemetry shape matches what's documented. Expected output is in `GreenPT/README.md`. The script is committed; the key file `GreenPT/greenpt.key` is gitignored and lives only on disk.
