@@ -39,6 +39,8 @@ WEB_RESEARCH_MD = REPO / "devcontainer" / "claude-md" / "web-research.md"
 SSH_DISCIPLINE_MD = REPO / "devcontainer" / "claude-md" / "ssh-discipline.md"
 BRAIN2_MD = REPO / "devcontainer" / "claude-md" / "brain2.md"
 FEEDBACK_AUTO_PROMOTE_MD = REPO / "devcontainer" / "claude-md" / "feedback-auto-promote.md"
+REPO_MD = REPO / "devcontainer" / "commands" / "repo.md"
+SHARED_REPOS_MD = REPO / "devcontainer" / "claude-md" / "shared-repos.md"
 TODO_CHANGELOG_MD = REPO / "devcontainer" / "claude-md" / "todo-changelog.md"
 PROJECT_HYGIENE_MD = REPO / "devcontainer" / "claude-md" / "project-hygiene.md"
 CONVERSATION_HISTORY_MD = REPO / "devcontainer" / "claude-md" / "conversation-history.md"
@@ -7705,6 +7707,396 @@ def test_task017_c2_repos_add_rw_flag_cli_level() -> None:
           "vibe repos add [--rw] <owner/repo> [path]" in VIBE.read_text(), "usage string not found")
 
 
+# ── task_017 AC12-AC15: Cycle 3 tests (claim/handoff, /repo command, fragment) ─
+# Append-only per /vs rules: C1/C2 tests above are frozen. Everything below is
+# new for Cycle 3; the C1/C2 test bodies above are untouched.
+
+def test_task017_c3_repo_md_shape() -> None:
+    """AC12: /repo command file shape, mirroring the vss.md file-shape tests
+    (frontmatter, description, documented subcommands, host/container
+    boundary guidance, claim file shape, relaunch notes) plus a regression
+    guard that the file never instructs writing INTO ~/.vibe from inside the
+    container (only ever describes it as out of reach)."""
+    print("\n[task_017 AC12: /repo command file shape]")
+    check("[c3-repo-md] repo.md exists", REPO_MD.exists(), str(REPO_MD))
+    if not REPO_MD.exists():
+        return
+    content = REPO_MD.read_text()
+
+    check("[c3-repo-md] frontmatter open delimiter", content.startswith("---\n"), "first 4 chars")
+    check("[c3-repo-md] description: in frontmatter",
+          "description:" in content.split("---\n")[1] if "---\n" in content else False, "")
+
+    check("[c3-repo-md] documents /repo add", "/repo add <owner/repo>" in content, "")
+    check("[c3-repo-md] documents /repo remove", "/repo remove <owner/repo>" in content, "")
+    check("[c3-repo-md] documents /repo claim", "/repo claim <name>" in content, "")
+
+    check("[c3-repo-md] states the container cannot touch ~/.vibe on the host",
+          "cannot touch `~/.vibe` on the host" in content, "exact phrase not found")
+
+    check("[c3-repo-md] claim documents the rw-request path under the signals sidecar",
+          "${VIBE_REPOS_DIR:-/repos}/.signals/<name>/rw-request" in content, "")
+    check("[c3-repo-md] claim documents KEY=VALUE project= field",
+          "project=<this project's name>" in content, "")
+    check("[c3-repo-md] claim documents KEY=VALUE since= field",
+          "since=<epoch seconds" in content, "")
+
+    check("[c3-repo-md] relaunch note present for add",
+          content.count("Relaunch required") >= 2, f"count={content.count('Relaunch required')}")
+
+    # Regression guard: every mention of ~/.vibe must sit in a negation
+    # context (out-of-reach / cannot / untouched) — never an instruction to
+    # write there from inside the container. Windowed check survives line
+    # wraps in the source markdown.
+    flat = re.sub(r"\s+", " ", content)
+    negation_cues = ("cannot", "can't", "untouched", "out of reach", "does not", "host-only")
+    bad_windows = []
+    for m in re.finditer(r"~/\.vibe", flat):
+        window = flat[max(0, m.start() - 80): m.end() + 80].lower()
+        if not any(cue in window for cue in negation_cues):
+            bad_windows.append(window)
+    check("[c3-repo-md] no ~/.vibe mention lacks a negation cue (never instructs writing there from the container)",
+          not bad_windows, str(bad_windows))
+
+
+def _extract_statusline() -> tuple[dict, str]:
+    """Re-extract the settings.local.json heredoc's statusLine command using
+    the same technique as the frozen test_vibe_statusline. Returns
+    (parsed_config, command_string); (empty dict, "") if the heredoc marker
+    is missing (caller must check and report)."""
+    vibe_src = VIBE.read_text()
+    start_marker = 'cat > "$WORKSPACE/.claude/settings.local.json" << \'EOF\''
+    start_idx = vibe_src.find(start_marker)
+    if start_idx == -1:
+        return {}, ""
+    start_idx = vibe_src.find("\n", start_idx) + 1
+    end_idx = vibe_src.find("\nEOF", start_idx)
+    config = json.loads(vibe_src[start_idx:end_idx])
+    return config, config.get("statusLine", {}).get("command", "")
+
+
+def test_task017_c3_statusline_structural_unchanged() -> None:
+    """AC13: the settings heredoc still parses as JSON, and the
+    forceLoginMethod/defaultMode/guard-bash.sh/guard-fs.sh entries the C1
+    era AC4-style structural tests assert on are all still present and
+    unchanged by the AC13 statusLine edit. Inline re-assertion (does not
+    touch the frozen test_vibe_statusline or test_task009_settings_json_updated
+    functions above)."""
+    print("\n[task_017 AC13: settings heredoc structural regressions unchanged]")
+    config, cmd = _extract_statusline()
+    check("[c3-status-struct] heredoc still parses as valid JSON", bool(config), "config empty/unparseable")
+    if not config:
+        return
+    check("[c3-status-struct] forceLoginMethod is claudeai",
+          config.get("forceLoginMethod") == "claudeai", str(config.get("forceLoginMethod")))
+    check("[c3-status-struct] permissions.defaultMode is bypassPermissions",
+          config.get("permissions", {}).get("defaultMode") == "bypassPermissions",
+          str(config.get("permissions")))
+    pretool = config.get("hooks", {}).get("PreToolUse", [])
+    bash_matcher = next((h for h in pretool if h.get("matcher") == "Bash"), None)
+    fs_matcher = next((h for h in pretool if h.get("matcher") == "Write|Edit|MultiEdit"), None)
+    check("[c3-status-struct] guard-bash.sh hook present under the Bash matcher",
+          bash_matcher is not None
+          and any("guard-bash.sh" in h.get("command", "") for h in bash_matcher.get("hooks", [])),
+          str(bash_matcher))
+    check("[c3-status-struct] guard-fs.sh hook present under the Write|Edit|MultiEdit matcher",
+          fs_matcher is not None
+          and any("guard-fs.sh" in h.get("command", "") for h in fs_matcher.get("hooks", [])),
+          str(fs_matcher))
+    check("[c3-status-struct] statusLine.type is still 'command'",
+          config.get("statusLine", {}).get("type") == "command", "")
+    check("[c3-status-struct] command still reads model.display_name",
+          ".model.display_name" in cmd, "")
+    check("[c3-status-struct] the best-effort bell escape is present in the command source",
+          "\\a" in cmd, cmd[:200])
+
+
+def test_task017_c3_statusline_no_signals_byte_identical() -> None:
+    """AC13(a): with VIBE_REPOS_DIR pointed at an empty temp dir (no .signals
+    tree at all), output is byte-identical to the frozen fixtures' exact
+    expectations. Spot-checks two of test_vibe_statusline's fixtures
+    (Fable-full and empty-JSON) without touching that frozen function."""
+    print("\n[task_017 AC13(a): no signals tree -> byte-identical to frozen fixtures]")
+    _, cmd = _extract_statusline()
+    if not cmd:
+        check("[c3-status-a] statusLine command extracted", False, "heredoc marker not found")
+        return
+    with tempfile.TemporaryDirectory() as td:
+        env = {**os.environ, "VIBE_REPOS_DIR": td, "VIBE_PROJECT_NAME": "irrelevant-project"}
+        fixtures = [
+            ('{"model":{"display_name":"Fable 5"},"context_window":{"used_percentage":42.7},'
+             '"rate_limits":{"five_hour":{"used_percentage":63}}}',
+             "F · vibe · ctx 42% · 5h 63%"),
+            ("{}", "? · vibe"),
+        ]
+        for stdin_json, expected in fixtures:
+            r = subprocess.run(["sh", "-c", cmd], input=stdin_json, env=env,
+                                capture_output=True, text=True, timeout=15)
+            check(f"[c3-status-a] {expected!r} byte-identical with no .signals tree present",
+                  r.returncode == 0 and r.stdout == expected,
+                  f"rc={r.returncode} out=[{r.stdout}] err=[{r.stderr.strip()[:80]}]")
+
+
+def _write_signals_fixture(sig_root: Path, name: str, holder_project: str | None,
+                            requester_project: str | None) -> None:
+    """Build <sig_root>/<name>/rw-lock.d/meta (holder_project, if given) and
+    <sig_root>/<name>/rw-request (requester_project, if given), matching the
+    Pinned-names KEY=VALUE shapes the statusLine command parses."""
+    d = sig_root / name
+    if holder_project is not None:
+        lock = d / "rw-lock.d"
+        lock.mkdir(parents=True, exist_ok=True)
+        (lock / "meta").write_text(
+            f"project={holder_project}\npid=99999\nsince=1000000\n", encoding="utf-8")
+    else:
+        d.mkdir(parents=True, exist_ok=True)
+    if requester_project is not None:
+        (d / "rw-request").write_text(
+            f"project={requester_project}\nsince=1000100\n", encoding="utf-8")
+
+
+def test_task017_c3_statusline_rw_segment_present_when_holder_and_requested() -> None:
+    """AC13(b): this session holds the lock (meta project= matches
+    VIBE_PROJECT_NAME) AND a rw-request exists -> the segment appears,
+    naming the requester."""
+    print("\n[task_017 AC13(b): holder + pending request -> rw segment shown]")
+    _, cmd = _extract_statusline()
+    if not cmd:
+        check("[c3-status-b] statusLine command extracted", False, "heredoc marker not found")
+        return
+    with tempfile.TemporaryDirectory() as td:
+        td_path = Path(td)
+        _write_signals_fixture(td_path / ".signals", "andeyePro",
+                                holder_project="thisproject", requester_project="moneyandeye")
+        env = {**os.environ, "VIBE_REPOS_DIR": str(td_path), "VIBE_PROJECT_NAME": "thisproject"}
+        r = subprocess.run(["sh", "-c", cmd], input='{"model":{"display_name":"Opus 4.8"}}',
+                            env=env, capture_output=True, text=True, timeout=15)
+        check("[c3-status-b] exits 0", r.returncode == 0, r.stderr[:200])
+        check("[c3-status-b] output contains the rw warning segment naming the requester",
+              " · ⚠ rw:moneyandeye" in r.stdout, r.stdout)
+        check("[c3-status-b] output is exactly the base segment plus the rw segment (no extra drift)",
+              r.stdout == "O · vibe · ⚠ rw:moneyandeye", r.stdout)
+
+
+def test_task017_c3_statusline_rw_segment_absent_when_not_holder() -> None:
+    """AC13(c): a rw-request exists but the lock's meta names a DIFFERENT
+    holder project (not us) -> segment ABSENT. We're not the holder, so
+    there's nothing for our statusLine to surrender."""
+    print("\n[task_017 AC13(c): request present but WE are not the holder -> segment absent]")
+    _, cmd = _extract_statusline()
+    if not cmd:
+        check("[c3-status-c] statusLine command extracted", False, "heredoc marker not found")
+        return
+    with tempfile.TemporaryDirectory() as td:
+        td_path = Path(td)
+        _write_signals_fixture(td_path / ".signals", "andeyePro",
+                                holder_project="otherproject", requester_project="moneyandeye")
+        env = {**os.environ, "VIBE_REPOS_DIR": str(td_path), "VIBE_PROJECT_NAME": "thisproject"}
+        r = subprocess.run(["sh", "-c", cmd], input='{"model":{"display_name":"Opus 4.8"}}',
+                            env=env, capture_output=True, text=True, timeout=15)
+        check("[c3-status-c] exits 0", r.returncode == 0, r.stderr[:200])
+        check("[c3-status-c] no rw warning segment leaks when we are not the lock holder",
+              "⚠ rw:" not in r.stdout, r.stdout)
+        check("[c3-status-c] output is exactly the base segment, unchanged",
+              r.stdout == "O · vibe", r.stdout)
+
+
+def test_task017_c3_statusline_rw_segment_absent_when_no_request() -> None:
+    """AC13(d): lock held by us but NO rw-request file exists -> segment
+    absent (nothing to surface)."""
+    print("\n[task_017 AC13(d): we hold the lock but no request exists -> segment absent]")
+    _, cmd = _extract_statusline()
+    if not cmd:
+        check("[c3-status-d] statusLine command extracted", False, "heredoc marker not found")
+        return
+    with tempfile.TemporaryDirectory() as td:
+        td_path = Path(td)
+        _write_signals_fixture(td_path / ".signals", "andeyePro",
+                                holder_project="thisproject", requester_project=None)
+        env = {**os.environ, "VIBE_REPOS_DIR": str(td_path), "VIBE_PROJECT_NAME": "thisproject"}
+        r = subprocess.run(["sh", "-c", cmd], input='{"model":{"display_name":"Opus 4.8"}}',
+                            env=env, capture_output=True, text=True, timeout=15)
+        check("[c3-status-d] exits 0", r.returncode == 0, r.stderr[:200])
+        check("[c3-status-d] no rw warning segment when there is no pending request",
+              "⚠ rw:" not in r.stdout, r.stdout)
+        check("[c3-status-d] output is exactly the base segment, unchanged",
+              r.stdout == "O · vibe", r.stdout)
+
+
+def test_task017_c3_shared_repos_md_shape() -> None:
+    """AC14: shared-repos.md fragment shape, mirroring the existing fragment
+    shape tests (e.g. test_brain2_md_fragment_content) — proprietary/
+    never-copy seam language, manifest path, ro etiquette, claim etiquette."""
+    print("\n[task_017 AC14: shared-repos.md fragment shape]")
+    check("[c3-fragment] shared-repos.md exists", SHARED_REPOS_MD.exists(), str(SHARED_REPOS_MD))
+    if not SHARED_REPOS_MD.exists():
+        return
+    body = SHARED_REPOS_MD.read_text()
+    check("[c3-fragment] documents the runtime manifest path",
+          "/workspace/.vibe/shared-repos.manifest" in body, "")
+    check("[c3-fragment] states never copy code from /repos/*",
+          "never copy" in body.lower() and "/repos/*" in body, "")
+    check("[c3-fragment] names the seam/interface/feature-flag consumption discipline",
+          any(term in body.lower() for term in ("seam", "interface", "feature-flag")), "")
+    check("[c3-fragment] documents ro etiquette: commit/push happens elsewhere",
+          "ro" in body.lower() and "commit" in body.lower() and "elsewhere" in body.lower(), "")
+    check("[c3-fragment] documents /repo claim etiquette",
+          "/repo claim" in body, "")
+    check("[c3-fragment] documents the ⚠ rw: statusLine segment to the holder",
+          "⚠ rw:" in body, "")
+
+
+def test_task017_c3_install_extras_shared_repos_md_gated() -> None:
+    """AC14/AC15: install-claude-extras.sh includes shared-repos.md ONLY when
+    VIBE_SHARED_REPOS_MANIFEST is a non-empty file, mirroring
+    test_install_extras_brain2_md_gated's technique (temp CLAUDE_CONFIG_DIR,
+    env override, before/after presence check in the installed managed
+    block)."""
+    print("\n[task_017 AC14/AC15: install-claude-extras.sh gates shared-repos.md on the manifest]")
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        env_base = os.environ.copy()
+        env_base["VIBE_EXTRAS_SRC_ROOT"] = str(REPO / "devcontainer")
+
+        # Pass 1: manifest path doesn't exist at all -> excluded ([ ! -s ] is
+        # true for a missing file).
+        dest_off = tmp_path / "off"; dest_off.mkdir()
+        env_off = env_base.copy()
+        env_off["CLAUDE_CONFIG_DIR"] = str(dest_off)
+        env_off["VIBE_SHARED_REPOS_MANIFEST"] = str(tmp_path / "does-not-exist-manifest")
+        r_off = subprocess.run(["bash", str(INSTALL_EXTRAS)], env=env_off, capture_output=True, text=True)
+        check("[c3-gate] install exits 0 (missing manifest)", r_off.returncode == 0, r_off.stderr[:200])
+        md_off = (dest_off / "CLAUDE.md").read_text()
+        check("[c3-gate] shared-repos.md ABSENT when manifest file is missing",
+              "<!-- vibe-md: shared-repos.md -->" not in md_off, "leaked with missing manifest")
+        check("[c3-gate] other fragments still present (sanity)",
+              "<!-- vibe-md: web-research.md -->" in md_off, "loop didn't run")
+
+        # Pass 2: manifest exists but is empty -> also excluded ([ ! -s ] is
+        # true for a zero-byte file too).
+        dest_empty = tmp_path / "empty"; dest_empty.mkdir()
+        empty_manifest = tmp_path / "empty-manifest"
+        empty_manifest.write_text("", encoding="utf-8")
+        env_empty = env_base.copy()
+        env_empty["CLAUDE_CONFIG_DIR"] = str(dest_empty)
+        env_empty["VIBE_SHARED_REPOS_MANIFEST"] = str(empty_manifest)
+        r_empty = subprocess.run(["bash", str(INSTALL_EXTRAS)], env=env_empty, capture_output=True, text=True)
+        check("[c3-gate] install exits 0 (empty manifest)", r_empty.returncode == 0, r_empty.stderr[:200])
+        md_empty = (dest_empty / "CLAUDE.md").read_text()
+        check("[c3-gate] shared-repos.md ABSENT when manifest file is empty",
+              "<!-- vibe-md: shared-repos.md -->" not in md_empty, "leaked with empty manifest")
+
+        # Pass 3: manifest non-empty -> included.
+        dest_on = tmp_path / "on"; dest_on.mkdir()
+        manifest = tmp_path / "shared-repos.manifest"
+        manifest.write_text("andeyePro rw andeyePro/andeyePro\n", encoding="utf-8")
+        env_on = env_base.copy()
+        env_on["CLAUDE_CONFIG_DIR"] = str(dest_on)
+        env_on["VIBE_SHARED_REPOS_MANIFEST"] = str(manifest)
+        r_on = subprocess.run(["bash", str(INSTALL_EXTRAS)], env=env_on, capture_output=True, text=True)
+        check("[c3-gate] install exits 0 (non-empty manifest)", r_on.returncode == 0, r_on.stderr[:200])
+        md_on = (dest_on / "CLAUDE.md").read_text()
+        check("[c3-gate] shared-repos.md PRESENT when manifest is non-empty",
+              "<!-- vibe-md: shared-repos.md -->" in md_on, "missing with non-empty manifest")
+        check("[c3-gate] installed body mentions the manifest path",
+              "/workspace/.vibe/shared-repos.manifest" in md_on, "manifest path not documented in installed body")
+
+
+def test_task017_c3_repo_claim_documented_flow_runnable() -> None:
+    """AC12: /repo claim has NO sourced vibe helper backing it — it is pure
+    documentation (Claude runs Bash per repo.md's prose); confirmed by
+    grepping vibe's source for a claim-writing function and finding none.
+    Since there is no fenced literal command to extract, this instead
+    substitutes concrete values for repo.md's placeholders (path template +
+    KEY=VALUE content template, both quoted verbatim from the file) and
+    proves the resulting mkdir+write is syntactically runnable and produces
+    the pinned KEY=VALUE shape, plus the pinned last-claim-wins overwrite
+    semantics."""
+    print("\n[task_017 AC12: /repo claim's documented request-file flow is syntactically runnable]")
+    vibe_src = VIBE.read_text()
+    check("[c3-claim] no sourced vibe helper implements /repo claim (pure documentation)",
+          "shared_repo_claim" not in vibe_src and "repo_claim_write" not in vibe_src, "")
+
+    body = REPO_MD.read_text() if REPO_MD.exists() else ""
+    check("[c3-claim] repo.md documents the exact rw-request path template",
+          "${VIBE_REPOS_DIR:-/repos}/.signals/<name>/rw-request" in body, "")
+    check("[c3-claim] repo.md pins unconditional overwrite (last-claim-wins)",
+          "Overwrite unconditionally" in body and "last-claim-wins" in body, "")
+
+    with tempfile.TemporaryDirectory() as td:
+        td_path = Path(td)
+        name = "andeyePro"
+        env = {**os.environ, "VIBE_REPOS_DIR": str(td_path)}
+        req_file = td_path / ".signals" / name / "rw-request"
+
+        def file_claim(project: str) -> subprocess.CompletedProcess:
+            # Path + content shape taken verbatim from repo.md's `/repo claim`
+            # section, placeholders substituted with concrete values.
+            snippet = (
+                f'mkdir -p "${{VIBE_REPOS_DIR:-/repos}}/.signals/{name}" && '
+                f'printf \'project=%s\\nsince=%s\\n\' {shlex.quote(project)} "$(date -u +%s)" '
+                f'> "${{VIBE_REPOS_DIR:-/repos}}/.signals/{name}/rw-request"'
+            )
+            return subprocess.run(["sh", "-c", snippet], env=env,
+                                   capture_output=True, text=True, timeout=15)
+
+        r1 = file_claim("moneyandeye")
+        check("[c3-claim] documented mkdir+write runs cleanly (syntactically valid)",
+              r1.returncode == 0, r1.stderr[:200])
+        check("[c3-claim] rw-request file created at the documented path",
+              req_file.is_file(), str(req_file))
+        if req_file.is_file():
+            content = req_file.read_text()
+            check("[c3-claim] rw-request content matches KEY=VALUE project=<name>",
+                  re.search(r"^project=moneyandeye$", content, re.MULTILINE) is not None, content)
+            check("[c3-claim] rw-request content matches KEY=VALUE since=<digits>",
+                  re.search(r"^since=\d+$", content, re.MULTILINE) is not None, content)
+
+        r2 = file_claim("otherclaimant")
+        check("[c3-claim] second claim overwrite runs cleanly", r2.returncode == 0, r2.stderr[:200])
+        content2 = req_file.read_text() if req_file.is_file() else ""
+        check("[c3-claim] last-claim-wins: newest claimant fully replaces the old request",
+              "project=otherclaimant" in content2 and "project=moneyandeye" not in content2, content2)
+
+
+def test_task017_c3_vibe_project_name_export_plumbing() -> None:
+    """AC13/AC18-style plumbing check scoped to VIBE_PROJECT_NAME: the
+    launcher exports it as a top-level (not command-substitution-internal)
+    statement, before the _build_override_config command substitution that
+    would otherwise swallow the export; and devcontainer.json's remoteEnv
+    (never containerEnv) carries it through so ${localEnv:VIBE_PROJECT_NAME}
+    resolves in-container."""
+    print("\n[task_017 AC13: VIBE_PROJECT_NAME export site + remoteEnv plumbing]")
+    src = VIBE.read_text()
+    lines = src.splitlines()
+    export_lines = [i for i, ln in enumerate(lines) if ln.strip() == "export VIBE_PROJECT_NAME"]
+    check("[c3-plumb] exactly one literal 'export VIBE_PROJECT_NAME' line in the script",
+          len(export_lines) == 1, str(export_lines))
+    if export_lines:
+        idx = export_lines[0]
+        check("[c3-plumb] export line sits at column 0 (top-level scope, not inside a function body)",
+              lines[idx] == "export VIBE_PROJECT_NAME", repr(lines[idx]))
+        assign_line = lines[idx - 1] if idx > 0 else ""
+        check("[c3-plumb] preceding line assigns VIBE_PROJECT_NAME=\"$PROJECT_NAME\" (plain assignment, "
+              "not inside a command substitution)",
+              assign_line.strip() == 'VIBE_PROJECT_NAME="$PROJECT_NAME"', repr(assign_line))
+        override_call_idx = next(
+            (i for i, ln in enumerate(lines) if "OVERRIDE_CONFIG=$(_build_override_config" in ln), None)
+        check("[c3-plumb] export happens BEFORE the _build_override_config command-substitution call "
+              "(exports inside $(...) die with the subshell)",
+              override_call_idx is not None and idx < override_call_idx,
+              f"export_idx={idx} override_call_idx={override_call_idx}")
+
+    devcontainer_json = json.loads((REPO / "devcontainer" / "devcontainer.json").read_text())
+    remote_env = devcontainer_json.get("remoteEnv", {})
+    container_env = devcontainer_json.get("containerEnv", {})
+    check("[c3-plumb] devcontainer.json remoteEnv carries VIBE_PROJECT_NAME via ${localEnv:...}",
+          remote_env.get("VIBE_PROJECT_NAME") == "${localEnv:VIBE_PROJECT_NAME}",
+          str(remote_env.get("VIBE_PROJECT_NAME")))
+    check("[c3-plumb] VIBE_PROJECT_NAME is NOT in containerEnv (remoteEnv-only, mirrors GITHUB_TOKEN discipline)",
+          "VIBE_PROJECT_NAME" not in container_env, str(container_env))
+
+
 def main() -> int:
     test_help()
     test_version()
@@ -7998,6 +8390,17 @@ def main() -> int:
     test_task017_c2_clipboard_and_learn_tempfile_migrated_to_hooks()
     test_task017_c2_mode_coherence_rw_manifest_and_override_agree()
     test_task017_c2_repos_add_rw_flag_cli_level()
+
+    test_task017_c3_repo_md_shape()
+    test_task017_c3_statusline_structural_unchanged()
+    test_task017_c3_statusline_no_signals_byte_identical()
+    test_task017_c3_statusline_rw_segment_present_when_holder_and_requested()
+    test_task017_c3_statusline_rw_segment_absent_when_not_holder()
+    test_task017_c3_statusline_rw_segment_absent_when_no_request()
+    test_task017_c3_shared_repos_md_shape()
+    test_task017_c3_install_extras_shared_repos_md_gated()
+    test_task017_c3_repo_claim_documented_flow_runnable()
+    test_task017_c3_vibe_project_name_export_plumbing()
 
     print()
     if FAILURES:

@@ -110,6 +110,17 @@ install_claude_md_fragments() {
       if [ "$(basename "$f")" = "brain2.md" ] && [ ! -d "${VIBE_BRAIN2_MOUNT_DIR:-/brain2}" ]; then
         continue
       fi
+      # shared-repos.md (task_017 Cycle 3, AC14) documents the /repos/<name>
+      # mount + claim/etiquette rules; only relevant when at least one shared
+      # repo is actually mounted this launch. Gated on the runtime manifest
+      # (Pinned names: written by the launcher every launch, one line per
+      # mounted repo) being non-empty — mirrors the brain2.md mount-existence
+      # gate above. VIBE_SHARED_REPOS_MANIFEST is a test override; defaults to
+      # the real in-container path.
+      if [ "$(basename "$f")" = "shared-repos.md" ] \
+         && [ ! -s "${VIBE_SHARED_REPOS_MANIFEST:-/workspace/.vibe/shared-repos.manifest}" ]; then
+        continue
+      fi
       fragments+=("$f")
     done < <(
       for mdfile in "$src_dir"/*.md; do
