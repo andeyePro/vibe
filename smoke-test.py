@@ -7838,6 +7838,12 @@ def _extract_statusline() -> tuple[dict, str]:
     return config, config.get("statusLine", {}).get("command", "")
 
 
+def _statusline_command() -> str:
+    """Extract just the statusLine command string (rate-limit tests)."""
+    _, cmd = _extract_statusline()
+    return cmd
+
+
 def test_task017_c3_statusline_structural_unchanged() -> None:
     """AC13: the settings heredoc still parses as JSON, and the
     forceLoginMethod/defaultMode/guard-bash.sh/guard-fs.sh entries the C1
@@ -8600,6 +8606,143 @@ def test_task017_c4_ac19_readme_security_section_consistent() -> None:
           "never a multi-repo token" in src, "no explicit multi-repo-token prohibition found in README")
 
 
+def test_vibe_statusline_rate_limit_side_effect() -> None:
+    """statusLine side effect: when .rate_limits.five_hour.used_percentage is
+    present AND ${VIBE_VSS_DIR:-/workspace/.vss} exists, the command atomically
+    drops an epoch=/used= reading into <dir>/rate-limit for the launcher's
+    rate-limit-aware auto-resume countdown. Display output must be byte-
+    identical whether or not the side effect fires; no file appears when the
+    field is missing or the dir doesn't exist."""
+    print("\n[statusLine: rate-limit side-effect file]")
+    cmd = _statusline_command()
+    check("[status-rl] command extracted", bool(cmd), "")
+    if not cmd:
+        return
+    check("[status-rl] command honours VIBE_VSS_DIR", "VIBE_VSS_DIR" in cmd, cmd[:200])
+
+    with_rl = ('{"model":{"display_name":"Fable 5"},"context_window":{"used_percentage":42.7},'
+               '"rate_limits":{"five_hour":{"used_percentage":63}}}')
+    with_rl_frac = ('{"model":{"display_name":"Opus 4.8"},'
+                    '"rate_limits":{"five_hour":{"used_percentage":4.9}}}')
+    without_rl = '{"model":{"display_name":"Opus 4.8"}}'
+
+    def run_cmd(stdin_json: str, vss_dir: str) -> subprocess.CompletedProcess:
+        env = {**os.environ, "VIBE_VSS_DIR": vss_dir}
+        return subprocess.run(["sh", "-c", cmd], input=stdin_json, env=env,
+                              capture_output=True, text=True, timeout=15)
+
+    with tempfile.TemporaryDirectory() as td:
+        # rate_limits present + dir exists → file written, display unchanged
+        r = run_cmd(with_rl, td)
+        rl_path = Path(td) / "rate-limit"
+        check("[status-rl] display exact with side effect",
+              r.returncode == 0 and r.stdout == "F · vibe · ctx 42% · 5h 63%",
+              f"rc={r.returncode} out=[{r.stdout}] err=[{r.stderr.strip()[:80]}]")
+        check("[status-rl] rate-limit file written", rl_path.is_file(), str(list(Path(td).iterdir())))
+        if rl_path.is_file():
+            lines = rl_path.read_text().splitlines()
+            check("[status-rl] exactly two KEY=VALUE lines", len(lines) == 2, str(lines))
+            check("[status-rl] epoch= is a plausible current epoch",
+                  len(lines) == 2 and re.fullmatch(r"epoch=\d{10,}", lines[0]) is not None,
+                  str(lines))
+            check("[status-rl] used= carries the floored percent",
+                  len(lines) == 2 and lines[1] == "used=63", str(lines))
+        check("[status-rl] no tmp file left behind",
+              not list(Path(td).glob("rate-limit.tmp.*")), str(list(Path(td).iterdir())))
+
+        # fractional percentage → floored integer in the file
+        r = run_cmd(with_rl_frac, td)
+        check("[status-rl] fractional display exact",
+              r.returncode == 0 and r.stdout == "O · vibe · 5h 4%",
+              f"rc={r.returncode} out=[{r.stdout}]")
+        check("[status-rl] fractional used= floored",
+              rl_path.is_file() and "used=4" in rl_path.read_text().splitlines(),
+              rl_path.read_text() if rl_path.is_file() else "missing")
+
+        # field missing → no file (fresh dir so the earlier write can't mask it)
+        sub = Path(td) / "no-field"
+        sub.mkdir()
+        r = run_cmd(without_rl, str(sub))
+        check("[status-rl] no rate_limits → display exact",
+              r.returncode == 0 and r.stdout == "O · vibe",
+              f"rc={r.returncode} out=[{r.stdout}]")
+        check("[status-rl] no rate_limits → no file written",
+              not (sub / "rate-limit").exists(), str(list(sub.iterdir())))
+
+        # dir doesn't exist → no file, display still byte-identical to the
+        # dir-exists run of the same fixture (side effect changes NOTHING visible)
+        gone = str(Path(td) / "does-not-exist")
+        r = run_cmd(with_rl, gone)
+        check("[status-rl] missing dir → display identical",
+              r.returncode == 0 and r.stdout == "F · vibe · ctx 42% · 5h 63%",
+              f"rc={r.returncode} out=[{r.stdout}] err=[{r.stderr.strip()[:80]}]")
+        check("[status-rl] missing dir → nothing created",
+              not Path(gone).exists(), "")
+
+
+def test_vibe_auto_resume_effective_wait() -> None:
+    """auto_resume_effective_wait + auto_resume_rate_headroom: the resume_at
+    base estimate is capped at the 120s grace ONLY for a fresh, low-usage
+    rate-limit reading; every malformed/stale/absent input keeps the
+    conservative base wait. Fixed epochs so the cases are deterministic:
+    now=1000000000, resume_at=now+7200 → base wait 7320."""
+    print("\n[vibe auto_resume_effective_wait: rate-limit-aware countdown]")
+    snippet = (
+        'm="${TMPDIR:-/tmp}/vibe-arw-m.$$"; r="${TMPDIR:-/tmp}/vibe-arw-r.$$"; now=1000000000; '
+        "printf 'active=1\\nremaining=2\\nresume_at=1000007200\\n' > \"$m\"; "
+        # fresh (age 10) + low (4) → cap at 120; headroom echoes the used%
+        "printf 'epoch=999999990\\nused=4\\n' > \"$r\"; "
+        'echo "CAP=[$(auto_resume_effective_wait "$m" "$r" "$now")]"; '
+        'echo "USED=[$(auto_resume_rate_headroom "$r" "$now")]"; '
+        # fresh + high (51 > default 50) → uncapped
+        "printf 'epoch=999999990\\nused=51\\n' > \"$r\"; "
+        'echo "HIGH=[$(auto_resume_effective_wait "$m" "$r" "$now")]"; '
+        # stale (age 2000 > default 1800) + low → uncapped
+        "printf 'epoch=999998000\\nused=4\\n' > \"$r\"; "
+        'echo "STALE=[$(auto_resume_effective_wait "$m" "$r" "$now")]"; '
+        # missing file → uncapped (also the resume_at-future base-preserved case)
+        'echo "MISSING=[$(auto_resume_effective_wait "$m" "$r.missing" "$now")]"; '
+        # garbage epoch → uncapped
+        "printf 'epoch=notanumber\\nused=4\\n' > \"$r\"; "
+        'echo "GEPOCH=[$(auto_resume_effective_wait "$m" "$r" "$now")]"; '
+        # garbage (injection-shaped) used → uncapped
+        "printf 'epoch=999999990\\nused=evil; rm -rf /\\n' > \"$r\"; "
+        'echo "GUSED=[$(auto_resume_effective_wait "$m" "$r" "$now")]"; '
+        # env knob: tighter max age (60 < age 100) → uncapped
+        "printf 'epoch=999999900\\nused=4\\n' > \"$r\"; "
+        'echo "KNOBAGE=[$(VIBE_RATE_READING_MAX_AGE=60; auto_resume_effective_wait "$m" "$r" "$now")]"; '
+        # env knob: looser used max (80 >= used 70, default 50 would refuse) → capped
+        "printf 'epoch=999999990\\nused=70\\n' > \"$r\"; "
+        'echo "KNOBUSED=[$(VIBE_RESUME_USED_MAX=80; auto_resume_effective_wait "$m" "$r" "$now")]"; '
+        'echo "DEFUSED=[$(auto_resume_effective_wait "$m" "$r" "$now")]"; '
+        # garbage knob value collapses to the default (fresh+low → still capped)
+        "printf 'epoch=999999990\\nused=4\\n' > \"$r\"; "
+        'echo "GKNOB=[$(VIBE_RATE_READING_MAX_AGE=bogus; auto_resume_effective_wait "$m" "$r" "$now")]"; '
+        # resume_at already past → 120 grace regardless of any reading
+        "printf 'active=1\\nremaining=2\\nresume_at=999999000\\n' > \"$m\"; "
+        'echo "PAST=[$(auto_resume_effective_wait "$m" "$r.missing" "$now")]"; '
+        # no usable resume_at → 1800 default
+        "printf 'active=1\\nremaining=2\\n' > \"$m\"; "
+        'echo "NORA=[$(auto_resume_effective_wait "$m" "$r.missing" "$now")]"; '
+        'rm -f "$m" "$r"'
+    )
+    r = _source_vibe_call({}, snippet)
+    check("[eff-wait] exits 0", r.returncode == 0, r.stderr)
+    check("[eff-wait] fresh + low → capped at 120", "CAP=[120]" in r.stdout, r.stdout)
+    check("[eff-wait] headroom echoes used%", "USED=[4]" in r.stdout, r.stdout)
+    check("[eff-wait] fresh + high(51) → uncapped", "HIGH=[7320]" in r.stdout, r.stdout)
+    check("[eff-wait] stale + low → uncapped", "STALE=[7320]" in r.stdout, r.stdout)
+    check("[eff-wait] missing file → base wait preserved", "MISSING=[7320]" in r.stdout, r.stdout)
+    check("[eff-wait] garbage epoch → uncapped", "GEPOCH=[7320]" in r.stdout, r.stdout)
+    check("[eff-wait] garbage used → uncapped", "GUSED=[7320]" in r.stdout, r.stdout)
+    check("[eff-wait] VIBE_RATE_READING_MAX_AGE honoured", "KNOBAGE=[7320]" in r.stdout, r.stdout)
+    check("[eff-wait] VIBE_RESUME_USED_MAX honoured", "KNOBUSED=[120]" in r.stdout, r.stdout)
+    check("[eff-wait] default refuses what the knob allowed", "DEFUSED=[7320]" in r.stdout, r.stdout)
+    check("[eff-wait] garbage knob → default behaviour", "GKNOB=[120]" in r.stdout, r.stdout)
+    check("[eff-wait] resume_at past → 120 grace", "PAST=[120]" in r.stdout, r.stdout)
+    check("[eff-wait] no resume_at → 1800 default", "NORA=[1800]" in r.stdout, r.stdout)
+
+
 def main() -> int:
     test_help()
     test_version()
@@ -8663,6 +8806,8 @@ def main() -> int:
     test_vibe_gitignore_heartbeat_pattern()
     test_vibe_task016_docs()
     test_vibe_statusline()
+    test_vibe_statusline_rate_limit_side_effect()
+    test_vibe_auto_resume_effective_wait()
     test_vibe_help_mentions_fable_and_model()
     test_ac1_no_container()
     test_ac2_matching_image()

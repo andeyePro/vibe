@@ -759,6 +759,16 @@ use short overrides so they finish in well under a minute:
       — the epoch value advances as tool calls fire (PreToolUse/PostToolUse/
       Stop hooks), confirming the heartbeat isn't just seeded once at launch
 
+**32g — fresh rate-limit reading with headroom caps the countdown at 2m:**
+- [ ] With a fake active marker whose `resume_at` is hours away
+      (`active=1`, `remaining=1`, `resume_at=<now + 3*3600>`), write a fake
+      fresh reading: `.vss/rate-limit` containing `epoch=<now>` and `used=4`
+- [ ] Trigger the countdown (e.g. `/exit` the claude window) — the message
+      reads `window ~4% used per last reading — relaunching claude
+      --continue in 2m 0s ...` instead of the multi-hour resume_at wait
+- [ ] Repeat with `used=90` (or delete `.vss/rate-limit`) — the countdown
+      falls back to the full resume_at-based wait with the original message
+
 ---
 
 ### Test 33: shared-repo rw lock (task_017 C2)

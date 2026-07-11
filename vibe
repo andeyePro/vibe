@@ -509,6 +509,12 @@ fable_billing_phase() {
 # relaunches `claude --continue "/vsss --resume"`. The skill sets active=0 at
 # any clean Final-state exit, so finished loops never relaunch. Manual
 # override: delete .vss/auto-resume, or Ctrl-C during the countdown.
+# The countdown is rate-limit-AWARE: resume_at is a blind worst-case estimate
+# (skill session start + 5h), so the container's statusLine (settings heredoc
+# below) drops the REAL 5h-window usage into .vss/rate-limit as a side
+# effect; a reading that is fresh (${VIBE_RATE_READING_MAX_AGE:-1800}s) with
+# headroom (used <= ${VIBE_RESUME_USED_MAX:-50}) caps the wait at the 120s
+# grace instead of sitting out a stale estimate (auto_resume_effective_wait).
 #
 # Stall watchdog (heartbeat-driven kill of a wedged usage-limit picker):
 # interactive claude does NOT exit when a Pro/Max usage window runs out — it
@@ -620,6 +626,62 @@ auto_resume_stalled() {
   esac
   gap=$(( now - epoch ))
   [ "$gap" -gt "$thresh" ]
+}
+
+# auto_resume_rate_headroom <rl_file> <now_epoch> — echoes the `used` percent
+# from the statusLine-written rate-limit reading (.vss/rate-limit — KEY=VALUE
+# lines `epoch=` + `used=`, both parsed digits-only via auto_resume_field, so
+# a hand-edited or corrupt file can never inject) iff the reading is BOTH
+# fresh (now - epoch <= ${VIBE_RATE_READING_MAX_AGE:-1800}; a future epoch
+# counts as fresh, mirroring auto_resume_stalled's negative-gap stance — a
+# clock-skewed reading is still a recent one) AND low
+# (used <= ${VIBE_RESUME_USED_MAX:-50}). Echoes nothing for a missing or
+# malformed file, a stale reading, or a used% above the threshold; garbage
+# env overrides collapse to the defaults. Every failure mode means "no
+# usable reading" — callers fall back to the conservative resume_at path.
+auto_resume_rate_headroom() {
+  local file="$1" now="$2" epoch used max_age used_max
+  max_age="${VIBE_RATE_READING_MAX_AGE:-1800}"
+  used_max="${VIBE_RESUME_USED_MAX:-50}"
+  case "$max_age" in ''|*[!0-9]*) max_age=1800 ;; esac
+  case "$used_max" in ''|*[!0-9]*) used_max=50 ;; esac
+  epoch=$(auto_resume_field "$file" epoch)
+  used=$(auto_resume_field "$file" used)
+  { [ -n "$epoch" ] && [ -n "$used" ]; } || return 0
+  [ $(( now - epoch )) -le "$max_age" ] || return 0
+  [ "$used" -le "$used_max" ] || return 0
+  echo "$used"
+}
+
+# auto_resume_effective_wait <marker_file> <ratelimit_file> <now_epoch> —
+# echoes the countdown seconds for the relaunch loop. The base case
+# reproduces the historical resume_at-only estimate exactly: unusable
+# resume_at → 1800s fallback; future resume_at → (resume_at - now) + 120s
+# pad; past resume_at → 120s grace — all three bound a tight relaunch loop
+# if the window hasn't really reset. But resume_at is a blind worst-case
+# guess (skill session start + 5h): the real 5h window often opened long
+# before /vsss did, so the estimate can overshoot by hours while the window
+# sits nearly unused. When the container's statusLine has left a FRESH
+# reading with plenty of headroom (auto_resume_rate_headroom above), waiting
+# out the stale estimate is pure waste — cap the wait at the 120s grace and
+# let the relaunch probe the real window (a wrong guess just re-enters this
+# countdown). Missing/stale/malformed reading → conservative base estimate
+# unchanged; nothing here can crash under `set -euo pipefail`.
+auto_resume_effective_wait() {
+  local marker="$1" rl="$2" now="$3" resume_at wait
+  resume_at=$(auto_resume_field "$marker" resume_at)
+  wait=1800
+  if [ -n "$resume_at" ]; then
+    if [ "$resume_at" -gt "$now" ]; then
+      wait=$(( resume_at - now + 120 ))
+    else
+      wait=120
+    fi
+  fi
+  if [ "$wait" -gt 120 ] && [ -n "$(auto_resume_rate_headroom "$rl" "$now")" ]; then
+    wait=120
+  fi
+  echo "$wait"
 }
 
 # vibe_container_kill_claude — best-effort SIGTERM to the claude process
@@ -2582,6 +2644,21 @@ fi
 #                                               stdout, so it never affects
 #                                               the exact-match stdout
 #                                               fixtures either way
+#                                               As a side effect, as a side effect,
+#                                               whenever the 5h reading is
+#                                               present AND
+#                                               ${VIBE_VSS_DIR:-/workspace/.vss}
+#                                               exists, it atomically
+#                                               (tmp+mv) drops the reading
+#                                               into .vss/rate-limit
+#                                               (epoch=<now>, used=<floored
+#                                               %>) — the launcher's
+#                                               auto-resume countdown
+#                                               consults this to skip a stale
+#                                               worst-case resume_at estimate
+#                                               (see auto_resume_effective_wait
+#                                               above); display output is
+#                                               untouched by the side effect
 mkdir -p "$WORKSPACE/.claude"
 cat > "$WORKSPACE/.claude/settings.local.json" << 'EOF'
 {
@@ -2591,7 +2668,7 @@ cat > "$WORKSPACE/.claude/settings.local.json" << 'EOF'
   "forceLoginMethod": "claudeai",
   "statusLine": {
     "type": "command",
-    "command": "input=$(cat); m=$(printf '%s' \"$input\" | jq -r '.model.display_name // \"?\"'); case \"$m\" in *Fable*) l=F;; *Opus*) l=O;; *Sonnet*) l=S;; *Haiku*) l=H;; *) l=\"$m\";; esac; ctx=$(printf '%s' \"$input\" | jq -r '.context_window.used_percentage // \"\" | if type==\"number\" then (floor|tostring) else . end'); win=$(printf '%s' \"$input\" | jq -r '.rate_limits.five_hour.used_percentage // \"\" | if type==\"number\" then (floor|tostring) else . end'); out=\"$l · vibe\"; [ -n \"$ctx\" ] && out=\"$out · ctx ${ctx}%\"; [ -n \"$win\" ] && out=\"$out · 5h ${win}%\"; sig_root=\"${VIBE_REPOS_DIR:-/repos}/.signals\"; rwseg=\"\"; if [ -d \"$sig_root\" ]; then for d in \"$sig_root\"/*/; do [ -d \"$d\" ] || continue; meta=\"$d/rw-lock.d/meta\"; req=\"$d/rw-request\"; if [ -f \"$meta\" ] && [ -f \"$req\" ]; then holder=$(grep '^project=' \"$meta\" 2>/dev/null | head -n1 | cut -d= -f2-); if [ -n \"$holder\" ] && [ \"$holder\" = \"${VIBE_PROJECT_NAME:-}\" ]; then requester=$(grep '^project=' \"$req\" 2>/dev/null | head -n1 | cut -d= -f2-); if [ -n \"$requester\" ]; then rwseg=\" · ⚠ rw:${requester}\"; printf '\\a' >&2; break; fi; fi; fi; done; fi; out=\"${out}${rwseg}\"; printf '%s' \"$out\""
+    "command": "input=$(cat); m=$(printf '%s' \"$input\" | jq -r '.model.display_name // \"?\"'); case \"$m\" in *Fable*) l=F;; *Opus*) l=O;; *Sonnet*) l=S;; *Haiku*) l=H;; *) l=\"$m\";; esac; ctx=$(printf '%s' \"$input\" | jq -r '.context_window.used_percentage // \"\" | if type==\"number\" then (floor|tostring) else . end'); win=$(printf '%s' \"$input\" | jq -r '.rate_limits.five_hour.used_percentage // \"\" | if type==\"number\" then (floor|tostring) else . end'); out=\"$l · vibe\"; [ -n \"$ctx\" ] && out=\"$out · ctx ${ctx}%\"; [ -n \"$win\" ] && out=\"$out · 5h ${win}%\"; vd=\"${VIBE_VSS_DIR:-/workspace/.vss}\"; if [ -n \"$win\" ] && [ -d \"$vd\" ]; then { printf 'epoch=%s\\nused=%s\\n' \"$(date +%s)\" \"$win\" > \"$vd/rate-limit.tmp.$$\" && mv \"$vd/rate-limit.tmp.$$\" \"$vd/rate-limit\"; } 2>/dev/null || rm -f \"$vd/rate-limit.tmp.$$\" 2>/dev/null; fi; sig_root=\"${VIBE_REPOS_DIR:-/repos}/.signals\"; rwseg=\"\"; if [ -d \"$sig_root\" ]; then for d in \"$sig_root\"/*/; do [ -d \"$d\" ] || continue; meta=\"$d/rw-lock.d/meta\"; req=\"$d/rw-request\"; if [ -f \"$meta\" ] && [ -f \"$req\" ]; then holder=$(grep '^project=' \"$meta\" 2>/dev/null | head -n1 | cut -d= -f2-); if [ -n \"$holder\" ] && [ \"$holder\" = \"${VIBE_PROJECT_NAME:-}\" ]; then requester=$(grep '^project=' \"$req\" 2>/dev/null | head -n1 | cut -d= -f2-); if [ -n \"$requester\" ]; then rwseg=\" · ⚠ rw:${requester}\"; printf '\\a' >&2; break; fi; fi; fi; done; fi; out=\"${out}${rwseg}\"; printf '%s' \"$out\""
   },
   "hooks": {
     "PreToolUse": [
@@ -2960,11 +3037,14 @@ launch_claude() {
 # EMPTY, and the empty-ref case never arms (fail-safe toward not killing).
 VIBE_SESSION_REF=$(mktemp "${TMPDIR:-/tmp}/vibe-session-ref.XXXXXX" 2>/dev/null) || VIBE_SESSION_REF=""
 
-# AUTO_RESUME_MARKER / AUTO_RESUME_HEARTBEAT — paths the whole auto-resume +
-# stall-watchdog machinery reads/writes, defined once before the first
-# supervised launch.
+# AUTO_RESUME_MARKER / AUTO_RESUME_HEARTBEAT / AUTO_RESUME_RATELIMIT — paths
+# the whole auto-resume + stall-watchdog machinery reads/writes, defined once
+# before the first supervised launch. The rate-limit file is written
+# in-container by the statusLine command (project root mounts at /workspace,
+# so it surfaces host-side here) and read by the countdown loop below.
 AUTO_RESUME_MARKER="$WORKSPACE/.vss/auto-resume"
 AUTO_RESUME_HEARTBEAT="$WORKSPACE/.vss/heartbeat"
+AUTO_RESUME_RATELIMIT="$WORKSPACE/.vss/rate-limit"
 
 # CLAUDE_EXIT — global, holds the exit status of the most recent claude run.
 # Set by launch_claude_supervised; the launcher's final statement propagates
@@ -3022,21 +3102,21 @@ launch_claude_supervised "$CLAUDE_RESUME_ARGS" "" "$VIBE_SESSION_REF"
 # countdown cancels; deleting .vss/auto-resume deactivates permanently.
 while auto_resume_pending "$AUTO_RESUME_MARKER"; do
   _ar_remaining=$(auto_resume_field "$AUTO_RESUME_MARKER" remaining)
-  _ar_resume_at=$(auto_resume_field "$AUTO_RESUME_MARKER" resume_at)
   _ar_now=$(date +%s)
-  # No usable reset estimate → 30 min default; estimate already past → 2 min
-  # grace. Both bound a tight relaunch loop if the window hasn't really reset.
-  _ar_wait=1800
-  if [ -n "$_ar_resume_at" ]; then
-    if [ "$_ar_resume_at" -gt "$_ar_now" ]; then
-      _ar_wait=$(( _ar_resume_at - _ar_now + 120 ))
-    else
-      _ar_wait=120
-    fi
-  fi
+  # Wait = resume_at estimate (30 min default / +2 min future pad / 2 min
+  # past grace), CAPPED at the 2 min grace when a fresh statusLine rate-limit
+  # reading shows headroom — see auto_resume_effective_wait. _ar_used is
+  # non-empty exactly when that cap applies (fresh + low always forces the
+  # 120s floor), so it doubles as the "say WHY the countdown is short" flag.
+  _ar_wait=$(auto_resume_effective_wait "$AUTO_RESUME_MARKER" "$AUTO_RESUME_RATELIMIT" "$_ar_now")
+  _ar_used=$(auto_resume_rate_headroom "$AUTO_RESUME_RATELIMIT" "$_ar_now")
   echo ""
   echo "  ◆ auto-resume: /vsss marker active, ${_ar_remaining} relaunch(es) left."
-  echo "    Relaunching claude --continue in $(( _ar_wait / 60 ))m $(( _ar_wait % 60 ))s — Ctrl-C to cancel, or delete .vss/auto-resume."
+  if [ -n "$_ar_used" ]; then
+    echo "    window ~${_ar_used}% used per last reading — relaunching claude --continue in $(( _ar_wait / 60 ))m $(( _ar_wait % 60 ))s — Ctrl-C to cancel, or delete .vss/auto-resume."
+  else
+    echo "    Relaunching claude --continue in $(( _ar_wait / 60 ))m $(( _ar_wait % 60 ))s — Ctrl-C to cancel, or delete .vss/auto-resume."
+  fi
   # Re-armed at the top of EVERY iteration, immediately before the countdown
   # sleep; reset right after. Registers ONLY the INT slot — must never touch
   # the EXIT slot, so vibe_on_exit (clipboard flush + lock release) still
