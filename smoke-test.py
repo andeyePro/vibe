@@ -55,6 +55,8 @@ VSS_MD = REPO / "devcontainer" / "commands" / "vss.md"
 VSSS_MD = REPO / "devcontainer" / "commands" / "vsss.md"
 CHECK_SP_CURRENT = REPO / "devcontainer" / "check-sp-current.sh"
 CYCLE_1_DIFF = REPO / ".vs" / "cycle-1" / "diff.patch"
+CREDENTIAL_HELPER = REPO / "devcontainer" / "credential-helper.sh"
+SETUP_GIT_SH = REPO / "devcontainer" / "setup-git.sh"
 
 FAILURES: list[tuple[str, str]] = []
 
@@ -6965,7 +6967,14 @@ def test_task017_delta_scan_b_path_missing() -> None:
 
 
 def test_task017_delta_scan_b_token_absent() -> None:
-    print("\n[task_017 delta AC3: shared_repos_scan — B: registered+acked, no token]")
+    # AMENDED by the chair at C4 under the spec's sanctioned frozen-test
+    # amendment (C4 preamble): AC18 governs from C4 — a missing token for an
+    # acked+registered ro repo is a WARNING, not a mount-blocker (an ro bind
+    # of a local checkout needs no token; only fetch/push do). The C1-era
+    # assertion (B: no token configured) tested the stricter interim
+    # behaviour; the scan now mounts, and the no-PAT nudge lives in
+    # `vibe repos list` (covered below) and the launch token-export loop.
+    print("\n[task_017 delta AC3->AC18: shared_repos_scan — token absent: warn, still mount ro]")
     with tempfile.TemporaryDirectory() as td:
         td = Path(td).resolve()
         home, ws, checkout = _repos_delta_fixture(td)
@@ -6976,9 +6985,14 @@ def test_task017_delta_scan_b_token_absent() -> None:
         env = {**os.environ, "HOME": str(home), "VIBE_CONFIG": f"{td}/no-config"}
         r = _source_vibe_call(env, f'shared_repos_scan {shlex.quote(str(ws))}')
         check("exits 0", r.returncode == 0, r.stderr)
-        check("classified B: no token configured",
-              r.stdout.strip() == "B andeyePro/andeyePro no token configured (run: vibe repos add andeyePro/andeyePro)",
+        check("tokenless repo still mounts (M, ro)",
+              r.stdout.strip() == f"M andeyePro ro andeyePro/andeyePro {checkout}",
               r.stdout)
+        # And the list surface carries the no-PAT nudge for the same fixture.
+        r2 = _source_vibe_call(env, f'cd {shlex.quote(str(ws))} && _repos_list')
+        check("list notes the missing PAT",
+              "no PAT staged" in r2.stdout and "vibe repos add andeyePro/andeyePro" in r2.stdout,
+              r2.stdout)
 
 
 def test_task017_delta_scan_b_sidecar_unwritable() -> None:
@@ -8097,6 +8111,446 @@ def test_task017_c3_vibe_project_name_export_plumbing() -> None:
           "VIBE_PROJECT_NAME" not in container_env, str(container_env))
 
 
+# ── task_017 Cycle 4 (haiku Tester): credential helper, useHttpPath, token ──
+# plumbing, invariant text. Independent read of .vs/spec.md end-to-end;
+# no generator reports consulted. AC16's helper is a pure stdin->stdout
+# filter — driven directly here, never through the launcher.
+
+def _c4_sanitise(slug: str) -> str:
+    """Python twin of credential-helper.sh's _sanitise_slug / vibe's
+    shared_repo_env_name: uppercase, then every non [A-Z0-9] byte -> '_'."""
+    return re.sub(r"[^A-Z0-9]", "_", slug.upper())
+
+
+def _c4_cred_stdin(protocol: str | None = "https", host: str | None = "github.com",
+                    path: str | None = None, raw_path: str | None = None) -> str:
+    """Build a git-credential-protocol stdin blob. raw_path, if given, is
+    spliced in verbatim (post encoding) instead of a plain path= line, for
+    control-character/injection fixtures that can't round-trip through a
+    plain python str formatted the normal way."""
+    lines = []
+    if protocol is not None:
+        lines.append(f"protocol={protocol}")
+    if host is not None:
+        lines.append(f"host={host}")
+    if raw_path is not None:
+        lines.append(raw_path)
+    elif path is not None:
+        lines.append(f"path={path}")
+    return "\n".join(lines) + "\n\n"
+
+
+def _c4_run_cred_helper(env_overrides: dict[str, str], stdin_text: str,
+                         op: str = "get") -> subprocess.CompletedProcess:
+    """Run credential-helper.sh directly (it's a standalone executable filter,
+    not a vibe-sourced function) against a MINIMAL env (PATH only) plus the
+    given overrides, so no ambient GITHUB_TOKEN/VIBE_SHARED_TOKEN_* in the
+    test runner's own environment can contaminate a security assertion."""
+    env = {"PATH": os.environ.get("PATH", "")}
+    env.update(env_overrides)
+    return run(["bash", str(CREDENTIAL_HELPER), op], env=env, input=stdin_text)
+
+
+def _c4_assert_silent(check_name: str, r: subprocess.CompletedProcess) -> None:
+    check(f"{check_name}: exits 0", r.returncode == 0, r.stderr)
+    check(f"{check_name}: emits NOTHING on stdout", r.stdout == "", repr(r.stdout))
+
+
+def _c4_assert_served(check_name: str, r: subprocess.CompletedProcess, token: str) -> None:
+    check(f"{check_name}: exits 0", r.returncode == 0, r.stderr)
+    check(f"{check_name}: serves username=x-access-token",
+          "username=x-access-token" in r.stdout, r.stdout)
+    check(f"{check_name}: serves password={token}",
+          f"password={token}" in r.stdout, r.stdout)
+
+
+def test_task017_c4_ac16_project_slug_exact_match_serves_project_token() -> None:
+    print("\n[task_017 C4 AC16: project slug exact match -> $GITHUB_TOKEN]")
+    r = _c4_run_cred_helper(
+        {"GITHUB_REPO_SLUG": "andeyePro/vibe", "GITHUB_TOKEN": "ghp_project"},
+        _c4_cred_stdin(path="andeyePro/vibe"))
+    _c4_assert_served("project exact match", r, "ghp_project")
+
+
+def test_task017_c4_ac16_shared_slug_match_with_valid_twin_serves_shared_token() -> None:
+    print("\n[task_017 C4 AC16: configured shared slug (twin verified) -> its OWN token, never $GITHUB_TOKEN]")
+    san = _c4_sanitise("andeyePro/andeyePro")
+    r = _c4_run_cred_helper(
+        {"GITHUB_REPO_SLUG": "andeyePro/vibe", "GITHUB_TOKEN": "ghp_project",
+         f"VIBE_SHARED_TOKEN_{san}": "ghp_shared",
+         f"VIBE_SHARED_SLUG_{san}": "andeyePro/andeyePro"},
+        _c4_cred_stdin(path="andeyePro/andeyePro"))
+    _c4_assert_served("shared match", r, "ghp_shared")
+    check("shared match: NEVER serves the project token instead",
+          "ghp_project" not in r.stdout, r.stdout)
+
+
+def test_task017_c4_ac16_unknown_repo_serves_nothing() -> None:
+    print("\n[task_017 C4 AC16: unconfigured repo -> NOTHING (central invariant)]")
+    r = _c4_run_cred_helper(
+        {"GITHUB_REPO_SLUG": "andeyePro/vibe", "GITHUB_TOKEN": "ghp_project"},
+        _c4_cred_stdin(path="someone-else/unrelated-repo"))
+    _c4_assert_silent("unknown repo", r)
+
+
+def test_task017_c4_ac16_nopath_no_shared_tokens_serves_project_token_compat() -> None:
+    print("\n[task_017 C4 AC17 no-path compat: no path + no shared repos configured -> $GITHUB_TOKEN]")
+    r = _c4_run_cred_helper(
+        {"GITHUB_REPO_SLUG": "andeyePro/vibe", "GITHUB_TOKEN": "ghp_project"},
+        _c4_cred_stdin(path=None))
+    _c4_assert_served("no-path compat", r, "ghp_project")
+
+
+def test_task017_c4_ac16_nopath_shared_tokens_configured_serves_nothing() -> None:
+    print("\n[task_017 C4 AC17 no-path fail-closed: no path + a shared repo IS configured -> NOTHING]")
+    san = _c4_sanitise("andeyePro/andeyePro")
+    r = _c4_run_cred_helper(
+        {"GITHUB_REPO_SLUG": "andeyePro/vibe", "GITHUB_TOKEN": "ghp_project",
+         f"VIBE_SHARED_TOKEN_{san}": "ghp_shared",
+         f"VIBE_SHARED_SLUG_{san}": "andeyePro/andeyePro"},
+        _c4_cred_stdin(path=None))
+    _c4_assert_silent("no-path + shared configured (mis-set useHttpPath must not widen)", r)
+
+
+def test_task017_c4_ac16_dot_git_suffix_shared_match() -> None:
+    print("\n[task_017 C4 AC16: '.git' suffix on a shared slug still matches]")
+    san = _c4_sanitise("andeyePro/andeyePro")
+    r = _c4_run_cred_helper(
+        {"GITHUB_REPO_SLUG": "andeyePro/vibe", "GITHUB_TOKEN": "ghp_project",
+         f"VIBE_SHARED_TOKEN_{san}": "ghp_shared",
+         f"VIBE_SHARED_SLUG_{san}": "andeyePro/andeyePro"},
+        _c4_cred_stdin(path="andeyePro/andeyePro.git"))
+    _c4_assert_served(".git suffix", r, "ghp_shared")
+
+
+def test_task017_c4_ac16_subdir_suffix_shared_match() -> None:
+    print("\n[task_017 C4 AC16: useHttpPath subdir suffix (owner/repo/info/refs) still matches]")
+    san = _c4_sanitise("andeyePro/andeyePro")
+    r = _c4_run_cred_helper(
+        {"GITHUB_REPO_SLUG": "andeyePro/vibe", "GITHUB_TOKEN": "ghp_project",
+         f"VIBE_SHARED_TOKEN_{san}": "ghp_shared",
+         f"VIBE_SHARED_SLUG_{san}": "andeyePro/andeyePro"},
+        _c4_cred_stdin(path="andeyePro/andeyePro/info/refs"))
+    _c4_assert_served("subdir suffix", r, "ghp_shared")
+
+
+def test_task017_c4_ac16_trailing_slash_only_unmatched_serves_nothing() -> None:
+    print("\n[task_017 C4 AC16: trailing-slash-only path on an UNCONFIGURED repo -> still NOTHING]")
+    r = _c4_run_cred_helper(
+        {"GITHUB_REPO_SLUG": "andeyePro/vibe", "GITHUB_TOKEN": "ghp_project"},
+        _c4_cred_stdin(path="someone-else/unrelated-repo/"))
+    _c4_assert_silent("trailing-slash-only, unmatched", r)
+
+
+def test_task017_c4_ac16_trailing_slash_project_slug_still_matches() -> None:
+    """Documents (doesn't just attack): the same subpath-discard rule that
+    lets owner/repo/info/refs through also lets a bare trailing slash on the
+    PROJECT's own slug through. Not a leak — it's still an exact owner/repo
+    match against GITHUB_REPO_SLUG, just with a trailing empty segment
+    discarded, same as any other subpath suffix."""
+    print("\n[task_017 C4 AC16: trailing-slash-only on the PROJECT's own slug still matches (documented, not a leak)]")
+    r = _c4_run_cred_helper(
+        {"GITHUB_REPO_SLUG": "andeyePro/vibe", "GITHUB_TOKEN": "ghp_project"},
+        _c4_cred_stdin(path="andeyePro/vibe/"))
+    _c4_assert_served("trailing-slash on project's own slug", r, "ghp_project")
+
+
+def test_task017_c4_ac16_case_difference_project_slug_never_matches() -> None:
+    print("\n[task_017 C4 AC16: differently-cased project slug must NOT match (case-sensitive)]")
+    r = _c4_run_cred_helper(
+        {"GITHUB_REPO_SLUG": "andeyePro/vibe", "GITHUB_TOKEN": "ghp_project"},
+        _c4_cred_stdin(path="AndeyePro/Vibe"))
+    _c4_assert_silent("case-differing project slug", r)
+
+
+def test_task017_c4_ac16_traversal_segments_serve_nothing() -> None:
+    print("\n[task_017 C4 AC16: '..' traversal segments -> NOTHING even when it resolves to a configured slug]")
+    san = _c4_sanitise("other/repo")
+    r = _c4_run_cred_helper(
+        {"GITHUB_REPO_SLUG": "andeyePro/vibe", "GITHUB_TOKEN": "ghp_project",
+         f"VIBE_SHARED_TOKEN_{san}": "ghp_shared",
+         f"VIBE_SHARED_SLUG_{san}": "other/repo"},
+        _c4_cred_stdin(path="andeyePro/../other/repo"))
+    _c4_assert_silent("traversal segments", r)
+
+
+def test_task017_c4_ac16_embedded_control_char_serves_nothing() -> None:
+    print("\n[task_017 C4 AC16: embedded control byte (CR) in an otherwise-matching path -> NOTHING]")
+    r = _c4_run_cred_helper(
+        {"GITHUB_REPO_SLUG": "andeyePro/vibe", "GITHUB_TOKEN": "ghp_project"},
+        _c4_cred_stdin(raw_path="path=andeyePro/vibe\r"))
+    _c4_assert_silent("embedded CR", r)
+
+
+def test_task017_c4_ac16_injection_string_serves_nothing_and_does_not_execute() -> None:
+    print("\n[task_017 C4 AC16: shell-metacharacter injection string in path -> NOTHING, no execution]")
+    sentinel = Path(tempfile.gettempdir()) / f"vibe-c4-injection-sentinel-{os.getpid()}"
+    if sentinel.exists():
+        sentinel.unlink()
+    r = _c4_run_cred_helper(
+        {"GITHUB_REPO_SLUG": "andeyePro/vibe", "GITHUB_TOKEN": "ghp_project"},
+        _c4_cred_stdin(path=f"foo/bar; touch {sentinel} #"))
+    _c4_assert_silent("injection string", r)
+    check("injection string: no side-effect execution (sentinel file NOT created)",
+          not sentinel.exists(), str(sentinel))
+    if sentinel.exists():
+        sentinel.unlink()
+
+
+def test_task017_c4_ac16_sanitisation_collision_twin_mismatch_serves_nothing() -> None:
+    """The gate-discriminating fixture (security-review C4 LOW, closed):
+    sanitisation is lossy — foo-bar/baz and foo/bar-baz both sanitise to
+    ..._FOO_BAR_BAZ. If the twin var holds the OTHER slug, a request for
+    the colliding one must get NOTHING even though its env-name lookup would
+    otherwise succeed. Pre-hardening this would have leaked the shared token
+    to the wrong repo."""
+    print("\n[task_017 C4 AC16: sanitisation-collision, twin mismatch -> NOTHING (post-security-review hardening)]")
+    san = _c4_sanitise("foo/bar-baz")
+    assert san == _c4_sanitise("foo-bar/baz"), "fixture assumption: both slugs must collide"
+    r = _c4_run_cred_helper(
+        {"GITHUB_REPO_SLUG": "andeyePro/vibe", "GITHUB_TOKEN": "ghp_project",
+         f"VIBE_SHARED_TOKEN_{san}": "ghp_shared_for_foo_bar_baz",
+         f"VIBE_SHARED_SLUG_{san}": "foo/bar-baz"},
+        _c4_cred_stdin(path="foo-bar/baz"))
+    _c4_assert_silent("sanitisation-collision, twin holds the OTHER slug", r)
+
+
+def test_task017_c4_ac16_sanitisation_collision_twin_match_serves_correct_token() -> None:
+    print("\n[task_017 C4 AC16: sanitisation-collision, twin MATCHES the request -> its token served]")
+    san = _c4_sanitise("foo/bar-baz")
+    r = _c4_run_cred_helper(
+        {"GITHUB_REPO_SLUG": "andeyePro/vibe", "GITHUB_TOKEN": "ghp_project",
+         f"VIBE_SHARED_TOKEN_{san}": "ghp_shared_for_foo_bar_baz",
+         f"VIBE_SHARED_SLUG_{san}": "foo/bar-baz"},
+        _c4_cred_stdin(path="foo/bar-baz"))
+    _c4_assert_served("sanitisation-collision, twin matches the request", r, "ghp_shared_for_foo_bar_baz")
+
+
+def test_task017_c4_ac16_twin_unset_serves_nothing_even_with_token_set() -> None:
+    print("\n[task_017 C4 AC16: twin var entirely unset (stale container/launcher mismatch) -> NOTHING]")
+    san = _c4_sanitise("andeyePro/andeyePro")
+    r = _c4_run_cred_helper(
+        {"GITHUB_REPO_SLUG": "andeyePro/vibe", "GITHUB_TOKEN": "ghp_project",
+         f"VIBE_SHARED_TOKEN_{san}": "ghp_shared"},
+        # deliberately no VIBE_SHARED_SLUG_<san> at all
+        _c4_cred_stdin(path="andeyePro/andeyePro"))
+    _c4_assert_silent("twin var unset", r)
+
+
+def test_task017_c4_ac16_non_get_operation_serves_nothing() -> None:
+    print("\n[task_017 C4 AC16: non-'get' git credential ops (store/erase) -> NOTHING]")
+    for op in ("store", "erase"):
+        r = _c4_run_cred_helper(
+            {"GITHUB_REPO_SLUG": "andeyePro/vibe", "GITHUB_TOKEN": "ghp_project"},
+            _c4_cred_stdin(path="andeyePro/vibe"), op=op)
+        _c4_assert_silent(f"op={op}", r)
+
+
+def test_task017_c4_ac16_non_github_host_serves_nothing() -> None:
+    print("\n[task_017 C4 AC16: non-github.com host -> NOTHING]")
+    r = _c4_run_cred_helper(
+        {"GITHUB_REPO_SLUG": "andeyePro/vibe", "GITHUB_TOKEN": "ghp_project"},
+        _c4_cred_stdin(host="gitlab.com", path="andeyePro/vibe"))
+    _c4_assert_silent("non-github host", r)
+
+
+def test_task017_c4_ac16_lookalike_subdomain_host_serves_nothing() -> None:
+    print("\n[task_017 C4 AC16: lookalike host (github.com.evil.com) -> NOTHING (exact host match only)]")
+    r = _c4_run_cred_helper(
+        {"GITHUB_REPO_SLUG": "andeyePro/vibe", "GITHUB_TOKEN": "ghp_project"},
+        _c4_cred_stdin(host="github.com.evil.com", path="andeyePro/vibe"))
+    _c4_assert_silent("lookalike subdomain host", r)
+
+
+def test_task017_c4_ac16_http_not_https_serves_nothing() -> None:
+    print("\n[task_017 C4 AC16: http (not https) -> NOTHING]")
+    r = _c4_run_cred_helper(
+        {"GITHUB_REPO_SLUG": "andeyePro/vibe", "GITHUB_TOKEN": "ghp_project"},
+        _c4_cred_stdin(protocol="http", path="andeyePro/vibe"))
+    _c4_assert_silent("http not https", r)
+
+
+def test_task017_c4_ac16_empty_shared_token_never_served() -> None:
+    print("\n[task_017 C4 AC16: matched shared slug but its token var is EMPTY -> NOTHING, never falls back]")
+    san = _c4_sanitise("andeyePro/andeyePro")
+    r = _c4_run_cred_helper(
+        {"GITHUB_REPO_SLUG": "andeyePro/vibe", "GITHUB_TOKEN": "ghp_project",
+         f"VIBE_SHARED_TOKEN_{san}": "",
+         f"VIBE_SHARED_SLUG_{san}": "andeyePro/andeyePro"},
+        _c4_cred_stdin(path="andeyePro/andeyePro"))
+    _c4_assert_silent("empty shared token", r)
+
+
+def test_task017_c4_ac16_never_widen_attack_battery() -> None:
+    """THE central invariant, attacked from many angles at once: no fixture
+    here is the project's own slug, yet every env has GITHUB_TOKEN staged.
+    None of these may ever put 'ghp_project' on stdout."""
+    print("\n[task_017 C4 AC16: never-widen attack battery — $GITHUB_TOKEN must NEVER appear for a non-project path]")
+    base_env = {"GITHUB_REPO_SLUG": "andeyePro/vibe", "GITHUB_TOKEN": "ghp_project"}
+    san_shared = _c4_sanitise("andeyePro/andeyePro")
+    attacks = [
+        ("plain unrelated repo", {}, _c4_cred_stdin(path="totally/unrelated")),
+        ("shared repo configured, wrong twin", {
+            f"VIBE_SHARED_TOKEN_{san_shared}": "ghp_shared",
+            f"VIBE_SHARED_SLUG_{san_shared}": "different/slug",
+        }, _c4_cred_stdin(path="andeyePro/andeyePro")),
+        ("traversal into project-adjacent path", {}, _c4_cred_stdin(path="andeyePro/../vibe")),
+        ("case-flipped project slug", {}, _c4_cred_stdin(path="ANDEYEPRO/VIBE")),
+        ("project slug with control byte suffix", {}, _c4_cred_stdin(raw_path="path=andeyePro/vibe\x01")),
+        ("empty path key present but blank", {}, _c4_cred_stdin(raw_path="path=")),
+        ("non-github host claiming project path", {}, _c4_cred_stdin(host="notgithub.com", path="andeyePro/vibe")),
+        ("http claiming project path", {}, _c4_cred_stdin(protocol="http", path="andeyePro/vibe")),
+    ]
+    for name, extra_env, stdin_text in attacks:
+        env = {**base_env, **extra_env}
+        r = _c4_run_cred_helper(env, stdin_text)
+        check(f"[never-widen] {name}: $GITHUB_TOKEN never appears on stdout",
+              "ghp_project" not in r.stdout, r.stdout)
+
+
+def test_task017_c4_ac17_usehttppath_same_scope_as_helper_registration() -> None:
+    print("\n[task_017 C4 AC17: credential.useHttpPath set at the SAME scope as credential.helper registration]")
+    src = SETUP_GIT_SH.read_text()
+    helper_line = next((ln for ln in src.splitlines() if "credential.helper" in ln and "git config" in ln), None)
+    usehttppath_line = next((ln for ln in src.splitlines() if "credential.useHttpPath" in ln and "git config" in ln), None)
+    check("[ac17] setup-git.sh sets credential.helper", helper_line is not None, src)
+    check("[ac17] setup-git.sh sets credential.useHttpPath", usehttppath_line is not None, src)
+    if helper_line and usehttppath_line:
+        check("[ac17] credential.helper registered at --global scope",
+              "--global" in helper_line, helper_line)
+        check("[ac17] credential.useHttpPath set at --global scope (same as the helper)",
+              "--global" in usehttppath_line, usehttppath_line)
+        check("[ac17] useHttpPath value is literally 'true'",
+              usehttppath_line.strip().endswith("true"), usehttppath_line)
+
+
+def test_task017_c4_ac17_setup_git_functional_in_sandbox_home() -> None:
+    print("\n[task_017 C4 AC17: setup-git.sh is runnable in a sandbox HOME and produces both settings]")
+    with tempfile.TemporaryDirectory() as td:
+        sandbox_home = Path(td) / "home"
+        sandbox_home.mkdir()
+        env = {**os.environ, "HOME": str(sandbox_home)}
+        r = run(["bash", str(SETUP_GIT_SH)], env=env)
+        check("[ac17] setup-git.sh exits 0 in a fresh sandbox HOME (no ~/.gitconfig-host present)",
+              r.returncode == 0, r.stderr)
+        helper_r = run(["git", "config", "--global", "--get", "credential.helper"], env=env)
+        usehttppath_r = run(["git", "config", "--global", "--get", "credential.useHttpPath"], env=env)
+        check("[ac17] resulting ~/.gitconfig has credential.helper = vibe-credential-helper",
+              helper_r.stdout.strip() == "/usr/local/bin/vibe-credential-helper", helper_r.stdout)
+        check("[ac17] resulting ~/.gitconfig has credential.useHttpPath = true",
+              usehttppath_r.stdout.strip() == "true", usehttppath_r.stdout)
+
+
+def test_task017_c4_ac18_top_level_exports_outside_build_override_config() -> None:
+    print("\n[task_017 C4 AC18: GITHUB_REPO_SLUG / VIBE_SHARED_TOKEN_* / VIBE_SHARED_SLUG_* exports sit "
+          "OUTSIDE _build_override_config (top-level scope; exports inside $(...) die with the subshell)]")
+    lines = VIBE.read_text().splitlines()
+    start = next((i for i, ln in enumerate(lines) if ln == "_build_override_config() {"), None)
+    check("[ac18] _build_override_config function start found", start is not None)
+    if start is None:
+        return
+    end = next((i for i in range(start + 1, len(lines)) if lines[i] == "}"), None)
+    check("[ac18] _build_override_config function end found", end is not None)
+    if end is None:
+        return
+    span = range(start, end + 1)
+
+    export_slug_idx = next((i for i, ln in enumerate(lines) if ln.strip() == 'export GITHUB_REPO_SLUG="$GITHUB_REPO"'), None)
+    export_shared_tok_idx = next((i for i, ln in enumerate(lines) if ln.strip() == 'export "$_env_name"="$_shared_tok"'), None)
+    export_shared_slug_idx = next(
+        (i for i, ln in enumerate(lines)
+         if 'export "VIBE_SHARED_SLUG_' in ln), None)
+
+    check("[ac18] 'export GITHUB_REPO_SLUG' line found", export_slug_idx is not None)
+    check("[ac18] shared-token export line found", export_shared_tok_idx is not None)
+    check("[ac18] shared-slug-twin export line found", export_shared_slug_idx is not None)
+
+    if export_slug_idx is not None:
+        check("[ac18] GITHUB_REPO_SLUG export is OUTSIDE _build_override_config",
+              export_slug_idx not in span, f"line {export_slug_idx}: {lines[export_slug_idx]!r}")
+        check("[ac18] GITHUB_REPO_SLUG export is at column 0 (top-level, not inside any function)",
+              lines[export_slug_idx] == lines[export_slug_idx].lstrip(), repr(lines[export_slug_idx]))
+    if export_shared_tok_idx is not None:
+        check("[ac18] shared-token export is OUTSIDE _build_override_config",
+              export_shared_tok_idx not in span, f"line {export_shared_tok_idx}: {lines[export_shared_tok_idx]!r}")
+    if export_shared_slug_idx is not None:
+        check("[ac18] shared-slug-twin export is OUTSIDE _build_override_config",
+              export_shared_slug_idx not in span, f"line {export_shared_slug_idx}: {lines[export_shared_slug_idx]!r}")
+
+    override_call_idx = next(
+        (i for i, ln in enumerate(lines) if "OVERRIDE_CONFIG=$(_build_override_config" in ln), None)
+    check("[ac18] _build_override_config command-substitution call site found", override_call_idx is not None)
+    if export_slug_idx is not None and override_call_idx is not None:
+        check("[ac18] GITHUB_REPO_SLUG export happens BEFORE the command-substitution call",
+              export_slug_idx < override_call_idx,
+              f"export_idx={export_slug_idx} override_call_idx={override_call_idx}")
+    if export_shared_tok_idx is not None and override_call_idx is not None:
+        check("[ac18] shared-token export loop happens BEFORE the command-substitution call",
+              export_shared_tok_idx < override_call_idx,
+              f"export_idx={export_shared_tok_idx} override_call_idx={override_call_idx}")
+
+
+def test_task017_c4_ac18_remoteenv_shared_token_and_twin_injection() -> None:
+    print("\n[task_017 C4 AC18: override-config generator injects matching VIBE_SHARED_TOKEN_*/"
+          "VIBE_SHARED_SLUG_* remoteEnv passthroughs]")
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td).resolve()
+        home, ws, checkout = _repos_delta_fixture(td)
+        san = _c4_sanitise("andeyePro/andeyePro")
+        (ws / ".vibe-repos").write_text("andeyePro/andeyePro ro\n", encoding="utf-8")
+        (home / ".vibe" / "repos").write_text(f"andeyePro/andeyePro={checkout}\n", encoding="utf-8")
+        (home / ".vibe" / "tokens").write_text("andeyePro/andeyePro=ghp_faketoken\n", encoding="utf-8")
+        (home / ".vibe" / "repos-acks").write_text(f"andeyePro/andeyePro={ws}\n", encoding="utf-8")
+        env = {**os.environ,
+               "OPENPROJECT_MCP_URL": "", "OPENPROJECT_MCP_BEARER": "",
+               "HOME": str(home), "VIBE_CONFIG": f"{td}/no-config",
+               "VIBE_BRAIN2_PATH": "off", "VIBE_ZOTERO_PATH": "off",
+               # Simulates what the top-level export block (tested structurally
+               # above) would have produced for this declared repo.
+               "VIBE_SHARED_ENV_NAMES": f"VIBE_SHARED_TOKEN_{san}",
+               f"VIBE_SHARED_TOKEN_{san}": "ghp_faketoken",
+               f"VIBE_SHARED_SLUG_{san}": "andeyePro/andeyePro"}
+        r = _source_vibe_call(
+            env, f'echo "OUT=[$(_build_override_config {shlex.quote(str(ws))})]"')
+        check("[ac18] exits 0", r.returncode == 0, r.stderr)
+        out = _read_override_out(r)
+        cfg = json.loads(Path(out).read_text()) if out and Path(out).exists() else {}
+        remote_env = cfg.get("remoteEnv", {})
+        container_env = cfg.get("containerEnv", {})
+        check(f"[ac18] remoteEnv carries VIBE_SHARED_TOKEN_{san} -> ${{localEnv:...}} passthrough",
+              remote_env.get(f"VIBE_SHARED_TOKEN_{san}") == f"${{localEnv:VIBE_SHARED_TOKEN_{san}}}",
+              str(remote_env))
+        check(f"[ac18] remoteEnv ALSO carries the VIBE_SHARED_SLUG_{san} twin passthrough",
+              remote_env.get(f"VIBE_SHARED_SLUG_{san}") == f"${{localEnv:VIBE_SHARED_SLUG_{san}}}",
+              str(remote_env))
+        check("[ac18] neither the token nor the twin land in containerEnv (remoteEnv-only, mirrors GITHUB_TOKEN)",
+              f"VIBE_SHARED_TOKEN_{san}" not in container_env and f"VIBE_SHARED_SLUG_{san}" not in container_env,
+              str(container_env))
+
+
+def test_task017_c4_ac19_claude_md_invariant_text_amended() -> None:
+    print("\n[task_017 C4 AC19: CLAUDE.md invariant text amended for per-repo tokens / launch-header blast radius]")
+    src = (REPO / "CLAUDE.md").read_text()
+    check("[ac19] CLAUDE.md still says each PAT stays scoped to one repo",
+          "one repo" in src or "single-repo" in src, "one repo / single-repo phrase not found")
+    check("[ac19] CLAUDE.md ties blast radius to the launch header",
+          "blast radius" in src and "launch header" in src, "blast radius / launch header phrasing not found")
+    check("[ac19] CLAUDE.md explicitly rules out a multi-repo token",
+          "never a multi-repo token" in src or "never one token reused across repos" in src,
+          "no explicit multi-repo-token prohibition found")
+
+
+def test_task017_c4_ac19_readme_security_section_consistent() -> None:
+    print("\n[task_017 C4 AC19: README security section consistent with the amended invariant]")
+    src = (REPO / "README.md").read_text()
+    check("[ac19] README says every fine-grained PAT stays scoped to a single repo",
+          "single repo" in src, "single repo phrase not found in README")
+    check("[ac19] README ties blast radius to the launch header",
+          "blast radius" in src and "launch header" in src, "blast radius / launch header phrasing not found in README")
+    check("[ac19] README explicitly rules out a multi-repo token",
+          "never a multi-repo token" in src, "no explicit multi-repo-token prohibition found in README")
+
+
 def main() -> int:
     test_help()
     test_version()
@@ -8401,6 +8855,38 @@ def main() -> int:
     test_task017_c3_install_extras_shared_repos_md_gated()
     test_task017_c3_repo_claim_documented_flow_runnable()
     test_task017_c3_vibe_project_name_export_plumbing()
+
+    # task_017 Cycle 4 (haiku Tester): credential helper never-widen attack
+    # list (AC16), useHttpPath scope + functional setup-git.sh (AC17), export
+    # scope + remoteEnv token/twin injection (AC18), invariant text (AC19).
+    test_task017_c4_ac16_project_slug_exact_match_serves_project_token()
+    test_task017_c4_ac16_shared_slug_match_with_valid_twin_serves_shared_token()
+    test_task017_c4_ac16_unknown_repo_serves_nothing()
+    test_task017_c4_ac16_nopath_no_shared_tokens_serves_project_token_compat()
+    test_task017_c4_ac16_nopath_shared_tokens_configured_serves_nothing()
+    test_task017_c4_ac16_dot_git_suffix_shared_match()
+    test_task017_c4_ac16_subdir_suffix_shared_match()
+    test_task017_c4_ac16_trailing_slash_only_unmatched_serves_nothing()
+    test_task017_c4_ac16_trailing_slash_project_slug_still_matches()
+    test_task017_c4_ac16_case_difference_project_slug_never_matches()
+    test_task017_c4_ac16_traversal_segments_serve_nothing()
+    test_task017_c4_ac16_embedded_control_char_serves_nothing()
+    test_task017_c4_ac16_injection_string_serves_nothing_and_does_not_execute()
+    test_task017_c4_ac16_sanitisation_collision_twin_mismatch_serves_nothing()
+    test_task017_c4_ac16_sanitisation_collision_twin_match_serves_correct_token()
+    test_task017_c4_ac16_twin_unset_serves_nothing_even_with_token_set()
+    test_task017_c4_ac16_non_get_operation_serves_nothing()
+    test_task017_c4_ac16_non_github_host_serves_nothing()
+    test_task017_c4_ac16_lookalike_subdomain_host_serves_nothing()
+    test_task017_c4_ac16_http_not_https_serves_nothing()
+    test_task017_c4_ac16_empty_shared_token_never_served()
+    test_task017_c4_ac16_never_widen_attack_battery()
+    test_task017_c4_ac17_usehttppath_same_scope_as_helper_registration()
+    test_task017_c4_ac17_setup_git_functional_in_sandbox_home()
+    test_task017_c4_ac18_top_level_exports_outside_build_override_config()
+    test_task017_c4_ac18_remoteenv_shared_token_and_twin_injection()
+    test_task017_c4_ac19_claude_md_invariant_text_amended()
+    test_task017_c4_ac19_readme_security_section_consistent()
 
     print()
     if FAILURES:

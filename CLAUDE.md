@@ -61,7 +61,7 @@ Convention reasoning: this split was adopted 2026-05-08 after an upstream mainta
 - GitHub credentials never leave the user's machine unencrypted beyond `~/.vibe/tokens` (chmod 600).
 - Claude Code must use subscription auth (`forceLoginMethod: "claudeai"`), never fall back to `ANTHROPIC_API_KEY`.
 - The container must run with `--permission-mode bypassPermissions` safely — firewall in `init-firewall.sh` is the network backstop, hooks in `guard-bash.sh` + `settings.local.json` are the tool-call backstop. Don't weaken either.
-- Fine-grained PATs are scoped to **one repo**; don't suggest workflows that need broader scopes.
+- Every fine-grained PAT stays scoped to **one repo**. A container's blast radius is exactly the repos announced in its launch header — the project repo plus any declared shared repos (`/repos/*`) — each served by its own single-repo token, routed by `credential.useHttpPath` in `devcontainer/credential-helper.sh`. Never a multi-repo token; never one token reused across repos. Don't suggest workflows that need broader scopes.
 
 ## Non-goals and boundaries
 

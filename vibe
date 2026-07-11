@@ -1180,6 +1180,22 @@ if op_host:
     flag = "--add-host=%s:host-gateway" % op_host
     if flag not in cfg["runArgs"]:
         cfg["runArgs"].append(flag)
+# task_017 shared-repos (AC18): per-shared-repo tokens reach the container via
+# remoteEnv ONLY (mirroring GITHUB_TOKEN / ZOTERO_API_KEY — never containerEnv).
+# The launcher exports each VIBE_SHARED_TOKEN_<slug> at top-level scope and lists
+# the names in VIBE_SHARED_ENV_NAMES; add a ${localEnv:NAME} passthrough for each
+# so the value crosses into the container. (GITHUB_REPO_SLUG is already a static
+# remoteEnv entry in devcontainer.json, so it needs no injection here.)
+shared_names = os.environ.get("VIBE_SHARED_ENV_NAMES", "").split()
+if shared_names:
+    if not isinstance(cfg.get("remoteEnv"), dict):
+        cfg["remoteEnv"] = {}
+    for name in shared_names:
+        cfg["remoteEnv"][name] = "${localEnv:%s}" % name
+        # Slug twin (VIBE_SHARED_SLUG_*): the helper's post-route identity
+        # re-verification needs the exact declared slug in-container too.
+        twin = "VIBE_SHARED_SLUG_" + name[len("VIBE_SHARED_TOKEN_"):]
+        cfg["remoteEnv"][twin] = "${localEnv:%s}" % twin
 with open(dst, "w") as f:
     json.dump(cfg, f, indent=2)
     f.write("\n")
@@ -1760,11 +1776,11 @@ shared_repos_scan() {
       continue
     fi
 
-    if [ -z "$(lookup_token "$slug")" ]; then
-      echo "B $slug no token configured (run: vibe repos add $slug)"
-      continue
-    fi
-
+    # Token-absent is a WARNING, not a mount-blocker, from C4 on (AC18 — the
+    # sanctioned relaxation recorded in the spec's C4 preamble): an ro bind of
+    # a LOCAL checkout needs no token at all; only fetch/push do. The launch
+    # path warns per-launch at the token-export loop, and `vibe repos list`
+    # appends a no-PAT note per mounted repo (see _repos_list).
     if ! shared_repo_ensure_signals "$path"; then
       echo "B $slug sidecar unwritable ($path/.vibe-signals)"
       continue
@@ -2016,7 +2032,11 @@ _repos_list() {
     case "$scan_line" in
       M\ *)
         read -r name mode slug path <<< "${scan_line#M }"
-        echo "  $slug - mounted $mode at /repos/$name"
+        if [ -z "$(lookup_token "$slug")" ]; then
+          echo "  $slug - mounted $mode at /repos/$name (no PAT staged - fetch/push will fail; run: vibe repos add $slug)"
+        else
+          echo "  $slug - mounted $mode at /repos/$name"
+        fi
         found=1
         ;;
       B\ *)
@@ -2634,6 +2654,56 @@ fi
 # export so ${localEnv:GITHUB_TOKEN} in devcontainer.json resolves in this env.
 export GITHUB_TOKEN
 
+# ── Per-repo credential env (task_017 shared-repos, AC18) ────────────────────
+# The in-container credential helper (devcontainer/credential-helper.sh) routes
+# a DIFFERENT single-repo PAT per requested repo path. It needs two things in
+# the container env:
+#   • GITHUB_REPO_SLUG — the project's OWN owner/repo. An exact path match here
+#     is the ONLY case that serves $GITHUB_TOKEN (the never-widen anchor).
+#     Carried statically in devcontainer.json's remoteEnv so it ALWAYS reaches
+#     the container, even for single-repo projects that generate no override
+#     config — without it, useHttpPath would break `git push` to the project's
+#     own repo. Just a slug, not a secret, but kept in remoteEnv beside the
+#     token for consistency (never containerEnv / firewall / postStart layer).
+#   • VIBE_SHARED_TOKEN_<SANITISED> — one scoped PAT per DECLARED shared repo.
+# These MUST be exported at TOP-LEVEL scope, NEVER inside _build_override_config:
+# that function runs via command substitution ($(...)), and exports made in a
+# subshell die with it — the exact trap documented for learning_load at
+# vibe:1691-1696. Export here so the ${localEnv:...} passthroughs resolve.
+export GITHUB_REPO_SLUG="$GITHUB_REPO"
+
+# Enumerate the project's declared shared repos (C1's shared_repos_parse, AC2)
+# and export each one's scoped token. Guarded: this cycle (C4) integrates on top
+# of C1-C3, so if the parser isn't present in this tree the loop is simply
+# skipped (no shared tokens -> the helper's single-repo compat path still works).
+# VIBE_SHARED_ENV_NAMES collects the exported names so render_devcontainer_with_
+# mounts can add matching remoteEnv passthroughs. A missing token is a WARNING,
+# not a mount-blocker (AC18): the var is still exported (empty) so the helper
+# fails CLOSED for that repo rather than falling back to $GITHUB_TOKEN.
+VIBE_SHARED_ENV_NAMES=""
+if declare -F shared_repos_parse >/dev/null 2>&1 && [ -f "$WORKSPACE/.vibe-repos" ]; then
+  while read -r _slug _mode; do
+    [ -z "$_slug" ] && continue
+    _env_name=$(shared_repo_env_name "$_slug")
+    _shared_tok=$(lookup_token "$_slug")
+    if [ -z "$_shared_tok" ]; then
+      echo "  ⚠ vibe: shared repo $_slug has no PAT staged — read-only local reads still" >&2
+      echo "    work, but fetch/push to it will fail (fix: vibe repos add $_slug)." >&2
+    fi
+    export "$_env_name"="$_shared_tok"
+    # Twin export: the EXACT declared slug under VIBE_SHARED_SLUG_<SANITISED>.
+    # The helper re-verifies a routed request against this before serving —
+    # sanitisation is lossy (foo-bar/baz vs foo/bar-baz), and env-name match
+    # alone must never be treated as slug identity (security-review C4).
+    export "VIBE_SHARED_SLUG_${_env_name#VIBE_SHARED_TOKEN_}"="$_slug"
+    case " $VIBE_SHARED_ENV_NAMES " in
+      *" $_env_name "*) : ;;                       # de-dupe (collision guarded at add-time)
+      *) VIBE_SHARED_ENV_NAMES="${VIBE_SHARED_ENV_NAMES}${VIBE_SHARED_ENV_NAMES:+ }$_env_name" ;;
+    esac
+  done < <(shared_repos_parse "$WORKSPACE/.vibe-repos")
+fi
+export VIBE_SHARED_ENV_NAMES
+
 # Zotero web-API key (optional). Stored alongside the GitHub PATs in
 # ~/.vibe/tokens (chmod 600) under the reserved, slash-free key
 # `ZOTERO_API_KEY` — it can't collide with an `owner/repo` PAT entry. Exported
@@ -2917,7 +2987,16 @@ launch_claude_supervised() {
   if [ -f "$AUTO_RESUME_MARKER" ]; then
     auto_resume_heartbeat_write "$AUTO_RESUME_HEARTBEAT" || true
   fi
-  launch_claude "$resume_args" "$prompt" &
+  # HOTFIX 2026-07-11 (first live launch after task_016 shipped): POSIX gives
+  # an async (&) command /dev/null as stdin when job control is off — so the
+  # backgrounded claude saw a non-TTY stdin, assumed print mode, and died
+  # with "Input must be provided either through stdin or as a prompt
+  # argument when using --print" on every fresh vibe launch. Explicitly
+  # re-attach the launcher's own stdin via a dup'd FD (an explicit
+  # redirection overrides the /dev/null default); FD 9 is opened once below,
+  # before the first supervised launch. Exactly the class of bug the smoke
+  # suite cannot see and MANUAL-TESTS Test 32 exists for.
+  launch_claude "$resume_args" "$prompt" <&9 &
   claude_pid=$!
   vibe_stall_watchdog "$claude_pid" "$AUTO_RESUME_MARKER" "$AUTO_RESUME_HEARTBEAT" "$ref" &
   wd_pid=$!
@@ -2927,6 +3006,12 @@ launch_claude_supervised() {
   wait "$wd_pid" 2>/dev/null || true
   return 0
 }
+
+# FD 9 = the launcher's real stdin (the terminal), duplicated once so every
+# supervised launch can hand it to the backgrounded claude explicitly (see
+# the HOTFIX note inside launch_claude_supervised). Guarded: nothing to dup
+# is fatal only if stdin is already closed, which a launcher run never has.
+exec 9<&0
 
 launch_claude_supervised "$CLAUDE_RESUME_ARGS" "" "$VIBE_SESSION_REF"
 

@@ -19,3 +19,10 @@ if [ -f "$SRC" ]; then
 fi
 
 git config --global credential.helper /usr/local/bin/vibe-credential-helper
+
+# task_017 (shared-repos): make git send the repository `path` (owner/repo) to
+# the credential helper on every request. Without this git omits `path` and the
+# helper cannot tell the project repo apart from a shared repo — so it can only
+# fall back to the pathless compat behaviour. Set at the SAME (--global) scope
+# as the helper so it applies to /workspace AND every /repos/* shared checkout.
+git config --global credential.useHttpPath true

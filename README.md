@@ -85,7 +85,7 @@ Getting the most from Fable 5 on a subscription: reserve it for genuinely huge o
 ## Security model
 
 - **Network:** iptables firewall allows only an allowlist of hosts a coding session needs (GitHub, npm, Anthropic, VS Code marketplace, a few opt-in extras — the list is `devcontainer/init-firewall.sh`), plus DNS and outbound SSH.
-- **GitHub:** fine-grained PAT scoped to one repo — if Claude goes rogue, blast radius is one repo.
+- **GitHub:** every fine-grained PAT stays scoped to a single repo. A container's blast radius is exactly the repos in its launch header — the project repo, plus any private repos it declares in `.vibe-repos` and mounts under `/repos/*` (read-only by default; `--rw` intents are lock-refereed) — each reached via its own single-repo token (routed by `credential.useHttpPath`), never a multi-repo token. If Claude goes rogue, it can only touch those announced repos.
 - **Host FS:** only the project folder, `~/.ssh` (ro), and `~/.gitconfig` (ro) are mounted in.
 - **Claude Pro credentials:** in a named Docker volume (`vibe-claude-config`), not bind-mounted from the host — a compromised container can't leak host credentials unless the firewall is breached.
 - **Built on Anthropic's [reference devcontainer for Claude Code](https://github.com/anthropics/claude-code/tree/main/.devcontainer)**, lightly patched (shared Claude auth across projects; read-only `~/.ssh` and `~/.gitconfig`; per-repo PAT via a git credential helper). Launches via [`@devcontainers/cli`](https://github.com/devcontainers/cli) with `--override-config` so you never commit `.devcontainer/` into each project.

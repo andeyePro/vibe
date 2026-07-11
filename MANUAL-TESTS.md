@@ -824,3 +824,30 @@ After completing all tests, check:
 - Safe to repeat tests (no destructive operations)
 - Use `vibe --help` in doubt
 - Check ~/.vibe/ for configuration files if needed
+
+### Test 34: shared-repos end-to-end credential routing (task_017 C4)
+
+Needs: a project with a declared+registered+acked shared repo (run `vibe repos
+add <owner/repo> <path>` in the project first) and PATs staged for both repos.
+
+**34a — project push unchanged:**
+- [ ] Inside the project's vibe session, commit a trivial change in /workspace
+      and `git push` — succeeds using the project's own PAT (no behaviour
+      change from useHttpPath)
+
+**34b — shared repo fetch/push uses ITS OWN PAT:**
+- [ ] `git -C /repos/<name> fetch` succeeds (rw session: also try a push to a
+      scratch branch)
+- [ ] Revoke ONLY the shared repo's PAT on GitHub, relaunch: fetch now fails
+      with an auth error naming github.com — the project PAT was NOT
+      substituted (never-widen)
+
+**34c — undeclared repo gets nothing:**
+- [ ] `git clone https://github.com/<some-other-private-repo-you-own>.git
+      /tmp/x` from inside the container fails auth — no token is served for a
+      repo that is neither the project nor a declared shared repo
+
+**34d — tokenless ro mount still works:**
+- [ ] Remove the shared repo's tokens line from ~/.vibe/tokens, relaunch:
+      launch header warns "no PAT staged", the mount still appears ro, local
+      reads work, `git -C /repos/<name> fetch` fails loud
