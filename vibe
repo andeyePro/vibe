@@ -537,7 +537,8 @@ fable_billing_phase() {
 # the loop is simply not entered and the launcher exits cleanly instead of
 # hanging forever. The watchdog's own lifetime is bounded by claude-PID
 # liveness alone (kill -0 in its poll loop) — no EXIT-trap dependency, so the
-# pre-existing clipboard-watcher EXIT trap is untouched; an orphaned watchdog
+# clipboard-watcher flush (registered via the vibe_on_exit dispatcher, behaviour
+# unchanged) is unaffected; an orphaned watchdog
 # (launcher died mid-wait) notices claude's death within one poll interval.
 # Ctrl-C during the countdown deactivates the marker (auto_resume_deactivate)
 # via a per-iteration INT trap — cancel means cancel, but crash-left markers
@@ -685,6 +686,300 @@ vibe_stall_watchdog() {
       return 0
     fi
   done
+  return 0
+}
+
+# ── Exit-hook dispatcher (the ONLY `trap ... EXIT` in this script) ────────────
+# bash keeps ONE command per trap slot, so a second `trap ... EXIT` silently
+# REPLACES the first — which is exactly how a shared-repo lock-release trap
+# would have eaten the Darwin clipboard-flush trap (or vice versa). All EXIT
+# work therefore goes through a single dispatcher: vibe_exit_hook_add appends
+# a command string to VIBE_EXIT_HOOKS and installs `trap vibe_on_exit EXIT`
+# exactly once, on first use. The dispatcher runs hooks in registration
+# order, EACH individually guarded with `|| true` — this script runs under
+# `set -euo pipefail`, and one refusing hook (shared_repo_lock_release in the
+# routine never-held-the-lock case, say) would otherwise abort the trap
+# handler and silently skip every later-registered hook — the exact
+# clipboard-flush regression task_016 refused to risk. Register through
+# vibe_exit_hook_add ONLY; never `trap ... EXIT` directly. Crash paths
+# (SIGKILL, power loss) run no EXIT hooks by definition — anything that must
+# survive them is designed around it (the rw lock's stale-reclaim handles a
+# dead holder pid; crash-left auto-resume markers deliberately persist).
+VIBE_EXIT_HOOKS=()
+VIBE_EXIT_TRAP_INSTALLED=""
+
+# vibe_on_exit — run every registered hook, in order, each guarded. The
+# empty-array early return also dodges bash 3.2's set -u objection to
+# expanding an empty array (macOS ships 3.2; same discipline as the
+# mount_args count checks elsewhere).
+vibe_on_exit() {
+  local _vibe_hook
+  [ "${#VIBE_EXIT_HOOKS[@]}" -eq 0 ] && return 0
+  for _vibe_hook in "${VIBE_EXIT_HOOKS[@]}"; do
+    eval "$_vibe_hook" || true
+  done
+  return 0
+}
+
+# vibe_exit_hook_add <command-string> — append a hook and install the single
+# EXIT trap on first use. This function is the dispatcher INSTALLER — the one
+# place `trap ... EXIT` is allowed.
+vibe_exit_hook_add() {
+  VIBE_EXIT_HOOKS+=("$1")
+  if [ -z "$VIBE_EXIT_TRAP_INSTALLED" ]; then
+    trap vibe_on_exit EXIT
+    VIBE_EXIT_TRAP_INSTALLED=1
+  fi
+}
+
+# ── Shared-repo single-writer rw lock (task_017 slice 2) ──────────────────────
+# One writer per shared checkout per Mac, refereed by a lock DIRECTORY at
+# <checkout>/.vibe-signals/rw-lock.d/ — a directory because `mkdir` is the
+# atomic acquire (no test-then-write race, works on every local filesystem;
+# cross-machine coordination is explicitly out of scope). Metadata lives in
+# rw-lock.d/meta as KEY=VALUE lines: project=<name>, pid=<launcher pid>,
+# since=<epoch>; pid/since are digits-only on read (auto_resume_field's
+# injection discipline). Stale-reclaim: a holder whose pid no longer exists
+# (kill -0 fails) is dead — remove the lock dir and retry the mkdir exactly
+# ONCE. A missing or malformed meta is treated as HELD-by-unknown, never as
+# stale: acquire is mkdir-then-write, so a contender can observe the dir
+# before meta lands, and stealing that window would break single-writer.
+# Contention resolves toward ro (fail-safe: never grant a write mount on a
+# doubtful lock); a killed launcher leaves the lock and the NEXT acquirer's
+# stale-reclaim collects it — no other cleanup mechanism exists or is needed.
+#
+# INTEGRATION STUBS (C1 symbols this cycle codes against, all guarded):
+#   shared_repos_parse <file>        — echoes validated "slug mode" lines
+#   repos_registry_lookup <slug>     — echoes the local checkout path or nothing
+#   shared_repo_ensure_signals <dir> — sidecar mkdir -p + gitignore, idempotent
+# Absent any of them (cycles landing out of order), the rw-intent pass below
+# no-ops rather than inventing C1 machinery. C1 also owns the `vibe repos`
+# dispatch block (the literal `if [ "${1:-}" = "repos" ]` before
+# parse_vibe_args); `vibe repos add --rw <slug>` wires there into
+#   shared_repo_declaration_set_mode "$WORKSPACE/.vibe-repos" "$slug" rw
+# — the helper ships fully implemented below, C1 owns the one dispatch line.
+
+# _shared_repo_lock_dir <checkout> — the lock path shape, defined once.
+_shared_repo_lock_dir() {
+  echo "$1/.vibe-signals/rw-lock.d"
+}
+
+# _shared_repo_meta_field <meta_file> <key> [digits] — echoes the last value
+# for key (everything after the first =); with "digits", non-numeric values
+# echo nothing. Missing file/key echoes nothing. Fail-safe like
+# auto_resume_field, which it mirrors.
+_shared_repo_meta_field() {
+  local file="$1" key="$2" want="${3:-}" val
+  [ -f "$file" ] || return 0
+  val=$(grep -E "^${key}=" "$file" 2>/dev/null | tail -1 | cut -d= -f2-)
+  if [ "$want" = "digits" ]; then
+    case "$val" in
+      ''|*[!0-9]*) return 0 ;;
+    esac
+  fi
+  [ -n "$val" ] && printf '%s\n' "$val"
+  return 0
+}
+
+# shared_repo_lock_holder <checkout> — echoes "project pid since" for the
+# current holder (pid/since digits-only, blank when malformed; project may
+# legitimately contain spaces, so callers must parse the LAST two fields as
+# pid/since and treat the remainder as the name). Echoes nothing when no
+# lock/meta exists.
+shared_repo_lock_holder() {
+  local meta project pid since
+  meta="$(_shared_repo_lock_dir "$1")/meta"
+  [ -f "$meta" ] || return 0
+  project=$(_shared_repo_meta_field "$meta" project)
+  pid=$(_shared_repo_meta_field "$meta" pid digits)
+  since=$(_shared_repo_meta_field "$meta" since digits)
+  echo "$project $pid $since"
+}
+
+# _shared_repo_lock_write_meta <meta_path> <project> <pid> — write the meta
+# file; plain > is fine (the surrounding lock DIR is the atomicity boundary —
+# nobody else can be inside a dir they failed to mkdir).
+_shared_repo_lock_write_meta() {
+  printf 'project=%s\npid=%s\nsince=%s\n' "$2" "$3" "$(date +%s)" > "$1" 2>/dev/null
+}
+
+# shared_repo_lock_acquire <checkout> <project> <pid> — returns 0 acquired,
+# 1 held-by-someone-else (holder details echoed as "project pid since").
+# RE-ENTRANT on (project, pid): a meta matching both is already ours →
+# return 0 without touching anything. That re-entrancy is load-bearing:
+# _build_override_config runs inside $(...), where lock side effects would
+# be invisible to the launcher, so the MAIN shell takes the lock first
+# (shared_repos_apply_rw_intents) and mount assembly merely re-reads the
+# answer — $$ inside a command-substitution subshell is the parent's pid, so
+# both calls present identical credentials. On meta-write failure the fresh
+# lock dir is rolled back and the acquire reports held (a dir with no meta
+# is unreleasable by us and unreclaimable by others — worse than losing).
+shared_repo_lock_acquire() {
+  local checkout="$1" project="$2" pid="$3" lock meta hpid
+  lock="$(_shared_repo_lock_dir "$checkout")"
+  meta="$lock/meta"
+  # Re-entrant fast path: we already hold it.
+  if [ -f "$meta" ] \
+     && [ "$(_shared_repo_meta_field "$meta" project)" = "$project" ] \
+     && [ "$(_shared_repo_meta_field "$meta" pid digits)" = "$pid" ]; then
+    return 0
+  fi
+  # Defensive sidecar mkdir (spec: never rely on Docker auto-vivification;
+  # also lets the lock helpers be exercised standalone against a bare temp
+  # checkout). shared_repo_ensure_signals (C1) remains the full-fat path —
+  # this covers only the parent-dir-for-mkdir need, guarded.
+  mkdir -p "${lock%/*}" 2>/dev/null || true
+  if mkdir "$lock" 2>/dev/null; then
+    if _shared_repo_lock_write_meta "$meta" "$project" "$pid"; then
+      return 0
+    fi
+    rm -rf "$lock" 2>/dev/null || true
+    return 1
+  fi
+  # Held. Stale ONLY when the holder pid parses digits-only AND is dead;
+  # reclaim exactly once, then one retry of the atomic mkdir.
+  hpid=$(_shared_repo_meta_field "$meta" pid digits)
+  if [ -n "$hpid" ] && ! kill -0 "$hpid" 2>/dev/null; then
+    rm -rf "$lock" 2>/dev/null || true
+    if mkdir "$lock" 2>/dev/null; then
+      if _shared_repo_lock_write_meta "$meta" "$project" "$pid"; then
+        return 0
+      fi
+      rm -rf "$lock" 2>/dev/null || true
+      return 1
+    fi
+  fi
+  shared_repo_lock_holder "$checkout"
+  return 1
+}
+
+# shared_repo_lock_release <checkout> <project> <pid> — remove the lock ONLY
+# when meta matches BOTH project and pid: never someone else's lock, never a
+# half-written one (missing/malformed meta refuses too). Returns 0 released,
+# 1 refused-or-nothing-held. The routine never-held case returning 1 is WHY
+# the exit dispatcher guards every hook with `|| true` — release is always
+# registered via vibe_exit_hook_add, never as a raw trap.
+shared_repo_lock_release() {
+  local checkout="$1" project="$2" pid="$3" lock meta
+  lock="$(_shared_repo_lock_dir "$checkout")"
+  meta="$lock/meta"
+  [ -d "$lock" ] || return 1
+  [ "$(_shared_repo_meta_field "$meta" project)" = "$project" ] || return 1
+  [ "$(_shared_repo_meta_field "$meta" pid digits)" = "$pid" ] || return 1
+  rm -rf "$lock" 2>/dev/null || return 1
+  return 0
+}
+
+# shared_repo_resolve_mode <slug> <checkout> <declared-mode> — echoes the
+# EFFECTIVE mount mode for a shared repo. "ro" (or anything that isn't the
+# exact token "rw" — unknown modes degrade toward not granting writes)
+# passes through untouched, no lock traffic. "rw" intent is refereed by the
+# single-writer lock: acquired (or already ours — re-entrant) → "rw"; held
+# elsewhere → "ro" fallback (the caller prints the loud holder warning;
+# shared_repo_lock_holder has the details). This is THE one call-site
+# function for C1's mount-assembly loop:
+#   mode=$(shared_repo_resolve_mode "$slug" "$checkout" "$declared_mode")
+# The lock was already taken (or refused) by shared_repos_apply_rw_intents
+# in the main shell before mount assembly ran, so this re-read cannot
+# double-acquire or flip the answer mid-launch. Always returns 0.
+# shellcheck disable=SC2034  # slug is part of the pinned signature; the
+# lock is per-checkout, but call sites pass the slug for future-proofing.
+shared_repo_resolve_mode() {
+  local slug="$1" checkout="$2" declared="${3:-ro}" project
+  if [ "$declared" != "rw" ]; then
+    echo "ro"
+    return 0
+  fi
+  project="${PROJECT_NAME:-$(basename "${WORKSPACE:-$PWD}")}"
+  if shared_repo_lock_acquire "$checkout" "$project" "$$" >/dev/null; then
+    echo "rw"
+  else
+    echo "ro"
+  fi
+  return 0
+}
+
+# shared_repo_declaration_set_mode <file> <slug> <mode> — set/update the mode
+# field on <slug>'s line in a .vibe-repos declaration (creates the file or
+# appends the line when absent). awk-to-temp + mv, the same portable rewrite
+# pattern as auto_resume_decrement; comments, blank lines and other entries
+# pass through byte-unchanged. Validates here too (slug charset, ro|rw mode,
+# reserved dot-prefixed basenames) — this is the write path `vibe repos add
+# --rw` wires into, and it must refuse garbage even if the caller forgot to.
+shared_repo_declaration_set_mode() {
+  local file="$1" slug="$2" mode="$3" tmp
+  [[ "$slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 1
+  case "${slug##*/}" in .*) return 1 ;; esac
+  case "$mode" in ro|rw) ;; *) return 1 ;; esac
+  if [ ! -f "$file" ]; then
+    printf '%s %s\n' "$slug" "$mode" > "$file"
+    return 0
+  fi
+  tmp="${file}.tmp.$$"
+  awk -v slug="$slug" -v mode="$mode" '
+    $0 !~ /^[[:space:]]*(#|$)/ && $1 == slug { print slug " " mode; found=1; next }
+    { print }
+    END { if (!found) print slug " " mode }
+  ' "$file" > "$tmp" && mv "$tmp" "$file"
+}
+
+# VIBE_RW_LOCKED_CHECKOUTS / VIBE_SHARED_REPO_WARNINGS — filled by
+# shared_repos_apply_rw_intents in the MAIN shell: locked checkouts get a
+# release hook each; warnings are printed later inside the launch header
+# (collected rather than echoed inline so they land in the banner block,
+# not above it).
+VIBE_RW_LOCKED_CHECKOUTS=()
+VIBE_SHARED_REPO_WARNINGS=()
+
+# shared_repos_apply_rw_intents <declaration_file> <project> <pid> — the
+# main-shell rw-intent pass, run ONCE per launch BEFORE mount assembly.
+# It must run in the launcher's own shell: lock acquisition is a side effect
+# and the release hooks register into VIBE_EXIT_HOOKS — both die inside the
+# $(...) that invokes _build_override_config (the same subshell trap the
+# learning_load comment at the OVERRIDE_CONFIG call site documents). For
+# each declared rw repo that resolves via the machine registry to an
+# existing checkout: attempt the lock; on success register the release as an
+# exit hook (release only ever matches OUR project+pid); on contention queue
+# a loud header warning naming the holder project + since-time and leave the
+# mode ro. Repos with no registry entry are silently skipped, mirroring
+# mount assembly's community-contributor silence. Guarded against C1's
+# helpers being absent (cycles can land out of order): no parser/registry →
+# no-op. Always returns 0 (launch must never abort over lock traffic).
+shared_repos_apply_rw_intents() {
+  local decl="$1" project="$2" pid="$3"
+  local line slug declared checkout holder rest hproject hsince since_fmt
+  [ -f "$decl" ] || return 0
+  type shared_repos_parse >/dev/null 2>&1 || return 0
+  type repos_registry_lookup >/dev/null 2>&1 || return 0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    slug="${line%% *}"
+    declared="${line#* }"
+    [ "$declared" = "rw" ] || continue
+    checkout="$(repos_registry_lookup "$slug")" || checkout=""
+    { [ -n "$checkout" ] && [ -d "$checkout" ]; } || continue
+    if shared_repo_lock_acquire "$checkout" "$project" "$pid" >/dev/null; then
+      VIBE_RW_LOCKED_CHECKOUTS+=("$checkout")
+      # printf %q so a checkout path (or project name) with spaces/quotes
+      # survives the dispatcher's eval verbatim.
+      vibe_exit_hook_add "shared_repo_lock_release $(printf '%q' "$checkout") $(printf '%q' "$project") $pid"
+    else
+      holder="$(shared_repo_lock_holder "$checkout")"
+      # Parse from the RIGHT: pid/since are the last two fields; the
+      # remainder is the project name (which may contain spaces).
+      hsince="${holder##* }"
+      rest="${holder% *}"
+      hproject="${rest% *}"
+      case "$hsince" in
+        ''|*[!0-9]*) since_fmt="unknown" ;;
+        *) since_fmt="$(date -r "$hsince" 2>/dev/null || date -d "@$hsince" 2>/dev/null || echo "epoch $hsince")" ;;
+      esac
+      [ -n "$hproject" ] || hproject="unknown"
+      VIBE_SHARED_REPO_WARNINGS+=("     ⚠ shared repo ${slug}: rw declared but the lock is held by '${hproject}' (since ${since_fmt}) — mounting ro this session")
+    fi
+  done <<EOF
+$(shared_repos_parse "$decl")
+EOF
   return 0
 }
 
@@ -1085,11 +1380,15 @@ _learning_capture() {
     local push_lc
     push_lc=$(lowercase "$(printf '%s' "$push_ans" | tr -d '[:space:]')")
     if [ "$push_lc" = "y" ] || [ "$push_lc" = "yes" ]; then
-      # Create tempfile for commit message; register cleanup trap.
+      # Create tempfile for commit message; register cleanup. EXIT goes via
+      # the dispatcher (no raw `trap ... EXIT` outside vibe_exit_hook_add);
+      # INT/TERM keep a direct trap — the dispatcher owns only the EXIT slot.
+      # rm -f is idempotent, so the INT→EXIT double-fire is harmless.
       local msg_tmp
       msg_tmp=$(mktemp)
+      vibe_exit_hook_add "rm -f '$msg_tmp'"
       # shellcheck disable=SC2064
-      trap "rm -f '$msg_tmp'" EXIT INT TERM
+      trap "rm -f '$msg_tmp'" INT TERM
       learning_commit_message "$pattern" > "$msg_tmp"
 
       # Add the new file.
@@ -1473,7 +1772,13 @@ shared_repos_scan() {
 
     seen_names="$seen_names
 $name"
-    bindmode="ro"  # cycle-1 hard-pin; rw arrives in cycle 2 via the lock
+    # Effective mode: declared intent resolved against the single-writer
+    # lock (C2). resolve_mode is a pure idempotent re-read here — the lock
+    # was taken (or refused, queueing a loud fallback warning) once, in the
+    # main shell, by shared_repos_apply_rw_intents BEFORE any caller of this
+    # scan runs; so list/header/manifest/mounts all report the same answer
+    # and a subshell invocation can never double-acquire.
+    bindmode="$(shared_repo_resolve_mode "$slug" "$path" "$mode")"
     echo "M $name $bindmode $slug $path"
   done < <(shared_repos_parse "$decl")
 }
@@ -1501,7 +1806,7 @@ shared_repos_manifest_lines() {
 # exit before that point, see the dispatch block below).
 
 _repos_usage() {
-  echo "Usage: vibe repos add <owner/repo> [path]" >&2
+  echo "Usage: vibe repos add [--rw] <owner/repo> [path]" >&2
   echo "       vibe repos remove <owner/repo> [--purge]" >&2
   echo "       vibe repos list" >&2
   exit 1
@@ -1516,7 +1821,20 @@ _repos_usage() {
 # stored yet. Exits non-zero with a one-line reason on any validation
 # failure; exits 0 with a relaunch reminder on success.
 _repos_add() {
-  local slug="${1:-}" path_arg="${2:-}"
+  # `--rw` (AC8) may appear before or after the slug; it sets the declared
+  # mode to rw — both on a fresh declaration and on one that already exists
+  # (shared_repo_declaration_set_mode flips an existing line in place).
+  local slug="" path_arg="" mode="ro" arg
+  for arg in "$@"; do
+    case "$arg" in
+      --rw) mode="rw" ;;
+      *)
+        if [ -z "$slug" ]; then slug="$arg"
+        elif [ -z "$path_arg" ]; then path_arg="$arg"
+        else _repos_usage; fi
+        ;;
+    esac
+  done
 
   if [ -z "$slug" ]; then
     _repos_usage
@@ -1582,7 +1900,14 @@ _repos_add() {
     echo "  ⚠ could not create $path/.vibe-signals (unwritable checkout?) — will show as BROKEN until fixed" >&2
   fi
 
-  _vibe_repos_decl_append "$(pwd -P)/.vibe-repos" "$slug" "ro"
+  if _vibe_repos_decl_has "$(pwd -P)/.vibe-repos" "$slug"; then
+    # Already declared: --rw upgrades the existing line's mode in place
+    # (add without --rw leaves an existing rw declaration alone — running
+    # plain `add` again must never silently DOWNGRADE an intent).
+    [ "$mode" = "rw" ] && shared_repo_declaration_set_mode "$(pwd -P)/.vibe-repos" "$slug" "rw"
+  else
+    _vibe_repos_decl_append "$(pwd -P)/.vibe-repos" "$slug" "$mode"
+  fi
   # The ack IS the consent act: this user, this machine, this project.
   shared_repo_ack "$slug" "$(pwd -P)"
 
@@ -2311,6 +2636,16 @@ _ensure_op_forwarder
 # is mounted.)
 learning_load
 
+# ── Shared-repo rw intents (task_017 C2) ── must run in THIS shell, before
+# _build_override_config: lock acquisition is a side effect and the release
+# hooks register into VIBE_EXIT_HOOKS — both would die inside the $(...)
+# below (the exact subshell trap the learning_load comment above documents).
+# Mount assembly then re-resolves each repo's mode idempotently via
+# shared_repo_resolve_mode (acquire is re-entrant on project+pid, and $$
+# inside the subshell is this shell's pid). Contention warnings are queued
+# in VIBE_SHARED_REPO_WARNINGS and printed inside the banner block below.
+shared_repos_apply_rw_intents "$WORKSPACE/.vibe-repos" "$PROJECT_NAME" "$$"
+
 # Resolve the override config: a generated per-session JSON with the learning /
 # brain / zotero mounts injected if any apply, else the source config.
 OVERRIDE_CONFIG=$(_build_override_config "$WORKSPACE")
@@ -2403,6 +2738,15 @@ if [ -n "$SHARED_REPOS_SCAN" ]; then
     esac
   done <<< "$SHARED_REPOS_SCAN"
 fi
+# Shared-repo rw contention fallbacks (queued by shared_repos_apply_rw_intents
+# above): loud, names the holder project + since-time. Successful rw grants
+# need no extra line here — the per-repo "◆ shared repo:" header line (C1)
+# reports the effective mode, which resolve_mode already flipped.
+if [ "${#VIBE_SHARED_REPO_WARNINGS[@]}" -gt 0 ]; then
+  for _srw_line in "${VIBE_SHARED_REPO_WARNINGS[@]}"; do
+    echo "$_srw_line"
+  done
+fi
 echo ""
 
 UP_BASE_ARGS=(
@@ -2469,11 +2813,19 @@ WATCHER_PID=""
 if [[ "$(uname)" == "Darwin" ]] && command -v pbcopy >/dev/null 2>&1; then
   mkdir -p "$WORKSPACE/.vibe"
   CLIP="$WORKSPACE/.vibe/copy-latest.txt"
+  # shellcheck disable=SC2034  # read at exit time inside the hook string
+  # registered below (shellcheck can parse trap strings but not hook strings).
   WATCHER_SEED_MTIME=$(stat -f %m "$CLIP" 2>/dev/null || stat -c %Y "$CLIP" 2>/dev/null || echo 0)
   pkill -f "vibe-copy-watcher\.sh ${WORKSPACE}\$" 2>/dev/null || true
   "$VIBE_REPO_DIR/vibe-copy-watcher.sh" "$WORKSPACE" &
+  # shellcheck disable=SC2034  # same: consumed by the exit hook string below
   WATCHER_PID=$!
-  trap 'if [ -s "$CLIP" ] && [ "$(stat -f %m "$CLIP" 2>/dev/null || stat -c %Y "$CLIP" 2>/dev/null || echo 0)" != "$WATCHER_SEED_MTIME" ]; then pbcopy < "$CLIP" 2>/dev/null || true; fi; kill "$WATCHER_PID" 2>/dev/null || true' EXIT
+  # Clipboard flush + watcher reap on exit. The hook BODY is byte-identical
+  # to the pre-dispatcher `trap ... EXIT` registration (task_008/016 smoke
+  # checks and MANUAL-TESTS pin its behaviour); only the registration
+  # mechanism changed — it now shares the single EXIT slot with the
+  # shared-repo lock release via vibe_on_exit (see the dispatcher block).
+  vibe_exit_hook_add 'if [ -s "$CLIP" ] && [ "$(stat -f %m "$CLIP" 2>/dev/null || stat -c %Y "$CLIP" 2>/dev/null || echo 0)" != "$WATCHER_SEED_MTIME" ]; then pbcopy < "$CLIP" 2>/dev/null || true; fi; kill "$WATCHER_PID" 2>/dev/null || true'
 fi
 
 # build_claude_model_args echoes "" / "--model <id>". MODEL_ARG is restricted
@@ -2571,7 +2923,7 @@ while auto_resume_pending "$AUTO_RESUME_MARKER"; do
   echo "    Relaunching claude --continue in $(( _ar_wait / 60 ))m $(( _ar_wait % 60 ))s — Ctrl-C to cancel, or delete .vss/auto-resume."
   # Re-armed at the top of EVERY iteration, immediately before the countdown
   # sleep; reset right after. Registers ONLY the INT slot — must never touch
-  # the EXIT slot, so the pre-existing clipboard-watcher EXIT trap still
+  # the EXIT slot, so vibe_on_exit (clipboard flush + lock release) still
   # fires on this exit-130 path. Cancel means cancel: deactivate the marker
   # so a stale "active=1" doesn't linger, but crash paths (no trap fires)
   # deliberately leave the marker alone so a crash-left marker still resumes.

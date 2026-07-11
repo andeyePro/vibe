@@ -7234,6 +7234,477 @@ def test_task017_delta_header_case_arms_present() -> None:
           block[:500])
 
 
+# ── task_017 AC8-AC11: rw intent + single-writer lock (Cycle 2) ──────────────
+# Haiku Tester. Lock helpers take a bare <checkout> path and are otherwise
+# HOME-independent, so most of these skip the full _repos_delta_fixture and
+# just use a bare tempdir. Real processes (backgrounded `sleep`) stand in for
+# "another launcher" per the task_016 watchdog-test precedent — never timing
+# alone: every negative samples a live PID or asserts on a persisted meta
+# file, and every positive is checked against evidence a broken implementation
+# could not produce by accident.
+
+def test_task017_c2_lock_acquire_writes_meta_and_holder_reads_digits() -> None:
+    print("\n[task_017 AC9: shared_repo_lock_acquire — success writes meta; holder reads digits-only]")
+    with tempfile.TemporaryDirectory() as td:
+        checkout = Path(td) / "checkout"
+        checkout.mkdir()
+        snippet = (
+            f'shared_repo_lock_acquire {shlex.quote(str(checkout))} projA 424242; echo "ACQ=[$?]"; '
+            f'shared_repo_lock_holder {shlex.quote(str(checkout))}'
+        )
+        r = _source_vibe_call({}, snippet)
+        check("exits 0", r.returncode == 0, r.stderr)
+        check("acquire returns 0 (acquired)", "ACQ=[0]" in r.stdout, r.stdout)
+        lines = [ln for ln in r.stdout.splitlines() if ln.strip()]
+        holder_line = lines[-1] if lines else ""
+        check("holder echoes 'projA 424242 <digits-only-epoch>'",
+              re.match(r'^projA 424242 \d+$', holder_line) is not None, holder_line)
+        meta = checkout / ".vibe-signals" / "rw-lock.d" / "meta"
+        check("meta file created", meta.is_file(), "meta missing")
+        if meta.is_file():
+            text = meta.read_text()
+            check("meta: project=projA", "project=projA" in text, text)
+            check("meta: pid=424242", "pid=424242" in text, text)
+            check("meta: since=<digits>", re.search(r'(?m)^since=\d+$', text) is not None, text)
+
+
+def test_task017_c2_lock_contend_live_holder_refused_and_not_reclaimed() -> None:
+    print("\n[task_017 AC9: shared_repo_lock_acquire — contend: different project, live holder pid -> refused, holder named, lock untouched]")
+    with tempfile.TemporaryDirectory() as td:
+        checkout = Path(td) / "checkout"
+        checkout.mkdir()
+        snippet = (
+            'set +e; '
+            'sleep 60 & holder_pid=$!; '
+            f'shared_repo_lock_acquire {shlex.quote(str(checkout))} holderProj "$holder_pid" >/dev/null; '
+            f'out=$(shared_repo_lock_acquire {shlex.quote(str(checkout))} otherProj "$$"); rc=$?; '
+            'echo "RC=[$rc]"; '
+            'echo "HOLDEROUT=[$out]"; '
+            'kill "$holder_pid" 2>/dev/null; wait "$holder_pid" 2>/dev/null; '
+            'set -e'
+        )
+        r = _source_vibe_call({}, snippet)
+        check("exits 0", r.returncode == 0, r.stderr)
+        check("contended acquire refused (rc=1)", "RC=[1]" in r.stdout, r.stdout)
+        check("refusal echoes the ORIGINAL holder's details (holderProj, not otherProj)",
+              re.search(r'HOLDEROUT=\[holderProj \d+ \d+\]', r.stdout) is not None, r.stdout)
+        meta = checkout / ".vibe-signals" / "rw-lock.d" / "meta"
+        check("lock meta still names the original live holder (never reclaimed while pid alive)",
+              meta.is_file() and "project=holderProj" in meta.read_text(), meta.read_text() if meta.is_file() else "meta missing")
+
+
+def test_task017_c2_lock_stale_reclaim_dead_holder_succeeds() -> None:
+    print("\n[task_017 AC9: shared_repo_lock_acquire — stale-reclaim: dead holder pid reclaimed exactly once]")
+    with tempfile.TemporaryDirectory() as td:
+        checkout = Path(td) / "checkout"
+        checkout.mkdir()
+        snippet = (
+            'set +e; '
+            '(sleep 0.2) & dead_pid=$!; '
+            f'shared_repo_lock_acquire {shlex.quote(str(checkout))} oldProj "$dead_pid" >/dev/null; echo "SETUP_RC=[$?]"; '
+            'wait "$dead_pid" 2>/dev/null; '
+            # Confirm the pid is provably dead before we rely on that in the assertion.
+            'if kill -0 "$dead_pid" 2>/dev/null; then echo "STILL_ALIVE=[yes]"; else echo "STILL_ALIVE=[no]"; fi; '
+            f'shared_repo_lock_acquire {shlex.quote(str(checkout))} newProj "$$"; echo "RECLAIM_RC=[$?]"; '
+            f'shared_repo_lock_holder {shlex.quote(str(checkout))}; '
+            'set -e'
+        )
+        r = _source_vibe_call({}, snippet)
+        check("exits 0", r.returncode == 0, r.stderr)
+        check("initial acquire (as the soon-to-die holder) succeeded", "SETUP_RC=[0]" in r.stdout, r.stdout)
+        check("holder pid is provably dead before reclaim", "STILL_ALIVE=[no]" in r.stdout, r.stdout)
+        check("reclaim by a new project/pid succeeds (rc=0)", "RECLAIM_RC=[0]" in r.stdout, r.stdout)
+        lines = [ln for ln in r.stdout.splitlines() if ln.strip()]
+        check("post-reclaim holder is the NEW project/pid, not the dead one",
+              re.match(r'^newProj \d+ \d+$', lines[-1]) is not None, lines[-1] if lines else "")
+
+
+def test_task017_c2_lock_release_matching_owner_removes_lock() -> None:
+    print("\n[task_017 AC9: shared_repo_lock_release — matching project+pid removes the lock]")
+    with tempfile.TemporaryDirectory() as td:
+        checkout = Path(td) / "checkout"
+        checkout.mkdir()
+        snippet = (
+            f'shared_repo_lock_acquire {shlex.quote(str(checkout))} projA "$$" >/dev/null; '
+            f'shared_repo_lock_release {shlex.quote(str(checkout))} projA "$$"; echo "REL=[$?]"'
+        )
+        r = _source_vibe_call({}, snippet)
+        check("exits 0", r.returncode == 0, r.stderr)
+        check("release returns 0", "REL=[0]" in r.stdout, r.stdout)
+        lock_dir = checkout / ".vibe-signals" / "rw-lock.d"
+        check("lock directory is gone after a matching release", not lock_dir.exists(), str(lock_dir))
+
+
+def test_task017_c2_lock_release_wrong_project_refused_intact() -> None:
+    print("\n[task_017 AC9: shared_repo_lock_release — wrong project refused, lock intact]")
+    with tempfile.TemporaryDirectory() as td:
+        checkout = Path(td) / "checkout"
+        checkout.mkdir()
+        snippet = (
+            'set +e; '
+            f'shared_repo_lock_acquire {shlex.quote(str(checkout))} projA "$$" >/dev/null; '
+            f'shared_repo_lock_release {shlex.quote(str(checkout))} wrongProj "$$"; echo "REL=[$?]"; '
+            'set -e'
+        )
+        r = _source_vibe_call({}, snippet)
+        check("exits 0", r.returncode == 0, r.stderr)
+        check("release with wrong project refused (rc=1)", "REL=[1]" in r.stdout, r.stdout)
+        meta = checkout / ".vibe-signals" / "rw-lock.d" / "meta"
+        check("lock left intact (still projA)", meta.is_file() and "project=projA" in meta.read_text(),
+              meta.read_text() if meta.is_file() else "meta missing")
+
+
+def test_task017_c2_lock_release_wrong_pid_refused_intact() -> None:
+    print("\n[task_017 AC9: shared_repo_lock_release — wrong pid refused, lock intact]")
+    with tempfile.TemporaryDirectory() as td:
+        checkout = Path(td) / "checkout"
+        checkout.mkdir()
+        snippet = (
+            'set +e; '
+            f'shared_repo_lock_acquire {shlex.quote(str(checkout))} projA 999999 >/dev/null; '
+            f'shared_repo_lock_release {shlex.quote(str(checkout))} projA "$$"; echo "REL=[$?]"; '
+            'set -e'
+        )
+        r = _source_vibe_call({}, snippet)
+        check("exits 0", r.returncode == 0, r.stderr)
+        check("release with wrong pid refused (rc=1)", "REL=[1]" in r.stdout, r.stdout)
+        meta = checkout / ".vibe-signals" / "rw-lock.d" / "meta"
+        check("lock left intact (still pid=999999)", meta.is_file() and "pid=999999" in meta.read_text(),
+              meta.read_text() if meta.is_file() else "meta missing")
+
+
+def test_task017_c2_lock_torn_meta_never_stolen_no_crash() -> None:
+    print("\n[task_017 AC9: torn meta (empty/garbage pid) — never stolen, never crashes]")
+    for label, meta_body in (
+        ("empty pid", "project=ghost\npid=\nsince=\n"),
+        ("garbage pid", "project=ghost\npid=notanumber\nsince=notanumber\n"),
+    ):
+        with tempfile.TemporaryDirectory() as td:
+            checkout = Path(td) / "checkout"
+            lockdir = checkout / ".vibe-signals" / "rw-lock.d"
+            lockdir.mkdir(parents=True)
+            (lockdir / "meta").write_text(meta_body, encoding="utf-8")
+            snippet = (
+                'set +e; '
+                f'shared_repo_lock_acquire {shlex.quote(str(checkout))} projA "$$"; echo "RC=[$?]"; '
+                'set -e'
+            )
+            r = _source_vibe_call({}, snippet)
+            check(f"[{label}] script exits 0 (no crash)", r.returncode == 0, r.stderr)
+            check(f"[{label}] acquire refused rather than stealing a torn lock (rc=1)",
+                  "RC=[1]" in r.stdout, r.stdout)
+            check(f"[{label}] meta left byte-for-byte untouched",
+                  (lockdir / "meta").read_text() == meta_body, (lockdir / "meta").read_text())
+
+
+def test_task017_c2_rw_free_lock_grants_rw() -> None:
+    print("\n[task_017 AC8: rw declared + free lock + apply_rw_intents run -> scan emits 'M <name> rw ...']")
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td).resolve()
+        home, ws, checkout = _repos_delta_fixture(td)
+        (ws / ".vibe-repos").write_text("andeyePro/andeyePro rw\n", encoding="utf-8")
+        (home / ".vibe" / "repos").write_text(f"andeyePro/andeyePro={checkout}\n", encoding="utf-8")
+        (home / ".vibe" / "tokens").write_text("andeyePro/andeyePro=ghp_faketoken\n", encoding="utf-8")
+        (home / ".vibe" / "repos-acks").write_text(f"andeyePro/andeyePro={ws}\n", encoding="utf-8")
+        env = {**os.environ, "HOME": str(home), "VIBE_CONFIG": f"{td}/no-config", "PROJECT_NAME": "projA"}
+        # Read the meta file INSIDE the same script, before it exits — a real
+        # launch registers lock release as an EXIT hook (AC10), so checking
+        # the filesystem from Python after the process has already exited
+        # would only ever see the lock gone, regardless of whether it was
+        # ever correctly acquired.
+        meta_path = checkout / ".vibe-signals" / "rw-lock.d" / "meta"
+        snippet = (
+            f'shared_repos_apply_rw_intents {shlex.quote(str(ws / ".vibe-repos"))} projA "$$"; '
+            f'shared_repos_scan {shlex.quote(str(ws))}; '
+            f'echo "META=[$(cat {shlex.quote(str(meta_path))} 2>/dev/null | tr "\\n" ";")]"'
+        )
+        r = _source_vibe_call(env, snippet)
+        check("exits 0", r.returncode == 0, r.stderr)
+        m_lines = [ln for ln in r.stdout.splitlines() if ln.startswith("M ")]
+        expected = f"M andeyePro rw andeyePro/andeyePro {checkout}"
+        check("scan emits rw bindmode when the lock is free", m_lines == [expected], r.stdout)
+        meta_m = re.search(r"META=\[(.*)\]", r.stdout)
+        meta_line = meta_m.group(1) if meta_m else ""
+        check("lock acquired and held by the requesting project (read while still held, pre-exit-release)",
+              "project=projA;" in meta_line and "pid=" in meta_line, meta_line)
+
+
+def test_task017_c2_rw_contended_falls_back_ro_with_warning() -> None:
+    print("\n[task_017 AC8: rw declared, lock held by another LIVE process -> scan falls back to ro + named contention warning]")
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td).resolve()
+        home, ws, checkout = _repos_delta_fixture(td)
+        (ws / ".vibe-repos").write_text("andeyePro/andeyePro rw\n", encoding="utf-8")
+        (home / ".vibe" / "repos").write_text(f"andeyePro/andeyePro={checkout}\n", encoding="utf-8")
+        (home / ".vibe" / "tokens").write_text("andeyePro/andeyePro=ghp_faketoken\n", encoding="utf-8")
+        (home / ".vibe" / "repos-acks").write_text(f"andeyePro/andeyePro={ws}\n", encoding="utf-8")
+        env = {**os.environ, "HOME": str(home), "VIBE_CONFIG": f"{td}/no-config", "PROJECT_NAME": "projB"}
+        snippet = (
+            'set +e; '
+            'sleep 60 & holder_pid=$!; '
+            f'shared_repo_lock_acquire {shlex.quote(str(checkout))} otherProj "$holder_pid" >/dev/null; '
+            f'shared_repos_apply_rw_intents {shlex.quote(str(ws / ".vibe-repos"))} projB "$$"; '
+            f'shared_repos_scan {shlex.quote(str(ws))}; '
+            'echo "WARNINGS=[${VIBE_SHARED_REPO_WARNINGS[*]}]"; '
+            'kill "$holder_pid" 2>/dev/null; wait "$holder_pid" 2>/dev/null; '
+            'set -e'
+        )
+        r = _source_vibe_call(env, snippet)
+        check("exits 0", r.returncode == 0, r.stderr)
+        m_lines = [ln for ln in r.stdout.splitlines() if ln.startswith("M ")]
+        check("scan falls back to ro bindmode (lock held elsewhere)",
+              m_lines == [f"M andeyePro ro andeyePro/andeyePro {checkout}"], r.stdout)
+        warn_line = next((ln for ln in r.stdout.splitlines() if ln.startswith("WARNINGS=[")), "")
+        check("contention warning names the holder project ('otherProj')", "otherProj" in warn_line, warn_line)
+        check("contention warning names the repo slug", "andeyePro/andeyePro" in warn_line, warn_line)
+        meta = checkout / ".vibe-signals" / "rw-lock.d" / "meta"
+        check("original holder's lock is untouched by the refused contender",
+              meta.is_file() and "project=otherProj" in meta.read_text(), meta.read_text() if meta.is_file() else "meta missing")
+
+
+def test_task017_c2_ro_declared_never_acquires_lock() -> None:
+    print("\n[task_017 AC8: a declared-ro repo never touches the lock (no lock dir created)]")
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td).resolve()
+        home, ws, checkout = _repos_delta_fixture(td)
+        (ws / ".vibe-repos").write_text("andeyePro/andeyePro ro\n", encoding="utf-8")
+        (home / ".vibe" / "repos").write_text(f"andeyePro/andeyePro={checkout}\n", encoding="utf-8")
+        (home / ".vibe" / "tokens").write_text("andeyePro/andeyePro=ghp_faketoken\n", encoding="utf-8")
+        (home / ".vibe" / "repos-acks").write_text(f"andeyePro/andeyePro={ws}\n", encoding="utf-8")
+        env = {**os.environ, "HOME": str(home), "VIBE_CONFIG": f"{td}/no-config", "PROJECT_NAME": "projA"}
+        snippet = (
+            f'shared_repos_apply_rw_intents {shlex.quote(str(ws / ".vibe-repos"))} projA "$$"; '
+            f'shared_repos_scan {shlex.quote(str(ws))}'
+        )
+        r = _source_vibe_call(env, snippet)
+        check("exits 0", r.returncode == 0, r.stderr)
+        expected = f"M andeyePro ro andeyePro/andeyePro {checkout}"
+        check("scan reports ro for a declared-ro repo", r.stdout.strip() == expected, r.stdout)
+        lock_dir = checkout / ".vibe-signals" / "rw-lock.d"
+        check("lock directory was NEVER created for a ro-declared repo (a broken impl that always "
+              "locks would fail this)", not lock_dir.exists(), str(lock_dir))
+
+
+def test_task017_c2_declaration_set_mode_flips_ro_to_rw() -> None:
+    print("\n[task_017 AC8: shared_repo_declaration_set_mode — flips ro->rw in-place, other lines untouched (vibe repos add --rw, helper level)]")
+    with tempfile.TemporaryDirectory() as td:
+        decl = Path(td) / ".vibe-repos"
+        decl.write_text("andeyePro/andeyePro ro\n# a comment\nother/repo ro\n", encoding="utf-8")
+        r = _source_vibe_call(
+            {}, f'shared_repo_declaration_set_mode {shlex.quote(str(decl))} andeyePro/andeyePro rw; echo "RC=[$?]"')
+        check("exits 0", r.returncode == 0, r.stderr)
+        check("helper returns 0", "RC=[0]" in r.stdout, r.stdout)
+        text = decl.read_text()
+        check("target slug flipped to rw", "andeyePro/andeyePro rw" in text, text)
+        check("target slug's old ro line is gone", "andeyePro/andeyePro ro" not in text, text)
+        check("comment line preserved verbatim", "# a comment" in text, text)
+        check("unrelated declaration untouched", "other/repo ro" in text, text)
+
+
+def test_task017_c2_declaration_set_mode_rejects_bad_mode() -> None:
+    print("\n[task_017 AC8: shared_repo_declaration_set_mode — rejects an invalid mode, no file created]")
+    with tempfile.TemporaryDirectory() as td:
+        decl = Path(td) / ".vibe-repos"
+        snippet = (
+            'set +e; '
+            f'shared_repo_declaration_set_mode {shlex.quote(str(decl))} foo/bar bogus; echo "RC=[$?]"; '
+            'set -e'
+        )
+        r = _source_vibe_call({}, snippet)
+        check("exits 0", r.returncode == 0, r.stderr)
+        check("helper refuses an invalid mode (rc=1)", "RC=[1]" in r.stdout, r.stdout)
+        check("no file created on rejection", not decl.exists(), "file was unexpectedly created")
+
+
+def test_task017_c2_exit_dispatcher_survives_refusing_hook() -> None:
+    print("\n[task_017 AC10: exit dispatcher — a refusing FIRST hook does not suppress later hooks]")
+    with tempfile.TemporaryDirectory() as td:
+        ev2 = Path(td) / "ev2"
+        ev3 = Path(td) / "ev3"
+        snippet = (
+            'vibe_exit_hook_add "false"; '
+            f'vibe_exit_hook_add "touch {shlex.quote(str(ev2))}"; '
+            f'vibe_exit_hook_add "touch {shlex.quote(str(ev3))}"'
+        )
+        r = _source_vibe_call({}, snippet)
+        check("subshell exits 0 despite a refusing first hook (set -euo pipefail survives)",
+              r.returncode == 0, r.stderr)
+        check("second-registered hook ran (evidence file exists)", ev2.exists(), "ev2 missing")
+        check("third-registered hook ran (evidence file exists)", ev3.exists(), "ev3 missing")
+
+
+def test_task017_c2_trap_dash_p_shows_single_dispatcher() -> None:
+    print("\n[task_017 AC10: trap -p EXIT shows exactly the vibe_on_exit dispatcher]")
+    r = _source_vibe_call({}, 'vibe_exit_hook_add "true"; trap -p EXIT')
+    check("exits 0", r.returncode == 0, r.stderr)
+    check("trap -p EXIT names vibe_on_exit as the (sole) EXIT handler",
+          "vibe_on_exit" in r.stdout and "EXIT" in r.stdout, r.stdout)
+
+
+def test_task017_c2_no_raw_exit_trap_outside_dispatcher() -> None:
+    print("\n[task_017 AC10: exactly one literal 'trap ... EXIT' in the whole script (the dispatcher installer)]")
+    src = VIBE.read_text()
+    lines = src.splitlines()
+    trap_exit_re = re.compile(r'^\s*trap\s+\S.*\bEXIT\b')
+    matches = [ln for ln in lines if trap_exit_re.match(ln)]
+    check("exactly one literal EXIT-trap installation site in the script",
+          len(matches) == 1, str(matches))
+    if matches:
+        check("that one site is 'trap vibe_on_exit EXIT' (inside vibe_exit_hook_add, the sanctioned installer)",
+              matches[0].strip() == 'trap vibe_on_exit EXIT', matches[0])
+    # INT/TERM traps (e.g. the /learn tempfile cleanup) are a separate slot and
+    # must NOT also claim EXIT.
+    int_term = [ln for ln in lines if re.match(r'^\s*trap\s+\S.*\bINT\b.*\bTERM\b', ln)
+                or re.match(r'^\s*trap\s+\S.*\bTERM\b.*\bINT\b', ln)]
+    check("at least one dedicated INT/TERM trap exists (separate from the EXIT dispatcher)",
+          len(int_term) >= 1, str(int_term))
+    check("no INT/TERM trap line also mentions EXIT",
+          all("EXIT" not in ln for ln in int_term), str(int_term))
+
+
+def test_task017_c2_clipboard_and_learn_tempfile_migrated_to_hooks() -> None:
+    print("\n[task_017 AC10: Darwin clipboard-flush body and /learn tempfile cleanup both migrated into vibe_exit_hook_add registrations]")
+    src = VIBE.read_text()
+    clip_hook_open = "vibe_exit_hook_add 'if [ -s \"$CLIP\" ]"
+    check("clipboard-flush body is registered via vibe_exit_hook_add (not a raw trap)",
+          clip_hook_open in src, "expected substring not found")
+    check("clipboard-flush body text is intact: drains to pbcopy",
+          'pbcopy < "$CLIP"' in src, "substring not found")
+    check("clipboard-flush body text is intact: reaps the watcher",
+          'kill "$WATCHER_PID" 2>/dev/null || true' in src, "substring not found")
+    learn_hook = 'vibe_exit_hook_add "rm -f \'$msg_tmp\'"'
+    check("vibe learn's tempfile cleanup is ALSO registered via vibe_exit_hook_add",
+          learn_hook in src, "expected substring not found")
+    check("vibe learn keeps a direct INT/TERM trap for the same tempfile (dispatcher owns only EXIT)",
+          'trap "rm -f \'$msg_tmp\'" INT TERM' in src, "substring not found")
+
+
+def test_task017_c2_mode_coherence_rw_manifest_and_override_agree() -> None:
+    print("\n[task_017 mode coherence: rw granted -> manifest says rw AND override JSON code bind has readonly absent while sidecar stays rw]")
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td).resolve()
+        home, ws, checkout = _repos_delta_fixture(td)
+        (ws / ".vibe-repos").write_text("andeyePro/andeyePro rw\n", encoding="utf-8")
+        (home / ".vibe" / "repos").write_text(f"andeyePro/andeyePro={checkout}\n", encoding="utf-8")
+        (home / ".vibe" / "tokens").write_text("andeyePro/andeyePro=ghp_faketoken\n", encoding="utf-8")
+        (home / ".vibe" / "repos-acks").write_text(f"andeyePro/andeyePro={ws}\n", encoding="utf-8")
+        env = {**os.environ,
+               "OPENPROJECT_MCP_URL": "", "OPENPROJECT_MCP_BEARER": "",
+               "HOME": str(home), "VIBE_CONFIG": f"{td}/no-config",
+               "VIBE_BRAIN2_PATH": "off", "VIBE_ZOTERO_PATH": "off",
+               "PROJECT_NAME": "projA"}
+        snippet = (
+            f'shared_repos_apply_rw_intents {shlex.quote(str(ws / ".vibe-repos"))} projA "$$"; '
+            f'echo "MANIFEST=[$(shared_repos_manifest_lines "$(shared_repos_scan {shlex.quote(str(ws))})")]"; '
+            f'echo "OUT=[$(_build_override_config {shlex.quote(str(ws))})]"'
+        )
+        r = _source_vibe_call(env, snippet)
+        check("exits 0", r.returncode == 0, r.stderr)
+        manifest_m = re.search(r"MANIFEST=\[(.*)\]", r.stdout)
+        manifest = manifest_m.group(1) if manifest_m else ""
+        check("manifest line reports rw for the granted repo",
+              manifest.strip() == "andeyePro rw andeyePro/andeyePro", r.stdout)
+        out = _read_override_out(r)
+        cfg = json.loads(Path(out).read_text()) if out and Path(out).exists() else {"mounts": []}
+        mounts = [m for m in cfg.get("mounts", []) if isinstance(m, dict)]
+        code_mount = next((m for m in mounts if m.get("target") == "/repos/andeyePro"), None)
+        sidecar_mount = next((m for m in mounts if m.get("target") == "/repos/.signals/andeyePro"), None)
+        check("code bind present", code_mount is not None, str(mounts))
+        if code_mount:
+            check("code bind's readonly key is ABSENT (rw granted agrees with the manifest)",
+                  "readonly" not in code_mount, str(code_mount))
+        check("sidecar bind present and rw regardless (no readonly key)",
+              sidecar_mount is not None and "readonly" not in sidecar_mount, str(sidecar_mount))
+
+
+def test_task017_c2_repos_add_rw_flag_cli_level() -> None:
+    print("\n[task_017 AC8: vibe repos add --rw at the CLI level — fresh-add-rw, upgrade-in-place, no-silent-downgrade, position-agnostic]")
+
+    def fixture(td: Path):
+        home, ws, checkout = _repos_delta_fixture(td)
+        # Pre-seed the token so _repos_add never reaches the interactive
+        # setup_token flow; every call below passes the path arg so the
+        # read -rp prompt is never hit either.
+        (home / ".vibe" / "tokens").write_text("andeyePro/andeyePro=ghp_faketoken\n", encoding="utf-8")
+        return home, ws, checkout
+
+    def run_add(home: Path, ws: Path, args: str):
+        # _repos_add ends in `exit 0` (and exits non-zero on validation
+        # failure), so run it in a subshell and capture its status; cd into
+        # the temp project first — the declaration path comes from pwd -P.
+        env = {**os.environ, "HOME": str(home), "VIBE_CONFIG": "/tmp/vibe-no-config-for-tests"}
+        snippet = (
+            'set +e; '
+            f'cd {shlex.quote(str(ws))} && ( _repos_add {args} ) >/dev/null 2>&1; echo "RC=[$?]"; '
+            'set -e'
+        )
+        return _source_vibe_call(env, snippet)
+
+    # 1. Fresh add with --rw BEFORE the slug -> declaration lands as rw.
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td).resolve()
+        home, ws, checkout = fixture(td)
+        r = run_add(home, ws, f'--rw andeyePro/andeyePro {shlex.quote(str(checkout))}')
+        check("[fresh-add-rw] exits 0", r.returncode == 0 and "RC=[0]" in r.stdout, r.stdout + r.stderr)
+        decl = (ws / ".vibe-repos").read_text() if (ws / ".vibe-repos").is_file() else ""
+        check("[fresh-add-rw] fresh declaration line is 'slug rw'",
+              "andeyePro/andeyePro rw" in decl, decl)
+        check("[fresh-add-rw] no ro line was written",
+              "andeyePro/andeyePro ro" not in decl, decl)
+
+    # 2. Upgrade in place: slug already declared ro; add --rw flips it to rw
+    #    on the SAME line (no duplicate entry).
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td).resolve()
+        home, ws, checkout = fixture(td)
+        (ws / ".vibe-repos").write_text("# keep me\nandeyePro/andeyePro ro\nother/repo ro\n", encoding="utf-8")
+        r = run_add(home, ws, f'--rw andeyePro/andeyePro {shlex.quote(str(checkout))}')
+        check("[upgrade] exits 0", r.returncode == 0 and "RC=[0]" in r.stdout, r.stdout + r.stderr)
+        decl = (ws / ".vibe-repos").read_text()
+        check("[upgrade] existing declaration upgraded to rw in place",
+              "andeyePro/andeyePro rw" in decl and "andeyePro/andeyePro ro" not in decl, decl)
+        check("[upgrade] exactly one line for the slug (no duplicate append)",
+              decl.count("andeyePro/andeyePro") == 1, decl)
+        check("[upgrade] comment and unrelated declaration untouched",
+              "# keep me" in decl and "other/repo ro" in decl, decl)
+
+    # 3. No silent downgrade: slug already declared rw; plain add (no --rw)
+    #    must leave the rw intent alone. A broken implementation that always
+    #    rewrites the line with its parsed default 'ro' fails this.
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td).resolve()
+        home, ws, checkout = fixture(td)
+        (ws / ".vibe-repos").write_text("andeyePro/andeyePro rw\n", encoding="utf-8")
+        r = run_add(home, ws, f'andeyePro/andeyePro {shlex.quote(str(checkout))}')
+        check("[no-downgrade] exits 0", r.returncode == 0 and "RC=[0]" in r.stdout, r.stdout + r.stderr)
+        decl = (ws / ".vibe-repos").read_text()
+        check("[no-downgrade] plain re-add does NOT downgrade an existing rw declaration",
+              "andeyePro/andeyePro rw" in decl and "andeyePro/andeyePro ro" not in decl, decl)
+
+    # 4. Position-agnostic: --rw AFTER the slug works too (trailing and
+    #    slug --rw path both parse).
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td).resolve()
+        home, ws, checkout = fixture(td)
+        r = run_add(home, ws, f'andeyePro/andeyePro {shlex.quote(str(checkout))} --rw')
+        check("[position] exits 0 with trailing --rw", r.returncode == 0 and "RC=[0]" in r.stdout, r.stdout + r.stderr)
+        decl = (ws / ".vibe-repos").read_text() if (ws / ".vibe-repos").is_file() else ""
+        check("[position] trailing --rw still declares rw",
+              "andeyePro/andeyePro rw" in decl, decl)
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td).resolve()
+        home, ws, checkout = fixture(td)
+        r = run_add(home, ws, f'andeyePro/andeyePro --rw {shlex.quote(str(checkout))}')
+        check("[position] exits 0 with mid-position --rw (slug --rw path)",
+              r.returncode == 0 and "RC=[0]" in r.stdout, r.stdout + r.stderr)
+        decl = (ws / ".vibe-repos").read_text() if (ws / ".vibe-repos").is_file() else ""
+        check("[position] mid-position --rw still declares rw",
+              "andeyePro/andeyePro rw" in decl, decl)
+
+    check("[usage] usage line documents the --rw flag",
+          "vibe repos add [--rw] <owner/repo> [path]" in VIBE.read_text(), "usage string not found")
+
+
 def main() -> int:
     test_help()
     test_version()
@@ -7509,6 +7980,24 @@ def main() -> int:
     test_task017_delta_override_config_no_binds_when_unacked()
     test_task017_delta_manifest_lines_mixed_tags()
     test_task017_delta_header_case_arms_present()
+    test_task017_c2_lock_acquire_writes_meta_and_holder_reads_digits()
+    test_task017_c2_lock_contend_live_holder_refused_and_not_reclaimed()
+    test_task017_c2_lock_stale_reclaim_dead_holder_succeeds()
+    test_task017_c2_lock_release_matching_owner_removes_lock()
+    test_task017_c2_lock_release_wrong_project_refused_intact()
+    test_task017_c2_lock_release_wrong_pid_refused_intact()
+    test_task017_c2_lock_torn_meta_never_stolen_no_crash()
+    test_task017_c2_rw_free_lock_grants_rw()
+    test_task017_c2_rw_contended_falls_back_ro_with_warning()
+    test_task017_c2_ro_declared_never_acquires_lock()
+    test_task017_c2_declaration_set_mode_flips_ro_to_rw()
+    test_task017_c2_declaration_set_mode_rejects_bad_mode()
+    test_task017_c2_exit_dispatcher_survives_refusing_hook()
+    test_task017_c2_trap_dash_p_shows_single_dispatcher()
+    test_task017_c2_no_raw_exit_trap_outside_dispatcher()
+    test_task017_c2_clipboard_and_learn_tempfile_migrated_to_hooks()
+    test_task017_c2_mode_coherence_rw_manifest_and_override_agree()
+    test_task017_c2_repos_add_rw_flag_cli_level()
 
     print()
     if FAILURES:

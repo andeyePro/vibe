@@ -90,6 +90,11 @@ Getting the most from Fable 5 on a subscription: reserve it for genuinely huge o
 - **Claude Pro credentials:** in a named Docker volume (`vibe-claude-config`), not bind-mounted from the host — a compromised container can't leak host credentials unless the firewall is breached.
 - **Built on Anthropic's [reference devcontainer for Claude Code](https://github.com/anthropics/claude-code/tree/main/.devcontainer)**, lightly patched (shared Claude auth across projects; read-only `~/.ssh` and `~/.gitconfig`; per-repo PAT via a git credential helper). Launches via [`@devcontainers/cli`](https://github.com/devcontainers/cli) with `--override-config` so you never commit `.devcontainer/` into each project.
 
+<!-- task_017 C2: fold this subsection into C1's "Shared repos" README section at integration -->
+### Shared repos: write access (`rw`)
+
+A shared repo declared `rw` in `.vibe-repos` (set it with `vibe repos add --rw <owner/repo>`) mounts read-write only when this launch wins the repo's single-writer lock — one writer per shared checkout per machine, refereed by an atomic lock directory at `<checkout>/.vibe-signals/rw-lock.d/`. If another live vibe session already holds it, the launch header names the holding project and since-when, and the repo falls back to a read-only mount for this session; exit the holder (the lock releases on exit) and relaunch to take over. A crashed holder is handled automatically: the next rw launch sees the dead pid and reclaims the stale lock. Mount modes are fixed at container creation, so a handoff is always exit-and-relaunch, never live.
+
 ## Coming soon
 
 In flight or specced; no firm dates.

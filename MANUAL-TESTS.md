@@ -761,6 +761,45 @@ use short overrides so they finish in well under a minute:
 
 ---
 
+### Test 33: shared-repo rw lock (task_017 C2)
+
+Covers the single-writer lock that referees `rw` intents in `.vibe-repos`,
+and the EXIT-trap consolidation it rode in on. Prerequisites: a shared repo
+registered on this machine (`vibe repos add <owner/repo> <path>`) and
+declared `rw` in two different projects' `.vibe-repos`.
+
+**33a — contended launch falls back ro, names the holder:**
+- [ ] Launch vibe in project A (rw declaration) — the shared-repo header
+      line reports `(rw)`, and `<checkout>/.vibe-signals/rw-lock.d/meta`
+      exists with `project=A`, this launcher's `pid=`, and a `since=` epoch
+- [ ] With A still running, launch vibe in project B (same repo, also
+      declared rw) — B's header prints the loud fallback warning naming
+      project A and the since-time, and the repo mounts read-only in B
+      (`touch /repos/<name>/x` fails inside B's container)
+- [ ] Exit A normally — `rw-lock.d/` is gone (released by the exit hook);
+      relaunch B and it now takes the lock and mounts rw
+
+**33b — stale lock reclaimed after kill -9:**
+- [ ] Launch vibe in project A with the rw declaration, then `kill -9` the
+      vibe launcher process (not claude) from another terminal — the lock
+      dir survives (no EXIT hook runs on SIGKILL; by design)
+- [ ] Launch vibe in project B — the dead pid in `meta` fails `kill -0`,
+      the stale lock is reclaimed exactly once, and B mounts rw with a
+      fresh `meta` naming B
+
+**33c — clipboard flush still works on exit (trap-migration regression):**
+- [ ] Mac only: in any vibe session, use `/c` to stage a copy, then exit
+      claude normally — the staged block lands on the Mac clipboard. The
+      flush body now runs as a `vibe_on_exit` hook rather than its own
+      `trap ... EXIT`; behaviour must be identical, including on the
+      Ctrl-C-during-countdown exit path (32d)
+- [ ] Same exit with a shared-repo rw lock held: BOTH the clipboard flush
+      and the lock release happen — hooks run in registration order, each
+      individually guarded, so a refusing release cannot eat the flush and
+      vice versa
+
+---
+
 ## Test Summary
 
 After completing all tests, check:
