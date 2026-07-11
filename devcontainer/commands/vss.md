@@ -18,7 +18,7 @@ Stop and surface to the user — do NOT autonomously proceed when:
 - **Destructive git.** Force-push, branch-delete, `git reset --hard`, hook bypass (`--no-verify`, `--no-gpg-sign`).
 - **`/learnings` writes.** The write-confirm hook will block these anyway; don't fight it. Tell the user to run `vibe learn` host-side.
 - **Firewall / hook / settings perms.** Edits to `init-firewall.sh`, `guard-bash.sh`, `guard-fs.sh`, `settings.local.json` permission lists.
-- **Credit-billed model dispatch.** Any Fable 5 (or other usage-credit) subagent dispatch or `/vs` Fable rung that was not pre-authorised by the user in an approved Model plan. Subscription tiers (haiku/sonnet/opus) never need this.
+- **Credit-billed model dispatch.** Any Fable 5 (or other usage-credit) subagent dispatch or `/vs` Fable rung that was not pre-authorised by the user — via an approved Model plan, or via `--fable-subagents` (alias `--fable`) passed on THIS invocation, which /vss threads into whatever tool it picks (for `/vs`: the Model plan records `Fable rung: pre-authorised (--fable-subagents)`). The flag is per-invocation consent, not a default; task-class routing still applies (never Fable for mechanical roles). Subscription tiers (haiku/sonnet/opus) never need this. Note `vibe --fable` (the launcher flag) is different: chair model only, no subagent authorisation.
 - **Scope creep beyond the announced plan.** If execution reveals the task is materially bigger than planned, stop and re-plan with the user.
 - **Anything explicitly flagged in `~/.claude/CLAUDE.md` or `/workspace/CLAUDE.md`** as needing user authorisation per turn.
 
@@ -88,7 +88,7 @@ Dispatch `Agent(subagent_type: "general-purpose", model: "opus")` with this brie
 > - `/loop <interval> <cmd>` — the task is recurring or polling-shaped (watch a deploy, re-run a check) rather than one-shot.
 > - **Direct in-session edit** — task is small, concrete, mechanically bounded. Most documentation, single-file changes, and config updates fall here.
 >
-> Also choose the `/vs` Generator tier (`--gen haiku|sonnet|opus`) from the task's difficulty per `/vs § Model economy`; never pick a credit-billed tier — that is hard-escalate territory.
+> Also choose the `/vs` Generator tier (`--gen haiku|sonnet|opus`) from the task's difficulty per `/vs § Model economy`; never pick a credit-billed tier — that is hard-escalate territory — UNLESS this /vss invocation carries `--fable-subagents` (alias `--fable`), in which case thread the grant into the chosen flow (for `/vs`: the Model plan records `Fable rung: pre-authorised (--fable-subagents)`); the grant permits, it never forces.
 >
 > Output: chosen mode, one-line rationale, and the literal command or flow the executor will run. Read `MEMORY.md` and apply Martin's preferences (intelligent caveman brevity, robust-100%-solutions-pre-alpha, no em dashes, concrete commands).
 >

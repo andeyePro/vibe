@@ -5429,6 +5429,55 @@ def test_vs_md_plain_techy_verbosity_flags() -> None:
           "propagate" in content.lower() and "subagent" in content.lower(), "")
 
 
+def test_fable_subagents_flag_docs() -> None:
+    """--fable-subagents (alias --fable) spec'd 2026-07-11 on Martin's live
+    request ("use Fable for any subagents that will get better or faster
+    results"). Guards the consent semantics: per-invocation pre-auth only,
+    task-class routing preserved (never mechanical roles), the no-flag
+    ask-gate unchanged, /vsss propagation + audit note, and the explicit
+    distinction from the vibe-launcher --fable (chair-model-only) flag."""
+    print("\n[/vs+/vss+/vsss: --fable-subagents standing pre-auth flag]")
+    vs = VS_MD.read_text()
+    check("[fable-flag] vs.md documents --fable-subagents",
+          "`/vs --fable-subagents " in vs, "")
+    check("[fable-flag] vs.md: Model plan records the grant",
+          "Fable rung: pre-authorised (--fable-subagents)" in vs, "")
+    check("[fable-flag] vs.md: never mechanical roles",
+          "NEVER Fable for mechanical roles" in vs, "")
+    check("[fable-flag] vs.md: permission, not blanket routing",
+          "the flag buys permission, not blanket routing" in vs, "")
+    check("[fable-flag] vs.md: without it the ask-gate is unchanged",
+          "Without it, the ask-before-Fable gate is unchanged" in vs, "")
+    check("[fable-flag] vs.md: ladder honours the standing grant",
+          "including a standing `--fable-subagents` grant" in vs, "")
+    check("[fable-flag] vs.md: distinct from vibe --fable launcher flag",
+          "sets only the chair/session model and authorises no subagent spend" in vs, "")
+    vss = (REPO / "devcontainer" / "commands" / "vss.md").read_text()
+    check("[fable-flag] vss.md: hard-escalate carve-out names the flag",
+          "--fable-subagents" in vss and "per-invocation consent, not a default" in vss, "")
+    vsss = (REPO / "devcontainer" / "commands" / "vsss.md").read_text()
+    check("[fable-flag] vsss.md: flag documented with alias",
+          "`/vsss --fable-subagents <args>` (alias `--fable`)" in vsss, "")
+    check("[fable-flag] vsss.md: propagates into every wrapped /vss",
+          "propagated into EVERY wrapped `/vss` iteration" in vsss, "")
+    check("[fable-flag] vsss.md: session-audit recording required",
+          "Record the grant in the session file" in vsss, "")
+    check("[fable-flag] vsss.md: distinct from vibe --fable",
+          "NOT the same as `vibe --fable`" in vsss, "")
+    check("[fable-flag] vs.md: alias documented, does not imply --fable-gen",
+          "(alias `--fable`)" in vs and "does NOT imply `--fable-gen`" in vs, "")
+    check("[fable-flag] vs.md: Step-2 point-of-use honours the flag",
+          "Honor `--gen` / `--fable-gen` / `--fable-subagents` if passed" in vs, "")
+    check("[fable-flag] vss.md: planner-brief carve-out present",
+          "UNLESS this /vss invocation carries `--fable-subagents`" in vss, "")
+    check("[fable-flag] vss.md: threads into whatever tool it picks",
+          "threads into whatever tool it picks" in vss, "")
+    check("[fable-flag] vss.md: launcher distinction pinned",
+          "chair model only, no subagent authorisation" in vss, "")
+    check("[fable-flag] vsss.md: grant persists across --sessions relaunches",
+          "The grant PERSISTS across `--sessions` auto-resume relaunches" in vsss, "")
+
+
 def test_vs_md_panel_flag() -> None:
     """vs.md spec'd --panel 2026-07-10 (blind independent panellists +
     correlated-agreement/sycophancy check, ported from the agent-review-panel
@@ -8764,6 +8813,7 @@ def main() -> int:
     test_install_extras_ensures_project_gitignore()
     test_feedback_auto_promote_fragment()
     test_vs_md_plain_techy_verbosity_flags()
+    test_fable_subagents_flag_docs()
     test_vs_md_panel_flag()
     test_vs_md_multi_task_archive_convention()
     test_vsss_md_inherits_escalate_and_budget()
