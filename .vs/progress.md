@@ -285,3 +285,14 @@ Evaluator independently re-ran both gates fresh: smoke 1048/1048, shellcheck cle
 Tiers that passed: Generator sonnet (cycle 1, one attempt); Tester sonnet (after haiku
 quality fail). Verdict: all 13 ACs delivered; no scope creep; invariants intact (guard
 hooks byte-identical per AC4 structural check; EXIT trap untouched).
+
+
+## task_017 — shared-repos (2026-07-11)
+
+Cycle 1 start. Spec locked after 3 Spec Critic iterations (11 concerns -> 4 -> pass; headline
+catches: lock-path pinned two different ways across cycles, unowned sidecar-dir creation vs
+Docker root auto-vivification, EXIT-trap dispatcher unguarded under set -e (the exact hazard
+task_016 refused to touch), stale-manifest ordering vs postStart, reserved .signals namespace).
+Spec approval: self-approved under /vss acts-as-user (autonomous run; Fable rung NOT
+pre-authorised; Generator sonnet C1-C3 / opus C4, Tester haiku, security-review C4 mandatory).
+Dispatching C1 Generator (sonnet).

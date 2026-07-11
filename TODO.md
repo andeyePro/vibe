@@ -31,6 +31,7 @@ Markers: `[ ]` open · `[!]` failed/abandoned (note what was tried)
 
 ## Open
 
+- [ ] **task_017: shared-repos — private repo mounted into multiple projects (FOSS-core freemium dev)** (2026-07-11) — in flight via /vs, 4 cycles: C1 registry/declaration/mounts/header, C2 rw lock, C3 claim + /repo + seam fragment, C4 per-repo credentials (security-review gated). Spec `.vs/spec.md`, locked after 3 Spec Critic iterations. Design settled with Martin in-conversation 2026-07-10/11.
 - [ ] **Martin: close the licence question — staying MIT?** (2026-07-08) — the brain2 "AGPL3+CLA CONFIRMED" record was a misrecording (Martin confirmed the transfer/publish item, not the licence; brain2 corrected 2026-07-08). Repo wording now reads MIT-and-set-aside; the AGPL/CLA drafts are removed (resurrect from git history if ever wanted). If staying MIT is confirmed, just delete this item.
 - [ ] **Martin-gated: approve + deploy vibe.andeye.com** (2026-07-08) — page copy drafted at `web/vibe-andeye.md` (DRAFT sentinel, pending review). Needs Martin's copy approval, then DNS + deploy. Also open in brain2: how prominently to disclose "vibe coded" on the dev surface, and the fight-vs-rebrand "vibe" naming decision.
 - [ ] **Martin-gated: non-coder installer path** (2026-07-08) — design doc at `.vs/audits/foss-release-and-noncoder-install-2026-07-08.md`. Preflight dependency check shipped in `install.sh` (safe slice). Recommendation is B-now (done) + a Mac `.app` wrapper later (gated on the Apple Developer org conversion to andeye Ltd). Needs Martin's call on the rung.
