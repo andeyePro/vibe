@@ -11,6 +11,7 @@ A single-command containerised Claude Code environment. `cd my-project && vibe` 
 - Opt-in cross-org learning library via `vibe learn --init` — you pick where it lives, public or private. Capture is manual; auto-promotion is planned. **Security note:** the bind-mount is read-write on macOS regardless of the `readonly` flag (Docker Desktop / OrbStack `fakeowner` quirk), so a PreToolUse hook gates writes — every Write, Edit, or MultiEdit touching `/learnings` prompts for confirmation. Bash redirects, `tee`, `cp`, `mv`, `rm` etc. are hooked too as defense-in-depth (acknowledged bypass classes in `devcontainer/guard-bash.sh`).
 - Slash commands, subagents, and Stop hooks pre-installed. Type `/help` once inside to discover them; `/sp` applies Superpowers methodology, `/vs` runs an adversarial coding harness (see below), `/vss` and `/vsss` automate it. Anything unfamiliar surfaces a one-liner when you first hit it.
 - House rules baked into every Claude session via a managed `~/.claude/CLAUDE.md` block — among them: try WebSearch before declaring a URL unreachable, and ask before SSHing out of the container (set `VIBE_SSH_AUTO=1` in `~/.vibe/config`, or `touch .vibe-allow-ssh` in a project, to opt into autonomous SSH per project).
+- **Shared repos** (in flight, cycle 1 of 4): declare a private repo your public project needs live cross-repo access to in a committed `.vibe-repos` file (`owner/repo [ro|rw]`, one per line); `vibe repos add owner/repo /path/to/local/checkout` registers where it actually lives on THIS machine (`~/.vibe/repos`, never committed) and mints its own single-repo PAT, same flow as the project token. It shows up read-only at `/repos/<name>` on the next launch — community contributors who never registered it see nothing at all; a registered-but-broken repo (missing checkout, missing token) gets a loud header warning instead of silent failure. `vibe repos list` / `vibe repos remove [--purge]` round it out. Write access (a per-session single-writer lock so two projects can't both push), `/repo claim` handoff, and per-repo credential routing (today every mount is hard-pinned read-only) are the next three cycles.
 
 ## Adversarial coding mode `/vs`
 
@@ -49,6 +50,7 @@ The installer clones vibe to `~/.vibe-src`, symlinks `~/bin/vibe`, and prompts f
 - `vibe --fable` — launch this session on Claude Fable 5 (billing-aware, see below)
 - `vibe --model <id>` — launch this session on any Claude model id
 - `vibe learn --init` — one-time setup of the cross-org learning library
+- `vibe repos add <owner/repo> [path]` — register a private repo this machine mounts read-only at `/repos/<name>` for every project that declares it (`vibe repos list` / `vibe repos remove [--purge]` manage it; see Shared repos above)
 
 Fresh conversation is the default — durable memory lives in `TODO.md`, `CLAUDE.md`, and Claude's auto-memory, not in resumed conversations (which accumulate compaction debt). `--continue` / `--resume` are opt-in for short-horizon pickup.
 
@@ -75,7 +77,8 @@ Getting the most from Fable 5 on a subscription: reserve it for genuinely huge o
 | `~/bin/vibe` | Symlink to the launcher |
 | `~/.vibe-src/` | Clone of this repo |
 | `~/.vibe/config` | `VIBE_PROJECTS_DIR`, `VIBE_SSH_AUTO` (opt-in: `=1` skips the per-action SSH ask in all projects), `VIBE_BRAIN2_PATH` / `VIBE_ZOTERO_PATH` (shared brain2 at `/brain2` rw + Zotero at `/zotero` ro; default `~/brain2` / `~/Zotero/storage`, mounted into every container when the dir exists, `=off` to disable), `VIBE_MODEL` (default model id for every launch; flags win), `VIBE_FABLE_CREDITS_OK` (`=1` skips the Fable 5 usage-credits confirm from 8 Jul 2026), `VIBE_GITHUB_OWNER` (default owner — personal account or org — offered when vibe creates a new repo; you can still type a different owner at the prompt) |
-| `~/.vibe/tokens` | GitHub PATs (`owner/repo=ghp_...`); optional `ZOTERO_API_KEY=...` line (slash-free key → no collision with a repo entry) surfaced in-container as `$ZOTERO_API_KEY` for direct Zotero web-API calls. `chmod 600` — never commit or sync to the cloud |
+| `~/.vibe/tokens` | GitHub PATs (`owner/repo=ghp_...`); optional `ZOTERO_API_KEY=...` line (slash-free key → no collision with a repo entry) surfaced in-container as `$ZOTERO_API_KEY` for direct Zotero web-API calls. A shared repo's PAT lives here too, keyed by its slug — same store, same `chmod 600`. Never commit or sync to the cloud |
+| `~/.vibe/repos` | Shared-repo machine registry (`owner/repo=/local/path`), `chmod 600`. Written by `vibe repos add`; per-machine, so two Macs sharing a project each register their own local checkout path |
 | `~/.vibe/skipped` | Projects opted out of GitHub |
 | `~/.vibe/learning.config` | Learning library location + visibility |
 

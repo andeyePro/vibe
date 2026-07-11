@@ -256,6 +256,16 @@ check_sp_drift() {
 # scratch). Both happened in amy-bo/electroPioreactor PR #16; the upstream
 # reviewer flagged them. This is the structural fix.
 #
+# .vibe-signals/ (task_017 cycle 1) is the shared-repos coordination sidecar
+# — added here so it's excluded when THIS project is itself a shared repo
+# some other project mounts. This is one of TWO independent owners of that
+# gitignore entry: the other is shared_repo_ensure_signals (in the `vibe`
+# launcher), which directly ensures the same line in a shared checkout's own
+# .gitignore at `vibe repos add` / mount-assembly time — needed because a
+# shared checkout may not be a vibe project itself and may never have run
+# this script. Deliberately NOT `.vibe-repos` — that file is committed by
+# design (it's the project's declaration of which shared repos it uses).
+#
 # Behaviour: add a managed block to /workspace/.gitignore on first
 # container start. If the block exists, leave it alone. User opt-out:
 # VIBE_AUTO_GITIGNORE=0 (or remove the managed block by hand; it won't
@@ -281,9 +291,64 @@ ensure_project_gitignore() {
     echo "# delete this entire block (won't be re-added once removed)."
     echo ".claude/settings.local.json"
     echo ".vibe/"
+    echo ".vibe-signals/"
     echo "$close"
   } >> "$gitignore"
   echo "vibe: added managed runtime-exclusions block to $gitignore" >&2
+}
+
+# Shared-repos git ergonomics (AC6, task_017 cycle 1): the runtime manifest
+# at /workspace/.vibe/shared-repos.manifest (one "name mode slug" line per
+# mounted shared repo, written by the `vibe` launcher STRICTLY BEFORE
+# `devcontainer up` in THIS SAME launch — see shared_repos_manifest_lines /
+# the SHARED_REPOS_MANIFEST write in the launcher) lists what's bind-mounted
+# at /repos/<name>. There's no pre-existing safe.directory mechanism in this
+# codebase to mirror — /workspace itself has never needed one, since its
+# ownership maps cleanly on the primary Mac platform. A shared-repo checkout
+# gets one because it's a bind mount of a DIFFERENT host path owned by the
+# same invoking user, and git's dubious-ownership check can still trip on
+# the uid mapping a fresh mount presents inside the container. Runs on every
+# container start; adds ONE literal per-repo `--add`-style entry (no `*`
+# wildcard — a wildcard would trust every future bind, not just today's
+# declared set) and de-duplicates first, since `git config --add` is not
+# itself idempotent (it would append a second identical line on every
+# restart otherwise). Reads the mount root from ${VIBE_REPOS_DIR:-/repos}
+# (not a hardcoded /repos) so a smoke fixture can point this at a temp tree
+# instead of the real container mount point.
+#
+# GIT_OPTIONAL_LOCKS=0 guidance (also AC6): shipped as a plain, constant
+# containerEnv/remoteEnv entry in devcontainer.json rather than computed
+# here — it's a fixed value, not derived from the manifest, and every other
+# constant in this container (NODE_OPTIONS, CLAUDE_CONFIG_DIR, ...) is
+# already set that way. Applied container-wide rather than scoped to just
+# the ro shared checkouts: git optional locks are a read-path optimisation,
+# never a correctness requirement, so disabling them everywhere is a safe
+# simplification instead of per-repo plumbing that would need a matching
+# ro/rw distinction of its own.
+ensure_shared_repos_safe_directory() {
+  local manifest="${VIBE_SHARED_REPOS_MANIFEST:-/workspace/.vibe/shared-repos.manifest}"
+  [ -f "$manifest" ] || return 0
+  local repos_root="${VIBE_REPOS_DIR:-/repos}"
+
+  # Manifest lines are "name mode slug" (AC5); only the basename is needed
+  # here, but mode/slug must still be consumed positionally so `name` gets
+  # just the first field, not the whole line.
+  local name dir mode slug
+  # shellcheck disable=SC2034  # mode/slug consumed positionally, not used
+  while read -r name mode slug; do
+    [ -n "$name" ] || continue
+    # Defense-in-depth charset guard (security-review, task_017 C1): trust in
+    # the manifest rests on the launcher having written it this launch; if a
+    # stale or hand-edited manifest smuggles a name with a slash or other
+    # metacharacter, skip it rather than feed it to git config.
+    case "$name" in
+      *[!A-Za-z0-9._-]*|.*) continue ;;
+    esac
+    dir="$repos_root/$name"
+    if ! git config --global --get-all safe.directory 2>/dev/null | grep -qxF "$dir"; then
+      git config --global --add safe.directory "$dir"
+    fi
+  done < "$manifest"
 }
 
 install_dir agents
@@ -294,3 +359,4 @@ install_brain2_skills
 check_superpowers
 check_sp_drift
 ensure_project_gitignore
+ensure_shared_repos_safe_directory

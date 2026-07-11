@@ -116,5 +116,15 @@
   "assigned_to": "generator",
   "mode": "rigorous",
   "last_modified": "2026-07-10T12:22:14Z"
+ },
+ {
+  "id": "task_017",
+  "description": "shared-repos: declaration+registry, /repos/<name> mounts, rw single-writer lock, claim/handoff, seam fragment, per-repo PATs via useHttpPath",
+  "implementation_status": "in_progress",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-07-11T04:02:57Z",
+  "cycle_1_note": "Generator (sonnet) delivered AC1-AC7: registry/declaration helpers, vibe repos add|remove|list, shared_repos_scan single-classification-pass mount assembly (2 binds/repo, ro hard-pinned), runtime manifest + install-claude-extras.sh safe.directory wiring, gitignore ownership, README+CHANGELOG. code-check clean, smoke 1080/1080 (no Tester checks yet - append-only per /vs convention, lands next). implementation_status stays in_progress (C1 of 4); C2 (rw lock) not started."
  }
 ]

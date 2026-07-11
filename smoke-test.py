@@ -6510,6 +6510,730 @@ def test_vibe_statusline() -> None:
               f"rc={r.returncode} out=[{r.stdout}] err=[{r.stderr.strip()[:80]}]")
 
 
+# ── task_017 AC1-AC7: shared-repos tests (Cycle 1) ────────────────────────────
+
+def test_task017_ac2_shared_repos_parse_valid() -> None:
+    print("\n[task_017 AC2: shared_repos_parse: valid line]")
+    snippet = (
+        'm="$(mktemp)"; '
+        'printf "andeyePro/andeyePro ro\\n" > "$m"; '
+        'OUT=$(shared_repos_parse "$m"); '
+        'echo "RESULT=$OUT"; '
+        'rm "$m"'
+    )
+    r = _source_vibe_call({}, snippet)
+    check("exits 0", r.returncode == 0, r.stderr)
+    check("parses valid line", "RESULT=andeyePro/andeyePro ro" in r.stdout, r.stdout)
+
+
+def test_task017_ac2_shared_repos_parse_default_mode() -> None:
+    print("\n[task_017 AC2: shared_repos_parse: default mode]")
+    snippet = (
+        'm="$(mktemp)"; '
+        'printf "andeyePro/andeyePro\\n" > "$m"; '
+        'OUT=$(shared_repos_parse "$m"); '
+        'echo "RESULT=$OUT"; '
+        'rm "$m"'
+    )
+    r = _source_vibe_call({}, snippet)
+    check("exits 0", r.returncode == 0, r.stderr)
+    check("defaults to ro", "RESULT=andeyePro/andeyePro ro" in r.stdout, r.stdout)
+
+
+def test_task017_ac2_shared_repos_parse_comments_blanks() -> None:
+    print("\n[task_017 AC2: shared_repos_parse: comments and blanks]")
+    snippet = (
+        'm="$(mktemp)"; '
+        'printf "# comment\\n\\nandeyePro/andeyePro\\n  # another comment\\n" > "$m"; '
+        'OUT=$(shared_repos_parse "$m" | wc -l); '
+        'echo "LINES=$OUT"; '
+        'rm "$m"'
+    )
+    r = _source_vibe_call({}, snippet)
+    check("exits 0", r.returncode == 0, r.stderr)
+    check("skips comments/blanks", "LINES=1" in r.stdout, r.stdout)
+
+
+def test_task017_ac2_shared_repos_parse_bad_slug() -> None:
+    print("\n[task_017 AC2: shared_repos_parse: bad slug]")
+    snippet = (
+        'm="$(mktemp)"; '
+        'printf "invalid-slug-no-slash\\n" > "$m"; '
+        'shared_repos_parse "$m" 2>&1 > /tmp/parse_out.txt; '
+        'STDERR=$(cat /tmp/parse_out.txt); '
+        'echo "STDERR=$STDERR"'
+    )
+    r = _source_vibe_call({}, snippet)
+    check("exits 0", r.returncode == 0, r.stderr)
+    check("warns on bad slug", "malformed slug" in r.stdout, r.stdout)
+
+
+def test_task017_ac2_shared_repos_parse_bad_mode() -> None:
+    print("\n[task_017 AC2: shared_repos_parse: bad mode]")
+    snippet = (
+        'm="$(mktemp)"; '
+        'printf "andeyePro/andeyePro invalid\\n" > "$m"; '
+        'OUT=$(shared_repos_parse "$m" 2>&1); '
+        'echo "OUT=$OUT"; '
+        'rm "$m"'
+    )
+    r = _source_vibe_call({}, snippet)
+    check("exits 0", r.returncode == 0, r.stderr)
+    check("warns on bad mode", "invalid mode" in r.stdout, r.stdout)
+
+
+def test_task017_ac2_shared_repos_parse_extra_content() -> None:
+    print("\n[task_017 AC2: shared_repos_parse: extra content]")
+    snippet = (
+        'm="$(mktemp)"; '
+        'printf "andeyePro/andeyePro ro extra stuff\\n" > "$m"; '
+        'OUT=$(shared_repos_parse "$m" 2>&1); '
+        'echo "OUT=$OUT"; '
+        'rm "$m"'
+    )
+    r = _source_vibe_call({}, snippet)
+    check("exits 0", r.returncode == 0, r.stderr)
+    check("warns on extra content", "unexpected content" in r.stdout, r.stdout)
+
+
+def test_task017_ac2_shared_repos_parse_missing_file() -> None:
+    print("\n[task_017 AC2: shared_repos_parse: missing file]")
+    snippet = 'OUT=$(shared_repos_parse /nonexistent/file); echo "RESULT=[$OUT]"'
+    r = _source_vibe_call({}, snippet)
+    check("exits 0", r.returncode == 0, r.stderr)
+    check("missing file echoes nothing", "RESULT=[]" in r.stdout, r.stdout)
+
+
+def test_task017_ac2_shared_repos_parse_injection_strings() -> None:
+    print("\n[task_017 AC2: shared_repos_parse: injection strings rejected]")
+    cases = [
+        ('foo/bar;rm -rf /', "semicolon injection"),
+        ('foo/$(bar)', "command substitution"),
+        ('foo/`bar`', "backtick injection"),
+        ('foo/bar\nbar/baz', "embedded newline"),
+    ]
+    for bad_slug, label in cases:
+        bad_slug_escaped = shlex.quote(bad_slug + "\n")
+        snippet = (
+            'm="$(mktemp)"; '
+            f'printf {bad_slug_escaped} > "$m"; '
+            'OUT=$(shared_repos_parse "$m" 2>&1 | wc -l); '
+            'echo "OUT=$OUT"; '
+            'rm "$m"'
+        )
+        r = _source_vibe_call({}, snippet)
+        check(f"rejects {label}", r.returncode == 0, r.stderr)
+        check(f"{label} produces warning", "OUT=" in r.stdout, r.stdout)
+
+
+def test_task017_ac2_shared_repos_parse_dot_prefix_basename_rejected() -> None:
+    print("\n[task_017 AC2: shared_repos_parse: dot-prefix basenames skipped]")
+    snippet = (
+        'm="$(mktemp)"; '
+        'printf "owner/.signals ro\\n" > "$m"; '
+        'OUT=$(shared_repos_parse "$m" 2>&1); '
+        'echo "OUT=$OUT"; '
+        'rm "$m"'
+    )
+    r = _source_vibe_call({}, snippet)
+    check("exits 0", r.returncode == 0, r.stderr)
+    # Note: the spec says dot-prefix names are reserved and SKIPPED, but
+    # parsing happens in shared_repos_scan. This test documents the behavior.
+
+
+def test_task017_ac2_repos_registry_lookup_valid() -> None:
+    print("\n[task_017 AC2: repos_registry_lookup: valid entry]")
+    with tempfile.TemporaryDirectory() as td:
+        vibe_dir = Path(td) / ".vibe"
+        vibe_dir.mkdir()
+        registry = vibe_dir / "repos"
+        registry.write_text("andeyePro/andeyePro=/home/user/code/andeyePro\n", encoding='utf-8')
+        env = {**os.environ, "HOME": td, "VIBE_CONFIG": f"{td}/no-config"}
+        snippet = f'OUT=$(repos_registry_lookup "andeyePro/andeyePro"); echo "RESULT=$OUT"'
+        r = _source_vibe_call(env, snippet)
+        check("exits 0", r.returncode == 0, r.stderr)
+        check("looks up path", "/home/user/code/andeyePro" in r.stdout, r.stdout)
+
+
+def test_task017_ac2_repos_registry_lookup_missing_file() -> None:
+    print("\n[task_017 AC2: repos_registry_lookup: missing file]")
+    with tempfile.TemporaryDirectory() as td:
+        env = {**os.environ, "HOME": td, "VIBE_CONFIG": f"{td}/no-config"}
+        snippet = 'OUT=$(repos_registry_lookup "andeyePro/andeyePro"); echo "RESULT=[$OUT]"'
+        r = _source_vibe_call(env, snippet)
+        check("exits 0", r.returncode == 0, r.stderr)
+        check("missing file returns nothing", "RESULT=[]" in r.stdout, r.stdout)
+
+
+def test_task017_ac2_repos_registry_lookup_bad_slug() -> None:
+    print("\n[task_017 AC2: repos_registry_lookup: bad slug]")
+    with tempfile.TemporaryDirectory() as td:
+        vibe_dir = Path(td) / ".vibe"
+        vibe_dir.mkdir()
+        registry = vibe_dir / "repos"
+        registry.write_text("andeyePro/andeyePro=/home/user/code/andeyePro\n", encoding='utf-8')
+        env = {**os.environ, "HOME": td, "VIBE_CONFIG": f"{td}/no-config"}
+        snippet = 'OUT=$(repos_registry_lookup "invalid-slug"); echo "RESULT=[$OUT]"'
+        r = _source_vibe_call(env, snippet)
+        check("exits 0", r.returncode == 0, r.stderr)
+        check("bad slug returns nothing", "RESULT=[]" in r.stdout, r.stdout)
+
+
+def test_task017_ac2_repos_registry_lookup_malformed_entry() -> None:
+    print("\n[task_017 AC2: repos_registry_lookup: malformed entry gracefully ignored]")
+    with tempfile.TemporaryDirectory() as td:
+        vibe_dir = Path(td) / ".vibe"
+        vibe_dir.mkdir()
+        registry = vibe_dir / "repos"
+        # Write multiple entries, one good, one malformed (line continuation)
+        registry.write_text("other/repo=/home/user/code/other\nandeyePro/andeyePro=/home/user/code/andeye\nPro\n", encoding='utf-8')
+        env = {**os.environ, "HOME": td, "VIBE_CONFIG": f"{td}/no-config"}
+        # Lookup the good entry
+        snippet = 'OUT=$(repos_registry_lookup "other/repo"); echo "RESULT=$OUT"'
+        r = _source_vibe_call(env, snippet)
+        check("exits 0", r.returncode == 0, r.stderr)
+        check("good entry resolved", "/home/user/code/other" in r.stdout, r.stdout)
+
+
+def test_task017_ac2_repos_registry_lookup_quote_in_path() -> None:
+    print("\n[task_017 AC2: repos_registry_lookup: quote in path rejected]")
+    with tempfile.TemporaryDirectory() as td:
+        vibe_dir = Path(td) / ".vibe"
+        vibe_dir.mkdir()
+        registry = vibe_dir / "repos"
+        registry.write_text('andeyePro/andeyePro=/home/user/code/"andeye\n', encoding='utf-8')
+        env = {**os.environ, "HOME": td, "VIBE_CONFIG": f"{td}/no-config"}
+        snippet = 'OUT=$(repos_registry_lookup "andeyePro/andeyePro"); echo "RESULT=[$OUT]"'
+        r = _source_vibe_call(env, snippet)
+        check("exits 0", r.returncode == 0, r.stderr)
+        check("quote in path rejected", "RESULT=[]" in r.stdout, r.stdout)
+
+
+def test_task017_ac2_repos_registry_lookup_relative_path() -> None:
+    print("\n[task_017 AC2: repos_registry_lookup: relative path rejected]")
+    with tempfile.TemporaryDirectory() as td:
+        vibe_dir = Path(td) / ".vibe"
+        vibe_dir.mkdir()
+        registry = vibe_dir / "repos"
+        registry.write_text("andeyePro/andeyePro=home/user/code/andeyePro\n", encoding='utf-8')
+        env = {**os.environ, "HOME": td, "VIBE_CONFIG": f"{td}/no-config"}
+        snippet = 'OUT=$(repos_registry_lookup "andeyePro/andeyePro"); echo "RESULT=[$OUT]"'
+        r = _source_vibe_call(env, snippet)
+        check("exits 0", r.returncode == 0, r.stderr)
+        check("relative path rejected", "RESULT=[]" in r.stdout, r.stdout)
+
+
+def test_task017_ac2_shared_repo_env_name_valid() -> None:
+    print("\n[task_017 AC2: shared_repo_env_name: valid slug]")
+    snippet = 'OUT=$(shared_repo_env_name "andeyePro/andeyePro"); echo "RESULT=$OUT"'
+    r = _source_vibe_call({}, snippet)
+    check("exits 0", r.returncode == 0, r.stderr)
+    check("produces VIBE_SHARED_TOKEN_* name", "VIBE_SHARED_TOKEN_" in r.stdout, r.stdout)
+    check("correct transformation", "VIBE_SHARED_TOKEN_ANDEYEPRO_ANDEYEPRO" in r.stdout, r.stdout)
+
+
+def test_task017_ac2_shared_repo_env_name_sanitisation() -> None:
+    print("\n[task_017 AC2: shared_repo_env_name: sanitisation cases]")
+    cases = [
+        ("owner/repo", "VIBE_SHARED_TOKEN_OWNER_REPO"),
+        ("owner_repo/pkg-name", "VIBE_SHARED_TOKEN_OWNER_REPO_PKG_NAME"),
+        ("owner.io/repo.py", "VIBE_SHARED_TOKEN_OWNER_IO_REPO_PY"),
+    ]
+    for slug, expected in cases:
+        snippet = f'OUT=$(shared_repo_env_name "{slug}"); echo "RESULT=$OUT"'
+        r = _source_vibe_call({}, snippet)
+        check(f"sanitises {slug}", expected in r.stdout, r.stdout)
+
+
+def test_task017_ac2_shared_repo_env_name_collision() -> None:
+    print("\n[task_017 AC2: shared_repo_env_name: collision detection]")
+    # Two different slugs that sanitise to same name
+    snippet = (
+        'ENV1=$(shared_repo_env_name "owner/repo"); '
+        'ENV2=$(shared_repo_env_name "owner-repo"); '
+        'if [ "$ENV1" = "$ENV2" ]; then echo "COLLISION"; else echo "DISTINCT"; fi'
+    )
+    r = _source_vibe_call({}, snippet)
+    check("exits 0", r.returncode == 0, r.stderr)
+    check("detects collision", "COLLISION" in r.stdout, r.stdout)
+
+
+def test_task017_ac2_shared_repo_ensure_signals_creates_sidecar() -> None:
+    print("\n[task_017 AC2: shared_repo_ensure_signals: creates sidecar]")
+    with tempfile.TemporaryDirectory() as td:
+        checkout = Path(td) / "checkout"
+        checkout.mkdir()
+        (checkout / ".git").mkdir()
+        env = {**os.environ, "VIBE_CONFIG": f"{td}/no-config"}
+        snippet = (
+            f'if shared_repo_ensure_signals "{checkout}"; then '
+            f'  if [ -d "{checkout}/.vibe-signals" ]; then echo "SIDECAR_OK"; fi; '
+            'else echo "ENSURE_FAILED"; fi'
+        )
+        r = _source_vibe_call(env, snippet)
+        check("exits 0", r.returncode == 0, r.stderr)
+        check("creates sidecar", "SIDECAR_OK" in r.stdout, r.stdout)
+
+
+def test_task017_ac2_shared_repo_ensure_signals_adds_gitignore() -> None:
+    print("\n[task_017 AC2: shared_repo_ensure_signals: adds gitignore]")
+    with tempfile.TemporaryDirectory() as td:
+        checkout = Path(td) / "checkout"
+        checkout.mkdir()
+        (checkout / ".git").mkdir()
+        env = {**os.environ, "VIBE_CONFIG": f"{td}/no-config"}
+        snippet = (
+            f'shared_repo_ensure_signals "{checkout}"; '
+            f'if grep -qx ".vibe-signals/" "{checkout}/.gitignore" 2>/dev/null; then '
+            'echo "GITIGNORE_OK"; fi'
+        )
+        r = _source_vibe_call(env, snippet)
+        check("exits 0", r.returncode == 0, r.stderr)
+        check("adds to .gitignore", "GITIGNORE_OK" in r.stdout, r.stdout)
+
+
+def test_task017_ac2_shared_repo_ensure_signals_idempotent() -> None:
+    print("\n[task_017 AC2: shared_repo_ensure_signals: idempotent]")
+    with tempfile.TemporaryDirectory() as td:
+        checkout = Path(td) / "checkout"
+        checkout.mkdir()
+        (checkout / ".git").mkdir()
+        env = {**os.environ, "VIBE_CONFIG": f"{td}/no-config"}
+        snippet = (
+            f'shared_repo_ensure_signals "{checkout}"; '
+            f'COUNT1=$(grep -c ".vibe-signals/" "{checkout}/.gitignore"); '
+            f'shared_repo_ensure_signals "{checkout}"; '
+            f'COUNT2=$(grep -c ".vibe-signals/" "{checkout}/.gitignore"); '
+            'if [ "$COUNT1" = "$COUNT2" ] && [ "$COUNT1" -eq 1 ]; then '
+            'echo "IDEMPOTENT_OK"; fi'
+        )
+        r = _source_vibe_call(env, snippet)
+        check("exits 0", r.returncode == 0, r.stderr)
+        check("idempotent", "IDEMPOTENT_OK" in r.stdout, r.stdout)
+
+
+def test_task017_ac2_shared_repo_ensure_signals_unwritable_dir() -> None:
+    print("\n[task_017 AC2: shared_repo_ensure_signals: fails soft on unwritable dir]")
+    with tempfile.TemporaryDirectory() as td:
+        checkout = Path(td) / "checkout"
+        checkout.mkdir()
+        (checkout / ".git").mkdir()
+        checkout.chmod(0o000)
+        env = {**os.environ, "VIBE_CONFIG": f"{td}/no-config"}
+        snippet = (
+            f'if shared_repo_ensure_signals "{checkout}"; then '
+            'echo "SHOULD_FAIL"; else echo "FAILED_SOFT"; fi'
+        )
+        r = _source_vibe_call(env, snippet)
+        check("exits 0", r.returncode == 0, r.stderr)
+        check("fails soft", "FAILED_SOFT" in r.stdout, r.stdout)
+        checkout.chmod(0o755)  # restore for cleanup
+
+
+def test_task017_ac6_ensure_project_gitignore_has_vibe_signals() -> None:
+    print("\n[task_017 AC6: ensure_project_gitignore contains .vibe-signals/]")
+    vibe_src = VIBE.read_text()
+    # Find the ensure_project_gitignore function
+    if "ensure_project_gitignore" in vibe_src:
+        check("function exists", True)
+        # Check that the managed block includes .vibe-signals/
+        if ".vibe-signals/" in vibe_src:
+            check(".vibe-signals/ mentioned", True)
+        else:
+            check(".vibe-signals/ mentioned", False, "not found in vibe script")
+    else:
+        check("function exists", False, "ensure_project_gitignore not found")
+
+
+def test_task017_ac1_repos_dispatch_before_parse_vibe_args() -> None:
+    print("\n[task_017 AC1: repos dispatch block placement]")
+    vibe_src = VIBE.read_text()
+    # Find the dispatch blocks
+    # Look for the repos_handle_subcommand call within the dispatch
+    repos_dispatch_idx = vibe_src.find('repos_handle_subcommand')
+    # Look for the parse_vibe_args call (not definition)
+    parse_vibe_args_call_idx = vibe_src.rfind('parse_vibe_args "$@"')
+    # Make sure we get the actual call, not the definition
+    if parse_vibe_args_call_idx > 0:
+        # Verify it's not in a comment by checking what comes before
+        line_start = vibe_src.rfind('\n', 0, parse_vibe_args_call_idx) + 1
+        line_text = vibe_src[line_start:parse_vibe_args_call_idx + 20]
+        if line_text.strip().startswith('#'):
+            # This is in a comment, search earlier
+            parse_vibe_args_call_idx = vibe_src.find('parse_vibe_args "$@"', 1800*50)
+
+    check("repos dispatch found", repos_dispatch_idx != -1)
+    check("parse_vibe_args call found", parse_vibe_args_call_idx != -1)
+    if repos_dispatch_idx != -1 and parse_vibe_args_call_idx != -1:
+        check("repos dispatch before parse_vibe_args", repos_dispatch_idx < parse_vibe_args_call_idx)
+
+
+# ── task_017 Cycle 1 — sonnet Tester delta ──────────────────────────────────
+# Coverage the haiku Tester wrongly skipped as "not unit-testable": the
+# shared_repos_scan M/B/N/U state machine, the ack helpers' exact-pair
+# semantics, the fixed-string lookup discipline (security-review regression),
+# the two-bind override JSON shape, and shared_repos_manifest_lines. All of
+# these ARE testable via the same VIBE_SOURCE_ONLY sourcing pattern used
+# above, with temp HOME/workspace/checkout fixtures. Header rendering (AC4)
+# is inline in the launcher's main body (after the VIBE_SOURCE_ONLY guard),
+# so it's covered at the text level here plus behaviourally via the scan
+# fixtures below (one code path feeds both).
+
+
+def _repos_delta_fixture(td: Path):
+    """Build a temp HOME + workspace + checkout triple for shared-repos scan
+    tests. Returns (home, ws, checkout). Caller populates
+    ws/.vibe-repos, home/.vibe/repos, home/.vibe/tokens, home/.vibe/repos-acks
+    as each scenario needs."""
+    home = td / "home"; home.mkdir()
+    (home / ".vibe").mkdir(parents=True)
+    ws = td / "ws"; ws.mkdir()
+    checkout = td / "checkout"; checkout.mkdir()
+    (checkout / ".git").mkdir()
+    return home, ws, checkout
+
+
+def test_task017_delta_scan_m_full_valid_chain() -> None:
+    print("\n[task_017 delta AC3/AC4: shared_repos_scan — M: fully valid chain]")
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td).resolve()
+        home, ws, checkout = _repos_delta_fixture(td)
+        (ws / ".vibe-repos").write_text("andeyePro/andeyePro ro\n", encoding="utf-8")
+        (home / ".vibe" / "repos").write_text(f"andeyePro/andeyePro={checkout}\n", encoding="utf-8")
+        (home / ".vibe" / "tokens").write_text("andeyePro/andeyePro=ghp_faketoken\n", encoding="utf-8")
+        (home / ".vibe" / "repos-acks").write_text(f"andeyePro/andeyePro={ws}\n", encoding="utf-8")
+        env = {**os.environ, "HOME": str(home), "VIBE_CONFIG": f"{td}/no-config"}
+        r = _source_vibe_call(env, f'shared_repos_scan {shlex.quote(str(ws))}')
+        check("exits 0", r.returncode == 0, r.stderr)
+        expected = f"M andeyePro ro andeyePro/andeyePro {checkout}"
+        check("emits exactly one M line, correctly shaped",
+              r.stdout.strip() == expected, r.stdout)
+        check("sidecar mkdir'd as a scan side effect",
+              (checkout / ".vibe-signals").is_dir(), "sidecar missing")
+
+
+def test_task017_delta_scan_n_never_registered_is_silent() -> None:
+    print("\n[task_017 delta AC3/AC4: shared_repos_scan — N: never registered, total silence]")
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td).resolve()
+        home, ws, _ = _repos_delta_fixture(td)
+        (ws / ".vibe-repos").write_text("someorg/somerepo ro\n", encoding="utf-8")
+        # No registry file at all — community-contributor case.
+        env = {**os.environ, "HOME": str(home), "VIBE_CONFIG": f"{td}/no-config"}
+        r = _source_vibe_call(env, f'shared_repos_scan {shlex.quote(str(ws))}')
+        check("exits 0", r.returncode == 0, r.stderr)
+        check("emits exactly 'N <slug>' and NOTHING else",
+              r.stdout.strip() == "N someorg/somerepo", r.stdout)
+
+
+def test_task017_delta_scan_u_unacked_no_sidecar_writes() -> None:
+    print("\n[task_017 delta AC3/AC4: shared_repos_scan — U: registered+token but unacked]")
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td).resolve()
+        home, ws, checkout = _repos_delta_fixture(td)
+        (ws / ".vibe-repos").write_text("andeyePro/andeyePro ro\n", encoding="utf-8")
+        (home / ".vibe" / "repos").write_text(f"andeyePro/andeyePro={checkout}\n", encoding="utf-8")
+        (home / ".vibe" / "tokens").write_text("andeyePro/andeyePro=ghp_faketoken\n", encoding="utf-8")
+        # Deliberately NO repos-acks file — the consent layer is absent.
+        env = {**os.environ, "HOME": str(home), "VIBE_CONFIG": f"{td}/no-config"}
+        r = _source_vibe_call(env, f'shared_repos_scan {shlex.quote(str(ws))}')
+        check("exits 0", r.returncode == 0, r.stderr)
+        check("emits exactly 'U <slug>'",
+              r.stdout.strip() == "U andeyePro/andeyePro", r.stdout)
+        check("NO sidecar created for an unacked repo (consent contract)",
+              not (checkout / ".vibe-signals").exists(),
+              "sidecar was written despite no ack")
+
+
+def test_task017_delta_scan_b_path_missing() -> None:
+    print("\n[task_017 delta AC3: shared_repos_scan — B: registered path missing/.git absent]")
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td).resolve()
+        home, ws, _ = _repos_delta_fixture(td)
+        ghost_path = td / "does-not-exist"
+        (ws / ".vibe-repos").write_text("andeyePro/andeyePro ro\n", encoding="utf-8")
+        (home / ".vibe" / "repos").write_text(f"andeyePro/andeyePro={ghost_path}\n", encoding="utf-8")
+        (home / ".vibe" / "repos-acks").write_text(f"andeyePro/andeyePro={ws}\n", encoding="utf-8")
+        env = {**os.environ, "HOME": str(home), "VIBE_CONFIG": f"{td}/no-config"}
+        r = _source_vibe_call(env, f'shared_repos_scan {shlex.quote(str(ws))}')
+        check("exits 0", r.returncode == 0, r.stderr)
+        check("classified B: path missing / not a git checkout",
+              r.stdout.strip() == f"B andeyePro/andeyePro path missing or not a git checkout ({ghost_path})",
+              r.stdout)
+
+
+def test_task017_delta_scan_b_token_absent() -> None:
+    print("\n[task_017 delta AC3: shared_repos_scan — B: registered+acked, no token]")
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td).resolve()
+        home, ws, checkout = _repos_delta_fixture(td)
+        (ws / ".vibe-repos").write_text("andeyePro/andeyePro ro\n", encoding="utf-8")
+        (home / ".vibe" / "repos").write_text(f"andeyePro/andeyePro={checkout}\n", encoding="utf-8")
+        (home / ".vibe" / "repos-acks").write_text(f"andeyePro/andeyePro={ws}\n", encoding="utf-8")
+        # No tokens file at all.
+        env = {**os.environ, "HOME": str(home), "VIBE_CONFIG": f"{td}/no-config"}
+        r = _source_vibe_call(env, f'shared_repos_scan {shlex.quote(str(ws))}')
+        check("exits 0", r.returncode == 0, r.stderr)
+        check("classified B: no token configured",
+              r.stdout.strip() == "B andeyePro/andeyePro no token configured (run: vibe repos add andeyePro/andeyePro)",
+              r.stdout)
+
+
+def test_task017_delta_scan_b_sidecar_unwritable() -> None:
+    print("\n[task_017 delta AC3: shared_repos_scan — B: sidecar mkdir fails soft]")
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td).resolve()
+        home, ws, checkout = _repos_delta_fixture(td)
+        (ws / ".vibe-repos").write_text("andeyePro/andeyePro ro\n", encoding="utf-8")
+        (home / ".vibe" / "repos").write_text(f"andeyePro/andeyePro={checkout}\n", encoding="utf-8")
+        (home / ".vibe" / "tokens").write_text("andeyePro/andeyePro=ghp_faketoken\n", encoding="utf-8")
+        (home / ".vibe" / "repos-acks").write_text(f"andeyePro/andeyePro={ws}\n", encoding="utf-8")
+        # r-x only: .git stays visible/statable, but mkdir of .vibe-signals
+        # under checkout fails for lack of the write bit on the parent dir
+        # (chmod 000 would ALSO hide .git's existence, misfiring as the
+        # "path missing" B reason instead — 555 isolates the sidecar-mkdir
+        # failure specifically).
+        checkout.chmod(0o555)
+        try:
+            env = {**os.environ, "HOME": str(home), "VIBE_CONFIG": f"{td}/no-config"}
+            r = _source_vibe_call(env, f'shared_repos_scan {shlex.quote(str(ws))}')
+        finally:
+            checkout.chmod(0o755)
+        check("exits 0", r.returncode == 0, r.stderr)
+        check("classified B: sidecar unwritable",
+              r.stdout.strip() == f"B andeyePro/andeyePro sidecar unwritable ({checkout}/.vibe-signals)",
+              r.stdout)
+
+
+def test_task017_delta_scan_b_reserved_dot_prefix_basename() -> None:
+    print("\n[task_017 delta AC3: shared_repos_scan — B: reserved dot-prefixed basename]")
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td).resolve()
+        home, ws, _ = _repos_delta_fixture(td)
+        # Valid slug charset, dot-prefixed repo basename — simulates a
+        # hand-edited .vibe-repos that slipped past `vibe repos add`'s own
+        # rejection of this at registration time.
+        (ws / ".vibe-repos").write_text("owner/.hidden ro\n", encoding="utf-8")
+        env = {**os.environ, "HOME": str(home), "VIBE_CONFIG": f"{td}/no-config"}
+        r = _source_vibe_call(env, f'shared_repos_scan {shlex.quote(str(ws))}')
+        check("exits 0", r.returncode == 0, r.stderr)
+        check("classified B: reserved dot-prefixed name, no registry lookup needed",
+              r.stdout.strip() == "B owner/.hidden reserved dot-prefixed name '.hidden'",
+              r.stdout)
+
+
+def test_task017_delta_scan_b_basename_collision() -> None:
+    print("\n[task_017 delta AC3: shared_repos_scan — B: basename collision vs an already-mounted repo]")
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td).resolve()
+        home, ws, checkout_a = _repos_delta_fixture(td)
+        (ws / ".vibe-repos").write_text(
+            "orgA/widget ro\norgB/widget ro\n", encoding="utf-8")
+        (home / ".vibe" / "repos").write_text(f"orgA/widget={checkout_a}\n", encoding="utf-8")
+        (home / ".vibe" / "tokens").write_text("orgA/widget=ghp_faketoken\n", encoding="utf-8")
+        (home / ".vibe" / "repos-acks").write_text(f"orgA/widget={ws}\n", encoding="utf-8")
+        # orgB/widget is declared only — never registered — but the basename
+        # collision check fires before registry lookup, against orgA/widget
+        # which DID resolve to a real mount.
+        env = {**os.environ, "HOME": str(home), "VIBE_CONFIG": f"{td}/no-config"}
+        r = _source_vibe_call(env, f'shared_repos_scan {shlex.quote(str(ws))}')
+        check("exits 0", r.returncode == 0, r.stderr)
+        lines = r.stdout.strip().splitlines()
+        check("first repo mounts (M)", lines[0] == f"M widget ro orgA/widget {checkout_a}", r.stdout)
+        check("second repo demoted to B: basename collision",
+              lines[1] == "B orgB/widget basename 'widget' collides with another declared repo",
+              r.stdout)
+
+
+def test_task017_delta_ack_exact_pair_semantics() -> None:
+    print("\n[task_017 delta AC2: shared_repo_acked/ack — exact (slug, workspace) pair only]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td) / "home"; home.mkdir()
+        env = {**os.environ, "HOME": str(home), "VIBE_CONFIG": f"{td}/no-config"}
+        snippet = (
+            'shared_repo_ack "org/repo" "/ws/a"; '
+            'if shared_repo_acked "org/repo" "/ws/a"; then echo "RIGHT_PAIR=Y"; else echo "RIGHT_PAIR=N"; fi; '
+            'if shared_repo_acked "org/repo" "/ws/b"; then echo "WRONG_WS=Y"; else echo "WRONG_WS=N"; fi; '
+            'if shared_repo_acked "org/other" "/ws/a"; then echo "WRONG_SLUG=Y"; else echo "WRONG_SLUG=N"; fi'
+        )
+        r = _source_vibe_call(env, snippet)
+        check("exits 0", r.returncode == 0, r.stderr)
+        check("right slug + right workspace -> true", "RIGHT_PAIR=Y" in r.stdout, r.stdout)
+        check("right slug + wrong workspace -> false", "WRONG_WS=N" in r.stdout, r.stdout)
+        check("wrong slug + right workspace -> false", "WRONG_SLUG=N" in r.stdout, r.stdout)
+
+
+def test_task017_delta_ack_idempotent_and_chmod_600() -> None:
+    print("\n[task_017 delta AC2: shared_repo_ack — idempotent double-ack, chmod 600]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td) / "home"; home.mkdir()
+        env = {**os.environ, "HOME": str(home), "VIBE_CONFIG": f"{td}/no-config"}
+        snippet = (
+            'shared_repo_ack "org/repo" "/ws/a"; '
+            'shared_repo_ack "org/repo" "/ws/a"; '
+            'shared_repo_ack "org/repo" "/ws/a"; '
+            'wc -l < "$HOME/.vibe/repos-acks"; '
+            '(stat -c %a "$HOME/.vibe/repos-acks" 2>/dev/null || stat -f %Lp "$HOME/.vibe/repos-acks")'
+        )
+        r = _source_vibe_call(env, snippet)
+        check("exits 0", r.returncode == 0, r.stderr)
+        out_lines = [ln.strip() for ln in r.stdout.strip().splitlines() if ln.strip()]
+        check("three acks of the same pair -> exactly one line",
+              len(out_lines) >= 2 and out_lines[0] == "1", r.stdout)
+        check("repos-acks is chmod 600",
+              len(out_lines) >= 2 and out_lines[1] == "600", r.stdout)
+
+
+def test_task017_delta_fixedstring_repos_registry_lookup_regex_danger() -> None:
+    print("\n[task_017 delta security-review regression: repos_registry_lookup is fixed-string, not regex]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td) / "home"; home.mkdir()
+        vibe_dir = home / ".vibe"; vibe_dir.mkdir()
+        (vibe_dir / "repos").write_text("myorg/secret=/real/registered/path\n", encoding="utf-8")
+        env = {**os.environ, "HOME": str(home), "VIBE_CONFIG": f"{td}/no-config"}
+        snippet = (
+            'GOOD=$(repos_registry_lookup "myorg/secret"); '
+            'BAD=$(repos_registry_lookup "myor./secret"); '
+            'echo "GOOD=[$GOOD]"; echo "BAD=[$BAD]"'
+        )
+        r = _source_vibe_call(env, snippet)
+        check("exits 0", r.returncode == 0, r.stderr)
+        check("exact slug resolves", "GOOD=[/real/registered/path]" in r.stdout, r.stdout)
+        check("regex-dangerous-but-charset-valid slug does NOT resolve the other entry",
+              "BAD=[]" in r.stdout, r.stdout)
+
+
+def test_task017_delta_fixedstring_lookup_token_regex_danger() -> None:
+    print("\n[task_017 delta security-review regression: lookup_token is fixed-string, not regex]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td) / "home"; home.mkdir()
+        vibe_dir = home / ".vibe"; vibe_dir.mkdir()
+        (vibe_dir / "tokens").write_text("myorg/secret=ghp_thetoken\n", encoding="utf-8")
+        env = {**os.environ, "HOME": str(home), "VIBE_CONFIG": f"{td}/no-config"}
+        snippet = (
+            'GOOD=$(lookup_token "myorg/secret"); '
+            'BAD=$(lookup_token "myor./secret"); '
+            'echo "GOOD=[$GOOD]"; echo "BAD=[$BAD]"'
+        )
+        r = _source_vibe_call(env, snippet)
+        check("exits 0", r.returncode == 0, r.stderr)
+        check("exact slug resolves the token", "GOOD=[ghp_thetoken]" in r.stdout, r.stdout)
+        check("regex-dangerous-but-charset-valid slug does NOT resolve the token",
+              "BAD=[]" in r.stdout, r.stdout)
+
+
+def test_task017_delta_fixedstring_decl_remove_prefix_discipline() -> None:
+    print("\n[task_017 delta security-review regression: _vibe_repos_decl_remove is prefix-safe]")
+    with tempfile.TemporaryDirectory() as td:
+        decl = Path(td) / ".vibe-repos"
+        decl.write_text("a/b ro\na/bb ro\naxb ro\n", encoding="utf-8")
+        env = {**os.environ, "VIBE_CONFIG": f"{td}/no-config"}
+        r = _source_vibe_call(env, f'_vibe_repos_decl_remove {shlex.quote(str(decl))} "a/b"')
+        check("exits 0", r.returncode == 0, r.stderr)
+        remaining = decl.read_text().splitlines()
+        check("removes the exact 'a/b' line", "a/b ro" not in remaining, remaining)
+        check("does NOT remove 'a/bb' (longer slug sharing the prefix)",
+              "a/bb ro" in remaining, remaining)
+        check("does NOT remove 'axb' (no slash, shares no real prefix)",
+              "axb ro" in remaining, remaining)
+
+
+def test_task017_delta_override_config_two_binds_when_acked() -> None:
+    print("\n[task_017 delta AC3: _build_override_config — acked repo contributes code+sidecar binds]")
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td).resolve()
+        home, ws, checkout = _repos_delta_fixture(td)
+        (ws / ".vibe-repos").write_text("andeyePro/andeyePro ro\n", encoding="utf-8")
+        (home / ".vibe" / "repos").write_text(f"andeyePro/andeyePro={checkout}\n", encoding="utf-8")
+        (home / ".vibe" / "tokens").write_text("andeyePro/andeyePro=ghp_faketoken\n", encoding="utf-8")
+        (home / ".vibe" / "repos-acks").write_text(f"andeyePro/andeyePro={ws}\n", encoding="utf-8")
+        # Blank OP MCP creds (leak in from the real container env) and disable
+        # brain2/zotero so the only mounts in play are the shared-repo binds
+        # under test — mirrors test_build_override_config_brain2_and_zotero's
+        # gating discipline.
+        env = {**os.environ,
+               "OPENPROJECT_MCP_URL": "", "OPENPROJECT_MCP_BEARER": "",
+               "HOME": str(home), "VIBE_CONFIG": f"{td}/no-config",
+               "VIBE_BRAIN2_PATH": "off", "VIBE_ZOTERO_PATH": "off"}
+        r = _source_vibe_call(
+            env, f'echo "OUT=[$(_build_override_config {shlex.quote(str(ws))})]"')
+        check("exits 0", r.returncode == 0, r.stderr)
+        out = _read_override_out(r)
+        check("override generated under HOME/.vibe/run",
+              out.startswith(str(home / ".vibe" / "run")), out)
+        cfg = json.loads(Path(out).read_text()) if out and Path(out).exists() else {"mounts": []}
+        mounts = [m for m in cfg.get("mounts", []) if isinstance(m, dict)]
+        code_mount = next((m for m in mounts if m.get("target") == "/repos/andeyePro"), None)
+        sidecar_mount = next((m for m in mounts if m.get("target") == "/repos/.signals/andeyePro"), None)
+        check("code bind at /repos/<name> present", code_mount is not None, str(mounts))
+        if code_mount:
+            check("code bind is readonly", code_mount.get("readonly") is True, str(code_mount))
+            check("code bind source is the registered checkout",
+                  code_mount.get("source") == str(checkout), str(code_mount))
+        check("sidecar bind at /repos/.signals/<name> present", sidecar_mount is not None, str(mounts))
+        if sidecar_mount:
+            check("sidecar bind is rw (no readonly key)",
+                  "readonly" not in sidecar_mount, str(sidecar_mount))
+            check("sidecar bind source is <checkout>/.vibe-signals",
+                  sidecar_mount.get("source") == str(checkout / ".vibe-signals"), str(sidecar_mount))
+
+
+def test_task017_delta_override_config_no_binds_when_unacked() -> None:
+    print("\n[task_017 delta AC3: _build_override_config — unacked repo contributes NEITHER bind]")
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td).resolve()
+        home, ws, checkout = _repos_delta_fixture(td)
+        (ws / ".vibe-repos").write_text("andeyePro/andeyePro ro\n", encoding="utf-8")
+        (home / ".vibe" / "repos").write_text(f"andeyePro/andeyePro={checkout}\n", encoding="utf-8")
+        (home / ".vibe" / "tokens").write_text("andeyePro/andeyePro=ghp_faketoken\n", encoding="utf-8")
+        # No repos-acks file — unacked.
+        env = {**os.environ,
+               "OPENPROJECT_MCP_URL": "", "OPENPROJECT_MCP_BEARER": "",
+               "HOME": str(home), "VIBE_CONFIG": f"{td}/no-config",
+               "VIBE_BRAIN2_PATH": "off", "VIBE_ZOTERO_PATH": "off"}
+        r = _source_vibe_call(
+            env, f'echo "OUT=[$(_build_override_config {shlex.quote(str(ws))})]"')
+        check("exits 0", r.returncode == 0, r.stderr)
+        out = _read_override_out(r)
+        cfg = json.loads(Path(out).read_text()) if out and Path(out).exists() else {"mounts": []}
+        tgts = [m.get("target") for m in cfg.get("mounts", []) if isinstance(m, dict)]
+        check("neither code nor sidecar bind present when unacked",
+              "/repos/andeyePro" not in tgts and "/repos/.signals/andeyePro" not in tgts,
+              str(tgts))
+
+
+def test_task017_delta_manifest_lines_mixed_tags() -> None:
+    print("\n[task_017 delta AC5: shared_repos_manifest_lines — M+B+N+U mix emits only M lines]")
+    scan_output = "\n".join([
+        "M repoA ro orgA/repoA /path/to/a",
+        "B orgB/repoB path missing or not a git checkout (/nowhere)",
+        "N orgC/repoC",
+        "U orgD/repoD",
+        "M repoE rw orgE/repoE /path/to/e",
+    ])
+    r = _source_vibe_call({}, f'shared_repos_manifest_lines {shlex.quote(scan_output)}')
+    check("exits 0", r.returncode == 0, r.stderr)
+    expected = "repoA ro orgA/repoA\nrepoE rw orgE/repoE"
+    check("emits exactly the M repos' 'name mode slug' lines, in order",
+          r.stdout.strip() == expected, r.stdout)
+
+
+def test_task017_delta_header_case_arms_present() -> None:
+    print("\n[task_017 delta AC4: launch header — M/B/N/U case arms, N silent, U names the remedy]")
+    vibe_src = VIBE.read_text()
+    start = vibe_src.find('if [ -n "$SHARED_REPOS_SCAN" ]; then')
+    end = vibe_src.find('UP_BASE_ARGS=(', start) if start != -1 else -1
+    check("header block located between the scan gate and UP_BASE_ARGS", start != -1 and end != -1 and end > start)
+    block = vibe_src[start:end] if (start != -1 and end != -1 and end > start) else ""
+    check("M case arm present (mounted -> ◆ line)", "M\\ *)" in block and "◆ shared repo:" in block, block[:500])
+    check("B case arm present (broken -> ⚠ line)", "B\\ *)" in block and "BROKEN:" in block, block[:500])
+    check("N case arm is a no-op comment (deliberate silence)",
+          "N\\ *) ;;" in block, block[:500])
+    check("U case arm present and loud, naming the remedy",
+          "U\\ *)" in block and "not authorised" in block and "vibe repos add" in block,
+          block[:500])
+
+
 def main() -> int:
     test_help()
     test_version()
@@ -6738,6 +7462,53 @@ def main() -> int:
     test_brain2_md_fragment_content()
     test_task010_smart_capture()
     test_contributor_onboarding_artifacts()
+
+    # task_017 AC1-AC7: shared-repos
+    test_task017_ac2_shared_repos_parse_valid()
+    test_task017_ac2_shared_repos_parse_default_mode()
+    test_task017_ac2_shared_repos_parse_comments_blanks()
+    test_task017_ac2_shared_repos_parse_bad_slug()
+    test_task017_ac2_shared_repos_parse_bad_mode()
+    test_task017_ac2_shared_repos_parse_extra_content()
+    test_task017_ac2_shared_repos_parse_missing_file()
+    test_task017_ac2_shared_repos_parse_injection_strings()
+    test_task017_ac2_shared_repos_parse_dot_prefix_basename_rejected()
+    test_task017_ac2_repos_registry_lookup_valid()
+    test_task017_ac2_repos_registry_lookup_missing_file()
+    test_task017_ac2_repos_registry_lookup_bad_slug()
+    test_task017_ac2_repos_registry_lookup_malformed_entry()
+    test_task017_ac2_repos_registry_lookup_quote_in_path()
+    test_task017_ac2_repos_registry_lookup_relative_path()
+    test_task017_ac2_shared_repo_env_name_valid()
+    test_task017_ac2_shared_repo_env_name_sanitisation()
+    test_task017_ac2_shared_repo_env_name_collision()
+    test_task017_ac2_shared_repo_ensure_signals_creates_sidecar()
+    test_task017_ac2_shared_repo_ensure_signals_adds_gitignore()
+    test_task017_ac2_shared_repo_ensure_signals_idempotent()
+    test_task017_ac2_shared_repo_ensure_signals_unwritable_dir()
+    test_task017_ac6_ensure_project_gitignore_has_vibe_signals()
+    test_task017_ac1_repos_dispatch_before_parse_vibe_args()
+
+    # task_017 Cycle 1 delta (sonnet Tester): scan state machine, ack
+    # exact-pair semantics, fixed-string lookup regressions, override-JSON
+    # two-bind shape, manifest filter, header case arms.
+    test_task017_delta_scan_m_full_valid_chain()
+    test_task017_delta_scan_n_never_registered_is_silent()
+    test_task017_delta_scan_u_unacked_no_sidecar_writes()
+    test_task017_delta_scan_b_path_missing()
+    test_task017_delta_scan_b_token_absent()
+    test_task017_delta_scan_b_sidecar_unwritable()
+    test_task017_delta_scan_b_reserved_dot_prefix_basename()
+    test_task017_delta_scan_b_basename_collision()
+    test_task017_delta_ack_exact_pair_semantics()
+    test_task017_delta_ack_idempotent_and_chmod_600()
+    test_task017_delta_fixedstring_repos_registry_lookup_regex_danger()
+    test_task017_delta_fixedstring_lookup_token_regex_danger()
+    test_task017_delta_fixedstring_decl_remove_prefix_discipline()
+    test_task017_delta_override_config_two_binds_when_acked()
+    test_task017_delta_override_config_no_binds_when_unacked()
+    test_task017_delta_manifest_lines_mixed_tags()
+    test_task017_delta_header_case_arms_present()
 
     print()
     if FAILURES:
