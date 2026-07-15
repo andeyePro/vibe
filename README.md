@@ -70,6 +70,14 @@ Getting the most from Fable 5 on a subscription: reserve it for genuinely huge o
 
 `/budget` (inside any session) reports month-to-date tokens per model across all vibe sessions on this machine, with estimated Fable 5 credit spend at list rates. Estimates, not invoices — the authoritative credit balance is the Anthropic console.
 
+### Second brain (optional)
+
+vibe can mount a shared "second brain" — any local git repo of Markdown notes — into every container at `/brain2` (read-write), so cross-project knowledge (decisions, conventions, operational notes) is readable and appendable from any session, independent of any single project's git history. Point `VIBE_BRAIN2_PATH` at the repo in `~/.vibe/config` (default `~/brain2`; `=off` to disable). It is entirely optional: vibe works fully without it, and a machine with no such repo gets a silent no-op.
+
+It's worth setting up if you: work across several repos and want durable knowledge that outlives any one project; already keep notes in Obsidian or a Markdown vault (the mount is Obsidian-friendly); or want Claude to consult and append to a persistent knowledge base instead of re-deriving context each session.
+
+The name is only a convention — "brain2" is shorthand for "second brain". The in-container mount point is `/brain2`, but the source can be any directory; nothing requires the folder or repo itself to be called "brain2".
+
 ## Host-side state
 
 | Path | Purpose |

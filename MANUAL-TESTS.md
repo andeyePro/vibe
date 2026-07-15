@@ -583,7 +583,7 @@ Regression guard for the fail-open bug where one unresolvable allowlist domain (
 curl -s -o /dev/null -w '%{http_code}\n' --connect-timeout 5 https://example.com        # blocked
 curl -s -o /dev/null -w '%{http_code}\n' --connect-timeout 5 https://api.github.com/zen  # 200 (allowlisted)
 curl -s -o /dev/null -w '%{http_code}\n' --connect-timeout 6 https://api.zotero.org/     # 200 (allowlisted for the Zotero feature)
-curl -s -o /dev/null -w '%{http_code}\n' --connect-timeout 5 http://[redacted-ip]/        # blocked (direct OpenProject is intentionally NOT allowlisted)
+curl -s -o /dev/null -w '%{http_code}\n' --connect-timeout 5 http://192.0.2.10/           # blocked (a private LAN host, e.g. direct OpenProject, is intentionally NOT allowlisted — substitute your own)
 ```
 
 **Expected:**

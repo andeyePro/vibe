@@ -22,7 +22,7 @@ A security issue in vibe is anything that breaks one of those backstops.
 
 Use this repository's Security tab, "Report a vulnerability" (GitHub private vulnerability reporting). That keeps the report private until there's a fix.
 
-If private reporting is unavailable, email [redacted-email] with `vibe security` in the subject.
+If private reporting is unavailable, contact the maintainer via https://github.com/Aqueum and we'll open a private channel from there.
 
 Please don't open a public issue for a vulnerability.
 
