@@ -1,0 +1,872 @@
+diff --git a/.gitignore b/.gitignore
+index 18714a4..4455bf9 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -27,4 +27,5 @@ __pycache__/
+ # delete this entire block (won't be re-added once removed).
+ .claude/settings.local.json
+ .vibe/
++.vibe-signals/
+ # <<< vibe-managed <<<
+diff --git a/.vs/progress.md b/.vs/progress.md
+index bd57767..3c6b590 100644
+--- a/.vs/progress.md
++++ b/.vs/progress.md
+@@ -285,3 +285,14 @@ Evaluator independently re-ran both gates fresh: smoke 1048/1048, shellcheck cle
+ Tiers that passed: Generator sonnet (cycle 1, one attempt); Tester sonnet (after haiku
+ quality fail). Verdict: all 13 ACs delivered; no scope creep; invariants intact (guard
+ hooks byte-identical per AC4 structural check; EXIT trap untouched).
++
++
++## task_017 — shared-repos (2026-07-11)
++
++Cycle 1 start. Spec locked after 3 Spec Critic iterations (11 concerns -> 4 -> pass; headline
++catches: lock-path pinned two different ways across cycles, unowned sidecar-dir creation vs
++Docker root auto-vivification, EXIT-trap dispatcher unguarded under set -e (the exact hazard
++task_016 refused to touch), stale-manifest ordering vs postStart, reserved .signals namespace).
++Spec approval: self-approved under /vss acts-as-user (autonomous run; Fable rung NOT
++pre-authorised; Generator sonnet C1-C3 / opus C4, Tester haiku, security-review C4 mandatory).
++Dispatching C1 Generator (sonnet).
+diff --git a/.vs/tasks.json b/.vs/tasks.json
+index 2cb4097..a7ac995 100644
+--- a/.vs/tasks.json
++++ b/.vs/tasks.json
+@@ -116,5 +116,15 @@
+   "assigned_to": "generator",
+   "mode": "rigorous",
+   "last_modified": "2026-07-10T12:22:14Z"
++ },
++ {
++  "id": "task_017",
++  "description": "shared-repos: declaration+registry, /repos/<name> mounts, rw single-writer lock, claim/handoff, seam fragment, per-repo PATs via useHttpPath",
++  "implementation_status": "in_progress",
++  "test_status": "pending",
++  "assigned_to": "generator",
++  "mode": "rigorous",
++  "last_modified": "2026-07-11T04:02:57Z",
++  "cycle_1_note": "Generator (sonnet) delivered AC1-AC7: registry/declaration helpers, vibe repos add|remove|list, shared_repos_scan single-classification-pass mount assembly (2 binds/repo, ro hard-pinned), runtime manifest + install-claude-extras.sh safe.directory wiring, gitignore ownership, README+CHANGELOG. code-check clean, smoke 1080/1080 (no Tester checks yet - append-only per /vs convention, lands next). implementation_status stays in_progress (C1 of 4); C2 (rw lock) not started."
+  }
+ ]
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index cac78af..75db8bf 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -4,6 +4,10 @@ vibe's done-work audit log. Each entry is a closed task — either successful (`
+ 
+ Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion between TODO and CHANGELOG. Before this date, closed items lived in `TODO.md ## Done`; they migrated here verbatim. New closed items append to this file.
+ 
++## 2026-07-11
++
++- [x] **shared-repos cycle 1: registry + declaration + read-only mounts + honest header** — task_017, first of 4 planned `/vs` cycles (rw lock lands C2, `/repo` claim/handoff + CLAUDE.md seam fragment C3, per-repo credential routing via `useHttpPath` C4). The problem: a public `<x>andeye` project sometimes needs live cross-repo development against a private repo (e.g. `andeyePro/andeyePro`) without either repo's blast radius widening. Mechanics: a project commits `.vibe-repos` (`owner/repo [ro|rw]` lines, charset-validated, comments/blanks allowed — deliberately NOT gitignored, since declaring WHAT a project uses is meant to travel with it); each machine separately registers WHERE that repo actually lives via `vibe repos add <owner/repo> [path]` into `~/.vibe/repos` (`slug=path`, chmod 600 like `~/.vibe/tokens`, which now also serves shared-repo PATs keyed by slug — reusing `lookup_token`/`setup_token` as-is). New `vibe repos` subcommand (`add` / `remove [--purge]` / `list`) dispatches in its own pre-`parse_vibe_args` block, mirroring `learn`'s exact placement, so `vibe repos add owner/repo` can never be swallowed by the positional-project-name catch-all. `shared_repos_scan` is the single classification pass (used by `list`, the launch header, the runtime manifest, AND `_build_override_config`'s mount-triple assembly, so none of the four can ever disagree): it emits `M`/`B`/`N` per declared slug — mounted, registered-but-broken-with-reason, or never-registered — and the header renders the never-registered case as TOTAL SILENCE (the community-contributor property: someone without the private repo sees nothing) versus a loud named warning for anything registered-but-broken (missing checkout, missing token, reserved dot-prefixed basename, basename collision). Every shared repo contributes TWO bind mounts from this cycle onward: the checkout itself (hard-pinned read-only in C1 — the declaration's `rw` field already parses so C2's lock logic has somewhere to read from, it just isn't wired to the actual bind flag yet) and its `.vibe-signals/` sidecar, always read-write even on a read-only code mount — that's what will let an ro session file an rw claim once C3 lands `/repo claim`. The sidecar directory is created host-side (`shared_repo_ensure_signals`, guarded/idempotent) at both `vibe repos add` time and defensively at mount assembly, specifically so Docker never auto-vivifies it as a root-owned bind target. A runtime manifest (`/workspace/.vibe/shared-repos.manifest`, one `name mode slug` line per mount) is written strictly before `devcontainer up` so `install-claude-extras.sh` can register `git config --global --add safe.directory /repos/<name>` for each one in the SAME launch — critical for the relaunch immediately after `vibe repos add`. `GIT_OPTIONAL_LOCKS=0` ships as a plain `devcontainer.json` containerEnv/remoteEnv constant (applied container-wide as a safe simplification — it's a read-path optimisation toggle, never a correctness concern). `ensure_project_gitignore`'s managed block gains `.vibe-signals/` (NOT `.vibe-repos`, which stays committed by design); `shared_repo_ensure_signals` is gitignore owner #2, for shared checkouts that aren't vibe projects themselves. shellcheck clean (15 files, two SC2318/SC2034 fixes during dev); full pre-existing smoke suite green (1080/1080, no regressions — the Tester's task_017 checks land in a later cycle per `/vs`'s Generator/Tester independence). README gains a Shared repos bullet + `~/.vibe/repos` host-state row + the `vibe repos add` usage line.
++
+ ## 2026-07-10
+ 
+ - [x] **`/vs --panel [N]`: blind review panel + sycophancy check** — ports the two agent-review-panel mechanisms the 2026-07 harness-landscape audit flagged as `/vs`'s clearest QA gap. N panellists (default 3, odd, Sonnet — deliberately not the upstream all-Opus: the mechanism's value is independence, not depth) dispatch as read-only `code-reviewer` agents in one concurrent batch with byte-identical briefs (no assigned personas — differentiation must emerge), each blind to the others' verdicts. The Evaluator then runs a mandatory correlated-agreement check: unanimous near-identical rationales = LOW-information consensus (logged as a weakness, optional single Opus depth-probe on high-blast-radius diffs); independent convergence = earned confidence; splits get written chair adjudication, and an unrefuted BLOCKING dissent from any one panellist blocks a pass regardless of majority. Composes with `--fuzzy` (replaces the single Reviewer) and rigorous mode (adds judgment beside the mechanical gate, which still governs); orthogonal to `--verbosity`/`--plain`/`--cost` (`role: "panel_reviewer"`). New vs.md § Step 5c + Flags + Model economy + Rules + artifact paths (`cycle-N/panel/`); 24 smoke checks guard the load-bearing properties. Authored chair-side per the /vss planner's hybrid mode; independently reviewed pre-commit by a blind read-only Sonnet reviewer, whose 7 findings (Step 6 never mandated reading the panel files; 5b/5c double-dispatch ambiguity; flow diagram omission; unvalidated N; overclaimed byte-identity; unannotated divergence from upstream's 4-6 panellists; one non-discriminating smoke check) were all fixed pre-commit.
+diff --git a/README.md b/README.md
+index 0151d34..83b6ebc 100644
+--- a/README.md
++++ b/README.md
+@@ -11,6 +11,7 @@ A single-command containerised Claude Code environment. `cd my-project && vibe`
+ - Opt-in cross-org learning library via `vibe learn --init` — you pick where it lives, public or private. Capture is manual; auto-promotion is planned. **Security note:** the bind-mount is read-write on macOS regardless of the `readonly` flag (Docker Desktop / OrbStack `fakeowner` quirk), so a PreToolUse hook gates writes — every Write, Edit, or MultiEdit touching `/learnings` prompts for confirmation. Bash redirects, `tee`, `cp`, `mv`, `rm` etc. are hooked too as defense-in-depth (acknowledged bypass classes in `devcontainer/guard-bash.sh`).
+ - Slash commands, subagents, and Stop hooks pre-installed. Type `/help` once inside to discover them; `/sp` applies Superpowers methodology, `/vs` runs an adversarial coding harness (see below), `/vss` and `/vsss` automate it. Anything unfamiliar surfaces a one-liner when you first hit it.
+ - House rules baked into every Claude session via a managed `~/.claude/CLAUDE.md` block — among them: try WebSearch before declaring a URL unreachable, and ask before SSHing out of the container (set `VIBE_SSH_AUTO=1` in `~/.vibe/config`, or `touch .vibe-allow-ssh` in a project, to opt into autonomous SSH per project).
++- **Shared repos** (in flight, cycle 1 of 4): declare a private repo your public project needs live cross-repo access to in a committed `.vibe-repos` file (`owner/repo [ro|rw]`, one per line); `vibe repos add owner/repo /path/to/local/checkout` registers where it actually lives on THIS machine (`~/.vibe/repos`, never committed) and mints its own single-repo PAT, same flow as the project token. It shows up read-only at `/repos/<name>` on the next launch — community contributors who never registered it see nothing at all; a registered-but-broken repo (missing checkout, missing token) gets a loud header warning instead of silent failure. `vibe repos list` / `vibe repos remove [--purge]` round it out. Write access (a per-session single-writer lock so two projects can't both push), `/repo claim` handoff, and per-repo credential routing (today every mount is hard-pinned read-only) are the next three cycles.
+ 
+ ## Adversarial coding mode `/vs`
+ 
+@@ -49,6 +50,7 @@ The installer clones vibe to `~/.vibe-src`, symlinks `~/bin/vibe`, and prompts f
+ - `vibe --fable` — launch this session on Claude Fable 5 (billing-aware, see below)
+ - `vibe --model <id>` — launch this session on any Claude model id
+ - `vibe learn --init` — one-time setup of the cross-org learning library
++- `vibe repos add <owner/repo> [path]` — register a private repo this machine mounts read-only at `/repos/<name>` for every project that declares it (`vibe repos list` / `vibe repos remove [--purge]` manage it; see Shared repos above)
+ 
+ Fresh conversation is the default — durable memory lives in `TODO.md`, `CLAUDE.md`, and Claude's auto-memory, not in resumed conversations (which accumulate compaction debt). `--continue` / `--resume` are opt-in for short-horizon pickup.
+ 
+@@ -75,7 +77,8 @@ Getting the most from Fable 5 on a subscription: reserve it for genuinely huge o
+ | `~/bin/vibe` | Symlink to the launcher |
+ | `~/.vibe-src/` | Clone of this repo |
+ | `~/.vibe/config` | `VIBE_PROJECTS_DIR`, `VIBE_SSH_AUTO` (opt-in: `=1` skips the per-action SSH ask in all projects), `VIBE_BRAIN2_PATH` / `VIBE_ZOTERO_PATH` (shared brain2 at `/brain2` rw + Zotero at `/zotero` ro; default `~/brain2` / `~/Zotero/storage`, mounted into every container when the dir exists, `=off` to disable), `VIBE_MODEL` (default model id for every launch; flags win), `VIBE_FABLE_CREDITS_OK` (`=1` skips the Fable 5 usage-credits confirm from 8 Jul 2026), `VIBE_GITHUB_OWNER` (default owner — personal account or org — offered when vibe creates a new repo; you can still type a different owner at the prompt) |
+-| `~/.vibe/tokens` | GitHub PATs (`owner/repo=ghp_...`); optional `ZOTERO_API_KEY=...` line (slash-free key → no collision with a repo entry) surfaced in-container as `$ZOTERO_API_KEY` for direct Zotero web-API calls. `chmod 600` — never commit or sync to the cloud |
++| `~/.vibe/tokens` | GitHub PATs (`owner/repo=ghp_...`); optional `ZOTERO_API_KEY=...` line (slash-free key → no collision with a repo entry) surfaced in-container as `$ZOTERO_API_KEY` for direct Zotero web-API calls. A shared repo's PAT lives here too, keyed by its slug — same store, same `chmod 600`. Never commit or sync to the cloud |
++| `~/.vibe/repos` | Shared-repo machine registry (`owner/repo=/local/path`), `chmod 600`. Written by `vibe repos add`; per-machine, so two Macs sharing a project each register their own local checkout path |
+ | `~/.vibe/skipped` | Projects opted out of GitHub |
+ | `~/.vibe/learning.config` | Learning library location + visibility |
+ 
+diff --git a/TODO.md b/TODO.md
+index e0a574b..b0ecb4d 100644
+--- a/TODO.md
++++ b/TODO.md
+@@ -31,6 +31,7 @@ Markers: `[ ]` open · `[!]` failed/abandoned (note what was tried)
+ 
+ ## Open
+ 
++- [ ] **task_017: shared-repos — private repo mounted into multiple projects (FOSS-core freemium dev)** (2026-07-11) — in flight via /vs, 4 cycles: C1 registry/declaration/mounts/header, C2 rw lock, C3 claim + /repo + seam fragment, C4 per-repo credentials (security-review gated). Spec `.vs/spec.md`, locked after 3 Spec Critic iterations. Design settled with Martin in-conversation 2026-07-10/11.
+ - [ ] **Martin: close the licence question — staying MIT?** (2026-07-08) — the brain2 "AGPL3+CLA CONFIRMED" record was a misrecording (Martin confirmed the transfer/publish item, not the licence; brain2 corrected 2026-07-08). Repo wording now reads MIT-and-set-aside; the AGPL/CLA drafts are removed (resurrect from git history if ever wanted). If staying MIT is confirmed, just delete this item.
+ - [ ] **Martin-gated: approve + deploy vibe.andeye.com** (2026-07-08) — page copy drafted at `web/vibe-andeye.md` (DRAFT sentinel, pending review). Needs Martin's copy approval, then DNS + deploy. Also open in brain2: how prominently to disclose "vibe coded" on the dev surface, and the fight-vs-rebrand "vibe" naming decision.
+ - [ ] **Martin-gated: non-coder installer path** (2026-07-08) — design doc at `.vs/audits/foss-release-and-noncoder-install-2026-07-08.md`. Preflight dependency check shipped in `install.sh` (safe slice). Recommendation is B-now (done) + a Mac `.app` wrapper later (gated on the Apple Developer org conversion to andeye Ltd). Needs Martin's call on the rung.
+diff --git a/devcontainer/devcontainer.json b/devcontainer/devcontainer.json
+index 73ad6ae..cc27579 100644
+--- a/devcontainer/devcontainer.json
++++ b/devcontainer/devcontainer.json
+@@ -43,7 +43,8 @@
+     "NODE_OPTIONS": "--max-old-space-size=4096",
+     "CLAUDE_CONFIG_DIR": "/home/node/.claude",
+     "POWERLEVEL9K_DISABLE_GITSTATUS": "true",
+-    "VIBE_SSH_AUTO": "${localEnv:VIBE_SSH_AUTO}"
++    "VIBE_SSH_AUTO": "${localEnv:VIBE_SSH_AUTO}",
++    "GIT_OPTIONAL_LOCKS": "0"
+   },
+   "remoteEnv": {
+     "GITHUB_TOKEN": "${localEnv:GITHUB_TOKEN}",
+@@ -54,7 +55,8 @@
+     "NODE_OPTIONS": "--max-old-space-size=4096",
+     "CLAUDE_CONFIG_DIR": "/home/node/.claude",
+     "POWERLEVEL9K_DISABLE_GITSTATUS": "true",
+-    "VIBE_SSH_AUTO": "${localEnv:VIBE_SSH_AUTO}"
++    "VIBE_SSH_AUTO": "${localEnv:VIBE_SSH_AUTO}",
++    "GIT_OPTIONAL_LOCKS": "0"
+   },
+   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
+   "workspaceFolder": "/workspace",
+diff --git a/devcontainer/install-claude-extras.sh b/devcontainer/install-claude-extras.sh
+index fde7ad5..13b21e2 100755
+--- a/devcontainer/install-claude-extras.sh
++++ b/devcontainer/install-claude-extras.sh
+@@ -256,6 +256,16 @@ check_sp_drift() {
+ # scratch). Both happened in amy-bo/electroPioreactor PR #16; the upstream
+ # reviewer flagged them. This is the structural fix.
+ #
++# .vibe-signals/ (task_017 cycle 1) is the shared-repos coordination sidecar
++# — added here so it's excluded when THIS project is itself a shared repo
++# some other project mounts. This is one of TWO independent owners of that
++# gitignore entry: the other is shared_repo_ensure_signals (in the `vibe`
++# launcher), which directly ensures the same line in a shared checkout's own
++# .gitignore at `vibe repos add` / mount-assembly time — needed because a
++# shared checkout may not be a vibe project itself and may never have run
++# this script. Deliberately NOT `.vibe-repos` — that file is committed by
++# design (it's the project's declaration of which shared repos it uses).
++#
+ # Behaviour: add a managed block to /workspace/.gitignore on first
+ # container start. If the block exists, leave it alone. User opt-out:
+ # VIBE_AUTO_GITIGNORE=0 (or remove the managed block by hand; it won't
+@@ -281,11 +291,59 @@ ensure_project_gitignore() {
+     echo "# delete this entire block (won't be re-added once removed)."
+     echo ".claude/settings.local.json"
+     echo ".vibe/"
++    echo ".vibe-signals/"
+     echo "$close"
+   } >> "$gitignore"
+   echo "vibe: added managed runtime-exclusions block to $gitignore" >&2
+ }
+ 
++# Shared-repos git ergonomics (AC6, task_017 cycle 1): the runtime manifest
++# at /workspace/.vibe/shared-repos.manifest (one "name mode slug" line per
++# mounted shared repo, written by the `vibe` launcher STRICTLY BEFORE
++# `devcontainer up` in THIS SAME launch — see shared_repos_manifest_lines /
++# the SHARED_REPOS_MANIFEST write in the launcher) lists what's bind-mounted
++# at /repos/<name>. There's no pre-existing safe.directory mechanism in this
++# codebase to mirror — /workspace itself has never needed one, since its
++# ownership maps cleanly on the primary Mac platform. A shared-repo checkout
++# gets one because it's a bind mount of a DIFFERENT host path owned by the
++# same invoking user, and git's dubious-ownership check can still trip on
++# the uid mapping a fresh mount presents inside the container. Runs on every
++# container start; adds ONE literal per-repo `--add`-style entry (no `*`
++# wildcard — a wildcard would trust every future bind, not just today's
++# declared set) and de-duplicates first, since `git config --add` is not
++# itself idempotent (it would append a second identical line on every
++# restart otherwise). Reads the mount root from ${VIBE_REPOS_DIR:-/repos}
++# (not a hardcoded /repos) so a smoke fixture can point this at a temp tree
++# instead of the real container mount point.
++#
++# GIT_OPTIONAL_LOCKS=0 guidance (also AC6): shipped as a plain, constant
++# containerEnv/remoteEnv entry in devcontainer.json rather than computed
++# here — it's a fixed value, not derived from the manifest, and every other
++# constant in this container (NODE_OPTIONS, CLAUDE_CONFIG_DIR, ...) is
++# already set that way. Applied container-wide rather than scoped to just
++# the ro shared checkouts: git optional locks are a read-path optimisation,
++# never a correctness requirement, so disabling them everywhere is a safe
++# simplification instead of per-repo plumbing that would need a matching
++# ro/rw distinction of its own.
++ensure_shared_repos_safe_directory() {
++  local manifest="${VIBE_SHARED_REPOS_MANIFEST:-/workspace/.vibe/shared-repos.manifest}"
++  [ -f "$manifest" ] || return 0
++  local repos_root="${VIBE_REPOS_DIR:-/repos}"
++
++  # Manifest lines are "name mode slug" (AC5); only the basename is needed
++  # here, but mode/slug must still be consumed positionally so `name` gets
++  # just the first field, not the whole line.
++  local name dir mode slug
++  # shellcheck disable=SC2034  # mode/slug consumed positionally, not used
++  while read -r name mode slug; do
++    [ -n "$name" ] || continue
++    dir="$repos_root/$name"
++    if ! git config --global --get-all safe.directory 2>/dev/null | grep -qxF "$dir"; then
++      git config --global --add safe.directory "$dir"
++    fi
++  done < "$manifest"
++}
++
+ install_dir agents
+ install_dir commands
+ install_hooks
+@@ -294,3 +352,4 @@ install_brain2_skills
+ check_superpowers
+ check_sp_drift
+ ensure_project_gitignore
++ensure_shared_repos_safe_directory
+diff --git a/vibe b/vibe
+index fcfcbc0..b4e98d3 100755
+--- a/vibe
++++ b/vibe
+@@ -45,6 +45,12 @@ set -euo pipefail
+ # ── Configuration ─────────────────────────────────────────────────────────────
+ CONFIG_FILE="${VIBE_CONFIG:-$HOME/.vibe/config}"
+ TOKENS_FILE="$HOME/.vibe/tokens"
++# Machine-local registry of shared-repo checkouts (task_017): `slug=path`
++# lines, chmod 600 like TOKENS_FILE. Distinct file from TOKENS_FILE because
++# it maps a slug to a LOCAL PATH, not a secret — no reason to share the
++# tighter secret-store mental model, and keeping them separate means a
++# `grep` of one never accidentally surfaces the other.
++REPOS_REGISTRY_FILE="$HOME/.vibe/repos"
+ SKIPPED_FILE="$HOME/.vibe/skipped"
+ IMAGE_MARKER="$HOME/.vibe/.image-built"
+ IMAGE_TAG="vibe-dev:latest"
+@@ -319,6 +325,21 @@ save_token() {
+   chmod 600 "$TOKENS_FILE"
+ }
+ 
++# remove_token <repo> — deletes the stored PAT for <repo>, if any. Mirrors
++# save_token's grep-filter-then-rewrite pattern but drops the line instead of
++# replacing it. No-op (not an error) when TOKENS_FILE is missing or the key
++# isn't present. Used by `vibe repos remove --purge` (task_017) to offer
++# dropping a shared repo's token alongside the registry entry.
++remove_token() {
++  local repo="$1"
++  [ -f "$TOKENS_FILE" ] || return 0
++  local tmp
++  tmp=$(mktemp)
++  grep -v "^${repo}=" "$TOKENS_FILE" > "$tmp" || true
++  mv "$tmp" "$TOKENS_FILE"
++  chmod 600 "$TOKENS_FILE"
++}
++
+ setup_token() {
+   local repo="$1"
+   local repo_short="${repo#*/}"
+@@ -1168,6 +1189,507 @@ _learning_include_project() {
+   exit 0
+ }
+ 
++# ── Shared-repos helpers (task_017 cycle 1) ───────────────────────────────────
++# Declaration file: <project>/.vibe-repos, COMMITTED (one `<owner>/<repo>
++# <ro|rw>` line per repo, mode optional/default ro). Machine registry:
++# ~/.vibe/repos (REPOS_REGISTRY_FILE, `slug=path` lines, chmod 600). Every
++# helper here is defined above the VIBE_SOURCE_ONLY guard so smoke-test.py
++# can unit-test them by sourcing the launcher directly. All read paths follow
++# the lookup_token / auto_resume_field fail-safe discipline: a missing file,
++# an unmatched key, or a malformed value echoes NOTHING rather than raising
++# an error — callers treat empty output as "not configured", never as a bug.
++
++# is_valid_repo_slug <slug> — true iff slug is exactly `owner/repo` in the
++# charset [A-Za-z0-9._-]+/[A-Za-z0-9._-]+ (one slash, no path traversal, no
++# shell metacharacters). Shared by shared_repos_parse (reading the committed
++# declaration file) and `vibe repos add` (reading a CLI arg) so a hand-edited
++# file and the CLI enforce the identical rule.
++is_valid_repo_slug() {
++  [[ "${1:-}" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]
++}
++
++# shared_repo_basename <slug> — echoes the mount-point basename: the part of
++# slug after the last '/'. Pure string op, no I/O.
++shared_repo_basename() {
++  printf '%s' "${1##*/}"
++}
++
++# shared_repo_env_name <slug> — echoes the full per-repo token env var name:
++# VIBE_SHARED_TOKEN_<SANITISED>, sanitisation = uppercase then every
++# non-alphanumeric character (including slug's own '/') becomes '_'. E.g.
++# andeyePro/andeyePro -> VIBE_SHARED_TOKEN_ANDEYEPRO_ANDEYEPRO. Pure string
++# transform; collision detection between two configured slugs sanitising to
++# the same name is `vibe repos add`'s job (see _repos_add below), not this
++# helper's.
++shared_repo_env_name() {
++  local upper
++  upper=$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')
++  printf 'VIBE_SHARED_TOKEN_%s' "$(printf '%s' "$upper" | tr -c 'A-Z0-9' '_')"
++}
++
++# shared_repos_parse <file> — reads a .vibe-repos declaration file, echoing
++# one "slug mode" line per VALID entry (mode is always "ro" or "rw", defaulted
++# to "ro" when the file omits it). Comments (lines starting with `#`, after
++# whitespace-trimming) and blank lines are skipped silently. A malformed line
++# (bad slug charset, bad mode, or unexpected trailing content) is skipped
++# with a one-line stderr warning naming the line number and offending text —
++# never aborts the read, so one bad hand-edited line can't hide every other
++# declaration. Missing file echoes nothing (fail-safe). `read`'s own
++# whitespace-splitting does the trimming; no sed/awk needed.
++shared_repos_parse() {
++  local file="$1"
++  [ -f "$file" ] || return 0
++  local lineno=0 raw slug mode extra
++  while IFS= read -r raw || [ -n "$raw" ]; do
++    lineno=$((lineno + 1))
++    slug="" mode="" extra=""
++    read -r slug mode extra <<< "$raw"
++    case "$slug" in
++      ''|'#'*) continue ;;  # blank or (whitespace-then-)comment line
++    esac
++    if ! is_valid_repo_slug "$slug"; then
++      echo "vibe: .vibe-repos:${lineno}: malformed slug '${slug}' — skipped" >&2
++      continue
++    fi
++    mode="${mode:-ro}"
++    case "$mode" in
++      ro|rw) ;;
++      *)
++        echo "vibe: .vibe-repos:${lineno}: invalid mode '${mode}' for '${slug}' — skipped" >&2
++        continue
++        ;;
++    esac
++    if [ -n "$extra" ]; then
++      echo "vibe: .vibe-repos:${lineno}: unexpected content after mode for '${slug}' — skipped" >&2
++      continue
++    fi
++    echo "$slug $mode"
++  done < "$file"
++}
++
++# repos_registry_lookup <slug> — echoes the registered local checkout path
++# for <slug> from REPOS_REGISTRY_FILE (`slug=path` lines), or nothing if
++# unregistered, the file is missing, or the resolved path fails validation
++# (contains a newline or a double-quote, or isn't absolute — a hand-trampled
++# registry line silently fails to resolve rather than propagating garbage
++# into a mount path). Mirrors lookup_token's `cut -d= -f2-` (not `-f2`) so a
++# path containing '=' is returned whole.
++repos_registry_lookup() {
++  local slug="$1"
++  [ -f "$REPOS_REGISTRY_FILE" ] || return 0
++  is_valid_repo_slug "$slug" || return 0
++  local path
++  path=$(grep "^${slug}=" "$REPOS_REGISTRY_FILE" 2>/dev/null | tail -1 | cut -d= -f2-) || return 0
++  [ -z "$path" ] && return 0
++  case "$path" in
++    *$'\n'*|*'"'*) return 0 ;;
++  esac
++  case "$path" in
++    /*) ;;
++    *) return 0 ;;
++  esac
++  printf '%s' "$path"
++}
++
++# repos_registry_save <slug> <path> — writes/updates the `slug=path` entry in
++# REPOS_REGISTRY_FILE (chmod 600, like TOKENS_FILE). Mirrors save_token's
++# grep-filter-then-rewrite pattern against a different file.
++repos_registry_save() {
++  local slug="$1" path="$2"
++  mkdir -p "$(dirname "$REPOS_REGISTRY_FILE")"
++  touch "$REPOS_REGISTRY_FILE"
++  local tmp
++  tmp=$(mktemp)
++  grep -v "^${slug}=" "$REPOS_REGISTRY_FILE" > "$tmp" || true
++  echo "${slug}=${path}" >> "$tmp"
++  mv "$tmp" "$REPOS_REGISTRY_FILE"
++  chmod 600 "$REPOS_REGISTRY_FILE"
++}
++
++# repos_registry_remove <slug> — drops <slug>'s entry from REPOS_REGISTRY_FILE
++# (used by `vibe repos remove --purge`). No-op when the file or the key is
++# absent.
++repos_registry_remove() {
++  local slug="$1"
++  [ -f "$REPOS_REGISTRY_FILE" ] || return 0
++  local tmp
++  tmp=$(mktemp)
++  grep -v "^${slug}=" "$REPOS_REGISTRY_FILE" > "$tmp" || true
++  mv "$tmp" "$REPOS_REGISTRY_FILE"
++  chmod 600 "$REPOS_REGISTRY_FILE"
++}
++
++# shared_repo_ensure_signals <checkout> — idempotently ensures the
++# .vibe-signals/ sidecar exists under <checkout> (host-side `mkdir -p`, so
++# it's owned by the invoking user rather than whatever uid Docker's bind
++# auto-vivification would pick) AND that .vibe-signals/ is gitignored in that
++# checkout's OWN .gitignore — a second, independent owner from
++# ensure_project_gitignore's managed block (install-claude-extras.sh), needed
++# because a shared checkout may not itself be a vibe project and may never
++# have launched vibe. Called from BOTH `vibe repos add` (registration time,
++# see _repos_add) and shared_repos_scan (defensively, before any bind
++# referencing the sidecar) — both call sites are guarded/idempotent, so
++# calling this twice (or a hundred times) across a launch is harmless.
++# Never aborts the caller on an unwritable checkout (read-only mount,
++# offline network volume, etc): returns 1 so the caller can demote the repo
++# to registered-but-broken (reason "sidecar unwritable") instead of tripping
++# `set -e`. Returns 0 on success.
++shared_repo_ensure_signals() {
++  local checkout="$1" sidecar gitignore
++  [ -n "$checkout" ] || return 1
++  sidecar="$checkout/.vibe-signals"
++  mkdir -p "$sidecar" 2>/dev/null || return 1
++  [ -w "$sidecar" ] || return 1
++
++  gitignore="$checkout/.gitignore"
++  if [ -f "$gitignore" ]; then
++    if ! grep -qxF ".vibe-signals/" "$gitignore" 2>/dev/null; then
++      echo ".vibe-signals/" >> "$gitignore" 2>/dev/null || return 1
++    fi
++  else
++    echo ".vibe-signals/" > "$gitignore" 2>/dev/null || return 1
++  fi
++  return 0
++}
++
++# shared_repos_scan <workspace> — the SINGLE classification pass shared by
++# `vibe repos list`, the launch header, the runtime manifest, and
++# _build_override_config's mount-triple assembly (deliberate: one code path
++# deciding what's mounted means the header can never disagree with what
++# actually got bind-mounted). Reads <workspace>/.vibe-repos via
++# shared_repos_parse and, for each validated (slug, mode) line, echoes
++# EXACTLY ONE of:
++#   M <name> <bindmode> <slug> <checkout>   — resolved & mounted
++#   B <slug> <reason...>                    — registered but broken
++#   N <slug>                                — never registered on this machine
++# The M/B/N split is what lets AC4's header distinguish "no registry entry"
++# (N — total silence, the community-contributor case) from "registry entry
++# broken" (B — loud warning) as two different branches below, not two
++# renderings of one branch. bindmode is hard-pinned "ro" in cycle 1
++# regardless of the declared mode (the mode field parses now so cycle 2's
++# rw-intent + lock logic has somewhere to read from; only cycle 2 wires it to
++# the actual bind flag). Side effect: a repo that reaches shared_repo_ensure_
++# signals gets its sidecar mkdir'd/gitignored here; a failure there demotes
++# it to B ("sidecar unwritable") rather than aborting — sibling repos are
++# still processed (never a hard failure partway through the scan).
++shared_repos_scan() {
++  local workspace="$1"
++  local decl="$workspace/.vibe-repos"
++  local seen_names="" slug mode name path bindmode
++
++  while read -r slug mode; do
++    [ -n "$slug" ] || continue
++
++    name="$(shared_repo_basename "$slug")"
++
++    # Reserved dot-prefixed basenames: the .vibe-signals sidecar namespace
++    # lives beside repo mounts, so a repo named e.g. `.foo` would collide
++    # with it. `vibe repos add` rejects these at registration; this is the
++    # defensive re-check for a hand-edited .vibe-repos that slipped one in.
++    case "$name" in
++      .*)
++        echo "vibe: shared repo '$slug': mount skipped - basenames beginning with '.' are reserved" >&2
++        echo "B $slug reserved dot-prefixed name '$name'"
++        continue
++        ;;
++    esac
++
++    # Basename collision: only matters against a name that ALREADY resolved
++    # to a real mount (see the `seen_names` update at the bottom) — a name
++    # clash against a repo that itself never mounts isn't a real conflict.
++    if printf '%s\n' "$seen_names" | grep -qxF "$name"; then
++      echo "B $slug basename '$name' collides with another declared repo"
++      continue
++    fi
++
++    path="$(repos_registry_lookup "$slug")"
++    if [ -z "$path" ]; then
++      echo "N $slug"
++      continue
++    fi
++
++    if [ ! -e "$path/.git" ]; then
++      echo "B $slug path missing or not a git checkout ($path)"
++      continue
++    fi
++
++    if [ -z "$(lookup_token "$slug")" ]; then
++      echo "B $slug no token configured (run: vibe repos add $slug)"
++      continue
++    fi
++
++    if ! shared_repo_ensure_signals "$path"; then
++      echo "B $slug sidecar unwritable ($path/.vibe-signals)"
++      continue
++    fi
++
++    seen_names="$seen_names
++$name"
++    bindmode="ro"  # cycle-1 hard-pin; rw arrives in cycle 2 via the lock
++    echo "M $name $bindmode $slug $path"
++  done < <(shared_repos_parse "$decl")
++}
++
++# shared_repos_manifest_lines <scan_output> — pure filter: given
++# shared_repos_scan's stdout, echoes the AC5 runtime-manifest lines ("name
++# mode slug", one per MOUNTED repo). No I/O — the caller redirects this to
++# the manifest file.
++shared_repos_manifest_lines() {
++  local scan="$1" scan_line name bindmode slug rest
++  while IFS= read -r scan_line; do
++    case "$scan_line" in
++      M\ *)
++        read -r name bindmode slug rest <<< "${scan_line#M }"
++        printf '%s %s %s\n' "$name" "$bindmode" "$slug"
++        ;;
++    esac
++  done <<< "$scan"
++}
++
++# ── Shared-repos subcommand internals (`vibe repos ...`) ─────────────────────
++# Operates on the CURRENT project directory via `pwd`, mirroring the learning
++# subcommand's `_learning_exclude_project` (not $WORKSPACE, which only exists
++# after the full launch flow resolves it — these subcommands dispatch and
++# exit before that point, see the dispatch block below).
++
++_repos_usage() {
++  echo "Usage: vibe repos add <owner/repo> [path]" >&2
++  echo "       vibe repos remove <owner/repo> [--purge]" >&2
++  echo "       vibe repos list" >&2
++  exit 1
++}
++
++# _repos_add <slug> [path] — validates <slug>, resolves/validates the local
++# checkout path (prompts if omitted; must contain .git), rejects a reserved
++# dot-prefixed basename or a basename/token-env collision against any OTHER
++# already-registered slug, writes the registry entry, ensures the signals
++# sidecar (+ its gitignore) in the checkout, appends the declaration to this
++# project's .vibe-repos if not already present, and mints a token if none is
++# stored yet. Exits non-zero with a one-line reason on any validation
++# failure; exits 0 with a relaunch reminder on success.
++_repos_add() {
++  local slug="${1:-}" path_arg="${2:-}"
++
++  if [ -z "$slug" ]; then
++    _repos_usage
++  fi
++  if ! is_valid_repo_slug "$slug"; then
++    echo "vibe repos add: '$slug' is not a valid owner/repo slug" >&2
++    exit 1
++  fi
++
++  local name
++  name="$(shared_repo_basename "$slug")"
++  case "$name" in
++    .*)
++      echo "vibe repos add: repo basenames beginning with '.' are reserved (the .vibe-signals sidecar namespace lives beside repo mounts)" >&2
++      exit 1
++      ;;
++  esac
++
++  # Collision checks against every OTHER already-registered slug: same mount
++  # basename, or same sanitised token env name.
++  local env_name
++  env_name="$(shared_repo_env_name "$slug")"
++  if [ -f "$REPOS_REGISTRY_FILE" ]; then
++    local existing_slug other_name other_env
++    while IFS='=' read -r existing_slug _; do
++      [ -n "$existing_slug" ] || continue
++      [ "$existing_slug" = "$slug" ] && continue
++      other_name="$(shared_repo_basename "$existing_slug")"
++      if [ "$other_name" = "$name" ]; then
++        echo "vibe repos add: basename '$name' already used by registered repo '$existing_slug' — mount points must be unique" >&2
++        exit 1
++      fi
++      other_env="$(shared_repo_env_name "$existing_slug")"
++      if [ "$other_env" = "$env_name" ]; then
++        echo "vibe repos add: '$slug' sanitises to the same token env var ($env_name) as already-registered '$existing_slug'" >&2
++        exit 1
++      fi
++    done < "$REPOS_REGISTRY_FILE"
++  fi
++
++  # Resolve the local checkout path.
++  local path="$path_arg"
++  if [ -z "$path" ]; then
++    read -rp "  Local path for $slug: " path
++  fi
++  case "$path" in
++    /*) ;;
++    *) path="$(cd "$path" 2>/dev/null && pwd -P)" || path="" ;;
++  esac
++  if [ -z "$path" ] || [ ! -d "$path" ]; then
++    echo "vibe repos add: '${path_arg:-$path}' is not a directory" >&2
++    exit 1
++  fi
++  if [ ! -e "$path/.git" ]; then
++    echo "vibe repos add: '$path' has no .git — point at an existing local checkout of $slug" >&2
++    echo "    (vibe repos add doesn't clone; if you don't have it yet: git clone https://github.com/$slug.git)" >&2
++    exit 1
++  fi
++
++  repos_registry_save "$slug" "$path"
++
++  if ! shared_repo_ensure_signals "$path"; then
++    echo "  ⚠ could not create $path/.vibe-signals (unwritable checkout?) — will show as BROKEN until fixed" >&2
++  fi
++
++  _vibe_repos_decl_append "$(pwd -P)/.vibe-repos" "$slug" "ro"
++
++  if [ -z "$(lookup_token "$slug")" ]; then
++    setup_token "$slug"
++  fi
++
++  echo "  ✓ $slug registered at $path and declared in .vibe-repos"
++  echo "    Relaunch (vibe) for the mount to take effect."
++  exit 0
++}
++
++# _vibe_repos_decl_has <file> <slug> — true iff <slug> is already declared
++# (any mode) in <file>, per shared_repos_parse's validated view.
++_vibe_repos_decl_has() {
++  local file="$1" slug="$2"
++  shared_repos_parse "$file" 2>/dev/null | cut -d' ' -f1 | grep -qxF "$slug"
++}
++
++# _vibe_repos_decl_append <file> <slug> <mode> — appends "<slug> <mode>" as a
++# new line (creating the file if absent). No-op if <slug> is already
++# declared (any mode) — see _vibe_repos_decl_has.
++_vibe_repos_decl_append() {
++  local file="$1" slug="$2" mode="$3"
++  _vibe_repos_decl_has "$file" "$slug" && return 0
++  printf '%s %s\n' "$slug" "$mode" >> "$file"
++}
++
++# _vibe_repos_decl_remove <file> <slug> — removes the line(s) declaring
++# <slug> from <file>, preserving every other line (comments, blanks, other
++# entries) untouched. No-op if the file or the slug isn't present.
++_vibe_repos_decl_remove() {
++  local file="$1" slug="$2"
++  [ -f "$file" ] || return 0
++  local tmp
++  tmp=$(mktemp)
++  grep -v -E "^${slug}([[:space:]]|\$)" "$file" > "$tmp" || true
++  mv "$tmp" "$file"
++}
++
++# _repos_remove <slug> [--purge] — removes <slug>'s declaration line from
++# this project's .vibe-repos (registry entry retained by default — other
++# projects may use it). --purge also drops the machine registry entry and,
++# if a token is stored, offers to delete it too. Exits non-zero with a
++# one-line reason on validation failure; exits 0 on success.
++_repos_remove() {
++  local slug="${1:-}" purge=""
++  if [ -z "$slug" ]; then
++    _repos_usage
++  fi
++  shift
++  case "${1:-}" in
++    --purge) purge=1 ;;
++    "") ;;
++    *)
++      echo "vibe repos remove: unknown option '$1'" >&2
++      exit 1
++      ;;
++  esac
++  if ! is_valid_repo_slug "$slug"; then
++    echo "vibe repos remove: '$slug' is not a valid owner/repo slug" >&2
++    exit 1
++  fi
++
++  local decl
++  decl="$(pwd -P)/.vibe-repos"
++  if ! _vibe_repos_decl_has "$decl" "$slug"; then
++    echo "vibe repos remove: '$slug' is not declared in this project's .vibe-repos" >&2
++    exit 1
++  fi
++  _vibe_repos_decl_remove "$decl" "$slug"
++  echo "  ✓ $slug removed from this project's .vibe-repos"
++
++  if [ -n "$purge" ]; then
++    repos_registry_remove "$slug"
++    echo "  ✓ $slug removed from the machine registry (~/.vibe/repos)"
++    if [ -n "$(lookup_token "$slug")" ]; then
++      if ask_yes_no "Also delete the stored token for $slug?" n; then
++        remove_token "$slug"
++        echo "  ✓ token deleted"
++      fi
++    fi
++  fi
++
++  echo "    Relaunch (vibe) for the change to take effect."
++  exit 0
++}
++
++# _repos_list — shows every repo declared in this project's .vibe-repos with
++# its resolution status: "mounted <ro|rw> at /repos/<name>", "BROKEN:
++# <reason>", or "not configured on this machine" — driven entirely by
++# shared_repos_scan's M/B/N tags (see its comment) so list can never disagree
++# with what a launch would actually mount. Always exits 0 (listing has no
++# validation-failure mode).
++_repos_list() {
++  local workspace decl
++  workspace="$(pwd -P)"
++  decl="$workspace/.vibe-repos"
++  if [ ! -f "$decl" ]; then
++    echo "  No .vibe-repos declaration in this project."
++    exit 0
++  fi
++
++  local scan_line found=0 name mode slug path reason
++  while IFS= read -r scan_line; do
++    case "$scan_line" in
++      M\ *)
++        read -r name mode slug path <<< "${scan_line#M }"
++        echo "  $slug - mounted $mode at /repos/$name"
++        found=1
++        ;;
++      B\ *)
++        read -r slug reason <<< "${scan_line#B }"
++        echo "  $slug - BROKEN: $reason"
++        found=1
++        ;;
++      N\ *)
++        read -r slug <<< "${scan_line#N }"
++        echo "  $slug - not configured on this machine"
++        found=1
++        ;;
++    esac
++  done < <(shared_repos_scan "$workspace")
++
++  [ "$found" -eq 1 ] || echo "  .vibe-repos declares nothing (every line was blank, a comment, or malformed - see warnings above)."
++  exit 0
++}
++
++# repos_handle_subcommand <args...> — top-level dispatcher for `vibe repos`,
++# invoked from its own dispatch block (mirrors `learn`'s, see the block
++# immediately before parse_vibe_args below). Every branch below exits inside
++# the sub-function it calls; nothing here relies on its own return value.
++repos_handle_subcommand() {
++  shift  # consume "repos"
++  local subcmd="${1:-}"
++  case "$subcmd" in
++    add)
++      shift
++      _repos_add "$@"
++      ;;
++    remove)
++      shift
++      _repos_remove "$@"
++      ;;
++    list)
++      _repos_list
++      ;;
++    "")
++      _repos_usage
++      ;;
++    *)
++      echo "vibe repos: unknown subcommand '$subcmd'" >&2
++      exit 1
++      ;;
++  esac
++}
++
+ # ── Learning mount helper ─────────────────────────────────────────────────────
+ 
+ # _build_override_config <workspace_abs_path> — collects the bind mounts that
+@@ -1248,6 +1770,33 @@ _build_override_config() {
+     mount_args+=("$zotero" "/zotero" "1")
+   fi
+ 
++  # Shared repos declared in this project's .vibe-repos (task_017 cycle 1).
++  # Each resolved repo contributes TWO bind triples: the checkout itself
++  # (ro, hard-pinned in cycle 1 — rw arrives in cycle 2's lock) at
++  # /repos/<name>, and its .vibe-signals/ sidecar, ALWAYS rw even when the
++  # code mount is ro, at /repos/.signals/<name> — that's what lets a
++  # read-only session file an rw claim (see .vs/spec.md's Pinned-names
++  # section). shared_repos_scan is the single classification pass shared
++  # with the header/manifest printed later in the launch flow; calling it
++  # again here (inside this function's own command-substitution subshell —
++  # the caller assigns this function's stdout to OVERRIDE_CONFIG) is safe and
++  # idempotent — its side effects are real mkdir/gitignore writes, which
++  # persist past a subshell exiting. Only EXPORTED SHELL VARIABLES die with a
++  # subshell (see the parent-shell config-load comment above this function);
++  # nothing here relies on that.
++  local scan_line name bindmode slug checkout ro_flag
++  while IFS= read -r scan_line; do
++    case "$scan_line" in
++      M\ *)
++        read -r name bindmode slug checkout <<< "${scan_line#M }"
++        ro_flag="0"
++        [ "$bindmode" = "ro" ] && ro_flag="1"
++        mount_args+=("$checkout" "/repos/$name" "$ro_flag")
++        mount_args+=("$checkout/.vibe-signals" "/repos/.signals/$name" "0")
++        ;;
++    esac
++  done < <(shared_repos_scan "$workspace")
++
+   # OpenProject MCP: the container resolves the sidecar's real hostname to the
+   # Mac forwarder via --add-host (so TLS/SNI/cert stay valid end-to-end). Empty
+   # unless the OP MCP is configured.
+@@ -1404,6 +1953,18 @@ if [ "${1:-}" = "learn" ]; then
+   exit $?
+ fi
+ 
++# ── Repos subcommand dispatch (task_017) ──────────────────────────────────────
++# Must be BEFORE the --* flag-parser loop — exactly like the `learn` block
++# above — otherwise `vibe repos add owner/repo` falls through to
++# parse_vibe_args's positional catch-all and gets treated as a project name.
++# Dispatches and exits; does NOT enter workspace resolution, preflight, image
++# build, GitHub setup, or container launch.
++if [ "${1:-}" = "repos" ]; then
++  repos_handle_subcommand "$@"
++  # repos_handle_subcommand's sub-functions always exit; this is a safety net.
++  exit $?
++fi
++
+ # ── Flags ─────────────────────────────────────────────────────────────────────
+ # parse_vibe_args (defined above the VIBE_SOURCE_ONLY guard so smoke-test.py
+ # can source-test it) accepts flags and the project positional in any order.
+@@ -1699,6 +2260,25 @@ learning_load
+ # brain / zotero mounts injected if any apply, else the source config.
+ OVERRIDE_CONFIG=$(_build_override_config "$WORKSPACE")
+ 
++# Shared repos (task_017 cycle 1): one scan feeds BOTH the runtime manifest
++# (AC5) and the header lines below, so the two can never disagree about
++# what's mounted. _build_override_config already ran its own internal scan
++# to build the bind-mount triples; shared_repos_scan is guarded/idempotent,
++# so re-running it here (in this shell, not a subshell, so the result can be
++# reused twice below) is safe — just mildly redundant filesystem work (a
++# git-checkout existence test + an idempotent mkdir per repo).
++SHARED_REPOS_SCAN="$(shared_repos_scan "$WORKSPACE")"
++
++# Runtime manifest (AC5): written STRICTLY BEFORE `devcontainer up` so
++# postStart's install-claude-extras.sh sees it in the SAME launch — this
++# ordering is load-bearing for the relaunch right after `vibe repos add`,
++# which needs the NEW repo's safe.directory entry on that very next launch,
++# not the one after. Truncates to empty (via the unconditional `>`) when
++# there are no mounted shared repos, rather than leaving the file absent.
++SHARED_REPOS_MANIFEST="$WORKSPACE/.vibe/shared-repos.manifest"
++mkdir -p "$(dirname "$SHARED_REPOS_MANIFEST")"
++shared_repos_manifest_lines "$SHARED_REPOS_SCAN" > "$SHARED_REPOS_MANIFEST"
++
+ echo ""
+ if [ "$CONTINUE" = true ]; then
+   echo "  ↻ vibe session continuing (most recent Claude conversation)"
+@@ -1741,6 +2321,29 @@ _zotero_banner="$(_zotero_source)"
+ if [ -n "$_zotero_banner" ] && [ -d "$_zotero_banner" ]; then
+   echo "     zotero  : /zotero (ro) @ ${_zotero_banner}"
+ fi
++# Shared-repos header (AC4): driven entirely by SHARED_REPOS_SCAN's M/B/N
++# tags (see shared_repos_scan's comment) — one ◆ line per MOUNTED repo, one
++# loud ⚠ warning per registered-but-broken repo naming the reason, and
++# NOTHING for a never-registered declaration (the `N)` arm below is a
++# deliberate no-op, not an omission — that's the community-contributor
++# silence AC4 asks for, and the explicit branch is what lets a test assert
++# the code path distinguishes "no registry entry" from "registry entry
++# broken" rather than inferring it from absence of output).
++if [ -n "$SHARED_REPOS_SCAN" ]; then
++  while IFS= read -r _shared_line; do
++    case "$_shared_line" in
++      M\ *)
++        read -r _shared_name _shared_mode _shared_slug _shared_path <<< "${_shared_line#M }"
++        echo "  ◆ shared repo: $_shared_slug at /repos/$_shared_name ($_shared_mode)"
++        ;;
++      B\ *)
++        read -r _shared_slug _shared_reason <<< "${_shared_line#B }"
++        echo "  ⚠ shared repo $_shared_slug BROKEN: $_shared_reason"
++        ;;
++      N\ *) ;;  # never registered on this machine — deliberate silence
++    esac
++  done <<< "$SHARED_REPOS_SCAN"
++fi
+ echo ""
+ 
+ UP_BASE_ARGS=(
