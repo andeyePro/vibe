@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# vibe pre-push hook (task_019) — thin wrapper translating git's real
+# pre-push contract into the scanner's BLOCK-tier-only backstop.
+#
+# git passes remote name/URL as $1/$2 and feeds stdin lines of the form:
+#   <local ref> <local sha1> <remote ref> <remote sha1>
+#
+# Per line (§ Scanner contract / spec.md component 2):
+#   - local sha all-zeros   -> branch delete, nothing to scan.
+#   - remote sha all-zeros  -> new branch: scan commits reachable from
+#     local sha but not from any existing remote ref
+#     (`git rev-list <local> --not --remotes`), via --blob-stdin --tier block
+#     so multi-commit new-branch pushes get commit-sha-attributed findings.
+#   - otherwise             -> scan <remote sha>..<local sha> via --range,
+#     BLOCK tier only (already-committed WARN-tier PII was seen by the
+#     commit-time gate; re-flagging it on every push is the "cries wolf"
+#     failure pre-push exists to avoid — see spec.md § Scanner contract).
+#
+# Override without editing this file: VIBE_CONTENT_GUARD=off (or
+# VIBE_ALLOW_COMMIT=1), or the git-native `git push --no-verify`.
+set -euo pipefail
+
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+SCANNER="$HOOK_DIR/vibe-content-scan.sh"
+
+if [ ! -x "$SCANNER" ]; then
+  echo "vibe pre-push: scanner not found at $SCANNER — skipping content guard" >&2
+  exit 0
+fi
+
+# is_zero_sha <sha> — true iff every character is '0' (SHA-1 or SHA-256,
+# any length — no hardcoded 40).
+is_zero_sha() {
+  case "$1" in
+    *[!0]*) return 1 ;;
+    "") return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+status=0
+
+# local_ref/remote_ref are part of git's stdin protocol and must be
+# consumed positionally even though only the two sha fields are used.
+# shellcheck disable=SC2034
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ -n "${local_sha:-}" ] || continue
+
+  if is_zero_sha "$local_sha"; then
+    continue  # branch delete - nothing to scan
+  fi
+
+  if is_zero_sha "$remote_sha"; then
+    # New branch: commits reachable from local_sha but not from any
+    # existing remote ref.
+    commits_raw="$(git rev-list "$local_sha" --not --remotes 2>/dev/null || true)"
+    [ -n "$commits_raw" ] || continue
+    commit_array=()
+    while IFS= read -r c; do
+      [ -n "$c" ] && commit_array+=("$c")
+    done <<< "$commits_raw"
+    [ "${#commit_array[@]}" -gt 0 ] || continue
+    if ! git log -p --no-color "${commit_array[@]}" 2>/dev/null \
+         | "$SCANNER" --blob-stdin --tier block; then
+      status=1
+    fi
+  else
+    count="$(git rev-list --count "$remote_sha..$local_sha" 2>/dev/null || echo 0)"
+    [ "$count" -gt 0 ] || continue
+    if ! "$SCANNER" --range "$remote_sha" "$local_sha"; then
+      status=1
+    fi
+  fi
+done
+
+exit "$status"

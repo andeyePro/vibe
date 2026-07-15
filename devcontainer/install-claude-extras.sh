@@ -362,9 +362,38 @@ ensure_shared_repos_safe_directory() {
   done < "$manifest"
 }
 
+# Sync the content-guard git hooks (task_019) into $DEST_ROOT/vibe-git-hooks/
+# (chmod +x on the scanner + three wrappers) and point git's global
+# core.hooksPath at that directory, so pre-commit/commit-msg/pre-push fire
+# for every repo the container touches, INCLUDING rw /repos/* shared repos
+# and (in the gardener) brain2 (core.hooksPath is --global, same scope as
+# ensure_shared_repos_safe_directory's safe.directory entries above — see
+# .vs/spec.md's "Note on core.hooksPath global scope"). Idempotent: re-runs
+# just re-copy + re-chmod + re-set the same config value. Unlike commands/
+# agents, hook files under vibe-git-hooks/ are enforcement code, not
+# user-editable content, so there is no "leave user edits alone" carve-out.
+install_git_hooks() {
+  local src="$SRC_ROOT/git-hooks"
+  local dest="$DEST_ROOT/vibe-git-hooks"
+
+  [ -d "$src" ] || return 0
+  mkdir -p "$dest"
+
+  local file name
+  for file in "$src"/*; do
+    [ -f "$file" ] || continue
+    name=$(basename "$file")
+    cp -f "$file" "$dest/$name"
+    chmod +x "$dest/$name"
+  done
+
+  git config --global core.hooksPath "$dest"
+}
+
 install_dir agents
 install_dir commands
 install_hooks
+install_git_hooks
 install_claude_md_fragments
 install_brain2_skills
 check_superpowers

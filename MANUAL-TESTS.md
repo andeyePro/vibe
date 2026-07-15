@@ -861,3 +861,61 @@ add <owner/repo> <path>` in the project first) and PATs staged for both repos.
 - [ ] Remove the shared repo's tokens line from ~/.vibe/tokens, relaunch:
       launch header warns "no PAT staged", the mount still appears ro, local
       reads work, `git -C /repos/<name> fetch` fails loud
+
+---
+
+### Test 35: content-guard git hooks + `vibe audit` (task_019)
+
+Verifies the regrettable-content guard end-to-end, INSIDE a running vibe
+session (the smoke suite covers the scanner/wrappers/install script/launcher
+as host-side subprocess fixtures; this test is the one thing they can't see —
+that a live in-container `git commit`/`git push` is actually routed through
+the installed hooks).
+
+```bash
+git config --global core.hooksPath   # should print .../vibe-git-hooks
+ls "$(git config --global core.hooksPath)"   # scanner + pre-commit + commit-msg + pre-push
+```
+
+**35a — clean commit unaffected:**
+- [ ] A normal `git commit` in `/workspace` with no secrets/PII in the diff
+      or message succeeds exactly as before (no behaviour change for the
+      common case)
+
+**35b — BLOCK secret is refused, loud, with a rule id:**
+- [ ] Stage a file containing a fake GitHub-PAT-shaped string (e.g.
+      `ghp_` followed by 36 letters) and `git commit` — refused, stderr shows
+      a `BLOCK` line naming `github-pat`
+- [ ] `VIBE_CONTENT_GUARD=off git commit ...` (same content) — succeeds, and
+      stderr additionally shows a loud "OVERRIDE" line naming the skipped
+      rule
+
+**35c — WARN PII is refused too (not silently allowed):**
+- [ ] Stage a file containing any RFC1918 IPv4 address from your own LAN
+      (a `192.168.x.x`/`10.x.x.x`/`172.16-31.x.x` address) and
+      `git commit` — refused, stderr shows a `WARN` line naming
+      `rfc1918-ip` (WARN exits non-zero here — it's a severity label, not a
+      soft gate, since there's no TTY for a y/n prompt)
+
+**35d — pre-push backstop, new branch:**
+- [ ] `VIBE_CONTENT_GUARD=off` a BLOCK-tier commit onto a new local branch,
+      then `git push origin <new-branch>` with NO override — refused by
+      `pre-push`, stderr names the offending commit sha
+
+**35e — `.vibe-content-allow` / `.vibe-content-guard-off`:**
+- [ ] Add a matching ERE line to a repo-root `.vibe-content-allow` for the
+      35c fixture's exact line — the same commit now succeeds with no
+      override
+- [ ] `touch .vibe-content-guard-off` in a scratch repo — commits with
+      BLOCK-tier content in that repo succeed silently (the marker exempts
+      the whole repo; remove it afterwards)
+
+**35f — `vibe audit --history` from the HOST shell (not in-container):**
+- [ ] In a scratch repo where a secret was committed then deleted in a later
+      commit, `vibe audit --history` (run on the Mac, from that repo's
+      directory) exits non-zero and names the specific commit sha — proving
+      it catches what the forward-looking hooks, which only ever saw HEAD at
+      commit time, structurally cannot
+- [ ] `vibe audit --history` in vibe's OWN repo checkout exits `0` (the
+      shipped `.vibe-content-allow` keeps the hygiene-doc example PII from
+      tripping the guard on vibe's own tracked content)

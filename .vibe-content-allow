@@ -1,0 +1,39 @@
+# vibe's own content-guard allowlist (task_019).
+#
+# One ERE regex per line; `#` comments and blank lines ignored; case-
+# sensitive. A finding is suppressed iff its WHOLE FLAGGED LINE matches
+# (grep -E) an entry below. See devcontainer/claude-md/content-guard.md.
+#
+# Scope: doc/fragment illustrative literals ONLY — the examples below teach
+# the guard's own PII categories in devcontainer/claude-md/project-hygiene.md,
+# ssh-discipline.md, and content-guard.md. None of these are real leaked
+# credentials or a live host this repo depends on.
+
+# Hygiene-doc example PII.
+/Users/martin/
+/Users/<your-name>/
+/Users/<name>/
+mcomz\.local
+pi02\.local
+192\.168\.0\.96
+
+# Claude Code's own runtime-config filename (.claude/settings.local.json,
+# referenced throughout project-hygiene.md) — a false positive against the
+# `.local` mDNS-hostname rule, not a hostname at all.
+settings\.local\.json
+
+# SECURITY.md maintainer contact link.
+github\.com/Aqueum
+
+# Pre-existing tracked-doc literals (CHANGELOG.md / MANUAL-TESTS.md) — none
+# real secrets or live hosts this repo depends on; all predate this guard.
+# CHANGELOG prose "...opus->ask-before-Fable-on-locked-spec" trips the
+# `sk-` OpenAI-key rule as a false positive ("a" + "sk-before-...").
+ask-before-Fable-on-locked-spec
+# CHANGELOG prose naming Docker Desktop's observed host-gateway IP.
+192\.168\.65\.254
+# MANUAL-TESTS git-config example address.
+test@example\.com
+# MANUAL-TESTS ZOTERO_API_KEY fixture value (a documented placeholder, not a
+# real key — matches the secret-named-assignment rule).
+TESTKEY0001testkey0002zz

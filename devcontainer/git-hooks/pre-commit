@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# vibe pre-commit hook (task_019) — thin wrapper translating git's real
+# pre-commit contract into the scanner's --staged mode. Installed by
+# install-claude-extras.sh's install_git_hooks() at
+# ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/vibe-git-hooks/, pointed at by
+# `git config --global core.hooksPath`.
+#
+# Override without editing this file: VIBE_CONTENT_GUARD=off (or
+# VIBE_ALLOW_COMMIT=1), or the git-native `git commit --no-verify`.
+set -euo pipefail
+
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+SCANNER="$HOOK_DIR/vibe-content-scan.sh"
+
+if [ ! -x "$SCANNER" ]; then
+  echo "vibe pre-commit: scanner not found at $SCANNER — skipping content guard" >&2
+  exit 0
+fi
+
+"$SCANNER" --staged

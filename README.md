@@ -51,6 +51,7 @@ The installer clones vibe to `~/.vibe-src`, symlinks `~/bin/vibe`, and prompts f
 - `vibe --model <id>` — launch this session on any Claude model id
 - `vibe learn --init` — one-time setup of the cross-org learning library
 - `vibe repos add <owner/repo> [path]` — register a private repo this machine mounts read-only at `/repos/<name>` for every project that declares it (`vibe repos list` / `vibe repos remove [--purge]` manage it; see Shared repos above)
+- `vibe audit [--history|--staged]` — host-side, scans the current project's full git history (default) or its staged diff for secrets and PII the git-hook layer below can't retroactively catch (see Content guard below)
 
 Fresh conversation is the default — durable memory lives in `TODO.md`, `CLAUDE.md`, and Claude's auto-memory, not in resumed conversations (which accumulate compaction debt). `--continue` / `--resume` are opt-in for short-horizon pickup.
 
@@ -97,6 +98,10 @@ The name is only a convention — "brain2" is shorthand for "second brain". The 
 - **Host FS:** only the project folder, `~/.ssh` (ro), and `~/.gitconfig` (ro) are mounted in.
 - **Claude Pro credentials:** in a named Docker volume (`vibe-claude-config`), not bind-mounted from the host — a compromised container can't leak host credentials unless the firewall is breached.
 - **Built on Anthropic's [reference devcontainer for Claude Code](https://github.com/anthropics/claude-code/tree/main/.devcontainer)**, lightly patched (shared Claude auth across projects; read-only `~/.ssh` and `~/.gitconfig`; per-repo PAT via a git credential helper). Launches via [`@devcontainers/cli`](https://github.com/devcontainers/cli) with `--override-config` so you never commit `.devcontainer/` into each project.
+
+### Content guard: secrets/PII pre-commit + pre-push block + pre-publish audit
+
+vibe containers commit and push under `bypassPermissions`, so a self-contained (no `gitleaks`/`trufflehog`, no network) git-hook layer scans everything before it leaves the machine: `pre-commit` (staged diff), `commit-msg` (the message itself), and `pre-push` (the outgoing push range). Two severities — **BLOCK** on high-precision secrets (GitHub PATs, API keys, AWS keys, private-key blocks, secret-shaped assignments), **WARN** on lower-precision PII (RFC1918/link-local IPs, personal home paths, `.local` hostnames, email addresses) — both exit non-zero by default, since commits here run non-interactively with no TTY for a y/n prompt. Clear a finding with a repo-root `.vibe-content-allow` entry (one ERE regex per line, whole-line match), a `.vibe-content-guard-off` marker (exempts an intentionally-private repo like the brain2 gardener entirely), or `VIBE_CONTENT_GUARD=off` (alias `VIBE_ALLOW_COMMIT=1`) for a one-off override — always logged loudly, never silent. A built-in allowlist (the `Co-Authored-By`/`Signed-off-by` trailer convention, `noreply@anthropic.com`) needs no configuration. `vibe audit --history` (host-side, run from the project directory) covers what a forward-looking hook can't: a repo's full history, both tiers, including content committed then later deleted — the case a Private→Public flip actually needs surfaced before it happens. It only reports; never rewrites history.
 
 <!-- task_017 C2: fold this subsection into C1's "Shared repos" README section at integration -->
 ### Shared repos: write access (`rw`)

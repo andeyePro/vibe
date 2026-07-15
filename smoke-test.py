@@ -57,6 +57,8 @@ CHECK_SP_CURRENT = REPO / "devcontainer" / "check-sp-current.sh"
 CYCLE_1_DIFF = REPO / ".vs" / "cycle-1" / "diff.patch"
 CREDENTIAL_HELPER = REPO / "devcontainer" / "credential-helper.sh"
 SETUP_GIT_SH = REPO / "devcontainer" / "setup-git.sh"
+VIBE_CONTENT_SCANNER = REPO / "devcontainer" / "git-hooks" / "vibe-content-scan.sh"
+CONTENT_GUARD_MD = REPO / "devcontainer" / "claude-md" / "content-guard.md"
 
 FAILURES: list[tuple[str, str]] = []
 
@@ -8743,6 +8745,406 @@ def test_vibe_auto_resume_effective_wait() -> None:
     check("[eff-wait] no resume_at → 1800 default", "NORA=[1800]" in r.stdout, r.stdout)
 
 
+# ── task_019: regrettable-content guard (secrets/PII pre-commit + pre-push block + audit) ───────
+
+
+def test_task019_ac1_staged_ghp_token_blocks() -> None:
+    """AC1: vibe-content-scan.sh --staged with runtime-built GHP token exits 1, emits BLOCK line."""
+    print("\n[task_019 AC1: staged GHP token blocks]")
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        repo.mkdir()
+        run(["git", "init"], cwd=repo)
+        run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+        run(["git", "config", "user.name", "Test User"], cwd=repo)
+
+        # Create a file with a runtime-constructed token (no literal secret in this code)
+        token = "ghp_" + ("A" * 36)
+        test_file = repo / "secret.txt"
+        test_file.write_text(f"My secret is {token}\n")
+        run(["git", "add", "secret.txt"], cwd=repo)
+
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
+        check("[task_019 AC1] exit 1", r.returncode == 1, r.stderr[:200])
+        check("[task_019 AC1] BLOCK in stderr", "BLOCK" in r.stderr, r.stderr)
+        check("[task_019 AC1] github-pat rule named", "github-pat" in r.stderr, r.stderr)
+
+
+def test_task019_ac2_message_private_key_blocks() -> None:
+    """AC2: vibe-content-scan.sh --message with runtime-built private key marker exits 1."""
+    print("\n[task_019 AC2: message with private key blocks]")
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        repo.mkdir()
+
+        # Runtime-constructed private key marker
+        msg_file = Path(td) / "msg.txt"
+        msg_file.write_text("-----BEGIN " + "OPENSSH PRIVATE KEY-----\n")
+
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--message", str(msg_file)], cwd=repo)
+        check("[task_019 AC2] exit 1", r.returncode == 1, r.stderr[:200])
+        check("[task_019 AC2] BLOCK in stderr", "BLOCK" in r.stderr, r.stderr)
+        check("[task_019 AC2] private-key rule named", "private-key" in r.stderr, r.stderr)
+
+
+def test_task019_ac3_staged_rfc1918_ip_warns() -> None:
+    """AC3: vibe-content-scan.sh --staged with RFC1918 IP exits 1, emits WARN line."""
+    print("\n[task_019 AC3: staged RFC1918 IP warns]")
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        repo.mkdir()
+        run(["git", "init"], cwd=repo)
+        run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+        run(["git", "config", "user.name", "Test User"], cwd=repo)
+
+        test_file = repo / "config.txt"
+        test_file.write_text("Server at [redacted-ip]\n")
+        run(["git", "add", "config.txt"], cwd=repo)
+
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
+        check("[task_019 AC3] exit 1", r.returncode == 1, r.stderr[:200])
+        check("[task_019 AC3] WARN in stderr", "WARN" in r.stderr, r.stderr)
+        check("[task_019 AC3] rfc1918-ip rule named", "rfc1918-ip" in r.stderr, r.stderr)
+
+
+def test_task019_ac4_clean_diff_passes() -> None:
+    """AC4: vibe-content-scan.sh --staged on ordinary code exits 0, no findings."""
+    print("\n[task_019 AC4: clean diff passes]")
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        repo.mkdir()
+        run(["git", "init"], cwd=repo)
+        run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+        run(["git", "config", "user.name", "Test User"], cwd=repo)
+
+        test_file = repo / "code.py"
+        test_file.write_text("def hello():\n    print('world')\n")
+        run(["git", "add", "code.py"], cwd=repo)
+
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
+        check("[task_019 AC4] exit 0", r.returncode == 0, r.stderr)
+        check("[task_019 AC4] no findings", len(r.stderr.strip()) == 0, r.stderr)
+
+
+def test_task019_ac5_override_bypasses_and_logs() -> None:
+    """AC5: VIBE_CONTENT_GUARD=off bypasses scan, exits 0, logs loudly."""
+    print("\n[task_019 AC5: override bypasses and logs]")
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        repo.mkdir()
+        run(["git", "init"], cwd=repo)
+        run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+        run(["git", "config", "user.name", "Test User"], cwd=repo)
+
+        token = "ghp_" + ("A" * 36)
+        test_file = repo / "secret.txt"
+        test_file.write_text(f"My secret is {token}\n")
+        run(["git", "add", "secret.txt"], cwd=repo)
+
+        env = {**os.environ, "VIBE_CONTENT_GUARD": "off"}
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo, env=env)
+        check("[task_019 AC5] exit 0", r.returncode == 0, r.stderr)
+        check("[task_019 AC5] logs OVERRIDE", "OVERRIDE" in r.stderr, r.stderr)
+        check("[task_019 AC5] names rule(s)", "github-pat" in r.stderr, r.stderr)
+
+
+def test_task019_ac6_allowlist_suppresses_finding() -> None:
+    """AC6: .vibe-content-allow suppresses findings matching its regex."""
+    print("\n[task_019 AC6: allowlist suppresses]")
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        repo.mkdir()
+        run(["git", "init"], cwd=repo)
+        run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+        run(["git", "config", "user.name", "Test User"], cwd=repo)
+
+        # Create allowlist that matches the IP
+        (repo / ".vibe-content-allow").write_text("192\\.168\\.0\\.35\n")
+
+        test_file = repo / "config.txt"
+        test_file.write_text("Server at [redacted-ip]\n")
+        run(["git", "add", "config.txt"], cwd=repo)
+
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
+        check("[task_019 AC6] exit 0 with allowlist", r.returncode == 0, r.stderr)
+        check("[task_019 AC6] no findings", len(r.stderr.strip()) == 0, r.stderr)
+
+        # Without allowlist, same content should fail
+        repo2 = Path(td) / "repo2"
+        repo2.mkdir()
+        run(["git", "init"], cwd=repo2)
+        run(["git", "config", "user.email", "test@example.com"], cwd=repo2)
+        run(["git", "config", "user.name", "Test User"], cwd=repo2)
+
+        test_file2 = repo2 / "config.txt"
+        test_file2.write_text("Server at [redacted-ip]\n")
+        run(["git", "add", "config.txt"], cwd=repo2)
+
+        r2 = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo2)
+        check("[task_019 AC6] exit 1 without allowlist", r2.returncode == 1, r2.stderr)
+
+
+def test_task019_ac7_guard_off_marker_skips_scan() -> None:
+    """AC7: .vibe-content-guard-off marker makes scanner exit 0 immediately."""
+    print("\n[task_019 AC7: guard-off marker skips]")
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        repo.mkdir()
+        run(["git", "init"], cwd=repo)
+        run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+        run(["git", "config", "user.name", "Test User"], cwd=repo)
+
+        # Create opt-out marker
+        (repo / ".vibe-content-guard-off").write_text("")
+
+        token = "ghp_" + ("A" * 36)
+        test_file = repo / "secret.txt"
+        test_file.write_text(f"My secret is {token}\n")
+        run(["git", "add", "secret.txt"], cwd=repo)
+
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
+        check("[task_019 AC7] exit 0 with marker", r.returncode == 0, r.stderr)
+        check("[task_019 AC7] no stderr output", len(r.stderr.strip()) == 0, r.stderr)
+
+
+def test_task019_ac8_install_hooks() -> None:
+    """AC8: install-claude-extras.sh installs hooks + sets core.hooksPath."""
+    print("\n[task_019 AC8: install hooks]")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td) / "home"
+        home.mkdir()
+        claude_dir = home / ".claude"
+
+        gitconfig = home / ".gitconfig"
+
+        env = {
+            **os.environ,
+            "HOME": str(home),
+            "CLAUDE_CONFIG_DIR": str(claude_dir),
+            "GIT_CONFIG_GLOBAL": str(gitconfig),
+            "VIBE_EXTRAS_SRC_ROOT": str(REPO / "devcontainer"),
+        }
+
+        r = run(["bash", str(INSTALL_EXTRAS)], env=env, cwd=REPO)
+        check("[task_019 AC8] install exits 0", r.returncode == 0, r.stderr[:200])
+
+        hooks_dir = claude_dir / "vibe-git-hooks"
+        check("[task_019 AC8] hooks dir created", hooks_dir.is_dir(), str(hooks_dir))
+        if hooks_dir.is_dir():
+            check("[task_019 AC8] scanner executable", (hooks_dir / "vibe-content-scan.sh").is_file(), str(hooks_dir))
+            check("[task_019 AC8] pre-commit executable", (hooks_dir / "pre-commit").is_file(), str(hooks_dir))
+            check("[task_019 AC8] commit-msg executable", (hooks_dir / "commit-msg").is_file(), str(hooks_dir))
+            check("[task_019 AC8] pre-push executable", (hooks_dir / "pre-push").is_file(), str(hooks_dir))
+
+        # Verify git config set
+        r2 = run(["git", "config", "--global", "core.hooksPath"], env=env)
+        check("[task_019 AC8] core.hooksPath set", str(hooks_dir) in r2.stdout.strip() if r2.stdout.strip() else False, r2.stdout)
+
+
+def test_task019_ac9_audit_history_finds_deleted_secret() -> None:
+    """AC9: vibe audit --history finds secrets deleted in later commits."""
+    print("\n[task_019 AC9: audit finds deleted secret]")
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        repo.mkdir()
+        run(["git", "init"], cwd=repo)
+        run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+        run(["git", "config", "user.name", "Test User"], cwd=repo)
+
+        # Commit 1: add secret
+        token = "ghp_" + ("A" * 36)
+        test_file = repo / "secret.txt"
+        test_file.write_text(f"Secret: {token}\n")
+        run(["git", "add", "secret.txt"], cwd=repo)
+        run(["git", "commit", "-m", "Add secret"], cwd=repo)
+
+        # Get the commit sha
+        r_sha = run(["git", "rev-parse", "HEAD"], cwd=repo)
+        commit_sha = r_sha.stdout.strip()
+
+        # Commit 2: delete secret
+        test_file.unlink()
+        run(["git", "add", "-u"], cwd=repo)
+        run(["git", "commit", "-m", "Remove secret"], cwd=repo)
+
+        # Audit should find the deleted secret
+        r = run(["bash", str(VIBE)] + ["audit", "--history"], cwd=repo)
+        check("[task_019 AC9] audit exit 1", r.returncode == 1, r.stdout + r.stderr)
+        check("[task_019 AC9] BLOCK finding reported", "BLOCK" in r.stdout, r.stdout)
+        check("[task_019 AC9] commit sha in output", commit_sha[:8] in r.stdout, r.stdout)
+
+
+def test_task019_ac10_real_hooks_block_commit() -> None:
+    """AC10: Real pre-commit hook blocks git commit of BLOCK content."""
+    print("\n[task_019 AC10: real hooks block commit]")
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        repo.mkdir()
+        hooks_dir = repo / ".git" / "hooks"
+
+        run(["git", "init"], cwd=repo)
+        run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+        run(["git", "config", "user.name", "Test User"], cwd=repo)
+
+        # Install hooks locally
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        for name in ["pre-commit", "commit-msg", "pre-push"]:
+            src = REPO / "devcontainer" / "git-hooks" / name
+            dst = hooks_dir / name
+            if src.exists():
+                import shutil
+                shutil.copy2(src, dst)
+                dst.chmod(0o755)
+
+        # Copy scanner
+        src = REPO / "devcontainer" / "git-hooks" / "vibe-content-scan.sh"
+        dst = hooks_dir / "vibe-content-scan.sh"
+        if src.exists():
+            import shutil
+            shutil.copy2(src, dst)
+            dst.chmod(0o755)
+
+        # Try to commit clean content first — should succeed
+        test_file = repo / "good.txt"
+        test_file.write_text("Hello world\n")
+        run(["git", "add", "good.txt"], cwd=repo)
+        r_clean = run(["git", "commit", "-m", "Good commit"], cwd=repo)
+        check("[task_019 AC10] clean commit succeeds", r_clean.returncode == 0, r_clean.stderr)
+
+        # Try to commit secret — should fail
+        token = "ghp_" + ("B" * 36)
+        secret_file = repo / "secret.txt"
+        secret_file.write_text(f"Token: {token}\n")
+        run(["git", "add", "secret.txt"], cwd=repo)
+        r_bad = run(["git", "commit", "-m", "Add secret"], cwd=repo)
+        check("[task_019 AC10] secret commit fails", r_bad.returncode != 0, r_bad.stderr)
+
+
+def test_task019_ac11_coauthored_by_trailer_clean() -> None:
+    """AC11: Commit message with Co-Authored-By trailer scans clean."""
+    print("\n[task_019 AC11: Co-Authored-By trailer exempt]")
+    with tempfile.TemporaryDirectory() as td:
+        msg_file = Path(td) / "msg.txt"
+        msg_file.write_text(
+            "Fix something\n"
+            "\n"
+            "Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>\n"
+        )
+
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--message", str(msg_file)], cwd=td)
+        check("[task_019 AC11] exit 0", r.returncode == 0, r.stderr)
+        check("[task_019 AC11] no findings", len(r.stderr.strip()) == 0, r.stderr)
+
+
+def test_task019_ac13_shellcheck_passes() -> None:
+    """AC13: code-check.py (shellcheck) passes on new shell files."""
+    print("\n[task_019 AC13: shellcheck clean]")
+    r = run(["python3", str(REPO / "code-check.py")], cwd=REPO)
+    check("[task_019 AC13] shellcheck exits 0", r.returncode == 0, r.stderr[:200])
+
+
+def test_task019_ac15_content_guard_md_exists() -> None:
+    """AC15: content-guard.md fragment exists and names key concepts."""
+    print("\n[task_019 AC15: content-guard.md exists]")
+    check("[task_019 AC15] file exists", CONTENT_GUARD_MD.is_file(), str(CONTENT_GUARD_MD))
+    if CONTENT_GUARD_MD.is_file():
+        content = CONTENT_GUARD_MD.read_text()
+        check("[task_019 AC15] mentions BLOCK tier", "BLOCK" in content, "")
+        check("[task_019 AC15] mentions WARN tier", "WARN" in content, "")
+        check("[task_019 AC15] mentions override", "VIBE_CONTENT_GUARD=off" in content, "")
+        check("[task_019 AC15] mentions allowlist", ".vibe-content-allow" in content, "")
+        check("[task_019 AC15] mentions opt-out", ".vibe-content-guard-off" in content, "")
+        check("[task_019 AC15] mentions vibe audit", "vibe audit" in content, "")
+
+
+def test_task019_ac16_audit_history_reports_warn_pii() -> None:
+    """AC16: vibe audit --history reports WARN PII findings (exit 0)."""
+    print("\n[task_019 AC16: audit reports WARN findings]")
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        repo.mkdir()
+        run(["git", "init"], cwd=repo)
+        run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+        run(["git", "config", "user.name", "Test User"], cwd=repo)
+
+        # Commit 1: add home path (/.local URL in a URL is not a trailer, so won't be suppressed)
+        test_file = repo / "config.txt"
+        test_file.write_text("Path to config: /Users/myname/project\n")
+        run(["git", "add", "config.txt"], cwd=repo)
+        run(["git", "commit", "-m", "Config"], cwd=repo)
+
+        # Get commit sha
+        r_sha = run(["git", "rev-parse", "HEAD"], cwd=repo)
+        commit_sha = r_sha.stdout.strip()
+
+        # Commit 2: delete path
+        test_file.unlink()
+        run(["git", "add", "-u"], cwd=repo)
+        run(["git", "commit", "-m", "Clean"], cwd=repo)
+
+        # Audit should find WARN but exit 0
+        r = run(["bash", str(VIBE)] + ["audit", "--history"], cwd=repo)
+        check("[task_019 AC16] audit exit 0 on WARN-only", r.returncode == 0, r.stdout + r.stderr)
+        check("[task_019 AC16] WARN finding reported", "WARN" in r.stdout, r.stdout)
+        check("[task_019 AC16] commit sha in output", commit_sha[:8] in r.stdout, r.stdout)
+
+
+def test_task019_ac17_new_branch_push_blocks_only_block_tier() -> None:
+    """AC17: pre-push on new branch scans BLOCK tier only; WARN-only commit pushes."""
+    print("\n[task_019 AC17: pre-push BLOCK-tier-only on new branch]")
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        repo.mkdir()
+
+        # Setup local repo
+        run(["git", "init"], cwd=repo)
+        run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+        run(["git", "config", "user.name", "Test User"], cwd=repo)
+
+        # Create local bare remote
+        bare_remote = Path(td) / "remote.git"
+        bare_remote.mkdir()
+        run(["git", "init", "--bare"], cwd=bare_remote)
+        run(["git", "remote", "add", "origin", str(bare_remote)], cwd=repo)
+
+        # Install hooks
+        hooks_dir = repo / ".git" / "hooks"
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        for name in ["pre-push"]:
+            src = REPO / "devcontainer" / "git-hooks" / name
+            dst = hooks_dir / name
+            if src.exists():
+                import shutil
+                shutil.copy2(src, dst)
+                dst.chmod(0o755)
+
+        # Copy scanner
+        src = REPO / "devcontainer" / "git-hooks" / "vibe-content-scan.sh"
+        dst = hooks_dir / "vibe-content-scan.sh"
+        if src.exists():
+            import shutil
+            shutil.copy2(src, dst)
+            dst.chmod(0o755)
+
+        # Create initial commit on master to establish a branch
+        initial_file = repo / "README.md"
+        initial_file.write_text("# Test repo\n")
+        run(["git", "add", "README.md"], cwd=repo)
+        run(["git", "commit", "-m", "Initial commit"], cwd=repo)
+        run(["git", "push", "-u", "origin", "master"], cwd=repo)
+
+        # Commit with WARN-tier PII (RFC1918 IP) on a new branch
+        run(["git", "checkout", "-b", "feature"], cwd=repo)
+        test_file = repo / "config.txt"
+        test_file.write_text("Server at [redacted-ip]\n")
+        run(["git", "add", "config.txt"], cwd=repo)
+        run(["git", "commit", "-m", "Add config with IP"], cwd=repo)
+
+        # Push new branch should succeed (pre-push scans BLOCK tier only, so WARN is allowed)
+        r = run(["git", "push", "-u", "origin", "feature"], cwd=repo)
+        check("[task_019 AC17] new branch push succeeds", r.returncode == 0, r.stderr)
+
+
 def main() -> int:
     test_help()
     test_version()
@@ -9082,6 +9484,26 @@ def main() -> int:
     test_task017_c4_ac18_remoteenv_shared_token_and_twin_injection()
     test_task017_c4_ac19_claude_md_invariant_text_amended()
     test_task017_c4_ac19_readme_security_section_consistent()
+
+    # task_019 (haiku Tester): regrettable-content guard — ACs 1–17 covering
+    # scanner (BLOCK/WARN tiers, secret patterns, PII rules), git hooks (staged/
+    # message/push), override + allowlist + opt-out semantics, install wiring,
+    # vibe audit history + staged, integration end-to-end.
+    test_task019_ac1_staged_ghp_token_blocks()
+    test_task019_ac2_message_private_key_blocks()
+    test_task019_ac3_staged_rfc1918_ip_warns()
+    test_task019_ac4_clean_diff_passes()
+    test_task019_ac5_override_bypasses_and_logs()
+    test_task019_ac6_allowlist_suppresses_finding()
+    test_task019_ac7_guard_off_marker_skips_scan()
+    test_task019_ac8_install_hooks()
+    test_task019_ac9_audit_history_finds_deleted_secret()
+    test_task019_ac10_real_hooks_block_commit()
+    test_task019_ac11_coauthored_by_trailer_clean()
+    test_task019_ac13_shellcheck_passes()
+    test_task019_ac15_content_guard_md_exists()
+    test_task019_ac16_audit_history_reports_warn_pii()
+    test_task019_ac17_new_branch_push_blocks_only_block_tier()
 
     print()
     if FAILURES:

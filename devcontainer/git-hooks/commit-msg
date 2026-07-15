@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# vibe commit-msg hook (task_019) — thin wrapper translating git's real
+# commit-msg contract ($1 = path to the message file) into the scanner's
+# --message mode. Installed alongside pre-commit/pre-push by
+# install-claude-extras.sh's install_git_hooks().
+#
+# Override without editing this file: VIBE_CONTENT_GUARD=off (or
+# VIBE_ALLOW_COMMIT=1), or the git-native `git commit --no-verify`.
+set -euo pipefail
+
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+SCANNER="$HOOK_DIR/vibe-content-scan.sh"
+
+if [ ! -x "$SCANNER" ]; then
+  echo "vibe commit-msg: scanner not found at $SCANNER — skipping content guard" >&2
+  exit 0
+fi
+
+"$SCANNER" --message "$1"

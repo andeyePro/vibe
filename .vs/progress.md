@@ -296,3 +296,18 @@ task_016 refused to touch), stale-manifest ordering vs postStart, reserved .sign
 Spec approval: self-approved under /vss acts-as-user (autonomous run; Fable rung NOT
 pre-authorised; Generator sonnet C1-C3 / opus C4, Tester haiku, security-review C4 mandatory).
 Dispatching C1 Generator (sonnet).
+
+## task_019 — cycle 1 — PASS (2026-07-15)
+
+Regrettable-content guard (secrets/PII pre-commit+commit-msg+pre-push block + `vibe audit` full-history scan). Spec Critic: pass after 3 iterations (5→1→0 BLOCKING). Generator: sonnet (started + passed at sonnet — no escalation). Tester: haiku, 45 task_019 checks + 1426 pre-existing = 1471/1471, 0 regressions. Shellcheck clean (verified directly on the 4 new hook files + `python3 code-check.py`).
+
+Evaluator (Opus chair) independent verification beyond the Tester's summary:
+- Ran the scanner directly: clean diff → exit 0; runtime-built `ghp_` token → exit 1 with `BLOCK\ts.py:1\tgithub-pat`; `Co-Authored-By: … <noreply@anthropic.com>` message → exit 0 (the make-or-break trailer exemption holds); raw body email → exit 1 WARN. All correct.
+- Dockerfile `COPY git-hooks/` change is necessary install wiring (mirrors `COPY hooks/`), not scope creep.
+- `vibe audit` dispatch correctly placed (after `repos`, before `parse_vibe_args`, dispatch-and-exit).
+- Invariants held: composes with `guard-bash.sh` (force-push still blocks, AC12), single-EXIT-trap invariant respected (Generator's bug #2 routed cleanup through `vibe_exit_hook_add`), firewall/credentials untouched, self-contained.
+- TDD caught two real bugs pre-verdict: (1) pipeline-subshell scoping made the scanner always exit 0 — critical, would have shipped a no-op guard; (2) a second raw `trap EXIT` broke a frozen invariant. Both fixed.
+
+Follow-up filed (not a blocker): `code-check.py` doesn't cover `devcontainer/git-hooks/` (frozen Tester fixture blocked the extension) — TODO Open.
+
+Verdict: PASS. Committing as `/vs cycle 1: pass`. Not pushed.

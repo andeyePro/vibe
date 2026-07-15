@@ -2152,6 +2152,161 @@ repos_handle_subcommand() {
   esac
 }
 
+# ── Content-guard audit (task_019) ────────────────────────────────────────────
+# `vibe audit` is host-side and runs entirely against the CURRENT directory's
+# git repo — no container involved, mirroring `vibe repos`. It uses vibe's
+# OWN source copy of the scanner (DEVCONTAINER_DIR/git-hooks/, not the copy
+# installed into a container's ~/.claude/vibe-git-hooks/), since it operates
+# on the host machine's checkout, not inside a devcontainer.
+
+_audit_scanner_path() {
+  echo "$DEVCONTAINER_DIR/git-hooks/vibe-content-scan.sh"
+}
+
+_audit_require_repo() {
+  local scanner
+  scanner="$(_audit_scanner_path)"
+  if [ ! -x "$scanner" ]; then
+    echo "vibe audit: scanner not found at $scanner" >&2
+    exit 1
+  fi
+  if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
+    echo "vibe audit: not inside a git repository" >&2
+    exit 1
+  fi
+}
+
+_audit_usage() {
+  cat <<'EOF'
+Usage: vibe audit [--history|--staged]
+
+  --history   (default) scan the full repo history, BOTH tiers - every
+              commit's added content (git log -p --all) plus every commit
+              message. Exits 1 only if a BLOCK-class finding is present;
+              WARN-only history exits 0 but the findings are still listed
+              (advisory - this is the Private->Public flip case a
+              forward-looking git-hook layer cannot retroactively cover).
+
+  --staged    scan the currently staged diff on demand (pre-commit
+              equivalent), outside of the git hook flow.
+
+Respects .vibe-content-allow and .vibe-content-guard-off in the repo root.
+Never rewrites history - reports only.
+EOF
+  exit 0
+}
+
+# _audit_staged — thin pass-through to `--staged`, printing the scanner's own
+# stderr findings and propagating its exit code as-is (no aggregation needed:
+# --staged already has the right both-tiers-exit-nonzero semantics).
+_audit_staged() {
+  _audit_require_repo
+  local scanner
+  scanner="$(_audit_scanner_path)"
+  if "$scanner" --staged; then
+    exit 0
+  else
+    exit 1
+  fi
+}
+
+# _audit_history — full-history scan, BOTH tiers, per component 7 of
+# .vs/spec.md. Two passes, each captured to a temp file (findings are on
+# stderr, tab-separated <CLASS>\t<location>\t<rule>\t<snippet>):
+#
+#   1. Content: `git log -p --all` piped through --blob-stdin (default tier
+#      "both"), which tracks `commit <sha>` headers itself and attributes
+#      each finding's location to that commit.
+#   2. Messages: `--message` doesn't know which commit it's scanning (its
+#      location is always the literal "message"), so this loop calls it
+#      once per commit and rewrites the location field to "commit <sha>"
+#      before appending - preserving --message's own both-tier + trailer-
+#      exemption logic without duplicating it.
+#
+# Audit's own exit code is computed HERE, independent of either scanner
+# invocation's exit code (which would return 1 on ANY finding, WARN
+# included): 1 iff a BLOCK-class line appears in the aggregate, 0 otherwise
+# (component 7: "WARN-only history exits 0 but still lists the WARN
+# findings"). Findings are grouped BLOCK-then-WARN in the printed report.
+_audit_history() {
+  _audit_require_repo
+  local scanner
+  scanner="$(_audit_scanner_path)"
+
+  local tmp_content tmp_messages tmp_msgfile
+  tmp_content="$(mktemp)"
+  tmp_messages="$(mktemp)"
+  tmp_msgfile="$(mktemp)"
+  # Register through the single EXIT-trap dispatcher (see "Exit-hook
+  # dispatcher" above) — never a raw `trap ... EXIT` here, which would
+  # silently replace whatever trap slot a later hook installs.
+  vibe_exit_hook_add "rm -f '$tmp_content' '$tmp_messages' '$tmp_msgfile'"
+
+  # Pass 1: full-history content, both tiers, commit-sha location tracking.
+  git log -p --no-color --all 2>/dev/null | "$scanner" --blob-stdin >/dev/null 2>"$tmp_content" || true
+
+  # Pass 2: every commit message, attributed to its own commit sha.
+  : > "$tmp_messages"
+  local sha
+  while IFS= read -r sha; do
+    [ -n "$sha" ] || continue
+    git log -1 --format=%B "$sha" > "$tmp_msgfile" 2>/dev/null || true
+    "$scanner" --message "$tmp_msgfile" 2>&1 1>/dev/null \
+      | awk -F'\t' -v sha="$sha" 'BEGIN{OFS="\t"} NF>=4{$2="commit " sha; print}' \
+      >> "$tmp_messages" || true
+  done < <(git log --all --format=%H 2>/dev/null)
+
+  local has_block=0 any=0
+  if awk -F'\t' '$1=="BLOCK"{f=1} END{exit !f}' "$tmp_content" "$tmp_messages" 2>/dev/null; then
+    has_block=1
+  fi
+
+  echo "vibe audit --history: full-history scan (content + commit messages, both tiers)"
+  if awk -F'\t' '$1=="BLOCK"{f=1} END{exit !f}' "$tmp_content" "$tmp_messages" 2>/dev/null; then
+    echo
+    echo "BLOCK:"
+    awk -F'\t' '$1=="BLOCK"' "$tmp_content" "$tmp_messages"
+    any=1
+  fi
+  if awk -F'\t' '$1=="WARN"{f=1} END{exit !f}' "$tmp_content" "$tmp_messages" 2>/dev/null; then
+    echo
+    echo "WARN (advisory - exit code unaffected):"
+    awk -F'\t' '$1=="WARN"' "$tmp_content" "$tmp_messages"
+    any=1
+  fi
+  if [ "$any" -eq 0 ]; then
+    echo "  clean - no findings across full history"
+  fi
+
+  if [ "$has_block" -eq 1 ]; then
+    exit 1
+  fi
+  exit 0
+}
+
+# audit_handle_subcommand <args...> — top-level dispatcher for `vibe audit`,
+# invoked from its own dispatch block (mirrors `learn`'s and `repos`', see
+# the block immediately before parse_vibe_args below).
+audit_handle_subcommand() {
+  shift  # consume "audit"
+  local subcmd="${1:-}"
+  case "$subcmd" in
+    --history|"")
+      _audit_history
+      ;;
+    --staged)
+      _audit_staged
+      ;;
+    --help|-h)
+      _audit_usage
+      ;;
+    *)
+      echo "vibe audit: unknown option '$subcmd'" >&2
+      exit 1
+      ;;
+  esac
+}
+
 # ── Learning mount helper ─────────────────────────────────────────────────────
 
 # _build_override_config <workspace_abs_path> — collects the bind mounts that
@@ -2424,6 +2579,17 @@ fi
 if [ "${1:-}" = "repos" ]; then
   repos_handle_subcommand "$@"
   # repos_handle_subcommand's sub-functions always exit; this is a safety net.
+  exit $?
+fi
+
+# ── Audit subcommand dispatch (task_019) ──────────────────────────────────────
+# Must be BEFORE the --* flag-parser loop — mirrors `learn`/`repos` above.
+# Host-side only: scans the CURRENT directory's git repo directly, no
+# container involved. Dispatches and exits; does NOT enter workspace
+# resolution, preflight, image build, GitHub setup, or container launch.
+if [ "${1:-}" = "audit" ]; then
+  audit_handle_subcommand "$@"
+  # audit_handle_subcommand's sub-functions always exit; this is a safety net.
   exit $?
 fi
 
