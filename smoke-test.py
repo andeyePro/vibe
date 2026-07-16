@@ -8798,7 +8798,7 @@ def test_task019_ac3_staged_rfc1918_ip_warns() -> None:
         run(["git", "config", "user.name", "Test User"], cwd=repo)
 
         test_file = repo / "config.txt"
-        test_file.write_text("Server at [redacted-ip]\n")
+        test_file.write_text("Server at 192.168.0.99\n")
         run(["git", "add", "config.txt"], cwd=repo)
 
         r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
@@ -8859,10 +8859,10 @@ def test_task019_ac6_allowlist_suppresses_finding() -> None:
         run(["git", "config", "user.name", "Test User"], cwd=repo)
 
         # Create allowlist that matches the IP
-        (repo / ".vibe-content-allow").write_text("192\\.168\\.0\\.35\n")
+        (repo / ".vibe-content-allow").write_text("192\\.168\\.0\\.99\n")
 
         test_file = repo / "config.txt"
-        test_file.write_text("Server at [redacted-ip]\n")
+        test_file.write_text("Server at 192.168.0.99\n")
         run(["git", "add", "config.txt"], cwd=repo)
 
         r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
@@ -8877,7 +8877,7 @@ def test_task019_ac6_allowlist_suppresses_finding() -> None:
         run(["git", "config", "user.name", "Test User"], cwd=repo2)
 
         test_file2 = repo2 / "config.txt"
-        test_file2.write_text("Server at [redacted-ip]\n")
+        test_file2.write_text("Server at 192.168.0.99\n")
         run(["git", "add", "config.txt"], cwd=repo2)
 
         r2 = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo2)
@@ -9136,7 +9136,7 @@ def test_task019_ac17_new_branch_push_blocks_only_block_tier() -> None:
         # Commit with WARN-tier PII (RFC1918 IP) on a new branch
         run(["git", "checkout", "-b", "feature"], cwd=repo)
         test_file = repo / "config.txt"
-        test_file.write_text("Server at [redacted-ip]\n")
+        test_file.write_text("Server at 192.168.0.99\n")
         run(["git", "add", "config.txt"], cwd=repo)
         run(["git", "commit", "-m", "Add config with IP"], cwd=repo)
 

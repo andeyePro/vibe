@@ -63,7 +63,7 @@ Test fixtures must never commit a *literal* real-shaped secret into vibe's repo.
 
 1. `vibe-content-scan.sh --staged` in a temp repo whose staged diff adds a runtime-built `ghp_`+36-char token exits `1` and emits a `BLOCK` line naming rule `github-pat`.
 2. `vibe-content-scan.sh --message <file>` where the file contains a runtime-built OpenSSH "BEGIN … PRIVATE KEY" block marker (the real contiguous form, constructed at test time) exits `1` with a `BLOCK` line (message tier scans secrets).
-3. `vibe-content-scan.sh --staged` on a diff adding `[redacted-ip]`, no allowlist/override, exits `1` AND emits a `WARN` line (class token distinct from `BLOCK`) naming rule `rfc1918-ip`.
+3. `vibe-content-scan.sh --staged` on a diff adding `192.168.0.99`, no allowlist/override, exits `1` AND emits a `WARN` line (class token distinct from `BLOCK`) naming rule `rfc1918-ip`.
 4. `vibe-content-scan.sh --staged` on a clean diff (ordinary code) exits `0` with no findings.
 5. With `VIBE_CONTENT_GUARD=off`, the AC1 scan exits `0` AND prints a stderr line naming the bypass and the skipped rule(s).
 6. **(mechanism, synthetic)** A temp repo with a `.vibe-content-allow` entry whose regex matches the flagged line → that finding is suppressed; a scan whose only finding is allow-listed exits `0`. A second temp repo without the entry → same content exits `1`. (No coupling to live doc text.)
@@ -76,7 +76,7 @@ Test fixtures must never commit a *literal* real-shaped secret into vibe's repo.
 13. `python3 code-check.py` (shellcheck) clean across all shell files including the new scanner + hooks.
 14. `python3 smoke-test.py` — full pre-existing suite still green (no regressions).
 15. A managed fragment `devcontainer/claude-md/content-guard.md` exists naming: the two tiers, the `VIBE_CONTENT_GUARD=off` override, the `.vibe-content-allow`/`.vibe-content-guard-off` files, and `vibe audit`.
-16. `vibe audit --history` on a throwaway repo whose history has an RFC1918 IP (`[redacted-ip]`) in a file committed then later deleted → the WARN finding is **reported** in the audit output (a `WARN` line whose location names the commit) even though exit is `0` (WARN-only history is advisory, not blocking). Proves audit surfaces **both** tiers in history, not just secrets.
+16. `vibe audit --history` on a throwaway repo whose history has an RFC1918 IP (`192.168.0.99`) in a file committed then later deleted → the WARN finding is **reported** in the audit output (a `WARN` line whose location names the commit) even though exit is `0` (WARN-only history is advisory, not blocking). Proves audit surfaces **both** tiers in history, not just secrets.
 17. A commit whose only finding is WARN-tier file content (an RFC1918 IP), landed with `VIBE_CONTENT_GUARD=off` at commit time, then pushed as a new branch through the real installed `pre-push` wrapper → `git push` **succeeds** with no override (pre-push scans BLOCK-tier only for file content, so already-committed WARN PII does not re-block). Proves the pre-push "cries wolf" fix holds.
 
 ## Out of scope (do NOT build)
