@@ -8,6 +8,14 @@ Markers: `[ ]` open · `[!]` failed/abandoned (note what was tried)
 
 **This section is the boot-time checklist Martin reviews when he comes back to vibe.** Items here are blocked on Martin's hands or judgement and CANNOT be progressed autonomously. CLAUDE.md instructs Claude to surface this section on every session start — if you're reading this as Claude, list the unticked items in your opening response and offer to walk Martin through them.
 
+### ⇒ START HERE after the 2026-07-16 rebuild (content-guard + OP-opt-in shipped)
+
+Two vibe-wide behaviour changes shipped and took effect on this rebuild — surface these to Martin first:
+
+- [ ] **Re-enable `/op` in Martin's PRIVATE projects.** OP is now opt-in and OFF by default (task_020). In each private project that uses `/op` (timeandeye, moneyandeye, mailandeye, …): `touch .vibe-allow-op` and leave it UNTRACKED. Do NOT set `VIBE_OP_AUTO=1` (re-exposes OP to public/upstream repos). Until done, `/op` won't connect there.
+- [ ] **Submit the GitHub Support ticket** for vibe's `refs/pull/*`. The 2026-07-16 PII purge rewrote history + deleted branches/tags, but the old (PII-bearing) commits stay reachable via pull-request refs until GitHub GCs them. Drafted 2026-07-16 (subject: "Purge removed sensitive data still reachable via pull-request refs — andeyePro/vibe"); submit at support.github.com/contact.
+- [ ] **Cross-repo PII purge** (timeandeye, moneyandeye, mailandeye, andeyePro, amy-bo/electroPioreactor) — tracked as an URGENT action in OpenProject (General project, filed 2026-07-16). Method proven on vibe. Corrections to the Desktop-drafted script before running: keep author name `Martin Currie` (NOT `Aqueum`); verify author/committer **metadata** (`git log --all --format='%ae %ce'`), not just blob content; use `--force-with-lease=<ref>:<sha>` if run inside a vibe container (guard-bash blocks bare `--force`). Run per-repo via that project's vibe session or the Mac terminal.
+
 ### ⇒ START HERE on relaunch (2026-07-11 pause for macOS update)
 
 - [ ] **Read the handoff note first**: `/brain2/andeye/vibe-handoff-2026-07-11.md` — full narrative of the 2026-07-11 session + the ordered to-do. Everything below in this sub-section is a one-line echo of it.
