@@ -9145,6 +9145,71 @@ def test_task019_ac17_new_branch_push_blocks_only_block_tier() -> None:
         check("[task_019 AC17] new branch push succeeds", r.returncode == 0, r.stderr)
 
 
+# ── task_020: per-project OpenProject MCP opt-in gate ──────────────────────────
+def _op_opted_in_result(env_vars: dict, setup: str) -> str:
+    """Source vibe, build a temp workspace via `setup` (bash setting WS=path),
+    run _op_opted_in "$WS", echo IN/OUT. Returns 'IN' or 'OUT'."""
+    call = (
+        'WS=$(mktemp -d); ' + setup +
+        '; if _op_opted_in "$WS"; then echo RESULT=IN; else echo RESULT=OUT; fi; '
+        'rm -rf "$WS"'
+    )
+    r = _source_vibe_call(env_vars, call)
+    if "RESULT=IN" in r.stdout:
+        return "IN"
+    if "RESULT=OUT" in r.stdout:
+        return "OUT"
+    return f"ERR({r.stdout}{r.stderr})"
+
+
+def test_task020_ac1_default_opted_out() -> None:
+    print("\n[task_020 AC1: default (no signal) -> OP opted OUT]")
+    res = _op_opted_in_result({}, 'git -C "$WS" init -q')
+    check("[task_020 AC1] no VIBE_OP_AUTO + no marker -> OUT", res == "OUT", res)
+
+
+def test_task020_ac2_global_auto_opts_in() -> None:
+    print("\n[task_020 AC2: VIBE_OP_AUTO=1 -> opted IN]")
+    res = _op_opted_in_result({"VIBE_OP_AUTO": "1"}, 'git -C "$WS" init -q')
+    check("[task_020 AC2] VIBE_OP_AUTO=1 -> IN", res == "IN", res)
+
+
+def test_task020_ac3_untracked_marker_opts_in() -> None:
+    print("\n[task_020 AC3: untracked .vibe-allow-op -> opted IN]")
+    res = _op_opted_in_result({}, 'git -C "$WS" init -q; touch "$WS/.vibe-allow-op"')
+    check("[task_020 AC3] untracked marker -> IN", res == "IN", res)
+
+
+def test_task020_ac4_committed_marker_refused() -> None:
+    print("\n[task_020 AC4: COMMITTED .vibe-allow-op refused (forge-resistant)]")
+    setup = (
+        'git -C "$WS" init -q; git -C "$WS" config user.email t@t; '
+        'git -C "$WS" config user.name t; touch "$WS/.vibe-allow-op"; '
+        'git -C "$WS" add .vibe-allow-op; git -C "$WS" commit -qm x'
+    )
+    res = _op_opted_in_result({}, setup)
+    check("[task_020 AC4] committed marker -> OUT (refused)", res == "OUT", res)
+
+
+def test_task020_ac6_non_git_workspace_refused() -> None:
+    print("\n[task_020 AC6: marker in a NON-git workspace refused (fail closed)]")
+    # No `git init` — bare dir with a marker (mimics a ZIP/tarball download).
+    res = _op_opted_in_result({}, 'touch "$WS/.vibe-allow-op"')
+    check("[task_020 AC6] non-git marker -> OUT (fail closed)", res == "OUT", res)
+
+
+def test_task020_ac5_cred_load_gated() -> None:
+    print("\n[task_020 AC5: OP cred load is gated on _op_opted_in]")
+    src = VIBE.read_text(encoding="utf-8")
+    check("[task_020 AC5] cred load guarded by _op_opted_in",
+          'if _op_opted_in "$WORKSPACE"; then' in src
+          and 'OPENPROJECT_MCP_URL=$(lookup_token "OPENPROJECT_MCP_URL")' in src, "")
+    # And the guard precedes the export/forwarder (creds empty when opted out)
+    guarded = src.split('if _op_opted_in "$WORKSPACE"; then', 1)
+    check("[task_020 AC5] opted-out branch empties the creds",
+          len(guarded) == 2 and 'OPENPROJECT_MCP_URL=""' in guarded[1][:400], "")
+
+
 def main() -> int:
     test_help()
     test_version()
@@ -9504,6 +9569,13 @@ def main() -> int:
     test_task019_ac15_content_guard_md_exists()
     test_task019_ac16_audit_history_reports_warn_pii()
     test_task019_ac17_new_branch_push_blocks_only_block_tier()
+
+    test_task020_ac1_default_opted_out()
+    test_task020_ac2_global_auto_opts_in()
+    test_task020_ac3_untracked_marker_opts_in()
+    test_task020_ac4_committed_marker_refused()
+    test_task020_ac6_non_git_workspace_refused()
+    test_task020_ac5_cred_load_gated()
 
     print()
     if FAILURES:

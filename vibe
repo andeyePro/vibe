@@ -86,6 +86,12 @@ PROJECTS_DIR="${VIBE_PROJECTS_DIR:-$HOME/Projects}"
 # but not in subprocesses unless explicitly exported. This lets users write
 # `VIBE_SSH_AUTO=1` (without `export`) in ~/.vibe/config and have it work.
 export VIBE_SSH_AUTO="${VIBE_SSH_AUTO:-}"
+# VIBE_OP_AUTO=1 opts EVERY project on this machine into the OpenProject MCP
+# (task_020). Off by default: OP reaches the user's PRIVATE OpenProject, so it must
+# not auto-activate in a public/upstream project's container. Per-project opt-in is
+# an UNTRACKED .vibe-allow-op marker (see _op_opted_in); this global switch is for a
+# machine whose projects are all private/trusted.
+export VIBE_OP_AUTO="${VIBE_OP_AUTO:-}"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 # Version string. Read from the VERSION file next to the resolved script
@@ -2326,6 +2332,39 @@ _op_mcp_host() {
   printf '%s' "${host%%:*}"
 }
 
+# _op_opted_in <workspace> — true iff THIS project is authorised to activate the
+# OpenProject MCP (task_020). OP reaches the user's PRIVATE OpenProject, so it is
+# OFF by default and must be opted into explicitly — a container for a public /
+# upstream repo must never silently receive the OP bearer. Two opt-in signals:
+#   - VIBE_OP_AUTO=1 in ~/.vibe/config — machine-global (all projects), for a
+#     machine whose repos are all private/trusted.
+#   - an UNTRACKED `.vibe-allow-op` marker in the workspace — per-project.
+# The marker is honoured ONLY with positive proof it is a local, untracked file in a
+# real git work tree — it must fail CLOSED otherwise. A marker COMMITTED to a repo is
+# refused (a malicious PR can't flip it on), AND a marker present where git can't
+# confirm the tracking state (no git, not a work tree, git error) is ALSO refused —
+# otherwise a `.vibe-allow-op` shipped inside a non-git distribution (ZIP download,
+# release tarball, `git archive`) would be accepted as if it were a local opt-in and
+# let untrusted code reach the user's private OpenProject. For a genuinely non-git
+# private workspace, use VIBE_OP_AUTO=1. Absence of both signals → OP not loaded.
+_op_opted_in() {
+  local ws="$1"
+  [ "${VIBE_OP_AUTO:-}" = "1" ] && return 0
+  [ -f "$ws/.vibe-allow-op" ] || return 1
+  # Marker present — require a verifiable git work tree, else refuse (fail closed).
+  if ! git -C "$ws" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "  ⚠ .vibe-allow-op present but this workspace isn't a verifiable git work tree — OP opt-in refused (a marker in a non-git download must not enable OP). Set VIBE_OP_AUTO=1 in ~/.vibe/config for a trusted non-git project." >&2
+    return 1
+  fi
+  # In a work tree — accept only if the marker is NOT tracked (a committed marker
+  # could be forged by a PR).
+  if git -C "$ws" ls-files --error-unmatch .vibe-allow-op >/dev/null 2>&1; then
+    echo "  ⚠ .vibe-allow-op is COMMITTED to this repo — ignored (OP opt-in must be a local, untracked file; a committed marker could be forged by a PR). 'touch .vibe-allow-op' locally to enable." >&2
+    return 1
+  fi
+  return 0
+}
+
 # Start the Mac-side TCP forwarder (127.0.0.1:$OP_MCP_FWD_PORT -> <op-host>:443)
 # so the non-tailnet container can reach the tailnet-only sidecar via --add-host.
 # Unprivileged, lifecycle-detached, and idempotent: the forwarder self-exits if
@@ -2967,8 +3006,17 @@ export ZOTERO_API_KEY
 # in-container registration (register-op-mcp.sh). OPENPROJECT_MCP_FWD_PORT is the
 # loopback port both sides agree on. Staging creds with no live sidecar is
 # harmless — the in-container registration is reachability-gated.
-OPENPROJECT_MCP_URL=$(lookup_token "OPENPROJECT_MCP_URL")
-OPENPROJECT_MCP_BEARER=$(lookup_token "OPENPROJECT_MCP_BEARER")
+# Per-project opt-in gate (task_020): only load the OP creds — and therefore only
+# start the forwarder, inject --add-host, and pass the bearer into the container —
+# when THIS project has opted in. Otherwise both stay empty and the whole OP path
+# no-ops (the bearer never reaches a container that didn't ask for it).
+if _op_opted_in "$WORKSPACE"; then
+  OPENPROJECT_MCP_URL=$(lookup_token "OPENPROJECT_MCP_URL")
+  OPENPROJECT_MCP_BEARER=$(lookup_token "OPENPROJECT_MCP_BEARER")
+else
+  OPENPROJECT_MCP_URL=""
+  OPENPROJECT_MCP_BEARER=""
+fi
 OPENPROJECT_MCP_FWD_PORT="$OP_MCP_FWD_PORT"
 export OPENPROJECT_MCP_URL OPENPROJECT_MCP_BEARER OPENPROJECT_MCP_FWD_PORT
 _ensure_op_forwarder
@@ -3054,6 +3102,13 @@ fi
 _zotero_banner="$(_zotero_source)"
 if [ -n "$_zotero_banner" ] && [ -d "$_zotero_banner" ]; then
   echo "     zotero  : /zotero (ro) @ ${_zotero_banner}"
+fi
+# OpenProject MCP status (task_020): only announce when this project opted in AND
+# creds are staged (i.e. /op is actually wired). Silence otherwise — a project that
+# didn't opt in never learns OP exists, which is the point.
+if [ -n "$OPENPROJECT_MCP_URL" ]; then
+  if [ "${VIBE_OP_AUTO:-}" = "1" ]; then _op_why="VIBE_OP_AUTO"; else _op_why=".vibe-allow-op"; fi
+  echo "     op      : /op enabled (opted in via ${_op_why})"
 fi
 # Shared-repos header (AC4): driven entirely by SHARED_REPOS_SCAN's M/B/N/U
 # tags (see shared_repos_scan's comment) — one ◆ line per MOUNTED repo, one

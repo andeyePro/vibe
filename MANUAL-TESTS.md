@@ -919,3 +919,14 @@ ls "$(git config --global core.hooksPath)"   # scanner + pre-commit + commit-msg
 - [ ] `vibe audit --history` in vibe's OWN repo checkout exits `0` (the
       shipped `.vibe-content-allow` keeps the hygiene-doc example PII from
       tripping the guard on vibe's own tracked content)
+
+---
+
+### Test 36: OpenProject MCP per-project opt-in (task_020)
+
+Needs OP creds staged in `~/.vibe/tokens` (`OPENPROJECT_MCP_URL` / `OPENPROJECT_MCP_BEARER`) and the sidecar/forwarder reachable.
+
+- [ ] In a project with **no** `.vibe-allow-op` and `VIBE_OP_AUTO` unset, launch `vibe`: the banner shows **no** `op :` line; inside, `claude mcp list` does **not** list `openproject`; `env | grep OPENPROJECT` shows the bearer is **absent** from the container env.
+- [ ] `touch .vibe-allow-op` in that project (leave it untracked), relaunch: banner shows `op : /op enabled (opted in via .vibe-allow-op)`; `claude mcp list` shows `openproject` connected; `/op` works.
+- [ ] `git add .vibe-allow-op && git commit`, relaunch: the launcher warns the committed marker is ignored, the `op :` line is gone, and `/op` is unavailable again (a committed marker must not enable OP).
+- [ ] Set `VIBE_OP_AUTO=1` in `~/.vibe/config`, relaunch a project with no marker: `op :` line shows `opted in via VIBE_OP_AUTO`; `/op` works everywhere.
