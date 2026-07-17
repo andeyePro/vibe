@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -19,11 +20,57 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent
 
+KNOWN_SHELLS = {"sh", "bash", "dash", "ksh", "zsh", "ash"}
+
+
+def is_shell_script(path: Path) -> bool:
+    """True iff path's first line is a shebang resolving to a known shell.
+
+    Defensive: any read failure (missing file, permission, non-UTF-8 bytes)
+    or an empty/first-lineless file returns False, never raises.
+    """
+    try:
+        with open(path, "r", errors="ignore") as f:
+            first_line = f.readline()
+    except (OSError, UnicodeError):
+        return False
+
+    if not first_line.startswith("#!"):
+        return False
+
+    tokens = first_line[2:].split()
+    if not tokens:
+        return False
+
+    first = Path(tokens[0]).name
+    if first != "env":
+        interpreter = first
+    else:
+        interpreter = None
+        for tok in tokens[1:]:
+            if tok.startswith("-"):
+                continue
+            interpreter = Path(tok).name
+            break
+        if interpreter is None:
+            return False
+
+    return interpreter in KNOWN_SHELLS
+
 
 def scripts() -> list[Path]:
+    override = os.environ.get("CODE_CHECK_SCRIPTS")
+    if override:
+        return [Path(p) for p in override.split(os.pathsep)]
+
     candidates = [REPO / "vibe", REPO / "install.sh"]
     candidates += sorted((REPO / "devcontainer").glob("*.sh"))
     candidates += sorted((REPO / "devcontainer" / "hooks").glob("*.sh"))
+    candidates += sorted(
+        p
+        for p in (REPO / "devcontainer" / "git-hooks").iterdir()
+        if p.is_file() and is_shell_script(p)
+    )
     return [p for p in candidates if p.exists()]
 
 

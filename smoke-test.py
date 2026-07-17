@@ -448,36 +448,26 @@ def _make_good_script(path: Path) -> None:
     path.chmod(0o755)
 
 
-def _patched_code_check(tmp: Path, target_paths: list[Path]) -> Path:
-    """Copy code-check.py into tmp, rewrite scripts() to return target_paths.
+def _patched_code_check(tmp: Path, target_paths: list[Path]) -> tuple[Path, dict[str, str]]:
+    """Point code-check.py's scripts() env seam at exactly target_paths.
 
-    Returns the path to the patched copy so callers can invoke it with
-    `python3 <returned path> --json`.  The patched copy's REPO constant is
-    pinned to the real repo root so relative-path logic works, and scripts()
-    returns an explicit list of target_paths — all of which must live inside
-    REPO so that relative_to(REPO) succeeds.
+    Returns (CODE_CHECK, env) — callers invoke the REAL code-check.py with
+    `run(["python3", str(target), "--json"], env=env, cwd=REPO)`. This
+    drives scripts() via the CODE_CHECK_SCRIPTS env seam (os.pathsep-
+    separated, exact list, no globbing, no .exists() filter) rather than
+    source-text-replacing scripts()'s body, so future edits to scripts()
+    can never silently no-op this fixture again.
+
+    The override is subprocess-scoped only: it is built into a fresh copy
+    of os.environ and returned for the caller to pass via run(env=...). It
+    never touches this process's own os.environ, so it cannot leak into
+    later tests in main()'s fixed sequence (`tmp` is accepted for call-site
+    compatibility but unused now — no temp file is written).
     """
-    original = CODE_CHECK.read_text()
-    # Pin REPO to the real repo root (the copy lives in a temp dir, so
-    # Path(__file__).resolve().parent would be wrong).
-    patched = original.replace(
-        "REPO = Path(__file__).resolve().parent",
-        f"REPO = Path({str(REPO)!r})",
-    )
-    # Build a literal Python list expression for the paths.
-    paths_repr = "[" + ", ".join(f"Path({str(p)!r})" for p in target_paths) + "]"
-    # Replace the scripts() body with a hardcoded return.
-    patched = patched.replace(
-        "def scripts() -> list[Path]:\n"
-        "    candidates = [REPO / \"vibe\", REPO / \"install.sh\"]\n"
-        "    candidates += sorted((REPO / \"devcontainer\").glob(\"*.sh\"))\n"
-        "    candidates += sorted((REPO / \"devcontainer\" / \"hooks\").glob(\"*.sh\"))\n"
-        "    return [p for p in candidates if p.exists()]",
-        f"def scripts() -> list[Path]:\n    return {paths_repr}",
-    )
-    out = tmp / "code-check-patched.py"
-    out.write_text(patched)
-    return out
+    del tmp  # no longer needed: no patched copy is written to disk
+    env = os.environ.copy()
+    env["CODE_CHECK_SCRIPTS"] = os.pathsep.join(str(p) for p in target_paths)
+    return CODE_CHECK, env
 
 
 # AC1 ─────────────────────────────────────────────────────────────────────────
@@ -541,8 +531,8 @@ def test_code_check_json_finding_schema() -> None:
         bad = REPO / "_smoke_test_bad_script.sh"
         try:
             _make_bad_script(bad)
-            patched = _patched_code_check(tmp, [bad])
-            r = run(["python3", str(patched), "--json"], cwd=REPO)
+            target, ccenv = _patched_code_check(tmp, [bad])
+            r = run(["python3", str(target), "--json"], env=ccenv, cwd=REPO)
             # Exit 1 expected (findings present)
             try:
                 data = json.loads(r.stdout)
@@ -584,8 +574,8 @@ def test_code_check_json_findings_exit1_and_count() -> None:
         bad = REPO / "_smoke_test_bad_ac4.sh"
         try:
             _make_bad_script(bad, varname="myunused")
-            patched = _patched_code_check(tmp, [bad])
-            r = run(["python3", str(patched), "--json"], cwd=REPO)
+            target, ccenv = _patched_code_check(tmp, [bad])
+            r = run(["python3", str(target), "--json"], env=ccenv, cwd=REPO)
             check("[json] AC4 exit 1 when findings present", r.returncode == 1,
                   f"exit={r.returncode} stderr={r.stderr[:200]}")
             try:
@@ -718,8 +708,8 @@ def test_code_check_json_summary_counts() -> None:
             _make_bad_script(bad1, varname="unused_one")
             _make_bad_script(bad2, varname="unused_two")
             _make_good_script(good)
-            patched = _patched_code_check(tmp, [bad1, bad2, good])
-            r = run(["python3", str(patched), "--json"], cwd=REPO)
+            target, ccenv = _patched_code_check(tmp, [bad1, bad2, good])
+            r = run(["python3", str(target), "--json"], env=ccenv, cwd=REPO)
             try:
                 data = json.loads(r.stdout)
             except json.JSONDecodeError:
@@ -773,6 +763,255 @@ def test_code_check_json_same_target_list() -> None:
     check("[json] AC10 --json files_checked == human mode paths",
           json_paths == human_paths,
           f"json_paths={sorted(json_paths)} human_paths={sorted(human_paths)}")
+
+
+# ── task_025: git-hooks shellcheck coverage + CODE_CHECK_SCRIPTS env seam ──────
+
+
+def _load_code_check_module():
+    """Import code-check.py as a module (its filename isn't a valid Python
+    module name, hence importlib.util.spec_from_file_location) so
+    is_shell_script can be called directly for AC2. Safe: the module's only
+    top-level side effect is defining names — main() runs solely under
+    `if __name__ == "__main__":`, which is false for an imported module."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("code_check_module", CODE_CHECK)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_task025_ac1_git_hooks_in_default_set() -> None:
+    """AC1: default scripts() (CODE_CHECK_SCRIPTS unset) includes all four
+    devcontainer/git-hooks/ files, by repo-relative path, via --json
+    files_checked."""
+    print("\n[task_025 AC1: git-hooks covered by default]")
+    env = os.environ.copy()
+    env.pop("CODE_CHECK_SCRIPTS", None)
+    r = run(["python3", str(CODE_CHECK), "--json"], env=env, cwd=REPO)
+    try:
+        data = json.loads(r.stdout)
+    except json.JSONDecodeError:
+        check("[task025] AC1 parse --json output", False, r.stdout[:200])
+        return
+    files_checked = set(data.get("files_checked", []))
+    expected = {
+        "devcontainer/git-hooks/vibe-content-scan.sh",
+        "devcontainer/git-hooks/commit-msg",
+        "devcontainer/git-hooks/pre-commit",
+        "devcontainer/git-hooks/pre-push",
+    }
+    check("[task025] AC1 default set includes all 4 git-hooks files",
+          expected.issubset(files_checked),
+          f"missing={expected - files_checked} files_checked={sorted(files_checked)}")
+
+
+def test_task025_ac2_is_shell_script_predicate() -> None:
+    """AC2: is_shell_script resolves every pinned shebang case, and never
+    raises on binary/nonexistent input."""
+    print("\n[task_025 AC2: is_shell_script predicate]")
+    module = _load_code_check_module()
+    is_shell_script = module.is_shell_script
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        cases: list[tuple[str, bytes, bool]] = [
+            ("env-bash-no-ext", b"#!/usr/bin/env bash\necho hi\n", True),
+            ("bin-sh", b"#!/bin/sh\necho hi\n", True),
+            ("bin-bash", b"#!/bin/bash\necho hi\n", True),
+            ("env-zsh", b"#!/usr/bin/env zsh\necho hi\n", True),
+            ("env-fish", b"#!/usr/bin/env fish\necho hi\n", False),
+            ("python3-shebang", b"#!/usr/bin/python3\nprint('hi')\n", False),
+            ("no-shebang", b"echo hi\n", False),
+            ("empty-file", b"", False),
+            ("env-dash-S-bash-x", b"#!/usr/bin/env -S bash -x\necho hi\n", True),
+            ("env-alone", b"#!/usr/bin/env\necho hi\n", False),
+            ("bare-bang", b"#!\necho hi\n", False),
+            ("whitespace-only", b"#!   \necho hi\n", False),
+        ]
+        for label, content, expected in cases:
+            p = tmp / f"case-{label}"
+            p.write_bytes(content)
+            got = is_shell_script(p)
+            check(f"[task025] AC2 {label} -> {expected}", got is expected,
+                  f"got={got!r} expected={expected!r}")
+
+        # Non-UTF-8 / binary first line -> False, no exception raised.
+        binary_path = tmp / "case-binary"
+        binary_path.write_bytes(bytes([0xFF, 0xFE, 0x00, 0x01, 0x02, 0x03] * 8))
+        raised = False
+        got = None
+        try:
+            got = is_shell_script(binary_path)
+        except Exception:  # noqa: BLE001 - the defensive no-raise contract under test
+            raised = True
+        check("[task025] AC2 binary first line -> False, no exception",
+              (not raised) and got is False, f"raised={raised} got={got!r}")
+
+        # Nonexistent path -> False, no exception (OSError swallowed).
+        missing_path = tmp / "does-not-exist"
+        raised = False
+        got = None
+        try:
+            got = is_shell_script(missing_path)
+        except Exception:  # noqa: BLE001
+            raised = True
+        check("[task025] AC2 nonexistent path -> False, no exception",
+              (not raised) and got is False, f"raised={raised} got={got!r}")
+
+
+def test_task025_ac3_env_seam_exact_list() -> None:
+    """AC3: CODE_CHECK_SCRIPTS set to two os.pathsep-separated paths (one
+    nonexistent) -> scripts() returns exactly those two Paths, in order, no
+    globbing/dedup/.exists() filter. The override is subprocess-scoped only
+    (never mutates this process's os.environ), so it cannot leak into the
+    two frozen bare-run tests later in main()'s fixed sequence."""
+    print("\n[task_025 AC3: env seam exact-list, subprocess-scoped]")
+    check("[task025] AC3 parent os.environ has no CODE_CHECK_SCRIPTS before test",
+          "CODE_CHECK_SCRIPTS" not in os.environ,
+          f"present={os.environ.get('CODE_CHECK_SCRIPTS')!r}")
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        real = tmp / "real-script.sh"
+        real.write_text("#!/bin/bash\necho hi\n")
+        missing = tmp / "does-not-exist.sh"  # deliberately never created
+
+        env = os.environ.copy()
+        env["CODE_CHECK_SCRIPTS"] = os.pathsep.join([str(real), str(missing)])
+
+        script = (
+            "import importlib.util, json\n"
+            f"spec = importlib.util.spec_from_file_location('cc', {str(CODE_CHECK)!r})\n"
+            "m = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(m)\n"
+            "print(json.dumps([str(p) for p in m.scripts()]))\n"
+        )
+        r = run(["python3", "-c", script], env=env, cwd=REPO)
+        check("[task025] AC3 subprocess exits 0", r.returncode == 0, r.stderr[:300])
+        try:
+            got = json.loads(r.stdout.strip())
+        except json.JSONDecodeError:
+            check("[task025] AC3 parse subprocess JSON output", False, r.stdout[:300])
+            return
+        check("[task025] AC3 exact 2-entry list, order preserved, no filter",
+              got == [str(real), str(missing)], f"got={got}")
+
+    check("[task025] AC3 parent os.environ has no CODE_CHECK_SCRIPTS after test",
+          "CODE_CHECK_SCRIPTS" not in os.environ,
+          f"present={os.environ.get('CODE_CHECK_SCRIPTS')!r}")
+
+
+def test_task025_ac4_unset_and_empty_env_falls_through_to_default() -> None:
+    """AC4: CODE_CHECK_SCRIPTS unset OR set to the empty string both fall
+    through to the same default set (AC1's git-hooks-inclusive set)."""
+    print("\n[task_025 AC4: unset/empty env -> default]")
+    script = (
+        "import importlib.util, json\n"
+        f"spec = importlib.util.spec_from_file_location('cc', {str(CODE_CHECK)!r})\n"
+        "m = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(m)\n"
+        "print(json.dumps(sorted(str(p) for p in m.scripts())))\n"
+    )
+    env_unset = os.environ.copy()
+    env_unset.pop("CODE_CHECK_SCRIPTS", None)
+    r_unset = run(["python3", "-c", script], env=env_unset, cwd=REPO)
+    check("[task025] AC4 unset-env subprocess exits 0", r_unset.returncode == 0,
+          r_unset.stderr[:300])
+
+    env_empty = os.environ.copy()
+    env_empty["CODE_CHECK_SCRIPTS"] = ""
+    r_empty = run(["python3", "-c", script], env=env_empty, cwd=REPO)
+    check("[task025] AC4 empty-env subprocess exits 0", r_empty.returncode == 0,
+          r_empty.stderr[:300])
+
+    try:
+        got_unset = json.loads(r_unset.stdout.strip())
+        got_empty = json.loads(r_empty.stdout.strip())
+    except json.JSONDecodeError:
+        check("[task025] AC4 parse both subprocess outputs", False,
+              f"unset={r_unset.stdout[:200]} empty={r_empty.stdout[:200]}")
+        return
+
+    check("[task025] AC4 unset and empty produce the identical default set",
+          got_unset == got_empty, f"unset={got_unset} empty={got_empty}")
+
+    default_names = {Path(p).name for p in got_unset}
+    check("[task025] AC4 default set includes all 4 git-hooks files",
+          {"vibe-content-scan.sh", "commit-msg", "pre-commit", "pre-push"} <= default_names,
+          f"names={default_names}")
+
+
+def test_task025_ac5_real_run_green_and_larger_set() -> None:
+    """AC5: python3 code-check.py exits 0; --json is a single valid object;
+    summary.files reflects the larger (git-hooks-inclusive) default set."""
+    print("\n[task_025 AC5: real run green + larger summary.files]")
+    r = run(["python3", str(CODE_CHECK)], cwd=REPO)
+    check("[task025] AC5 human mode exits 0 (all git-hooks files clean)",
+          r.returncode == 0, f"exit={r.returncode} output={r.stdout[-300:]}")
+
+    rj = run(["python3", str(CODE_CHECK), "--json"], cwd=REPO)
+    check("[task025] AC5 --json exits 0", rj.returncode == 0,
+          f"exit={rj.returncode} stderr={rj.stderr[:200]}")
+    try:
+        data = json.loads(rj.stdout)
+        check("[task025] AC5 --json stdout is a single valid JSON object",
+              isinstance(data, dict), f"type={type(data)}")
+    except json.JSONDecodeError as exc:
+        check("[task025] AC5 --json stdout is a single valid JSON object", False, str(exc))
+        return
+
+    files_checked = data.get("files_checked", [])
+    summary = data.get("summary", {})
+    check("[task025] AC5 summary.files == len(files_checked)",
+          summary.get("files") == len(files_checked),
+          f"summary.files={summary.get('files')} len={len(files_checked)}")
+    git_hooks_in_set = [f for f in files_checked if f.startswith("devcontainer/git-hooks/")]
+    check("[task025] AC5 summary.files includes the 4 git-hooks files",
+          len(git_hooks_in_set) == 4, f"git_hooks_in_set={git_hooks_in_set}")
+
+
+def _patched_code_check_has_scripts_source_replace() -> bool:
+    """True iff _patched_code_check's source contains a `.replace(` call
+    whose argument text includes the substring `def scripts()`
+    (AST-proven) — the regression guard AC7 targets: the PATTERN (a
+    .replace keyed on scripts()'s source), not one literal string."""
+    import ast
+    import inspect
+
+    src = inspect.getsource(_patched_code_check)
+    tree = ast.parse(src)
+    target = "def scripts()"
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "replace"
+        ):
+            for arg in node.args:
+                if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                    if target in arg.value:
+                        return True
+    return False
+
+
+def test_task025_ac7_no_scripts_source_text_replace() -> None:
+    """AC7: _patched_code_check (however reshaped) contains no `.replace(`
+    call keyed on scripts()'s source text."""
+    print("\n[task_025 AC7: no source-text .replace() on scripts()]")
+    import inspect
+    found = _patched_code_check_has_scripts_source_replace()
+    check("[task025] AC7 _patched_code_check has no scripts()-source .replace() call",
+          not found, inspect.getsource(_patched_code_check))
+
+
+def test_task025_ac8_code_check_py_compile() -> None:
+    """AC8: code-check.py passes python3 -m py_compile (its lint gate,
+    since shellcheck itself doesn't cover Python)."""
+    print("\n[task_025 AC8: code-check.py py_compile]")
+    r = run(["python3", "-m", "py_compile", str(CODE_CHECK)], cwd=REPO)
+    check("[task025] AC8 py_compile exits 0", r.returncode == 0,
+          f"exit={r.returncode} stderr={r.stderr[:300]}")
 
 
 # ── vibe --continue / --resume flag tests ──────────────────────────────────────
@@ -10783,6 +11022,13 @@ def main() -> int:
     test_code_check_json_help_mentions_flag()
     test_code_check_json_summary_counts()
     test_code_check_json_same_target_list()
+    test_task025_ac1_git_hooks_in_default_set()
+    test_task025_ac2_is_shell_script_predicate()
+    test_task025_ac3_env_seam_exact_list()
+    test_task025_ac4_unset_and_empty_env_falls_through_to_default()
+    test_task025_ac5_real_run_green_and_larger_set()
+    test_task025_ac7_no_scripts_source_text_replace()
+    test_task025_ac8_code_check_py_compile()
     test_vibe_resume_args_fresh()
     test_vibe_resume_args_continue()
     test_vibe_resume_args_resume_picker()

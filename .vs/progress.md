@@ -436,3 +436,25 @@ default algorithm pinned (no separate *.sh glob); CODE_CHECK_SCRIPTS env-leak is
 _patched_code_check sanctioned under the freeze-anchor exception. NOT security-review-gated
 (dev-lint file selector, not a guard). Spec approval: self-approved under /vss acts-as-user.
 Dispatching Generator (sonnet).
+
+## task_025 — cycle 1 — PASS (2026-07-17)
+
+code-check.py git-hooks coverage via CODE_CHECK_SCRIPTS env seam. Generator: sonnet (passed at
+sonnet). Tester: sonnet, blind — reshaped _patched_code_check to the env seam (sanctioned
+freeze-anchor amendment; 3 previously-red fixture tests now green with identical assertions) +
+30 new assertions across 7 functions. Full suite 1731/0; code-check 19 files (was 15), exit 0;
+py_compile clean. 0 regressions.
+
+Evaluator (Fable 5 chair) beyond the Tester — independent in-process verification of code-check.py:
+- git-hooks coverage: all 4 files (vibe-content-scan.sh, commit-msg, pre-commit, pre-push) in the
+  default set. Env seam: exact 2-path list preserved incl. a nonexistent path (no glob, no exists
+  filter), order kept; empty string falls through to default. is_shell_script edges all correct:
+  bash/sh/zsh True; fish False (basename whitelist, not "sh" substring); python3 False; `env -S
+  bash -x` True; `env` alone / bare `#!` / whitespace-only / empty / binary-first-line all False,
+  none raised.
+- Env-leak safety (the Spec Critic's headline concern): CODE_CHECK_SCRIPTS absent from os.environ
+  after the suite; fixture passes env only via run(env=...). AC7 structural: _patched_code_check
+  no longer text-replaces scripts()'s body — the landmine is permanently retired.
+- NOT security-review-gated (dev-lint file selector, not a guard) — per the spec's explicit note.
+
+Verdict: PASS. Committing as `/vs cycle 1: pass`. Not pushed.
