@@ -1,0 +1,141 @@
+=== task_024 Tester verification log ===
+Date: 2026-07-17T08:52:41Z
+pre-change-sha: c1513945a35309138fd3e9893b0ce0f1177c4275
+
+--- 1. Baseline: python3 smoke-test.py BEFORE any Tester edits (verifies zero pre-existing failures) ---
+  ✓ [task_023 glob ?] exit 1 (ab.txt still WARNs)
+  ✓ [task_023 glob ?] a.txt (one char) suppressed
+  ✓ [task_023 glob ?] ab.txt (two chars) still WARNs
+
+✓ smoke tests passed
+
+--- 2. Empirical AC1 repro (staged) ---
+See transcript; verified: BLOCK secret.txt:2 github-pat, exit=1, path not clobbered by ++ /dev/null spoof
+
+--- 3. AC5 differential: spoof-free real-diff corpus, OLD scanner vs NEW scanner ---
+--range path (scan_diff_stream):
+BYTE-IDENTICAL
+old stderr:
+BLOCK	modme.txt:7	github-pat	ghp_KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+new stderr:
+BLOCK	modme.txt:7	github-pat	ghp_KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+
+--blob-stdin path (scan_blob_stdin), same corpus as a raw -U0 diff stream:
+BYTE-IDENTICAL
+
+--- 4. AC6 differential: git log -p --no-color --all | head -n 12000, OLD vs NEW scanner via --blob-stdin ---
+old exit / new exit:
+old=1
+new=1
+old finding count: 248
+new finding count: 249
+LC_ALL=C sort diff (old vs new):
+150a151
+> WARN	commit 401bf18d60cc5de085d3d92ba6c8eadd18486332	home-path	/Users/myname/
+
+OBJECTIVE ORACLE TRACE — the single differing line:
+  Differing finding: WARN  commit 401bf18d60cc5de085d3d92ba6c8eadd18486332  home-path  /Users/myname/
+  Occurrence count: old=13, new=14 (one extra in NEW).
+  Binary-search isolation confirmed the extra occurrence appears exactly when stream line 7612 is included
+  (upto=7611: old=12 new=12; upto=7612: old=12 new=13).
+  Stream line 7612 (1-indexed in the 12000-line slice):
++++        test_file.write_text("Path to config: /Users/myname/project\n")
+  This line is an ADDED line inside commit 401bf18d's real hunk (a previously-archived
+  .vs/archive/task_022/critiques/cycle-1-files/diff.patch file being added wholesale.)
+  Its raw text on the wire is '+++        test_file.write_text("Path to config: /Users/myname/project\\n")'
+  — three leading '+' chars then a space, which matches the OLD parser's shape-based
+  '"+++ "*' header-noise case (three plus, then space) so the OLD parser drops the ENTIRE
+  line unscanned. The NEW hunk-aware parser is correctly still INSIDE commit 401bf18d's
+  real @@ -declared hunk budget at this point (a plain added line, single leading '+' is the
+  real diff prefix), classifies it by first byte '+' regardless of what follows, strips
+  exactly one '+', and scans the remainder '++        test_file.write_text("Path to config:
+  /Users/myname/project\\n")' as content — finding the embedded /Users/myname/ WARN literal
+  (itself a quoted fixture string inside the nested/archived diff.patch file).
+  This is precisely the deliberate, spec-sanctioned MORE-findings behaviour change
+  (AC1/AC3: a spoof-shaped added line is now scanned as content). It is a genuine, organic
+  occurrence of the exact vulnerability shape this task closes, found in the repo's own
+  history — not a false positive, not a regression.
+  No other differences exist anywhere in the 12000-line slice (0 crashes, both exit=1).
+  AC6 OBJECTIVE ORACLE VERDICT: PASS — the sole difference is mechanically traced to a
+  spoof-shaped line per the AC's own carve-out.
+
+--- 5. AC9: vibe audit --history timing ---
+WARN	commit b4596c1ea50e75bbe05feded3d7cb781ea393672	rfc1918-ip	192.168.0.99
+WARN	commit e1e7bfb886725f5f29cea63892210f67483ccbbd	home-path	/home/runner/
+WARN	identity	commit-identity	redacted@localhost
+(full run took 30.3s wall-clock, real 0m30.318s — under the 60s gate)
+
+--- 6. shellcheck (direct) ---
+clean
+
+--- 7. python3 code-check.py (post Tester edits) ---
+→ shellcheck devcontainer/hooks/copy-last-block.sh
+
+✓ shellcheck clean across 15 files
+
+--- 8. FULL python3 smoke-test.py (post Tester edits) — mandatory regression ---
+  ✓ [task_024 AC2] no finding located in .vs/x (the spoofed path)
+
+[task_024 AC3: spoofed content scanned as content — staged]
+  ✓ [task_024 AC3 staged] exit 1
+  ✓ [task_024 AC3 staged] BLOCK finding(s) in spoofed.txt for the spoofed token
+  ✓ [task_024 AC3 staged] BLOCK finding in zzz_real.txt (correct attribution AFTER the forged-budget probe)
+  ✓ [task_024 AC3 staged] no finding attributed to a bogus '99' line/location from the forged header
+
+[task_024 AC3: spoofed content scanned as content — blob-stdin]
+  ✓ [task_024 AC3 blob-stdin] exit 1
+  ✓ [task_024 AC3 blob-stdin] BLOCK finding present for the spoofed content
+  ✓ [task_024 AC3 blob-stdin] finding attributed to the commit (old parser dropped this line entirely)
+  ✓ [task_024 AC3 blob-stdin] forged-budget probe line produced no finding of its own (exactly the github-pat + secret-assignment pair from the token line, nothing extra)
+
+[task_024 AC3b: zero-byte suppressBlankEmpty context-line exploit]
+  ✓ [task_024 AC3b] fixture genuinely contains a zero-byte context line
+  ✓ [task_024 AC3b] exit 1
+  ✓ [task_024 AC3b] BLOCK github-pat finding present
+  ✓ [task_024 AC3b] finding correctly attributed to the commit (budget did not leak across the file boundary)
+  ✓ [task_024 AC3b] exactly one BLOCK finding (no duplicate/misfired scans from a leaked window)
+
+[task_024 AC4: deleted-line + added-line two-line dance bounded]
+  ✓ [task_024 AC4] exit 1
+  ✓ [task_024 AC4] BLOCK finding attributed to orig.txt (current_file never flipped to evil)
+  ✓ [task_024 AC4] no finding attributed to a file named evil
+
+[task_024 AC5: real-header corpus — frozen findings via --range]
+  ✓ [task_024 AC5] exit 1
+  ✓ [task_024 AC5] exactly 1 finding (--range is block-tier only; the WARN in newfile.txt is skipped)
+  ✓ [task_024 AC5] BLOCK github-pat in modme.txt at the SECOND hunk's real line (multi-hunk attribution)
+  ✓ [task_024 AC5 staged-tier] no finding ever attributed to todelete.txt (deleted file skipped)
+  ✓ [task_024 AC5 staged-tier] no finding from modechange.txt/binaryfile.bin/nonewline.txt/zerocount_del.txt
+
+[task_024 AC7: U3 context lines decrement both, not scanned]
+  ✓ [task_024 AC7] fixture's hunk genuinely carries U3 context (leading-space) lines
+  ✓ [task_024 AC7] exit 1
+  ✓ [task_024 AC7] exactly one finding — the added-line secret
+  ✓ [task_024 AC7] no WARN finding from the context line's IP (context never scanned)
+
+[task_024 AC8: malformed @@ header fail-safe]
+  ✓ [task_024 AC8] no crash: exit code is 0 or 1, not a bash/set -e death
+  ✓ [task_024 AC8] exit 1 (the real secret after the malformed headers is found)
+  ✓ [task_024 AC8] exactly one finding: the real secret, nothing from either malformed-header region
+
+[task_024 AC8: no forks in scan_blob_stdin's new hunk-parsing logic]
+  ✓ [task_024 AC8] scan_blob_stdin (minus the one documented pre-existing awk line): no forbidden external-command names
+  ✓ [task_024 AC8] the one documented pre-existing awk line is actually still there (proves the exclusion above is discriminating, not accidentally matching nothing)
+
+[task_024 AC10: CHANGELOG.md entry present]
+  ✓ [task_024 AC10] CHANGELOG.md exists
+  ✓ [task_024 AC10] CHANGELOG.md mentions task_024
+  ✓ [task_024 AC10] CHANGELOG.md mentions hunk-aware parsing
+
+[task_024 AC10: TODO.md hardening item ticked/removed]
+  ✓ [task_024 AC10] TODO.md exists
+  ✗ [task_024 AC10] the hardening item is no longer open ('- [ ]') in TODO.md — either ticked to [x] or removed entirely now that task_024 has landed the fix
+
+✗ 1 check(s) failed:
+    - [task_024 AC10] the hardening item is no longer open ('- [ ]') in TODO.md — either ticked to [x] or removed entirely now that task_024 has landed the fix
+      still present as an open TODO item
+
+--- 9. python3 code-check.py exit code check ---
+
+code-check.py exit: 0 (clean, 15 files)
+Full smoke-test.py totals: 1699 passed, 1 failed (task_024 AC10 TODO.md bookkeeping gap), exit=1
