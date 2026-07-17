@@ -1,0 +1,1522 @@
+diff --git a/.vibe-content-allow b/.vibe-content-allow
+new file mode 100644
+index 0000000..e3113b7
+--- /dev/null
++++ b/.vibe-content-allow
+@@ -0,0 +1,39 @@
++# vibe's own content-guard allowlist (task_019).
++#
++# One ERE regex per line; `#` comments and blank lines ignored; case-
++# sensitive. A finding is suppressed iff its WHOLE FLAGGED LINE matches
++# (grep -E) an entry below. See devcontainer/claude-md/content-guard.md.
++#
++# Scope: doc/fragment illustrative literals ONLY — the examples below teach
++# the guard's own PII categories in devcontainer/claude-md/project-hygiene.md,
++# ssh-discipline.md, and content-guard.md. None of these are real leaked
++# credentials or a live host this repo depends on.
++
++# Hygiene-doc example PII.
++/Users/martin/
++/Users/<your-name>/
++/Users/<name>/
++mcomz\.local
++pi02\.local
++192\.168\.0\.96
++
++# Claude Code's own runtime-config filename (.claude/settings.local.json,
++# referenced throughout project-hygiene.md) — a false positive against the
++# `.local` mDNS-hostname rule, not a hostname at all.
++settings\.local\.json
++
++# SECURITY.md maintainer contact link.
++github\.com/Aqueum
++
++# Pre-existing tracked-doc literals (CHANGELOG.md / MANUAL-TESTS.md) — none
++# real secrets or live hosts this repo depends on; all predate this guard.
++# CHANGELOG prose "...opus->ask-before-Fable-on-locked-spec" trips the
++# `sk-` OpenAI-key rule as a false positive ("a" + "sk-before-...").
++ask-before-Fable-on-locked-spec
++# CHANGELOG prose naming Docker Desktop's observed host-gateway IP.
++192\.168\.65\.254
++# MANUAL-TESTS git-config example address.
++test@example\.com
++# MANUAL-TESTS ZOTERO_API_KEY fixture value (a documented placeholder, not a
++# real key — matches the secret-named-assignment rule).
++TESTKEY0001testkey0002zz
+diff --git a/.vs/spec.md b/.vs/spec.md
+new file mode 100644
+index 0000000..3a535c0
+--- /dev/null
++++ b/.vs/spec.md
+@@ -0,0 +1,116 @@
++# Spec — task_019: regrettable-content guard (secrets/PII pre-commit + pre-push block + pre-publish audit)
++
++## Task summary
++
++vibe containers commit and push freely under `bypassPermissions`, and in practice have committed personal/inappropriate content — PII, private-machine specifics, and even sensitive detail in commit *messages* — that made Time&I's Private→Public flip painful. Build a **vibe-core** guard that stops regrettable content leaving the machine: a git-hook layer (pre-commit + commit-msg + pre-push) that scans staged content AND commit messages AND the outgoing push range, blocking high-precision secrets and warning on lower-precision PII, with an explicit logged override; plus a host-side `vibe audit` command that scans a repo's **full history** for the Private→Public case a forward-looking hook cannot retroactively cover. It ships to every container via `install-claude-extras.sh` and must not false-positive on vibe's own repo (which deliberately contains example PII in its hygiene docs), on the mandatory `Co-Authored-By` commit trailer, or on intentionally-private repos (e.g. a brain2 knowledge base committed by its gardener).
++
++## Design (locked with Martin — not open for re-litigation)
++
++- **Two-tier response, block-by-default:** BLOCK on high-precision secrets; WARN on lower-precision PII. **Both tiers exit non-zero (block) by default** in the non-interactive agent context — the tier is a *confidence/severity label*, not a hard-vs-soft gate (see § WARN semantics). Override bypasses either.
++- **Ships core** — installed for every container, not user-specific.
++- **Self-contained** — pure POSIX/bash + grep ERE, no `gitleaks`/`trufflehog` (not in the firewall allowlist).
++- **Scans commit messages** for secrets, not just diffs (with trailer handling, see below).
++
++## Scanner contract (pinned, so Generator and Tester cannot guess differently)
++
++- **Invocation:** `vibe-content-scan.sh <mode>` where mode is `--staged` | `--message <file>` | `--range <a> <b>` | `--blob-stdin` (raw content on stdin, used by `vibe audit`).
++- **Output line format (one per finding), machine-parseable, tab-separated:**
++  `<CLASS>\t<location>\t<rule>\t<snippet>` — CLASS is the literal token `BLOCK` or `WARN`; location is `file:line` (or `message` / `commit <sha>` for non-file sources); rule is a short rule id (e.g. `github-pat`, `rfc1918-ip`); snippet is the matched substring, truncated to 60 chars. All findings go to stderr; stdout stays empty.
++- **Exit codes:** `0` = clean (or all findings suppressed/overridden); `1` = at least one un-suppressed finding that blocks. **Exit 1, not 2** — 2 is guard-bash.sh's PreToolUse protocol signal and is deliberately not reused here (git only cares zero vs non-zero).
++- **Tier scanning by mode:** `--staged` and `--message` scan **both** tiers. `--range` (pre-push backstop) scans **BLOCK tier only** for file content — rationale: PII already committed was seen by the commit-time gate, so re-flagging it on every push of the same branch is the "cries wolf" failure; pre-push exists to catch *secrets* that reach the push range by any route. `vibe audit --history` scans **both** tiers for file content — it is a one-shot, deliberately-invoked scan with no repeat-nag problem, and WARN-tier PII sitting in history is exactly what a Private→Public flip needs surfaced. Every mode that scans commit messages scans both tiers against those messages (subject to the trailer exemption below).
++- **Built-in default allowlist (scanner-level, applies to EVERY repo, not opt-in):** the scanner always suppresses (a) the `Co-Authored-By:` / `Signed-off-by:` git trailer lines and the literal address `noreply@anthropic.com` and `*.users.noreply.github.com`; (b) email/IP findings on lines matching a standard git trailer (`^[A-Z][A-Za-z-]+:\s`). This is what stops the guard firing on its own commit convention.
++- **Message-tier email rule:** the WARN email rule, when scanning a commit *message*, ignores trailer lines per the built-in allowlist above; it still catches a raw address pasted into free-text message body.
++
++## WARN semantics (resolves the non-TTY ambiguity)
++
++Commits here are made by Claude via the Bash tool with no TTY, so an interactive "confirm y/n" is impossible. Therefore: **both BLOCK and WARN exit non-zero by default** and both are cleared the same way (allowlist entry, opt-out marker, or `VIBE_CONTENT_GUARD=off`). The tier distinction is real but narrow: (1) WARN findings are labelled `WARN` in output and grouped separately in `vibe audit`; (2) a repo can globally silence a whole WARN *class* via config without silencing BLOCK; (3) BLOCK denotes near-certain secrets a human should almost never override, WARN denotes probable PII a human often legitimately keeps (via allowlist). The spec does NOT claim WARN is a softer runtime gate in the agent context — it is not.
++
++## Components (target shape; Generator may refine mechanics, not remove capability)
++
++1. `devcontainer/git-hooks/vibe-content-scan.sh` — the single scanner core implementing the § Scanner contract.
++2. `devcontainer/git-hooks/pre-commit`, `commit-msg`, `pre-push` — thin wrappers translating git's real hook contract into scanner modes:
++   - `pre-commit` → `--staged`.
++   - `commit-msg` → `--message "$1"` ($1 is the message-file path git passes).
++   - `pre-push` → reads stdin lines `<localref> <localsha> <remoteref> <remotesha>`; **per line: if `<localsha>` is all-zeros (branch delete) → skip (nothing to scan); if `<remotesha>` is all-zeros (new branch) → scan commits reachable from localsha but not from any existing remote ref (`git rev-list <localsha> --not --remotes`); else → scan `<remotesha>..<localsha>`.** Empty range → exit 0. (`--not --remotes` scopes across all configured remotes; correct for vibe's one-remote-per-container model. A rare multi-remote first-push to a second remote could under-scan commits already tracked via another remote — accepted limitation, not covered by an AC.)
++3. `install-claude-extras.sh`: new `install_git_hooks()` — copy the hooks dir to `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/vibe-git-hooks/` (chmod +x on the three wrappers + scanner) and set `git config --global core.hooksPath` to that dir inside the container. Idempotent; added to the existing `install_*` call list.
++4. **Per-repo opt-out (single syntax):** a repo-root marker file `.vibe-content-guard-off`. When present, the scanner exits `0` immediately. This exempts an intentionally-private repo whose commits happen *in-container* — the brain2 **gardener** (whose `/workspace` is the brain2 repo and which commits in-container) is the flagship case; reader containers never commit brain2 so are irrelevant here. Absence = guarded (block-by-default).
++5. **Override (per-invocation, logged):** `VIBE_CONTENT_GUARD=off` in the environment bypasses the scan for that one git invocation and prints a loud stderr line naming what was skipped (rule ids). git-native `git commit --no-verify` / `git push --no-verify` also bypass and are documented. Never silent. `VIBE_ALLOW_COMMIT=1` is accepted as an alias.
++6. **Allowlist (precise semantics):** a repo-root `.vibe-content-allow` file — one **ERE regex per line**, `#` comments and blank lines ignored, case-sensitive. A finding is suppressed iff its **whole flagged line** matches (`grep -E`) any allow entry. vibe's own repo ships a `.vibe-content-allow` covering **doc/fragment literals only**: the hygiene-doc example PII (`/Users/martin`, the example IPs, `mcomz.local`/`pi02.local`) and the SECURITY.md maintainer link — so criterion 6 holds. Test fixtures need no allowlist entry: they are runtime-constructed and never staged as literals (§ Dogfooding).
++7. `vibe audit [--history|--staged]` (host-side subcommand in the `vibe` launcher, dispatched like `vibe repos`, before `parse_vibe_args`) — `--history` (default) scans the **full history, BOTH tiers**: all added content across every commit via `git log -p --all` piped through the scanner (`--blob-stdin`), plus every commit message (`git log --all --format=%B`). This catches both a secret and PII (IP/personal-path/`.local`) committed then later deleted — the exact Private→Public case. In `--blob-stdin` audit mode the scanner **tracks the most recent `commit <sha>` header** in the `git log -p` stream and attributes each finding's location to that commit (location = `commit <sha>`), so a human knows where to look. Findings grouped by class (BLOCK then WARN); exit `1` if any BLOCK-class finding, `0` otherwise (WARN-only history exits `0` but still lists the WARN findings — advisory for the flip). `--staged` runs the pre-commit-equivalent scan on demand. Respects `.vibe-content-allow`.
++8. `devcontainer/claude-md/content-guard.md` — managed fragment teaching in-container Claude: the two tiers, the `VIBE_CONTENT_GUARD=off` override, the `.vibe-content-allow`/`.vibe-content-guard-off` files, and `vibe audit` (mirrors `learn-hook.md`).
++9. Docs/tests: `smoke-test.py` `test_task019_*` cases for every AC; a `MANUAL-TESTS.md` section; a `CHANGELOG.md` entry in the same commit; a README mention.
++
++## Dogfooding (how this task lands without fighting its own guard)
++
++Test fixtures must never commit a *literal* real-shaped secret into vibe's repo. Two rules: (1) smoke-test fixtures **construct** bad strings at runtime by concatenation (e.g. `"ghp_" + "A"*36`, `"-----BEGIN " + "OPENSSH PRIVATE KEY-----"`) and write them into throwaway temp repos — so no contiguous secret pattern is ever staged in vibe's own tree; (2) for any unavoidable literal (illustrative strings in docs/fragment), add a matching `.vibe-content-allow` entry. The landing commit of this task may additionally use `VIBE_CONTENT_GUARD=off` if needed, but rule (1) should make that unnecessary.
++
++## Detection rules
++
++**BLOCK tier (high-precision secrets):**
++- GitHub PAT: `ghp_[A-Za-z0-9]{36}`, `github_pat_[A-Za-z0-9_]{22,}`.
++- OpenAI/Anthropic-style: `sk-[A-Za-z0-9-]{20,}`.
++- AWS access key id: `AKIA[0-9A-Z]{16}`.
++- Private key blocks: `-----BEGIN ([A-Z ]+ )?PRIVATE KEY-----`.
++- Secret-named assignment: a key matching `(?i)(secret|token|password|passwd|api[_-]?key|bearer)` assigned (`=`/`:`) a value of ≥16 chars from `[A-Za-z0-9+/=_-]`. (Test fixtures for this rule are runtime-constructed per § Dogfooding.)
++
++**WARN tier (lower-precision PII, source list = `devcontainer/claude-md/project-hygiene.md`):**
++- RFC1918 / link-local IPs: `10.`, `172.(1[6-9]|2[0-9]|3[01]).`, `192.168.`, `169.254.` octet patterns.
++- Personal home paths: `/Users/[^/ ]+/`, `/home/[^/ ]+/` — **excluding** the generic container users `node` and `root`.
++- `.local` mDNS hostnames: `[A-Za-z0-9-]+\.local\b`.
++- Email addresses: `[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}` — with the trailer/noreply exemptions from § Scanner contract.
++
++## Acceptance criteria (mechanical — each verifiable by a smoke-test; fixtures runtime-constructed per § Dogfooding)
++
++1. `vibe-content-scan.sh --staged` in a temp repo whose staged diff adds a runtime-built `ghp_`+36-char token exits `1` and emits a `BLOCK` line naming rule `github-pat`.
++2. `vibe-content-scan.sh --message <file>` where the file contains a runtime-built `-----BEGIN OPENSSH PRIVATE KEY-----` marker exits `1` with a `BLOCK` line (message tier scans secrets).
++3. `vibe-content-scan.sh --staged` on a diff adding `192.0.2.35`, no allowlist/override, exits `1` AND emits a `WARN` line (class token distinct from `BLOCK`) naming rule `rfc1918-ip`.
++4. `vibe-content-scan.sh --staged` on a clean diff (ordinary code) exits `0` with no findings.
++5. With `VIBE_CONTENT_GUARD=off`, the AC1 scan exits `0` AND prints a stderr line naming the bypass and the skipped rule(s).
++6. **(mechanism, synthetic)** A temp repo with a `.vibe-content-allow` entry whose regex matches the flagged line → that finding is suppressed; a scan whose only finding is allow-listed exits `0`. A second temp repo without the entry → same content exits `1`. (No coupling to live doc text.)
++7. A repo-root `.vibe-content-guard-off` marker makes the scanner exit `0` immediately even on AC1 BLOCK content.
++8. Running the real `install-claude-extras.sh` against an isolated `HOME`/`CLAUDE_CONFIG_DIR`/`GIT_CONFIG_GLOBAL` installs the scanner + three wrappers executable under `<cfg>/vibe-git-hooks/`, and afterwards `git config --global core.hooksPath` actually returns that path (real config state, not a stubbed call capture).
++9. `vibe audit --history` on a throwaway repo whose HISTORY contains a runtime-built `ghp_` token that was committed and then **deleted** in a later commit exits `1` and reports the finding as a `BLOCK` line whose location names the specific commit sha (full-history, not HEAD-only); a clean-history repo exits `0`.
++10. **(integration, end-to-end through the installed hooks)** In a throwaway `git init` repo with a local bare remote and `core.hooksPath` pointed at the installed dir: a real `git commit` of clean content succeeds and a real `git commit` of AC1 BLOCK content fails via the actual `pre-commit` wrapper; a real `git push` of a **new branch** whose tip commit added a secret fails via the actual `pre-push` wrapper (exercises the zero-SHA new-branch range rule).
++11. A real Claude-style commit **message** ending `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>` scans **clean** (exit `0`) through `--message` — the built-in trailer exemption holds (guards concern 1: the guard must not fire on its own convention).
++12. The pre-existing `guard-bash.sh` force-push block still fires unchanged (`git push --force` without lease → exit 2) — no regression.
++13. `python3 code-check.py` (shellcheck) clean across all shell files including the new scanner + hooks.
++14. `python3 smoke-test.py` — full pre-existing suite still green (no regressions).
++15. A managed fragment `devcontainer/claude-md/content-guard.md` exists naming: the two tiers, the `VIBE_CONTENT_GUARD=off` override, the `.vibe-content-allow`/`.vibe-content-guard-off` files, and `vibe audit`.
++16. `vibe audit --history` on a throwaway repo whose history has an RFC1918 IP (`192.0.2.35`) in a file committed then later deleted → the WARN finding is **reported** in the audit output (a `WARN` line whose location names the commit) even though exit is `0` (WARN-only history is advisory, not blocking). Proves audit surfaces **both** tiers in history, not just secrets.
++17. A commit whose only finding is WARN-tier file content (an RFC1918 IP), landed with `VIBE_CONTENT_GUARD=off` at commit time, then pushed as a new branch through the real installed `pre-push` wrapper → `git push` **succeeds** with no override (pre-push scans BLOCK-tier only for file content, so already-committed WARN PII does not re-block). Proves the pre-push "cries wolf" fix holds.
++
++## Out of scope (do NOT build)
++
++- Git **history rewriting** / `filter-repo` / BFG. `vibe audit` only *reports*; never rewrites (destructive, separate deliberate op).
++- External scanners (`gitleaks`/`trufflehog`) or any new network dependency.
++- Full Shannon-entropy detection (only the simple secret-named-assignment heuristic in v1).
++- Changing `guard-bash.sh`/`guard-fs.sh`/firewall behaviour beyond composing (AC12 guards this).
++- Per-project OpenProject gating (separate finding → TODO, not this task).
++- Auto-fixing/redacting flagged content — the guard blocks/warns and reports; the human decides.
++- Persisting an override against a specific commit SHA so pre-push doesn't re-scan (avoided instead by pre-push scanning secrets-only — see § Scanner contract).
++
++## Note on `core.hooksPath` global scope (concern 14)
++
++`core.hooksPath` is set `--global` in-container, so it also covers rw `/repos/*` shared repos and (in the gardener) brain2. This is intended — a shared repo may also go public, so guarding it is correct; an intentionally-private one uses `.vibe-content-guard-off`. No interaction with task_017 credential routing (hooks read content, never credentials).
++
++## Test location
++
++`smoke-test.py` — new `test_task019_*` functions (host-side; subprocess-invoke the scanner, install script, and real git hooks against crafted temp repos with runtime-built fixtures; assert exit codes + output tokens), matching the existing `test_task0NN_*` convention. Tester-only and immutable once written. Shellcheck via `code-check.py`.
++
++## Proposed budget
++
++**3 cycles.** C1: scanner core + three wrappers + install wiring + fragment + allowlist/opt-out/override + built-in trailer exemption (ACs 1-8,10-13,15,17). C2: `vibe audit` launcher subcommand + full-history both-tier scan (ACs 9,16). C3: contingency for regressions/AC14 + docs (README, MANUAL-TESTS, CHANGELOG). Fewer if C1 lands broad.
++
++## Model plan
++
++- Planner + Evaluator: session model (Opus chair).
++- Spec Critic: sonnet.
++- Generator: **sonnet**, ceiling **opus** (security-adjacent shell + regex correctness — escalate on a capability-fail, not on spec/test issues).
++- Tester: haiku, → sonnet only if test *quality* is flagged.
++- **Fable rung: NOT pre-authorised** (Fable rationing 2026-07-11; no credit spend without a fresh ask). Well-specified — Sonnet-appropriate.
++
++## Invariants (from CLAUDE.md — must hold)
++
++- Don't weaken the firewall or the existing guard hooks (compose only; AC12).
++- Every PAT stays single-repo; no change to credential routing.
++- Self-contained; must **not** block normal commits in ordinary use — the built-in trailer exemption (AC11), allowlist, opt-out, and pre-push-secrets-only design are what protect this. A guard that cries wolf gets disabled.
+diff --git a/.vs/tasks.json b/.vs/tasks.json
+index b1b2d95..f413483 100644
+--- a/.vs/tasks.json
++++ b/.vs/tasks.json
+@@ -129,5 +129,15 @@
+     "cycle_2_note": "Tester (haiku) added 18 append-only smoke-test.py functions covering AC8 (rw-intent resolution: free-lock grant, live-holder contention fallback + named warning, ro-declared repos never touch the lock, shared_repo_declaration_set_mode at the helper level, PLUS CLI-level vibe repos add --rw: fresh-add-rw, upgrade-in-place, no-silent-downgrade on plain re-add, --rw position-agnostic - the flag wiring landed as an integrator edit mid-cycle after the Tester flagged it missing), AC9 (lock acquire/contend/stale-reclaim/release/torn-meta, all against real backgrounded processes), AC10 (exit dispatcher survives a refusing first hook via evidence files, single trap -p EXIT installer, no raw trap EXIT elsewhere, clipboard-flush + /learn tempfile cleanup both confirmed migrated into vibe_exit_hook_add), and one mode-coherence fixture tying manifest/override-JSON agreement together. Full suite: smoke-test.py 1273/1273 checks passing, 0 regressions in the frozen C1 suite; code-check.py shellcheck clean. Artifacts: .vs/cycle-2/test-output.log, .vs/cycle-2/summary.md.",
+     "cycle_3_note": "Tester (haiku) added 10 append-only smoke-test.py functions (61 checks) covering AC12 (/repo command file shape incl. host/container ~/.vibe boundary + negation-window regression guard, claim path/KEY=VALUE content shape, and a substituted-placeholder run of the documented mkdir+write proving syntactic validity + last-claim-wins overwrite since the claim flow has no sourced vibe helper - pure documentation), AC13 (statusLine \u26a0 rw:<requester> segment: structural regression guard on forceLoginMethod/defaultMode/guard-bash.sh/guard-fs.sh entries, byte-identical spot-check of two frozen fixtures with VIBE_REPOS_DIR pointed at an empty temp dir, and three functional fixtures - holder+request present, request present but not-us-the-holder, holder-but-no-request - all via VIBE_REPOS_DIR/VIBE_PROJECT_NAME env overrides), AC14 (shared-repos.md fragment shape + install-claude-extras.sh gating on VIBE_SHARED_REPOS_MANIFEST across missing/empty/non-empty), and VIBE_PROJECT_NAME plumbing (top-level export site before the _build_override_config command-substitution subshell, remoteEnv-only carriage in devcontainer.json, absent from containerEnv). Full suite: smoke-test.py 1334/1334 checks passing, 0 regressions in the frozen C1/C2 suite; code-check.py shellcheck clean. AC13(c)'s discriminating power verified by hand-running a deliberately broken statusLine variant (holder-equality check removed) and confirming the assertion fails against it. No AC12-AC15 mechanism found unimplemented. Artifacts: .vs/cycle-3/test-output.log, .vs/cycle-3/summary.md.",
+     "cycle_4_note": "Tester (haiku) added 28 append-only smoke-test.py functions (92 checks) covering AC16 (credential-helper.sh driven directly as a stdin->stdout filter: project-slug exact match, shared-slug match gated by the launcher-exported VIBE_SHARED_SLUG_* twin, unknown-repo silence, .git suffix, subdir suffix, trailing-slash-only (both unmatched and on the project's own slug), case-sensitivity, '..' traversal, embedded control byte, shell-metacharacter injection with a no-execution sentinel check, the post-security-review sanitisation-collision hardening (twin-mismatch silence is the gate-discriminating fixture; twin-match still serves correctly; twin-entirely-unset also silences), non-get ops, non-github host, lookalike subdomain host, http-not-https, empty-token-never-served, and a consolidated never-widen attack battery asserting $GITHUB_TOKEN never appears on stdout across 8 simultaneous non-project attempts), AC17 (useHttpPath registered at the same --global scope as credential.helper in setup-git.sh, plus a functional run of setup-git.sh against a fresh sandbox HOME confirming both settings land), AC18 (structural: GITHUB_REPO_SLUG / shared-token / shared-slug-twin exports all sit at column-0 top-level scope strictly outside and before the _build_override_config command-substitution call; functional: render_devcontainer_with_mounts injects matching VIBE_SHARED_TOKEN_*/VIBE_SHARED_SLUG_* remoteEnv passthroughs, remoteEnv-only never containerEnv), AC19 (CLAUDE.md + README text checks for the amended single-repo-PAT/launch-header-blast-radius/never-multi-repo-token wording). Full suite: smoke-test.py 1426/1426 checks passing, 0 regressions in the frozen C1-C3 suite; code-check.py shellcheck clean across 15 files. GAP FOUND: AC18's sanctioned C4 relaxation (missing token for an acked+registered ro repo should WARN and still MOUNT ro) is NOT implemented - shared_repos_scan still hard-blocks with 'B ... no token configured', so the C1 frozen test test_task017_delta_scan_b_token_absent is unchanged and still passes; no frozen-test amendment needed yet, this is UNIMPLEMENTED plumbing for the chair to pick up, not a Tester-side fix. AC20 (security-review) ran mid-cycle with a CLEAR verdict, closing one LOW (the sanitisation-collision twin-check) which this cycle's tests now cover as the gate-discriminating fixture. AC21's MANUAL-TESTS.md end-to-end push section (shared repo / project repo / undeclared repo) has not been authored yet - Generator/chair responsibility per spec, not Tester's. Artifacts: .vs/cycle-4/test-output.log, .vs/cycle-4/summary.md."
++  },
++  {
++    "id": "task_019",
++    "description": "regrettable-content guard: pre-commit/commit-msg/pre-push secret+PII scanner (block-by-default, two-tier, override/allowlist/opt-out) + vibe audit full-history scan; ships core",
++    "implementation_status": "complete",
++    "test_status": "passing",
++    "assigned_to": "generator",
++    "mode": "rigorous",
++    "last_modified": "2026-07-15",
++    "cycle_1_note": "Tester (haiku) added 15 append-only smoke-test.py functions (45 checks) covering AC1-AC17 (AC12/AC14 not testable via smoke-test: AC12 is regression guard on pre-existing guard-bash.sh, AC14 is pre-existing suite integrity - both verified separately). Scanner core tested: BLOCK tier (GitHub PAT, private-key), WARN tier (RFC1918 IP, home-path), clean content. Git hooks tested: real pre-commit blocks secrets; real commit-msg scans messages; pre-push new-branch permits WARN-tier PII (BLOCK-only backstop). Override (VIBE_CONTENT_GUARD=off) logs loudly. Allowlist (.vibe-content-allow regex) suppresses findings. Opt-out marker (.vibe-content-guard-off) immediate exit. Install wiring (install-claude-extras.sh + core.hooksPath) functional. Audit tested: --history finds deleted secrets (attributes to commit SHA), reports WARN-only with exit 0 (advisory). Trailer exemption verified on Co-Authored-By. All fixtures runtime-constructed (no literal secrets in test code). Full suite: smoke-test.py 1471/1471 checks passing (45 task_019 + 1426 pre-existing frozen), 0 regressions; code-check.py shellcheck clean on 15 files. Artifacts: .vs/cycle-1/test-output.log."
+   }
+ ]
+\ No newline at end of file
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 6737293..dcf73e7 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -4,6 +4,10 @@ vibe's done-work audit log. Each entry is a closed task — either successful (`
+ 
+ Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion between TODO and CHANGELOG. Before this date, closed items lived in `TODO.md ## Done`; they migrated here verbatim. New closed items append to this file.
+ 
++## 2026-07-15
++
++- [x] **regrettable-content guard: secrets/PII pre-commit + pre-push block + pre-publish audit (task_019)** — vibe containers commit and push freely under `bypassPermissions`, and in practice that has landed personal/private-machine PII, and even the odd secret, in a repo before anyone noticed — the exact pain the Time&I Private→Public flip surfaced. New self-contained (POSIX/bash + grep ERE only, no `gitleaks`/`trufflehog`, no network) scanner core `devcontainer/git-hooks/vibe-content-scan.sh` implements four modes pinned by `.vs/spec.md`'s Scanner contract — `--staged`, `--message <file>`, `--range <a> <b>`, `--blob-stdin [--tier block]` — emitting tab-separated `<CLASS>\t<location>\t<rule>\t<snippet>` findings to stderr (stdout always empty), exit `1` on any un-suppressed finding, never `2` (reserved for `guard-bash.sh`'s PreToolUse protocol). Two severities, both exit non-zero by default since these commits run non-interactively with no TTY for a y/n prompt: **BLOCK** (GitHub PATs, OpenAI/Anthropic-style keys, AWS access keys, private-key blocks, secret-shaped assignments) and **WARN** (RFC1918/link-local IPs, personal home paths excluding the generic `node`/`root` container users, `.local` mDNS hostnames, email addresses). A built-in allowlist needs no configuration — `Co-Authored-By:`/`Signed-off-by:` trailers and `noreply@anthropic.com`/`*.users.noreply.github.com` are always exempt, and email/IP findings are suppressed on any generic trailer-shaped line — so the guard never fires on its own commit convention (verified against a real Claude-style trailer). Three thin wrappers (`pre-commit` → `--staged`; `commit-msg` → `--message "$1"`; `pre-push` → the zero-SHA rules from spec component 2, scanning BLOCK-tier-only on the outgoing range so already-committed WARN-tier PII doesn't "cry wolf" on every push) translate git's real hook contract into scanner invocations. `install-claude-extras.sh` gains `install_git_hooks()` — copies the hooks dir to `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/vibe-git-hooks/`, chmod +x, sets `git config --global core.hooksPath` — idempotent, wired into the existing call list; Dockerfile gains the matching `COPY git-hooks/`. Two escape hatches, both loud, never silent: a per-invocation `VIBE_CONTENT_GUARD=off` (alias `VIBE_ALLOW_COMMIT=1`) override that still runs the scan and names every skipped rule id on stderr; a per-repo `.vibe-content-guard-off` marker that exempts an intentionally-private repo entirely (the brain2 gardener is the flagship case — its `/workspace` IS brain2 and it commits in-container; `core.hooksPath` is deliberately `--global`, so it also covers rw `/repos/*` shared repos). A repo-root `.vibe-content-allow` (one ERE regex per line, `#`/blank ignored, case-sensitive, whole-flagged-line match) handles known deliberate literals; vibe's own repo ships one covering its hygiene-doc example PII (`/Users/martin`, the example IPs, `mcomz.local`/`pi02.local`) so the guard doesn't fire on its own documentation. New host-side `vibe audit [--history|--staged]` subcommand (dispatches like `vibe repos`, before `parse_vibe_args`, entirely host-side against the current directory's git repo — no container) covers what a forward-looking git-hook layer structurally cannot: `--history` scans the FULL history, both tiers — `git log -p --all` piped through `--blob-stdin` for content (which tracks `commit <sha>` headers itself, so every finding names the exact commit) plus every commit message individually re-attributed from `--message`'s generic `message` location to `commit <sha>` — catching a secret or an IP that was committed and later deleted, the exact Private→Public case. Exit `1` only on a BLOCK-class finding; WARN-only history exits `0` but still lists every WARN finding as advisory. Never rewrites history, only reports. Two implementation notes worth recording: (1) the scanner's diff-parsing helper had to move from a `cmd | function` pipe to process substitution (`function < <(cmd)`) partway through, since bash pipeline components run in subshells and were silently discarding the global finding-accumulator state; (2) `code-check.py`'s `scripts()` was deliberately left untouched (not extended to glob `devcontainer/git-hooks/`) after doing so broke a pre-existing Tester-immutable smoke fixture (`_patched_code_check`) that does a literal-string replace of `scripts()`'s exact source text — shellcheck cleanliness of the new hook scripts is verified directly instead (`shellcheck --shell=bash --severity=warning` on all four files, and manually via `python3 code-check.py` with the git-hooks directory temporarily wired in during development). MANUAL-TESTS gains Test 35 (six sub-cases, the one thing the host-side smoke suite structurally can't see: a live in-container `git commit`/`git push` actually routed through the installed hooks). New managed fragment `devcontainer/claude-md/content-guard.md` teaches every session the two tiers, the override, the allowlist/opt-out files, and `vibe audit`. shellcheck clean across all new shell files; full pre-existing smoke suite green, no regressions.
++
+ ## 2026-07-14
+ 
+ - [x] **brain2 fragment: `inbox/` → `meta/inbox/` path fix** — brain2 moved its `inbox/` fold to `meta/inbox/` (part of Martin's "root = human-facing knowledge only, plumbing under meta/" restructure; the folder move + brain2-internal ref updates landed on the brain2 side). The vibe repo holds a separate copy of the filing guidance in `devcontainer/claude-md/brain2.md`, which `install-claude-extras.sh` bakes into every reader container's `~/.claude/CLAUDE.md`, so the move left that fragment pointing reader containers at the now-gone `/brain2/inbox/` path. Updated all three references (the conceptual `inbox/` tray mention plus the `zotero-queue`/`op-queue` stockpile paths) to `/brain2/meta/inbox/`. Re-bakes into containers on next start; live `~/.claude/CLAUDE.md` copies refresh on next `vibe` launch. Docs-only; shellcheck clean (15 files). Surfaced during the vibe↔brain2 restructure sign-off (`/brain2/andeye/vibe-brain2-restructure.md`), which had recorded the inbox move as complete — this was the missed cross-repo half.
+diff --git a/MANUAL-TESTS.md b/MANUAL-TESTS.md
+index ac95eee..7831726 100644
+--- a/MANUAL-TESTS.md
++++ b/MANUAL-TESTS.md
+@@ -861,3 +861,61 @@ add <owner/repo> <path>` in the project first) and PATs staged for both repos.
+ - [ ] Remove the shared repo's tokens line from ~/.vibe/tokens, relaunch:
+       launch header warns "no PAT staged", the mount still appears ro, local
+       reads work, `git -C /repos/<name> fetch` fails loud
++
++---
++
++### Test 35: content-guard git hooks + `vibe audit` (task_019)
++
++Verifies the regrettable-content guard end-to-end, INSIDE a running vibe
++session (the smoke suite covers the scanner/wrappers/install script/launcher
++as host-side subprocess fixtures; this test is the one thing they can't see —
++that a live in-container `git commit`/`git push` is actually routed through
++the installed hooks).
++
++```bash
++git config --global core.hooksPath   # should print .../vibe-git-hooks
++ls "$(git config --global core.hooksPath)"   # scanner + pre-commit + commit-msg + pre-push
++```
++
++**35a — clean commit unaffected:**
++- [ ] A normal `git commit` in `/workspace` with no secrets/PII in the diff
++      or message succeeds exactly as before (no behaviour change for the
++      common case)
++
++**35b — BLOCK secret is refused, loud, with a rule id:**
++- [ ] Stage a file containing a fake GitHub-PAT-shaped string (e.g.
++      `ghp_` followed by 36 letters) and `git commit` — refused, stderr shows
++      a `BLOCK` line naming `github-pat`
++- [ ] `VIBE_CONTENT_GUARD=off git commit ...` (same content) — succeeds, and
++      stderr additionally shows a loud "OVERRIDE" line naming the skipped
++      rule
++
++**35c — WARN PII is refused too (not silently allowed):**
++- [ ] Stage a file containing any RFC1918 IPv4 address from your own LAN
++      (a `192.168.x.x`/`10.x.x.x`/`172.16-31.x.x` address) and
++      `git commit` — refused, stderr shows a `WARN` line naming
++      `rfc1918-ip` (WARN exits non-zero here — it's a severity label, not a
++      soft gate, since there's no TTY for a y/n prompt)
++
++**35d — pre-push backstop, new branch:**
++- [ ] `VIBE_CONTENT_GUARD=off` a BLOCK-tier commit onto a new local branch,
++      then `git push origin <new-branch>` with NO override — refused by
++      `pre-push`, stderr names the offending commit sha
++
++**35e — `.vibe-content-allow` / `.vibe-content-guard-off`:**
++- [ ] Add a matching ERE line to a repo-root `.vibe-content-allow` for the
++      35c fixture's exact line — the same commit now succeeds with no
++      override
++- [ ] `touch .vibe-content-guard-off` in a scratch repo — commits with
++      BLOCK-tier content in that repo succeed silently (the marker exempts
++      the whole repo; remove it afterwards)
++
++**35f — `vibe audit --history` from the HOST shell (not in-container):**
++- [ ] In a scratch repo where a secret was committed then deleted in a later
++      commit, `vibe audit --history` (run on the Mac, from that repo's
++      directory) exits non-zero and names the specific commit sha — proving
++      it catches what the forward-looking hooks, which only ever saw HEAD at
++      commit time, structurally cannot
++- [ ] `vibe audit --history` in vibe's OWN repo checkout exits `0` (the
++      shipped `.vibe-content-allow` keeps the hygiene-doc example PII from
++      tripping the guard on vibe's own tracked content)
+diff --git a/README.md b/README.md
+index 33dc39a..dc30a88 100644
+--- a/README.md
++++ b/README.md
+@@ -51,6 +51,7 @@ The installer clones vibe to `~/.vibe-src`, symlinks `~/bin/vibe`, and prompts f
+ - `vibe --model <id>` — launch this session on any Claude model id
+ - `vibe learn --init` — one-time setup of the cross-org learning library
+ - `vibe repos add <owner/repo> [path]` — register a private repo this machine mounts read-only at `/repos/<name>` for every project that declares it (`vibe repos list` / `vibe repos remove [--purge]` manage it; see Shared repos above)
++- `vibe audit [--history|--staged]` — host-side, scans the current project's full git history (default) or its staged diff for secrets and PII the git-hook layer below can't retroactively catch (see Content guard below)
+ 
+ Fresh conversation is the default — durable memory lives in `TODO.md`, `CLAUDE.md`, and Claude's auto-memory, not in resumed conversations (which accumulate compaction debt). `--continue` / `--resume` are opt-in for short-horizon pickup.
+ 
+@@ -98,6 +99,10 @@ The name is only a convention — "brain2" is shorthand for "second brain". The
+ - **Claude Pro credentials:** in a named Docker volume (`vibe-claude-config`), not bind-mounted from the host — a compromised container can't leak host credentials unless the firewall is breached.
+ - **Built on Anthropic's [reference devcontainer for Claude Code](https://github.com/anthropics/claude-code/tree/main/.devcontainer)**, lightly patched (shared Claude auth across projects; read-only `~/.ssh` and `~/.gitconfig`; per-repo PAT via a git credential helper). Launches via [`@devcontainers/cli`](https://github.com/devcontainers/cli) with `--override-config` so you never commit `.devcontainer/` into each project.
+ 
++### Content guard: secrets/PII pre-commit + pre-push block + pre-publish audit
++
++vibe containers commit and push under `bypassPermissions`, so a self-contained (no `gitleaks`/`trufflehog`, no network) git-hook layer scans everything before it leaves the machine: `pre-commit` (staged diff), `commit-msg` (the message itself), and `pre-push` (the outgoing push range). Two severities — **BLOCK** on high-precision secrets (GitHub PATs, API keys, AWS keys, private-key blocks, secret-shaped assignments), **WARN** on lower-precision PII (RFC1918/link-local IPs, personal home paths, `.local` hostnames, email addresses) — both exit non-zero by default, since commits here run non-interactively with no TTY for a y/n prompt. Clear a finding with a repo-root `.vibe-content-allow` entry (one ERE regex per line, whole-line match), a `.vibe-content-guard-off` marker (exempts an intentionally-private repo like the brain2 gardener entirely), or `VIBE_CONTENT_GUARD=off` (alias `VIBE_ALLOW_COMMIT=1`) for a one-off override — always logged loudly, never silent. A built-in allowlist (the `Co-Authored-By`/`Signed-off-by` trailer convention, `noreply@anthropic.com`) needs no configuration. `vibe audit --history` (host-side, run from the project directory) covers what a forward-looking hook can't: a repo's full history, both tiers, including content committed then later deleted — the case a Private→Public flip actually needs surfaced before it happens. It only reports; never rewrites history.
++
+ <!-- task_017 C2: fold this subsection into C1's "Shared repos" README section at integration -->
+ ### Shared repos: write access (`rw`)
+ 
+diff --git a/TODO.md b/TODO.md
+index bf867f2..12c2a58 100644
+--- a/TODO.md
++++ b/TODO.md
+@@ -41,6 +41,8 @@ Markers: `[ ]` open · `[!]` failed/abandoned (note what was tried)
+ 
+ ## Open
+ 
++- [ ] **task_019: regrettable-content guard (secrets/PII pre-commit+pre-push block + `vibe audit` full-history scan)** (2026-07-15) — in flight via /vs, spec locked after 3 Spec Critic iterations (`.vs/spec.md`). Two-tier (BLOCK secrets / WARN PII), block-by-default with `VIBE_CONTENT_GUARD=off` override + `.vibe-content-allow` + `.vibe-content-guard-off` opt-out; ships core via install-claude-extras.sh (core.hooksPath); built-in `Co-Authored-By` trailer exemption so it never fires on its own commits. Motivated by Time&I's Private→Public flip pain.
++- [ ] **OP access is machine-global, not per-project — public/upstream projects can reach private OpenProject** (2026-07-15) — OP MCP registration keys off `OPENPROJECT_MCP_URL`/`OPENPROJECT_MCP_BEARER` in `~/.vibe/tokens` (machine-global) + forwarder reachability; there's no per-project gate like SSH's `.vibe-allow-ssh`/`VIBE_SSH_AUTO`. So an upstream-bound public repo's container (e.g. electroPioreactor) would get Martin's private OP if creds are staged + forwarder up. Fix: per-project OP opt-in, exclude upstream/public projects. Flagged by Martin 2026-07-15.
+ - [ ] **shared-repos: mount-set drift doesn't trigger container recreate** (2026-07-11) — `vibe repos add` ends with "Relaunch (vibe) for the mount to take effect", but a plain relaunch REUSES the existing container (`devcontainer up` only recreates on `--rebuild` or image drift, vibe:2938-2940), so a newly-added shared-repo bind mount is silently absent until the user happens to `--rebuild`. Hit live 2026-07-11 adding andeyePro/andeyePro to timeandeye. Fix: extend the drift check to compare the desired shared-repo mount set against the existing container's actual mounts (`docker inspect {{.Mounts}}`) and append `--remove-existing-container` on mismatch; also correct the `vibe repos add` closing message. Same drift check should cover a repo's registry path changing and a declaration being removed.
+ - [ ] **task_017: shared-repos — private repo mounted into multiple projects (FOSS-core freemium dev)** (2026-07-11) — in flight via /vs, 4 cycles: C1 registry/declaration/mounts/header, C2 rw lock, C3 claim + /repo + seam fragment, C4 per-repo credentials (security-review gated). Spec `.vs/spec.md`, locked after 3 Spec Critic iterations. Design settled with Martin in-conversation 2026-07-10/11.
+ - [ ] **Martin: close the licence question — staying MIT?** (2026-07-08) — the brain2 "AGPL3+CLA CONFIRMED" record was a misrecording (Martin confirmed the transfer/publish item, not the licence; brain2 corrected 2026-07-08). Repo wording now reads MIT-and-set-aside; the AGPL/CLA drafts are removed (resurrect from git history if ever wanted). If staying MIT is confirmed, just delete this item.
+diff --git a/devcontainer/Dockerfile b/devcontainer/Dockerfile
+index ed8757f..fb80d81 100644
+--- a/devcontainer/Dockerfile
++++ b/devcontainer/Dockerfile
+@@ -129,6 +129,7 @@ COPY agents/ /usr/local/share/vibe/agents/
+ COPY commands/ /usr/local/share/vibe/commands/
+ COPY claude-md /usr/local/share/vibe/claude-md/
+ COPY hooks/ /usr/local/share/vibe/hooks/
++COPY git-hooks/ /usr/local/share/vibe/git-hooks/
+ USER root
+ RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/guard-bash.sh /usr/local/bin/guard-fs.sh /usr/local/bin/install-claude-extras.sh /usr/local/bin/check-sp-current.sh /usr/local/bin/register-op-mcp.sh /usr/local/bin/vibe-credential-helper /usr/local/bin/vibe-copy && \
+   echo "node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/node-firewall && \
+diff --git a/devcontainer/claude-md/content-guard.md b/devcontainer/claude-md/content-guard.md
+new file mode 100644
+index 0000000..017981e
+--- /dev/null
++++ b/devcontainer/claude-md/content-guard.md
+@@ -0,0 +1,74 @@
++# Regrettable-content guard (git hooks + `vibe audit`)
++
++Every vibe container ships a git-hook layer that scans content BEFORE it
++leaves the machine — staged diffs, commit messages, and outgoing pushes —
++for secrets and personal/private-machine PII. It composes with, and never
++replaces, `guard-bash.sh`'s force-push/branch-delete block.
++
++## Two tiers, both non-blocking-by-default only via explicit override
++
++- **BLOCK** — high-precision secrets: GitHub PATs, OpenAI/Anthropic-style
++  keys, AWS access key ids, private-key blocks, and a generic
++  secret/token/password/api-key-shaped assignment of a long value.
++- **WARN** — lower-precision PII: RFC1918/link-local IPs, personal home
++  paths (`/Users/<name>/`, `/home/<name>/` — excluding the generic
++  container users `node`/`root`), `.local` mDNS hostnames, and email
++  addresses.
++
++Because commits here run non-interactively via the Bash tool (no TTY for a
++y/n prompt), **both tiers exit non-zero by default** — WARN is not a softer
++runtime gate, it is a severity label. Both are cleared the same way: an
++allowlist entry, the opt-out marker, or the loud override below. `git commit
++--no-verify` / `git push --no-verify` also bypass, git-natively.
++
++`pre-commit` and `commit-msg` scan both tiers. `pre-push` re-scans only the
++BLOCK tier on the outgoing push range — PII already committed was already
++seen by the commit-time gate, so re-flagging it on every push of the same
++branch is the "cries wolf" failure that gets a guard disabled; pre-push
++exists to catch secrets that reach the push range by any other route.
++
++## Override: `VIBE_CONTENT_GUARD=off` (or `VIBE_ALLOW_COMMIT=1`)
++
++Set either in the environment to bypass enforcement for that one git
++invocation. Never silent — the scanner prints a loud stderr line naming the
++override and every rule id it skipped. Prefer this over disabling the guard
++outright when a finding is a deliberate one-off (e.g. Martin's own IP in a
++throwaway test fixture that never gets committed for real).
++
++## Per-repo opt-out: `.vibe-content-guard-off`
++
++A repo-root marker file that makes the scanner exit clean immediately, no
++scanning at all. For a repo that's intentionally private end-to-end — the
++brain2 gardener (whose `/workspace` IS the brain2 repo and commits
++in-container) is the flagship case. Reader containers never commit brain2,
++so this never applies to them.
++
++## Per-repo allowlist: `.vibe-content-allow`
++
++A repo-root file, one ERE regex per line (`#` comments and blank lines
++ignored, case-sensitive). A finding is suppressed iff its **whole flagged
++line** matches any entry. Use this for known, deliberate literals — vibe's
++own repo ships one covering the example PII in its own hygiene docs
++(`/Users/martin`, the example IPs, `mcomz.local`/`pi02.local`) and the
++SECURITY.md maintainer link, so the guard never fires on its own
++documentation.
++
++The scanner also has a **built-in allowlist that needs no configuration**:
++`Co-Authored-By:`/`Signed-off-by:` trailer lines, `noreply@anthropic.com`,
++and `*.users.noreply.github.com` are always exempt — this is what stops the
++guard firing on its own commit convention.
++
++## `vibe audit [--history|--staged]`
++
++Host-side command (run from the project directory, like `vibe repos`) that
++scans **beyond** what the forward-looking git hooks can retroactively cover
++— the case a Private→Public repo flip actually needs. `--history` (default)
++scans the full history, both tiers, including content that was committed
++and later deleted: a secret or an IP that only ever existed for a few
++commits is still visible to a clone of the repo's history. Exits `1` only
++if a BLOCK-class finding turns up anywhere in history; WARN-only history
++exits `0` but still lists every WARN finding — advisory, for the human
++doing the flip to review. `--staged` runs the same check as `pre-commit`,
++on demand. `vibe audit` never rewrites history — it only reports; a real
++Private→Public flip needing history rewritten is a separate, deliberate
++operation (`git filter-repo` / BFG), never automated by this guard.
+diff --git a/devcontainer/git-hooks/commit-msg b/devcontainer/git-hooks/commit-msg
+new file mode 100755
+index 0000000..f1fbc0d
+--- /dev/null
++++ b/devcontainer/git-hooks/commit-msg
+@@ -0,0 +1,19 @@
++#!/usr/bin/env bash
++# vibe commit-msg hook (task_019) — thin wrapper translating git's real
++# commit-msg contract ($1 = path to the message file) into the scanner's
++# --message mode. Installed alongside pre-commit/pre-push by
++# install-claude-extras.sh's install_git_hooks().
++#
++# Override without editing this file: VIBE_CONTENT_GUARD=off (or
++# VIBE_ALLOW_COMMIT=1), or the git-native `git commit --no-verify`.
++set -euo pipefail
++
++HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
++SCANNER="$HOOK_DIR/vibe-content-scan.sh"
++
++if [ ! -x "$SCANNER" ]; then
++  echo "vibe commit-msg: scanner not found at $SCANNER — skipping content guard" >&2
++  exit 0
++fi
++
++"$SCANNER" --message "$1"
+diff --git a/devcontainer/git-hooks/pre-commit b/devcontainer/git-hooks/pre-commit
+new file mode 100755
+index 0000000..9107242
+--- /dev/null
++++ b/devcontainer/git-hooks/pre-commit
+@@ -0,0 +1,20 @@
++#!/usr/bin/env bash
++# vibe pre-commit hook (task_019) — thin wrapper translating git's real
++# pre-commit contract into the scanner's --staged mode. Installed by
++# install-claude-extras.sh's install_git_hooks() at
++# ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/vibe-git-hooks/, pointed at by
++# `git config --global core.hooksPath`.
++#
++# Override without editing this file: VIBE_CONTENT_GUARD=off (or
++# VIBE_ALLOW_COMMIT=1), or the git-native `git commit --no-verify`.
++set -euo pipefail
++
++HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
++SCANNER="$HOOK_DIR/vibe-content-scan.sh"
++
++if [ ! -x "$SCANNER" ]; then
++  echo "vibe pre-commit: scanner not found at $SCANNER — skipping content guard" >&2
++  exit 0
++fi
++
++"$SCANNER" --staged
+diff --git a/devcontainer/git-hooks/pre-push b/devcontainer/git-hooks/pre-push
+new file mode 100755
+index 0000000..aaf4651
+--- /dev/null
++++ b/devcontainer/git-hooks/pre-push
+@@ -0,0 +1,76 @@
++#!/usr/bin/env bash
++# vibe pre-push hook (task_019) — thin wrapper translating git's real
++# pre-push contract into the scanner's BLOCK-tier-only backstop.
++#
++# git passes remote name/URL as $1/$2 and feeds stdin lines of the form:
++#   <local ref> <local sha1> <remote ref> <remote sha1>
++#
++# Per line (§ Scanner contract / spec.md component 2):
++#   - local sha all-zeros   -> branch delete, nothing to scan.
++#   - remote sha all-zeros  -> new branch: scan commits reachable from
++#     local sha but not from any existing remote ref
++#     (`git rev-list <local> --not --remotes`), via --blob-stdin --tier block
++#     so multi-commit new-branch pushes get commit-sha-attributed findings.
++#   - otherwise             -> scan <remote sha>..<local sha> via --range,
++#     BLOCK tier only (already-committed WARN-tier PII was seen by the
++#     commit-time gate; re-flagging it on every push is the "cries wolf"
++#     failure pre-push exists to avoid — see spec.md § Scanner contract).
++#
++# Override without editing this file: VIBE_CONTENT_GUARD=off (or
++# VIBE_ALLOW_COMMIT=1), or the git-native `git push --no-verify`.
++set -euo pipefail
++
++HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
++SCANNER="$HOOK_DIR/vibe-content-scan.sh"
++
++if [ ! -x "$SCANNER" ]; then
++  echo "vibe pre-push: scanner not found at $SCANNER — skipping content guard" >&2
++  exit 0
++fi
++
++# is_zero_sha <sha> — true iff every character is '0' (SHA-1 or SHA-256,
++# any length — no hardcoded 40).
++is_zero_sha() {
++  case "$1" in
++    *[!0]*) return 1 ;;
++    "") return 1 ;;
++    *) return 0 ;;
++  esac
++}
++
++status=0
++
++# local_ref/remote_ref are part of git's stdin protocol and must be
++# consumed positionally even though only the two sha fields are used.
++# shellcheck disable=SC2034
++while read -r local_ref local_sha remote_ref remote_sha; do
++  [ -n "${local_sha:-}" ] || continue
++
++  if is_zero_sha "$local_sha"; then
++    continue  # branch delete - nothing to scan
++  fi
++
++  if is_zero_sha "$remote_sha"; then
++    # New branch: commits reachable from local_sha but not from any
++    # existing remote ref.
++    commits_raw="$(git rev-list "$local_sha" --not --remotes 2>/dev/null || true)"
++    [ -n "$commits_raw" ] || continue
++    commit_array=()
++    while IFS= read -r c; do
++      [ -n "$c" ] && commit_array+=("$c")
++    done <<< "$commits_raw"
++    [ "${#commit_array[@]}" -gt 0 ] || continue
++    if ! git log -p --no-color "${commit_array[@]}" 2>/dev/null \
++         | "$SCANNER" --blob-stdin --tier block; then
++      status=1
++    fi
++  else
++    count="$(git rev-list --count "$remote_sha..$local_sha" 2>/dev/null || echo 0)"
++    [ "$count" -gt 0 ] || continue
++    if ! "$SCANNER" --range "$remote_sha" "$local_sha"; then
++      status=1
++    fi
++  fi
++done
++
++exit "$status"
+diff --git a/devcontainer/git-hooks/vibe-content-scan.sh b/devcontainer/git-hooks/vibe-content-scan.sh
+new file mode 100755
+index 0000000..ebc3c6a
+--- /dev/null
++++ b/devcontainer/git-hooks/vibe-content-scan.sh
+@@ -0,0 +1,312 @@
++#!/usr/bin/env bash
++# vibe-content-scan.sh — task_019 regrettable-content guard.
++#
++# Self-contained POSIX/bash + grep ERE scanner for secrets (BLOCK tier) and
++# lower-precision PII (WARN tier). No network, no gitleaks/trufflehog.
++#
++# Invocation:
++#   vibe-content-scan.sh --staged
++#   vibe-content-scan.sh --message <file>
++#   vibe-content-scan.sh --range <a> <b>
++#   vibe-content-scan.sh --blob-stdin [--tier block]
++#
++# Output: one line per finding on STDERR, tab-separated:
++#   <CLASS>\t<location>\t<rule>\t<snippet>
++# CLASS is BLOCK or WARN. stdout is always empty.
++#
++# Exit codes: 0 = clean (or every finding suppressed/overridden); 1 = at
++# least one un-suppressed finding. Never 2 (that is guard-bash.sh's
++# PreToolUse protocol signal, deliberately not reused here).
++#
++# Overrides (both logged loudly, never silent):
++#   VIBE_CONTENT_GUARD=off   — skip enforcement for this invocation
++#   VIBE_ALLOW_COMMIT=1      — alias for the same
++# Per-repo opt-out: a repo-root .vibe-content-guard-off marker file makes
++# this script exit 0 immediately, before any scanning.
++# Per-repo allowlist: a repo-root .vibe-content-allow file, one ERE regex
++# per line (# comments / blank lines ignored, case-sensitive); a finding is
++# suppressed iff its whole flagged line matches (grep -E) any entry.
++#
++# See .vs/spec.md (task_019) for the full pinned contract this implements,
++# and devcontainer/claude-md/content-guard.md for the in-session summary.
++
++set -euo pipefail
++
++# ── Repo root + per-repo opt-out ─────────────────────────────────────────────
++REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)"
++
++if [ -f "$REPO_ROOT/.vibe-content-guard-off" ]; then
++  exit 0
++fi
++
++ALLOWLIST_FILE="$REPO_ROOT/.vibe-content-allow"
++
++# ── Override detection (does not skip scanning — still reports what would
++# have fired, then exits 0 with a loud stderr line naming the bypass). ──────
++GUARD_OVERRIDE=0
++if [ "${VIBE_CONTENT_GUARD:-}" = "off" ] || [ "${VIBE_ALLOW_COMMIT:-}" = "1" ]; then
++  GUARD_OVERRIDE=1
++fi
++
++# ── Finding accumulators (global, mutated by scan_line/check_rule) ─────────
++FOUND=0
++declare -a FOUND_RULES=()
++
++# line_is_allowlisted <content> — true iff the whole line matches any ERE
++# in $ALLOWLIST_FILE (comments/blanks ignored, case-sensitive).
++line_is_allowlisted() {
++  local content="$1"
++  [ -f "$ALLOWLIST_FILE" ] || return 1
++  local pattern
++  while IFS= read -r pattern || [ -n "$pattern" ]; do
++    case "$pattern" in
++      ""|\#*) continue ;;
++    esac
++    if printf '%s' "$content" | grep -qE -- "$pattern" 2>/dev/null; then
++      return 0
++    fi
++  done < "$ALLOWLIST_FILE"
++  return 1
++}
++
++# record_rule <rule> — append to FOUND_RULES if not already present.
++record_rule() {
++  local rule="$1" r
++  for r in "${FOUND_RULES[@]}"; do
++    [ "$r" = "$rule" ] && return 0
++  done
++  FOUND_RULES+=("$rule")
++  return 0
++}
++
++# check_rule <class> <rule> <ere-pattern> <icase:0|1> <content> <location>
++# Emits a finding line to stderr (unless allowlisted) and marks FOUND=1.
++check_rule() {
++  local class="$1" rule="$2" pattern="$3" icase="$4" content="$5" location="$6"
++  local m
++  if [ "$icase" = "1" ]; then
++    m=$(printf '%s' "$content" | grep -oiE -- "$pattern" 2>/dev/null | head -n1) || true
++  else
++    m=$(printf '%s' "$content" | grep -oE -- "$pattern" 2>/dev/null | head -n1) || true
++  fi
++  [ -z "$m" ] && return 0
++
++  if line_is_allowlisted "$content"; then
++    return 0
++  fi
++
++  local snippet="${m:0:60}"
++  printf '%s\t%s\t%s\t%s\n' "$class" "$location" "$rule" "$snippet" >&2
++  FOUND=1
++  record_rule "$rule"
++}
++
++# is_named_trailer <content> — Co-Authored-By: / Signed-off-by: lines are
++# fully exempt from ALL rules (built-in allowlist (a)).
++is_named_trailer() {
++  printf '%s' "$1" | grep -qiE '^(Co-authored-by|Signed-off-by):[[:space:]]'
++}
++
++# is_trailer_line <content> — a generic git-trailer-shaped line
++# (^[A-Z][A-Za-z-]+:\s). Built-in allowlist (b): suppresses email/IP
++# findings specifically (not BLOCK findings) on lines shaped like this.
++is_trailer_line() {
++  printf '%s' "$1" | grep -qE '^[A-Za-z][A-Za-z-]+:[[:space:]]'
++}
++
++# is_noreply_email <matched-address> — the literal exemptions in the
++# built-in allowlist: noreply@anthropic.com and *@*.users.noreply.github.com.
++is_noreply_email() {
++  case "$1" in
++    noreply@anthropic.com) return 0 ;;
++    *@*.users.noreply.github.com) return 0 ;;
++    *) return 1 ;;
++  esac
++}
++
++# check_email_rule <content> <location> — WARN email rule with the
++# noreply/trailer exemptions applied inline (can't be expressed as a single
++# ERE, so it gets its own small function instead of going through check_rule).
++check_email_rule() {
++  local content="$1" location="$2"
++  is_trailer_line "$content" && return 0
++  local m
++  m=$(printf '%s' "$content" | grep -oE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' 2>/dev/null | head -n1) || true
++  [ -z "$m" ] && return 0
++  is_noreply_email "$m" && return 0
++  if line_is_allowlisted "$content"; then
++    return 0
++  fi
++  local snippet="${m:0:60}"
++  printf '%s\t%s\t%s\t%s\n' "WARN" "$location" "email-address" "$snippet" >&2
++  FOUND=1
++  record_rule "email-address"
++}
++
++# check_home_path_rule <content> <location> — WARN home-path rule, excluding
++# the generic container users node/root.
++check_home_path_rule() {
++  local content="$1" location="$2"
++  local m user
++  m=$(printf '%s' "$content" | grep -oE '/(Users|home)/[^/ ]+/' 2>/dev/null | head -n1) || true
++  [ -z "$m" ] && return 0
++  user=$(printf '%s' "$m" | sed -E 's#^/(Users|home)/([^/]+)/#\2#')
++  case "$user" in
++    node|root) return 0 ;;
++  esac
++  if line_is_allowlisted "$content"; then
++    return 0
++  fi
++  local snippet="${m:0:60}"
++  printf '%s\t%s\t%s\t%s\n' "WARN" "$location" "home-path" "$snippet" >&2
++  FOUND=1
++  record_rule "home-path"
++}
++
++# check_ip_rule <content> <location> — WARN rfc1918-ip rule, suppressed on
++# trailer-shaped lines (built-in allowlist (b)).
++check_ip_rule() {
++  local content="$1" location="$2"
++  is_trailer_line "$content" && return 0
++  local pattern='(10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|169\.254\.[0-9]{1,3}\.[0-9]{1,3})'
++  check_rule "WARN" "rfc1918-ip" "$pattern" "0" "$content" "$location"
++}
++
++# scan_line <content> <location> <tier: both|block> — runs every applicable
++# rule against one line of content.
++scan_line() {
++  local content="$1" location="$2" tier="$3"
++
++  is_named_trailer "$content" && return 0
++
++  # BLOCK tier — always scanned regardless of mode.
++  check_rule "BLOCK" "github-pat" 'ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,}' "0" "$content" "$location"
++  check_rule "BLOCK" "openai-key" 'sk-[A-Za-z0-9-]{20,}' "0" "$content" "$location"
++  check_rule "BLOCK" "aws-access-key" 'AKIA[0-9A-Z]{16}' "0" "$content" "$location"
++  check_rule "BLOCK" "private-key" '-----BEGIN ([A-Z ]+ )?PRIVATE KEY-----' "0" "$content" "$location"
++  check_rule "BLOCK" "secret-assignment" '(secret|token|password|passwd|api[_-]?key|bearer)[A-Za-z0-9_]*[[:space:]]*[:=][[:space:]]*"?'"'"'?[A-Za-z0-9+/=_-]{16,}' "1" "$content" "$location"
++
++  if [ "$tier" = "both" ]; then
++    check_ip_rule "$content" "$location"
++    check_home_path_rule "$content" "$location"
++    check_rule "WARN" "mdns-local" '[A-Za-z0-9-]+\.local\b' "0" "$content" "$location"
++    check_email_rule "$content" "$location"
++  fi
++}
++
++# ── Unified-diff parsing (shared by --staged and --range) ──────────────────
++# scan_diff_stream <tier> — reads a `git diff -U0` stream on stdin, tracks
++# current file + line number from the hunk headers, and scans every added
++# (+) line. Deleted files (+++ /dev/null) are skipped (nothing added).
++scan_diff_stream() {
++  local tier="$1"
++  local current_file="" current_line=0 skip_file=1
++  local diffline
++  while IFS= read -r diffline || [ -n "$diffline" ]; do
++    case "$diffline" in
++      "+++ "*)
++        local f="${diffline#+++ }"
++        if [ "$f" = "/dev/null" ]; then
++          skip_file=1
++          current_file=""
++        else
++          current_file="${f#b/}"
++          skip_file=0
++        fi
++        ;;
++      "@@ "*)
++        local hunk="${diffline#@@ }"
++        hunk="${hunk%% @@*}"
++        local plus="${hunk#*+}"
++        current_line="${plus%%,*}"
++        ;;
++      +*)
++        if [ "$skip_file" -eq 0 ] && [ -n "$current_file" ]; then
++          local content="${diffline#+}"
++          scan_line "$content" "${current_file}:${current_line}" "$tier"
++          current_line=$((current_line + 1))
++        fi
++        ;;
++      *) : ;;
++    esac
++  done
++}
++
++# ── blob-stdin: raw content on stdin, tracking `commit <sha>` headers ──────
++scan_blob_stdin() {
++  local tier="$1"
++  local current_commit="stdin"
++  local line
++  while IFS= read -r line || [ -n "$line" ]; do
++    case "$line" in
++      commit\ *)
++        current_commit="commit ${line#commit }"
++        # Trim any trailing " (something)" merge annotation down to the sha token.
++        current_commit="commit $(printf '%s' "${current_commit#commit }" | awk '{print $1}')"
++        ;;
++      "+++ "*|"---"*|"@@ "*) : ;;  # header noise, not content
++      +*)
++        local content="${line#+}"
++        scan_line "$content" "$current_commit" "$tier"
++        ;;
++      *) : ;;
++    esac
++  done
++}
++
++# ── Mode dispatch ────────────────────────────────────────────────────────────
++MODE="${1:-}"
++[ "$#" -gt 0 ] && shift
++
++case "$MODE" in
++  --staged)
++    # Process substitution, NOT a pipe: scan_diff_stream mutates global
++    # FOUND/FOUND_RULES, which must survive in THIS shell, not a pipeline
++    # subshell (`cmd | scan_diff_stream` would run the function in a
++    # subshell and silently lose every finding).
++    scan_diff_stream "both" < <(git diff --cached -U0 --no-color 2>/dev/null)
++    ;;
++  --message)
++    MSG_FILE="${1:-}"
++    if [ -z "$MSG_FILE" ] || [ ! -f "$MSG_FILE" ]; then
++      echo "vibe-content-scan.sh --message: missing or unreadable message file '$MSG_FILE'" >&2
++      exit 1
++    fi
++    while IFS= read -r line || [ -n "$line" ]; do
++      scan_line "$line" "message" "both"
++    done < "$MSG_FILE"
++    ;;
++  --range)
++    A="${1:-}"; B="${2:-}"
++    if [ -z "$A" ] || [ -z "$B" ]; then
++      echo "vibe-content-scan.sh --range: needs two revisions" >&2
++      exit 1
++    fi
++    scan_diff_stream "block" < <(git diff -U0 --no-color "$A" "$B" 2>/dev/null)
++    ;;
++  --blob-stdin)
++    TIER="both"
++    if [ "${1:-}" = "--tier" ] && [ "${2:-}" = "block" ]; then
++      TIER="block"
++    fi
++    scan_blob_stdin "$TIER"
++    ;;
++  *)
++    echo "vibe-content-scan.sh: unknown mode '$MODE' (expected --staged|--message|--range|--blob-stdin)" >&2
++    exit 1
++    ;;
++esac
++
++# ── Decide exit code ─────────────────────────────────────────────────────────
++if [ "$GUARD_OVERRIDE" -eq 1 ]; then
++  if [ "$FOUND" -eq 1 ]; then
++    rules_list="${FOUND_RULES[*]}"
++    echo "vibe-content-scan.sh: OVERRIDE (VIBE_CONTENT_GUARD=off / VIBE_ALLOW_COMMIT=1) — skipped enforcement for: ${rules_list// /, }" >&2
++  fi
++  exit 0
++fi
++
++if [ "$FOUND" -eq 1 ]; then
++  exit 1
++fi
++exit 0
+diff --git a/devcontainer/install-claude-extras.sh b/devcontainer/install-claude-extras.sh
+index 925c5cb..e851d01 100755
+--- a/devcontainer/install-claude-extras.sh
++++ b/devcontainer/install-claude-extras.sh
+@@ -362,9 +362,38 @@ ensure_shared_repos_safe_directory() {
+   done < "$manifest"
+ }
+ 
++# Sync the content-guard git hooks (task_019) into $DEST_ROOT/vibe-git-hooks/
++# (chmod +x on the scanner + three wrappers) and point git's global
++# core.hooksPath at that directory, so pre-commit/commit-msg/pre-push fire
++# for every repo the container touches, INCLUDING rw /repos/* shared repos
++# and (in the gardener) brain2 (core.hooksPath is --global, same scope as
++# ensure_shared_repos_safe_directory's safe.directory entries above — see
++# .vs/spec.md's "Note on core.hooksPath global scope"). Idempotent: re-runs
++# just re-copy + re-chmod + re-set the same config value. Unlike commands/
++# agents, hook files under vibe-git-hooks/ are enforcement code, not
++# user-editable content, so there is no "leave user edits alone" carve-out.
++install_git_hooks() {
++  local src="$SRC_ROOT/git-hooks"
++  local dest="$DEST_ROOT/vibe-git-hooks"
++
++  [ -d "$src" ] || return 0
++  mkdir -p "$dest"
++
++  local file name
++  for file in "$src"/*; do
++    [ -f "$file" ] || continue
++    name=$(basename "$file")
++    cp -f "$file" "$dest/$name"
++    chmod +x "$dest/$name"
++  done
++
++  git config --global core.hooksPath "$dest"
++}
++
+ install_dir agents
+ install_dir commands
+ install_hooks
++install_git_hooks
+ install_claude_md_fragments
+ install_brain2_skills
+ check_superpowers
+diff --git a/smoke-test.py b/smoke-test.py
+index 73de181..c7a56a7 100755
+--- a/smoke-test.py
++++ b/smoke-test.py
+@@ -57,6 +57,8 @@ CHECK_SP_CURRENT = REPO / "devcontainer" / "check-sp-current.sh"
+ CYCLE_1_DIFF = REPO / ".vs" / "cycle-1" / "diff.patch"
+ CREDENTIAL_HELPER = REPO / "devcontainer" / "credential-helper.sh"
+ SETUP_GIT_SH = REPO / "devcontainer" / "setup-git.sh"
++VIBE_CONTENT_SCANNER = REPO / "devcontainer" / "git-hooks" / "vibe-content-scan.sh"
++CONTENT_GUARD_MD = REPO / "devcontainer" / "claude-md" / "content-guard.md"
+ 
+ FAILURES: list[tuple[str, str]] = []
+ 
+@@ -8743,6 +8745,406 @@ def test_vibe_auto_resume_effective_wait() -> None:
+     check("[eff-wait] no resume_at → 1800 default", "NORA=[1800]" in r.stdout, r.stdout)
+ 
+ 
++# ── task_019: regrettable-content guard (secrets/PII pre-commit + pre-push block + audit) ───────
++
++
++def test_task019_ac1_staged_ghp_token_blocks() -> None:
++    """AC1: vibe-content-scan.sh --staged with runtime-built GHP token exits 1, emits BLOCK line."""
++    print("\n[task_019 AC1: staged GHP token blocks]")
++    with tempfile.TemporaryDirectory() as td:
++        repo = Path(td) / "repo"
++        repo.mkdir()
++        run(["git", "init"], cwd=repo)
++        run(["git", "config", "user.email", "test@example.com"], cwd=repo)
++        run(["git", "config", "user.name", "Test User"], cwd=repo)
++
++        # Create a file with a runtime-constructed token (no literal secret in this code)
++        token = "ghp_" + ("A" * 36)
++        test_file = repo / "secret.txt"
++        test_file.write_text(f"My secret is {token}\n")
++        run(["git", "add", "secret.txt"], cwd=repo)
++
++        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
++        check("[task_019 AC1] exit 1", r.returncode == 1, r.stderr[:200])
++        check("[task_019 AC1] BLOCK in stderr", "BLOCK" in r.stderr, r.stderr)
++        check("[task_019 AC1] github-pat rule named", "github-pat" in r.stderr, r.stderr)
++
++
++def test_task019_ac2_message_private_key_blocks() -> None:
++    """AC2: vibe-content-scan.sh --message with runtime-built private key marker exits 1."""
++    print("\n[task_019 AC2: message with private key blocks]")
++    with tempfile.TemporaryDirectory() as td:
++        repo = Path(td) / "repo"
++        repo.mkdir()
++
++        # Runtime-constructed private key marker
++        msg_file = Path(td) / "msg.txt"
++        msg_file.write_text("-----BEGIN " + "OPENSSH PRIVATE KEY-----\n")
++
++        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--message", str(msg_file)], cwd=repo)
++        check("[task_019 AC2] exit 1", r.returncode == 1, r.stderr[:200])
++        check("[task_019 AC2] BLOCK in stderr", "BLOCK" in r.stderr, r.stderr)
++        check("[task_019 AC2] private-key rule named", "private-key" in r.stderr, r.stderr)
++
++
++def test_task019_ac3_staged_rfc1918_ip_warns() -> None:
++    """AC3: vibe-content-scan.sh --staged with RFC1918 IP exits 1, emits WARN line."""
++    print("\n[task_019 AC3: staged RFC1918 IP warns]")
++    with tempfile.TemporaryDirectory() as td:
++        repo = Path(td) / "repo"
++        repo.mkdir()
++        run(["git", "init"], cwd=repo)
++        run(["git", "config", "user.email", "test@example.com"], cwd=repo)
++        run(["git", "config", "user.name", "Test User"], cwd=repo)
++
++        test_file = repo / "config.txt"
++        test_file.write_text("Server at 192.0.2.35\n")
++        run(["git", "add", "config.txt"], cwd=repo)
++
++        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
++        check("[task_019 AC3] exit 1", r.returncode == 1, r.stderr[:200])
++        check("[task_019 AC3] WARN in stderr", "WARN" in r.stderr, r.stderr)
++        check("[task_019 AC3] rfc1918-ip rule named", "rfc1918-ip" in r.stderr, r.stderr)
++
++
++def test_task019_ac4_clean_diff_passes() -> None:
++    """AC4: vibe-content-scan.sh --staged on ordinary code exits 0, no findings."""
++    print("\n[task_019 AC4: clean diff passes]")
++    with tempfile.TemporaryDirectory() as td:
++        repo = Path(td) / "repo"
++        repo.mkdir()
++        run(["git", "init"], cwd=repo)
++        run(["git", "config", "user.email", "test@example.com"], cwd=repo)
++        run(["git", "config", "user.name", "Test User"], cwd=repo)
++
++        test_file = repo / "code.py"
++        test_file.write_text("def hello():\n    print('world')\n")
++        run(["git", "add", "code.py"], cwd=repo)
++
++        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
++        check("[task_019 AC4] exit 0", r.returncode == 0, r.stderr)
++        check("[task_019 AC4] no findings", len(r.stderr.strip()) == 0, r.stderr)
++
++
++def test_task019_ac5_override_bypasses_and_logs() -> None:
++    """AC5: VIBE_CONTENT_GUARD=off bypasses scan, exits 0, logs loudly."""
++    print("\n[task_019 AC5: override bypasses and logs]")
++    with tempfile.TemporaryDirectory() as td:
++        repo = Path(td) / "repo"
++        repo.mkdir()
++        run(["git", "init"], cwd=repo)
++        run(["git", "config", "user.email", "test@example.com"], cwd=repo)
++        run(["git", "config", "user.name", "Test User"], cwd=repo)
++
++        token = "ghp_" + ("A" * 36)
++        test_file = repo / "secret.txt"
++        test_file.write_text(f"My secret is {token}\n")
++        run(["git", "add", "secret.txt"], cwd=repo)
++
++        env = {**os.environ, "VIBE_CONTENT_GUARD": "off"}
++        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo, env=env)
++        check("[task_019 AC5] exit 0", r.returncode == 0, r.stderr)
++        check("[task_019 AC5] logs OVERRIDE", "OVERRIDE" in r.stderr, r.stderr)
++        check("[task_019 AC5] names rule(s)", "github-pat" in r.stderr, r.stderr)
++
++
++def test_task019_ac6_allowlist_suppresses_finding() -> None:
++    """AC6: .vibe-content-allow suppresses findings matching its regex."""
++    print("\n[task_019 AC6: allowlist suppresses]")
++    with tempfile.TemporaryDirectory() as td:
++        repo = Path(td) / "repo"
++        repo.mkdir()
++        run(["git", "init"], cwd=repo)
++        run(["git", "config", "user.email", "test@example.com"], cwd=repo)
++        run(["git", "config", "user.name", "Test User"], cwd=repo)
++
++        # Create allowlist that matches the IP
++        (repo / ".vibe-content-allow").write_text("192\\.168\\.0\\.35\n")
++
++        test_file = repo / "config.txt"
++        test_file.write_text("Server at 192.0.2.35\n")
++        run(["git", "add", "config.txt"], cwd=repo)
++
++        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
++        check("[task_019 AC6] exit 0 with allowlist", r.returncode == 0, r.stderr)
++        check("[task_019 AC6] no findings", len(r.stderr.strip()) == 0, r.stderr)
++
++        # Without allowlist, same content should fail
++        repo2 = Path(td) / "repo2"
++        repo2.mkdir()
++        run(["git", "init"], cwd=repo2)
++        run(["git", "config", "user.email", "test@example.com"], cwd=repo2)
++        run(["git", "config", "user.name", "Test User"], cwd=repo2)
++
++        test_file2 = repo2 / "config.txt"
++        test_file2.write_text("Server at 192.0.2.35\n")
++        run(["git", "add", "config.txt"], cwd=repo2)
++
++        r2 = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo2)
++        check("[task_019 AC6] exit 1 without allowlist", r2.returncode == 1, r2.stderr)
++
++
++def test_task019_ac7_guard_off_marker_skips_scan() -> None:
++    """AC7: .vibe-content-guard-off marker makes scanner exit 0 immediately."""
++    print("\n[task_019 AC7: guard-off marker skips]")
++    with tempfile.TemporaryDirectory() as td:
++        repo = Path(td) / "repo"
++        repo.mkdir()
++        run(["git", "init"], cwd=repo)
++        run(["git", "config", "user.email", "test@example.com"], cwd=repo)
++        run(["git", "config", "user.name", "Test User"], cwd=repo)
++
++        # Create opt-out marker
++        (repo / ".vibe-content-guard-off").write_text("")
++
++        token = "ghp_" + ("A" * 36)
++        test_file = repo / "secret.txt"
++        test_file.write_text(f"My secret is {token}\n")
++        run(["git", "add", "secret.txt"], cwd=repo)
++
++        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
++        check("[task_019 AC7] exit 0 with marker", r.returncode == 0, r.stderr)
++        check("[task_019 AC7] no stderr output", len(r.stderr.strip()) == 0, r.stderr)
++
++
++def test_task019_ac8_install_hooks() -> None:
++    """AC8: install-claude-extras.sh installs hooks + sets core.hooksPath."""
++    print("\n[task_019 AC8: install hooks]")
++    with tempfile.TemporaryDirectory() as td:
++        home = Path(td) / "home"
++        home.mkdir()
++        claude_dir = home / ".claude"
++
++        gitconfig = home / ".gitconfig"
++
++        env = {
++            **os.environ,
++            "HOME": str(home),
++            "CLAUDE_CONFIG_DIR": str(claude_dir),
++            "GIT_CONFIG_GLOBAL": str(gitconfig),
++            "VIBE_EXTRAS_SRC_ROOT": str(REPO / "devcontainer"),
++        }
++
++        r = run(["bash", str(INSTALL_EXTRAS)], env=env, cwd=REPO)
++        check("[task_019 AC8] install exits 0", r.returncode == 0, r.stderr[:200])
++
++        hooks_dir = claude_dir / "vibe-git-hooks"
++        check("[task_019 AC8] hooks dir created", hooks_dir.is_dir(), str(hooks_dir))
++        if hooks_dir.is_dir():
++            check("[task_019 AC8] scanner executable", (hooks_dir / "vibe-content-scan.sh").is_file(), str(hooks_dir))
++            check("[task_019 AC8] pre-commit executable", (hooks_dir / "pre-commit").is_file(), str(hooks_dir))
++            check("[task_019 AC8] commit-msg executable", (hooks_dir / "commit-msg").is_file(), str(hooks_dir))
++            check("[task_019 AC8] pre-push executable", (hooks_dir / "pre-push").is_file(), str(hooks_dir))
++
++        # Verify git config set
++        r2 = run(["git", "config", "--global", "core.hooksPath"], env=env)
++        check("[task_019 AC8] core.hooksPath set", str(hooks_dir) in r2.stdout.strip() if r2.stdout.strip() else False, r2.stdout)
++
++
++def test_task019_ac9_audit_history_finds_deleted_secret() -> None:
++    """AC9: vibe audit --history finds secrets deleted in later commits."""
++    print("\n[task_019 AC9: audit finds deleted secret]")
++    with tempfile.TemporaryDirectory() as td:
++        repo = Path(td) / "repo"
++        repo.mkdir()
++        run(["git", "init"], cwd=repo)
++        run(["git", "config", "user.email", "test@example.com"], cwd=repo)
++        run(["git", "config", "user.name", "Test User"], cwd=repo)
++
++        # Commit 1: add secret
++        token = "ghp_" + ("A" * 36)
++        test_file = repo / "secret.txt"
++        test_file.write_text(f"Secret: {token}\n")
++        run(["git", "add", "secret.txt"], cwd=repo)
++        run(["git", "commit", "-m", "Add secret"], cwd=repo)
++
++        # Get the commit sha
++        r_sha = run(["git", "rev-parse", "HEAD"], cwd=repo)
++        commit_sha = r_sha.stdout.strip()
++
++        # Commit 2: delete secret
++        test_file.unlink()
++        run(["git", "add", "-u"], cwd=repo)
++        run(["git", "commit", "-m", "Remove secret"], cwd=repo)
++
++        # Audit should find the deleted secret
++        r = run(["bash", str(VIBE)] + ["audit", "--history"], cwd=repo)
++        check("[task_019 AC9] audit exit 1", r.returncode == 1, r.stdout + r.stderr)
++        check("[task_019 AC9] BLOCK finding reported", "BLOCK" in r.stdout, r.stdout)
++        check("[task_019 AC9] commit sha in output", commit_sha[:8] in r.stdout, r.stdout)
++
++
++def test_task019_ac10_real_hooks_block_commit() -> None:
++    """AC10: Real pre-commit hook blocks git commit of BLOCK content."""
++    print("\n[task_019 AC10: real hooks block commit]")
++    with tempfile.TemporaryDirectory() as td:
++        repo = Path(td) / "repo"
++        repo.mkdir()
++        hooks_dir = repo / ".git" / "hooks"
++
++        run(["git", "init"], cwd=repo)
++        run(["git", "config", "user.email", "test@example.com"], cwd=repo)
++        run(["git", "config", "user.name", "Test User"], cwd=repo)
++
++        # Install hooks locally
++        hooks_dir.mkdir(parents=True, exist_ok=True)
++        for name in ["pre-commit", "commit-msg", "pre-push"]:
++            src = REPO / "devcontainer" / "git-hooks" / name
++            dst = hooks_dir / name
++            if src.exists():
++                import shutil
++                shutil.copy2(src, dst)
++                dst.chmod(0o755)
++
++        # Copy scanner
++        src = REPO / "devcontainer" / "git-hooks" / "vibe-content-scan.sh"
++        dst = hooks_dir / "vibe-content-scan.sh"
++        if src.exists():
++            import shutil
++            shutil.copy2(src, dst)
++            dst.chmod(0o755)
++
++        # Try to commit clean content first — should succeed
++        test_file = repo / "good.txt"
++        test_file.write_text("Hello world\n")
++        run(["git", "add", "good.txt"], cwd=repo)
++        r_clean = run(["git", "commit", "-m", "Good commit"], cwd=repo)
++        check("[task_019 AC10] clean commit succeeds", r_clean.returncode == 0, r_clean.stderr)
++
++        # Try to commit secret — should fail
++        token = "ghp_" + ("B" * 36)
++        secret_file = repo / "secret.txt"
++        secret_file.write_text(f"Token: {token}\n")
++        run(["git", "add", "secret.txt"], cwd=repo)
++        r_bad = run(["git", "commit", "-m", "Add secret"], cwd=repo)
++        check("[task_019 AC10] secret commit fails", r_bad.returncode != 0, r_bad.stderr)
++
++
++def test_task019_ac11_coauthored_by_trailer_clean() -> None:
++    """AC11: Commit message with Co-Authored-By trailer scans clean."""
++    print("\n[task_019 AC11: Co-Authored-By trailer exempt]")
++    with tempfile.TemporaryDirectory() as td:
++        msg_file = Path(td) / "msg.txt"
++        msg_file.write_text(
++            "Fix something\n"
++            "\n"
++            "Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>\n"
++        )
++
++        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--message", str(msg_file)], cwd=td)
++        check("[task_019 AC11] exit 0", r.returncode == 0, r.stderr)
++        check("[task_019 AC11] no findings", len(r.stderr.strip()) == 0, r.stderr)
++
++
++def test_task019_ac13_shellcheck_passes() -> None:
++    """AC13: code-check.py (shellcheck) passes on new shell files."""
++    print("\n[task_019 AC13: shellcheck clean]")
++    r = run(["python3", str(REPO / "code-check.py")], cwd=REPO)
++    check("[task_019 AC13] shellcheck exits 0", r.returncode == 0, r.stderr[:200])
++
++
++def test_task019_ac15_content_guard_md_exists() -> None:
++    """AC15: content-guard.md fragment exists and names key concepts."""
++    print("\n[task_019 AC15: content-guard.md exists]")
++    check("[task_019 AC15] file exists", CONTENT_GUARD_MD.is_file(), str(CONTENT_GUARD_MD))
++    if CONTENT_GUARD_MD.is_file():
++        content = CONTENT_GUARD_MD.read_text()
++        check("[task_019 AC15] mentions BLOCK tier", "BLOCK" in content, "")
++        check("[task_019 AC15] mentions WARN tier", "WARN" in content, "")
++        check("[task_019 AC15] mentions override", "VIBE_CONTENT_GUARD=off" in content, "")
++        check("[task_019 AC15] mentions allowlist", ".vibe-content-allow" in content, "")
++        check("[task_019 AC15] mentions opt-out", ".vibe-content-guard-off" in content, "")
++        check("[task_019 AC15] mentions vibe audit", "vibe audit" in content, "")
++
++
++def test_task019_ac16_audit_history_reports_warn_pii() -> None:
++    """AC16: vibe audit --history reports WARN PII findings (exit 0)."""
++    print("\n[task_019 AC16: audit reports WARN findings]")
++    with tempfile.TemporaryDirectory() as td:
++        repo = Path(td) / "repo"
++        repo.mkdir()
++        run(["git", "init"], cwd=repo)
++        run(["git", "config", "user.email", "test@example.com"], cwd=repo)
++        run(["git", "config", "user.name", "Test User"], cwd=repo)
++
++        # Commit 1: add home path (/.local URL in a URL is not a trailer, so won't be suppressed)
++        test_file = repo / "config.txt"
++        test_file.write_text("Path to config: /Users/myname/project\n")
++        run(["git", "add", "config.txt"], cwd=repo)
++        run(["git", "commit", "-m", "Config"], cwd=repo)
++
++        # Get commit sha
++        r_sha = run(["git", "rev-parse", "HEAD"], cwd=repo)
++        commit_sha = r_sha.stdout.strip()
++
++        # Commit 2: delete path
++        test_file.unlink()
++        run(["git", "add", "-u"], cwd=repo)
++        run(["git", "commit", "-m", "Clean"], cwd=repo)
++
++        # Audit should find WARN but exit 0
++        r = run(["bash", str(VIBE)] + ["audit", "--history"], cwd=repo)
++        check("[task_019 AC16] audit exit 0 on WARN-only", r.returncode == 0, r.stdout + r.stderr)
++        check("[task_019 AC16] WARN finding reported", "WARN" in r.stdout, r.stdout)
++        check("[task_019 AC16] commit sha in output", commit_sha[:8] in r.stdout, r.stdout)
++
++
++def test_task019_ac17_new_branch_push_blocks_only_block_tier() -> None:
++    """AC17: pre-push on new branch scans BLOCK tier only; WARN-only commit pushes."""
++    print("\n[task_019 AC17: pre-push BLOCK-tier-only on new branch]")
++    with tempfile.TemporaryDirectory() as td:
++        repo = Path(td) / "repo"
++        repo.mkdir()
++
++        # Setup local repo
++        run(["git", "init"], cwd=repo)
++        run(["git", "config", "user.email", "test@example.com"], cwd=repo)
++        run(["git", "config", "user.name", "Test User"], cwd=repo)
++
++        # Create local bare remote
++        bare_remote = Path(td) / "remote.git"
++        bare_remote.mkdir()
++        run(["git", "init", "--bare"], cwd=bare_remote)
++        run(["git", "remote", "add", "origin", str(bare_remote)], cwd=repo)
++
++        # Install hooks
++        hooks_dir = repo / ".git" / "hooks"
++        hooks_dir.mkdir(parents=True, exist_ok=True)
++        for name in ["pre-push"]:
++            src = REPO / "devcontainer" / "git-hooks" / name
++            dst = hooks_dir / name
++            if src.exists():
++                import shutil
++                shutil.copy2(src, dst)
++                dst.chmod(0o755)
++
++        # Copy scanner
++        src = REPO / "devcontainer" / "git-hooks" / "vibe-content-scan.sh"
++        dst = hooks_dir / "vibe-content-scan.sh"
++        if src.exists():
++            import shutil
++            shutil.copy2(src, dst)
++            dst.chmod(0o755)
++
++        # Create initial commit on master to establish a branch
++        initial_file = repo / "README.md"
++        initial_file.write_text("# Test repo\n")
++        run(["git", "add", "README.md"], cwd=repo)
++        run(["git", "commit", "-m", "Initial commit"], cwd=repo)
++        run(["git", "push", "-u", "origin", "master"], cwd=repo)
++
++        # Commit with WARN-tier PII (RFC1918 IP) on a new branch
++        run(["git", "checkout", "-b", "feature"], cwd=repo)
++        test_file = repo / "config.txt"
++        test_file.write_text("Server at 192.0.2.35\n")
++        run(["git", "add", "config.txt"], cwd=repo)
++        run(["git", "commit", "-m", "Add config with IP"], cwd=repo)
++
++        # Push new branch should succeed (pre-push scans BLOCK tier only, so WARN is allowed)
++        r = run(["git", "push", "-u", "origin", "feature"], cwd=repo)
++        check("[task_019 AC17] new branch push succeeds", r.returncode == 0, r.stderr)
++
++
+ def main() -> int:
+     test_help()
+     test_version()
+@@ -9083,6 +9485,26 @@ def main() -> int:
+     test_task017_c4_ac19_claude_md_invariant_text_amended()
+     test_task017_c4_ac19_readme_security_section_consistent()
+ 
++    # task_019 (haiku Tester): regrettable-content guard — ACs 1–17 covering
++    # scanner (BLOCK/WARN tiers, secret patterns, PII rules), git hooks (staged/
++    # message/push), override + allowlist + opt-out semantics, install wiring,
++    # vibe audit history + staged, integration end-to-end.
++    test_task019_ac1_staged_ghp_token_blocks()
++    test_task019_ac2_message_private_key_blocks()
++    test_task019_ac3_staged_rfc1918_ip_warns()
++    test_task019_ac4_clean_diff_passes()
++    test_task019_ac5_override_bypasses_and_logs()
++    test_task019_ac6_allowlist_suppresses_finding()
++    test_task019_ac7_guard_off_marker_skips_scan()
++    test_task019_ac8_install_hooks()
++    test_task019_ac9_audit_history_finds_deleted_secret()
++    test_task019_ac10_real_hooks_block_commit()
++    test_task019_ac11_coauthored_by_trailer_clean()
++    test_task019_ac13_shellcheck_passes()
++    test_task019_ac15_content_guard_md_exists()
++    test_task019_ac16_audit_history_reports_warn_pii()
++    test_task019_ac17_new_branch_push_blocks_only_block_tier()
++
+     print()
+     if FAILURES:
+         print(f"✗ {len(FAILURES)} check(s) failed:")
+diff --git a/vibe b/vibe
+index fcad647..44491f0 100755
+--- a/vibe
++++ b/vibe
+@@ -2152,6 +2152,161 @@ repos_handle_subcommand() {
+   esac
+ }
+ 
++# ── Content-guard audit (task_019) ────────────────────────────────────────────
++# `vibe audit` is host-side and runs entirely against the CURRENT directory's
++# git repo — no container involved, mirroring `vibe repos`. It uses vibe's
++# OWN source copy of the scanner (DEVCONTAINER_DIR/git-hooks/, not the copy
++# installed into a container's ~/.claude/vibe-git-hooks/), since it operates
++# on the host machine's checkout, not inside a devcontainer.
++
++_audit_scanner_path() {
++  echo "$DEVCONTAINER_DIR/git-hooks/vibe-content-scan.sh"
++}
++
++_audit_require_repo() {
++  local scanner
++  scanner="$(_audit_scanner_path)"
++  if [ ! -x "$scanner" ]; then
++    echo "vibe audit: scanner not found at $scanner" >&2
++    exit 1
++  fi
++  if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
++    echo "vibe audit: not inside a git repository" >&2
++    exit 1
++  fi
++}
++
++_audit_usage() {
++  cat <<'EOF'
++Usage: vibe audit [--history|--staged]
++
++  --history   (default) scan the full repo history, BOTH tiers - every
++              commit's added content (git log -p --all) plus every commit
++              message. Exits 1 only if a BLOCK-class finding is present;
++              WARN-only history exits 0 but the findings are still listed
++              (advisory - this is the Private->Public flip case a
++              forward-looking git-hook layer cannot retroactively cover).
++
++  --staged    scan the currently staged diff on demand (pre-commit
++              equivalent), outside of the git hook flow.
++
++Respects .vibe-content-allow and .vibe-content-guard-off in the repo root.
++Never rewrites history - reports only.
++EOF
++  exit 0
++}
++
++# _audit_staged — thin pass-through to `--staged`, printing the scanner's own
++# stderr findings and propagating its exit code as-is (no aggregation needed:
++# --staged already has the right both-tiers-exit-nonzero semantics).
++_audit_staged() {
++  _audit_require_repo
++  local scanner
++  scanner="$(_audit_scanner_path)"
++  if "$scanner" --staged; then
++    exit 0
++  else
++    exit 1
++  fi
++}
++
++# _audit_history — full-history scan, BOTH tiers, per component 7 of
++# .vs/spec.md. Two passes, each captured to a temp file (findings are on
++# stderr, tab-separated <CLASS>\t<location>\t<rule>\t<snippet>):
++#
++#   1. Content: `git log -p --all` piped through --blob-stdin (default tier
++#      "both"), which tracks `commit <sha>` headers itself and attributes
++#      each finding's location to that commit.
++#   2. Messages: `--message` doesn't know which commit it's scanning (its
++#      location is always the literal "message"), so this loop calls it
++#      once per commit and rewrites the location field to "commit <sha>"
++#      before appending - preserving --message's own both-tier + trailer-
++#      exemption logic without duplicating it.
++#
++# Audit's own exit code is computed HERE, independent of either scanner
++# invocation's exit code (which would return 1 on ANY finding, WARN
++# included): 1 iff a BLOCK-class line appears in the aggregate, 0 otherwise
++# (component 7: "WARN-only history exits 0 but still lists the WARN
++# findings"). Findings are grouped BLOCK-then-WARN in the printed report.
++_audit_history() {
++  _audit_require_repo
++  local scanner
++  scanner="$(_audit_scanner_path)"
++
++  local tmp_content tmp_messages tmp_msgfile
++  tmp_content="$(mktemp)"
++  tmp_messages="$(mktemp)"
++  tmp_msgfile="$(mktemp)"
++  # Register through the single EXIT-trap dispatcher (see "Exit-hook
++  # dispatcher" above) — never a raw `trap ... EXIT` here, which would
++  # silently replace whatever trap slot a later hook installs.
++  vibe_exit_hook_add "rm -f '$tmp_content' '$tmp_messages' '$tmp_msgfile'"
++
++  # Pass 1: full-history content, both tiers, commit-sha location tracking.
++  git log -p --no-color --all 2>/dev/null | "$scanner" --blob-stdin >/dev/null 2>"$tmp_content" || true
++
++  # Pass 2: every commit message, attributed to its own commit sha.
++  : > "$tmp_messages"
++  local sha
++  while IFS= read -r sha; do
++    [ -n "$sha" ] || continue
++    git log -1 --format=%B "$sha" > "$tmp_msgfile" 2>/dev/null || true
++    "$scanner" --message "$tmp_msgfile" 2>&1 1>/dev/null \
++      | awk -F'\t' -v sha="$sha" 'BEGIN{OFS="\t"} NF>=4{$2="commit " sha; print}' \
++      >> "$tmp_messages" || true
++  done < <(git log --all --format=%H 2>/dev/null)
++
++  local has_block=0 any=0
++  if awk -F'\t' '$1=="BLOCK"{f=1} END{exit !f}' "$tmp_content" "$tmp_messages" 2>/dev/null; then
++    has_block=1
++  fi
++
++  echo "vibe audit --history: full-history scan (content + commit messages, both tiers)"
++  if awk -F'\t' '$1=="BLOCK"{f=1} END{exit !f}' "$tmp_content" "$tmp_messages" 2>/dev/null; then
++    echo
++    echo "BLOCK:"
++    awk -F'\t' '$1=="BLOCK"' "$tmp_content" "$tmp_messages"
++    any=1
++  fi
++  if awk -F'\t' '$1=="WARN"{f=1} END{exit !f}' "$tmp_content" "$tmp_messages" 2>/dev/null; then
++    echo
++    echo "WARN (advisory - exit code unaffected):"
++    awk -F'\t' '$1=="WARN"' "$tmp_content" "$tmp_messages"
++    any=1
++  fi
++  if [ "$any" -eq 0 ]; then
++    echo "  clean - no findings across full history"
++  fi
++
++  if [ "$has_block" -eq 1 ]; then
++    exit 1
++  fi
++  exit 0
++}
++
++# audit_handle_subcommand <args...> — top-level dispatcher for `vibe audit`,
++# invoked from its own dispatch block (mirrors `learn`'s and `repos`', see
++# the block immediately before parse_vibe_args below).
++audit_handle_subcommand() {
++  shift  # consume "audit"
++  local subcmd="${1:-}"
++  case "$subcmd" in
++    --history|"")
++      _audit_history
++      ;;
++    --staged)
++      _audit_staged
++      ;;
++    --help|-h)
++      _audit_usage
++      ;;
++    *)
++      echo "vibe audit: unknown option '$subcmd'" >&2
++      exit 1
++      ;;
++  esac
++}
++
+ # ── Learning mount helper ─────────────────────────────────────────────────────
+ 
+ # _build_override_config <workspace_abs_path> — collects the bind mounts that
+@@ -2427,6 +2582,17 @@ if [ "${1:-}" = "repos" ]; then
+   exit $?
+ fi
+ 
++# ── Audit subcommand dispatch (task_019) ──────────────────────────────────────
++# Must be BEFORE the --* flag-parser loop — mirrors `learn`/`repos` above.
++# Host-side only: scans the CURRENT directory's git repo directly, no
++# container involved. Dispatches and exits; does NOT enter workspace
++# resolution, preflight, image build, GitHub setup, or container launch.
++if [ "${1:-}" = "audit" ]; then
++  audit_handle_subcommand "$@"
++  # audit_handle_subcommand's sub-functions always exit; this is a safety net.
++  exit $?
++fi
++
+ # ── Flags ─────────────────────────────────────────────────────────────────────
+ # parse_vibe_args (defined above the VIBE_SOURCE_ONLY guard so smoke-test.py
+ # can source-test it) accepts flags and the project positional in any order.
