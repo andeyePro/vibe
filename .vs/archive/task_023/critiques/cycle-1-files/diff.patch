@@ -1,0 +1,252 @@
+diff --git a/.vibe-content-allow b/.vibe-content-allow
+index e3113b7..89ae933 100644
+--- a/.vibe-content-allow
++++ b/.vibe-content-allow
+@@ -37,3 +37,12 @@ test@example\.com
+ # MANUAL-TESTS ZOTERO_API_KEY fixture value (a documented placeholder, not a
+ # real key — matches the secret-named-assignment rule).
+ TESTKEY0001testkey0002zz
++
++# task_023 path-warn entries (WARN-tier only — a real secret in either path
++# still BLOCKs; see devcontainer/claude-md/content-guard.md). Harness prose
++# under .vs/ and smoke-test.py's runtime fixtures deliberately discuss/hold
++# WARN-class example literals (RFC1918 IPs, example emails, .local
++# hostnames) as part of teaching or exercising the guard's own rules — not
++# real leaked PII.
++path-warn:.vs/*
++path-warn:smoke-test.py
+diff --git a/.vs/tasks.json b/.vs/tasks.json
+index d47aa47..a121c5f 100644
+--- a/.vs/tasks.json
++++ b/.vs/tasks.json
+@@ -152,10 +152,10 @@
+  {
+   "id": "task_023",
+   "description": "content guard: path-warn:<glob> allowlist entries - per-file WARN-tier demotion in diff modes so vibe's repo is self-clean; BLOCK never path-suppressible; path-warn lines never enter the ERE loop",
+-  "implementation_status": "in_progress",
++  "implementation_status": "complete",
+   "test_status": "pending",
+   "assigned_to": "generator",
+   "mode": "rigorous",
+-  "last_modified": "2026-07-17T07:29:34Z"
++  "last_modified": "2026-07-17T07:38:43Z"
+  }
+ ]
+\ No newline at end of file
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 4e1a202..a1b48c5 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -6,6 +6,8 @@ Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion
+ 
+ ## 2026-07-17
+ 
++- [x] **task_023: `path-warn:<glob>` allowlist entries — path-scoped WARN suppression so vibe's own repo is self-clean under its own content guard** — after task_019/022, vibe's own tree legitimately contains WARN-class example literals (RFC1918 IPs, example emails, `.local` hostnames) in `smoke-test.py`'s runtime fixtures and `.vs/` harness prose, so a commit touching those files nagged for a `VIBE_CONTENT_GUARD=off` override even though nothing was actually leaking. Global content-allowlisting of the literals was rejected (would blind the guard everywhere); the fix is path-scoped instead. New `.vibe-content-allow` entry kind `path-warn:<glob>` — a bash `case`-style glob (unquoted, so `*` crosses `/`) matched against the repo-relative file path, structurally separate from the file's existing ERE-per-line loop. In `--staged`/`--range` only, `scan_diff_stream` now tracks a per-file `current_file_tier` at each `+++ b/<path>` header: demoted to `block` when the path matches a `path-warn` glob, otherwise left at the mode's tier — a one-way floor (BLOCK rules run unconditionally regardless of tier, so a path can suppress WARN noise but never a secret; `--range` is already block-tier, so path-warn entries are a byte-identical no-op there, pinning the idempotency property). The make-or-break constraint: `path-warn:` lines never reach `line_is_allowlisted`'s `grep -E` loop, in whole-line or stripped-glob form — a glob like `smoke-test.py` fed to ERE would be a live literal-substring suppressor for ANY finding (including BLOCK) on any line merely mentioning the filename, so the parser skips `path-warn:*` lines structurally before that loop ever sees them. New `load_path_warn_globs`/`file_is_path_warn` (lazy-loaded once, no forks, no external commands — bash `case` pattern match only) keep task_022's no-fork hot-path shape intact. Not applied in `--message`/`--messages-stdin`/`--blob-stdin`/`--identity` (no file path exists there; history scans deliberately keep full WARN visibility for the Private→Public flip case). vibe's own `.vibe-content-allow` ships `path-warn:.vs/*` and `path-warn:smoke-test.py`. Documented in `content-guard.md` including the stale-scanner caveat (a pre-task_023 scanner reading a `path-warn:` entry falls back to whole-line ERE matching, so it only suppresses a finding on content containing the literal text `path-warn:smoke-test.py` — narrow, accepted, and the scanner change ships in the same commit as the allowlist entries so vibe's own repo never sits in the mixed state) and the accepted `path-warn:*` (repo-wide WARN-off) degenerate case, same trust model as an already-possible overbroad ERE entry. Verified via a scratch fixture-repo differential harness (not committed — gitignored under `.vs/cycle-*/`) covering AC1 (differential vs `git show HEAD` old scanner, byte-identical with no path-warn entries present), AC2 (staged suppression incl. a 3-levels-deep nested-path case and an empty-glob no-op), AC3/AC3b (BLOCK always fires, staged and range, and path-warn lines proven never to reach the ERE loop via literal-text-collision fixtures), AC3c (`--range` byte-identical with/without path-warn entries), AC4 (`--message`/`--blob-stdin`/`--messages-stdin`/`--identity` byte-identical to the old scanner with path-warn entries present), and AC5 (shipped-entries self-clean end-to-end, both the clean WARN case and a planted-PAT BLOCK case) — 16/16 green. `shellcheck devcontainer/git-hooks/vibe-content-scan.sh` clean (direct invocation — `code-check.py`'s fixture-frozen `scripts()` structurally can't see that directory), `python3 code-check.py` clean (15 files), full `python3 smoke-test.py` green with no regressions (task_022's static no-fork/no-`\b`/no-bash-4 shape guards intact). `vibe audit --history` sanity-timed at ~28s on the vibe repo (well under the 60s gate, no blow-up; task_022's ~22s baseline preserved within normal variance).
++
+ - [x] **task_022: `vibe audit --history` performance — fork-storm removal + single-pass message scan** — `vibe audit --history` timed out at 280s on the vibe repo (~230 commits). Two causes, both in the task_019 content guard, both fixed with the finding set held byte-identical (the scanner is a security boundary shared by pre-commit/commit-msg/pre-push and `vibe audit` — a silently-narrowed rule is a shipped hole). (1) **Match primitives (Part A):** the five hot-path functions (`check_rule`, `check_email_rule`, `check_home_path_rule`, `is_named_trailer`, `is_trailer_line`) forked a `printf | grep -oE` (plus a `sed`) per rule per line — ~400k+ subprocesses over `git log -p --all` in pass 1 alone. Swapped to bash-native `[[ =~ ]]` + `BASH_REMATCH`; those bodies now contain zero external-command invocations or command substitutions (a permanent static-shape test guards against the fork-storm returning). Portability held to POSIX ERE for BSD `regcomp` (macOS bash 3.2) and glibc (container bash 5) alike — no bash-4 features, and the `mdns-local` rule's GNU `\b` word-boundary was rewritten to a capture-group POSIX form (`([A-Za-z0-9-]+\.local)([^A-Za-z0-9_]|$)`, snippet taken from group 1 so `foo.localhost` still doesn't match and reported snippets are unchanged). `set -euo pipefail` survival: every match test is guarded in an `if`/`&&`; `nocasematch` is set and restored on every path out of the icase branch (a leak would silently make later case-sensitive rules case-insensitive — an adversarial corpus line with a mixed-case secret trigger and an uppercase `FOO.LOCAL` proves it doesn't). (2) **Single-pass message scan (Part B):** new scanner mode `--messages-stdin` reads NUL-delimited `<sha>\n<body>` records (from `git log --all -z --format='%H%n%B'`), scanning each message line as `commit <sha>` — the NUL delimiter, not line-shape sniffing, is the record boundary, so a body line like `commit deadbeef` or `+foo` is scanned as content and never misparsed; empty/malformed records are skipped without crashing. `_audit_history` pass 2 collapsed from a fork-per-commit `--message`+awk loop (and its dead `tmp_msgfile`) to one pipe into `--messages-stdin`; passes 1 (`--blob-stdin`) and 3 (`--identity`) unchanged. Result: full `vibe audit --history` ~20.7s (was >280s), scanner ~24x faster on a 12k-line real-history slice; old-vs-new byte-identical across `--blob-stdin`/`--staged`/`--message`/`--range`/`--messages-stdin` on an every-rule adversarial corpus and on the real repo history. `--message` (commit-msg hook) retained unchanged; override/opt-out paths unchanged. shellcheck clean; full smoke suite green; scanner header comment + usage text updated.
+ 
+ - [x] **task_021: commit-identity guard — scanner `--identity` mode + pre-commit gate + audit identities pass** — root cause of the 2026-07-17 cross-org email exposure was `setup-git.sh` silently inheriting the host's real `user.email` while nothing checked identity (≈2,300 public commits carried real addresses; the content guard and `vibe audit` only saw blob/message content, never metadata). Now: `vibe-content-scan.sh --identity [email]` WARNs (`commit-identity`) on any non-noreply-class commit email (exempt: `*@users.noreply.github.com`, `noreply@github.com`, `noreply@anthropic.com`, `placeholder@vibe.local`; `.vibe-content-allow` whole-line entries suppress deliberate identities); `pre-commit` runs it alongside `--staged` (both run, either fails the commit, fix/keep instructions printed); `vibe audit --history` gains a pass 3 that feeds every unique author+committer email from all refs through the same check as WARN findings. TDD: smoke tests task_021 AC1–AC3 written first and watched fail; AC10 fixture email moved to a noreply form (now correctly gated). Docs: content-guard.md fragment gains the commit-identity tier.
+diff --git a/devcontainer/claude-md/content-guard.md b/devcontainer/claude-md/content-guard.md
+index 733a86a..319df66 100644
+--- a/devcontainer/claude-md/content-guard.md
++++ b/devcontainer/claude-md/content-guard.md
+@@ -68,6 +68,57 @@ The scanner also has a **built-in allowlist that needs no configuration**:
+ and `*.users.noreply.github.com` are always exempt — this is what stops the
+ guard firing on its own commit convention.
+ 
++## Per-file WARN allowlist: `path-warn:<glob>` entries (task_023)
++
++A `.vibe-content-allow` line of the form `path-warn:<glob>` is a
++**different entry kind** from the ERE lines above — it is a bash
++`case`-style glob matched against the repo-relative file path, not a
++regex matched against content. In `--staged` and `--range` only, when a
++file's path matches a `path-warn` glob, that file's added lines are
++scanned at BLOCK tier only: WARN-class rules (IP, home-path, mdns,
++email) are skipped for that file; **BLOCK rules always still fire** — a
++real secret in a path-warn-matched file is still a shipped secret, no
++path ever suppresses a BLOCK finding, in any mode.
++
++- **Glob semantics**: `*` crosses `/` — `path-warn:.vs/*` matches a file
++  nested arbitrarily deep, e.g. `.vs/archive/task_099/critiques/foo.md`.
++  Literal path characters that are also glob metacharacters (`[`, `]`,
++  `?`) need escaping if you want them matched literally — the scanner
++  does not do this for you.
++- **Empty glob is malformed and inert**: `path-warn:` with nothing (or
++  only whitespace) after the prefix matches no file — never treated as
++  match-all. `path-warn:*` (repo-wide WARN-off) IS accepted deliberately:
++  it carries the same trust model as an equally-overbroad ERE entry (a
++  lone `.`) already could — `.vibe-content-allow` is a PR-reviewable
++  committed file, and the scanner does not police how broad an entry is.
++- **Structural exclusion from the ERE loop**: `path-warn:` lines
++  (whole line or the glob remainder) are NEVER handed to `grep -E` as a
++  content pattern. A glob like `smoke-test.py` used as an ERE would be a
++  live literal-substring match suppressing ANY finding — including a
++  BLOCK secret — on any line merely mentioning the filename, so the
++  parser structurally skips these lines before they can reach that loop.
++- **Diff modes only**: `--message`, `--messages-stdin`, `--blob-stdin`
++  (history scans), and `--identity` have no file path to match against —
++  `path-warn` entries are invisible there; history findings deliberately
++  keep full WARN visibility for the Private→Public flip case.
++- **Stale-scanner caveat**: a pre-task_023 scanner reading a
++  `.vibe-content-allow` with `path-warn:` entries doesn't know the
++  syntax — it falls back to its normal ERE-whole-line matching and feeds
++  the WHOLE line, prefix included, to `grep -E`. That means an entry like
++  `path-warn:smoke-test.py` only suppresses a finding on a stale scanner
++  if the flagged content line contains the literal text
++  `path-warn:smoke-test.py` — a narrow, accepted window (in practice:
++  documentation quoting the allowlist entry itself). Never put a
++  `path-warn:` entry's literal text on the same line as anything
++  sensitive, and don't rely on stale-scanner suppression for anything —
++  it is not the mechanism, just a documented edge case.
++- **vibe's own repo ships two entries**: `path-warn:.vs/*` and
++  `path-warn:smoke-test.py` — the `/vs` harness prose and the runtime
++  test fixtures both deliberately discuss/hold WARN-class example
++  literals (RFC1918 IPs, example emails, `.local` hostnames) as part of
++  teaching or exercising the guard's own categories, not real leaked PII.
++  A real secret in either path still BLOCKs.
++
+ ## `vibe audit [--history|--staged]`
+ 
+ Host-side command (run from the project directory, like `vibe repos`) that
+diff --git a/devcontainer/git-hooks/vibe-content-scan.sh b/devcontainer/git-hooks/vibe-content-scan.sh
+index 6c4f67a..5c7ee29 100755
+--- a/devcontainer/git-hooks/vibe-content-scan.sh
++++ b/devcontainer/git-hooks/vibe-content-scan.sh
+@@ -41,8 +41,23 @@
+ # per line (# comments / blank lines ignored, case-sensitive); a finding is
+ # suppressed iff its whole flagged line matches (grep -E) any entry.
+ #
+-# See .vs/spec.md (task_019) for the full pinned contract this implements,
+-# and devcontainer/claude-md/content-guard.md for the in-session summary.
++# task_023: a line of the form `path-warn:<glob>` is a DIFFERENT entry kind
++# — a bash case-style glob matched against the repo-relative file path
++# (`*` crosses `/`), not an ERE. In `--staged`/`--range` only, a file whose
++# path matches a path-warn glob is scanned at tier `block` for its added
++# lines: WARN-class rules are skipped for that file, BLOCK rules always
++# still fire (path never suppresses a secret). path-warn lines are
++# structurally excluded from the ERE allowlist loop — neither the whole
++# line nor the glob remainder is ever handed to grep -E as a content
++# pattern (a glob like `smoke-test.py` used as an ERE would be a live
++# literal-substring suppressor for ANY finding, including BLOCK, on any
++# line merely mentioning the filename). Not applied in --message,
++# --messages-stdin, --blob-stdin, or --identity — no file path exists
++# there. See devcontainer/claude-md/content-guard.md for the full contract.
++#
++# See .vs/spec.md (task_019, task_023) for the full pinned contract this
++# implements, and devcontainer/claude-md/content-guard.md for the
++# in-session summary.
+ 
+ set -euo pipefail
+ 
+@@ -67,14 +82,18 @@ FOUND=0
+ declare -a FOUND_RULES=()
+ 
+ # line_is_allowlisted <content> — true iff the whole line matches any ERE
+-# in $ALLOWLIST_FILE (comments/blanks ignored, case-sensitive).
++# in $ALLOWLIST_FILE (comments/blanks/path-warn: entries ignored,
++# case-sensitive). path-warn: entries are a structurally different kind
++# (task_023, see file header) and MUST NEVER reach grep -E here — this is
++# what keeps a path glob from acting as a live literal-substring suppressor
++# for arbitrary content (AC3b).
+ line_is_allowlisted() {
+   local content="$1"
+   [ -f "$ALLOWLIST_FILE" ] || return 1
+   local pattern
+   while IFS= read -r pattern || [ -n "$pattern" ]; do
+     case "$pattern" in
+-      ""|\#*) continue ;;
++      ""|\#*|path-warn:*) continue ;;
+     esac
+     if printf '%s' "$content" | grep -qE -- "$pattern" 2>/dev/null; then
+       return 0
+@@ -83,6 +102,52 @@ line_is_allowlisted() {
+   return 1
+ }
+ 
++# ── path-warn glob parsing (task_023) ───────────────────────────────────────
++# Structurally separate from the ERE loop above — path-warn lines never
++# reach grep -E in any form. Populated once (lazy, idempotent) and reused
++# per-file by scan_diff_stream's per-FILE tier-demotion check.
++PATH_WARN_GLOBS_LOADED=0
++declare -a PATH_WARN_GLOBS=()
++
++# load_path_warn_globs — parses $ALLOWLIST_FILE once, extracting the glob
++# remainder of every path-warn:<glob> line (leading/trailing whitespace
++# trimmed). An empty/whitespace-only glob is malformed and skipped — it
++# matches nothing, never treated as match-all.
++load_path_warn_globs() {
++  [ "$PATH_WARN_GLOBS_LOADED" -eq 1 ] && return 0
++  PATH_WARN_GLOBS_LOADED=1
++  [ -f "$ALLOWLIST_FILE" ] || return 0
++  local pattern glob
++  while IFS= read -r pattern || [ -n "$pattern" ]; do
++    case "$pattern" in
++      path-warn:*)
++        glob="${pattern#path-warn:}"
++        glob="${glob#"${glob%%[![:space:]]*}"}"
++        glob="${glob%"${glob##*[![:space:]]}"}"
++        [ -n "$glob" ] && PATH_WARN_GLOBS+=("$glob")
++        ;;
++      *) : ;;
++    esac
++  done < "$ALLOWLIST_FILE"
++  return 0
++}
++
++# file_is_path_warn <repo-relative-path> — true iff the path matches any
++# path-warn glob. Unquoted bash case-style pattern match (no external
++# command, no fork): `*` crosses `/`, so `path-warn:.vs/*` matches a file
++# nested arbitrarily deep under .vs/.
++file_is_path_warn() {
++  local path="$1" glob
++  load_path_warn_globs
++  for glob in "${PATH_WARN_GLOBS[@]}"; do
++    # shellcheck disable=SC2254  # intentional glob match, not literal
++    case "$path" in
++      $glob) return 0 ;;
++    esac
++  done
++  return 1
++}
++
+ # record_rule <rule> — append to FOUND_RULES if not already present.
+ record_rule() {
+   local rule="$1" r
+@@ -252,9 +317,16 @@ scan_line() {
+ # scan_diff_stream <tier> — reads a `git diff -U0` stream on stdin, tracks
+ # current file + line number from the hunk headers, and scans every added
+ # (+) line. Deleted files (+++ /dev/null) are skipped (nothing added).
++#
++# task_023: at each `+++ b/<path>` header, current_file_tier is set to the
++# mode's tier and then demoted to "block" if <path> matches a path-warn
++# glob — a per-FILE, one-way floor (never raises tier above what the mode
++# already requested; --range is already "block" so this is a no-op there,
++# pinning AC3c). BLOCK rules run unconditionally inside scan_line
++# regardless of tier, so this only ever suppresses WARN-class findings.
+ scan_diff_stream() {
+   local tier="$1"
+-  local current_file="" current_line=0 skip_file=1
++  local current_file="" current_line=0 skip_file=1 current_file_tier="$tier"
+   local diffline
+   while IFS= read -r diffline || [ -n "$diffline" ]; do
+     case "$diffline" in
+@@ -266,6 +338,10 @@ scan_diff_stream() {
+         else
+           current_file="${f#b/}"
+           skip_file=0
++          current_file_tier="$tier"
++          if file_is_path_warn "$current_file"; then
++            current_file_tier="block"
++          fi
+         fi
+         ;;
+       "@@ "*)
+@@ -277,7 +353,7 @@ scan_diff_stream() {
+       +*)
+         if [ "$skip_file" -eq 0 ] && [ -n "$current_file" ]; then
+           local content="${diffline#+}"
+-          scan_line "$content" "${current_file}:${current_line}" "$tier"
++          scan_line "$content" "${current_file}:${current_line}" "$current_file_tier"
+           current_line=$((current_line + 1))
+         fi
+         ;;
