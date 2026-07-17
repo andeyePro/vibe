@@ -17,4 +17,9 @@ if [ ! -x "$SCANNER" ]; then
   exit 0
 fi
 
-"$SCANNER" --staged
+# Two independent checks; the commit proceeds only if BOTH pass. Each runs
+# even when the other fails so the user sees every finding in one shot.
+rc=0
+"$SCANNER" --staged   || rc=1
+"$SCANNER" --identity || rc=1
+exit "$rc"

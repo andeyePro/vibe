@@ -2262,12 +2262,23 @@ _audit_history() {
       >> "$tmp_messages" || true
   done < <(git log --all --format=%H 2>/dev/null)
 
+  # Pass 3: author/committer identities across all refs (task_021). The
+  # content passes can't see metadata, so each unique email goes through
+  # the scanner's --identity mode; findings land in the shared WARN pool.
+  local email
+  while IFS= read -r email; do
+    [ -n "$email" ] || continue
+    "$scanner" --identity "$email" 2>&1 1>/dev/null \
+      | awk -F'\t' 'BEGIN{OFS="\t"} NF>=4{print}' \
+      >> "$tmp_messages" || true
+  done < <(git log --all --format='%ae%n%ce' 2>/dev/null | sort -u)
+
   local has_block=0 any=0
   if awk -F'\t' '$1=="BLOCK"{f=1} END{exit !f}' "$tmp_content" "$tmp_messages" 2>/dev/null; then
     has_block=1
   fi
 
-  echo "vibe audit --history: full-history scan (content + commit messages, both tiers)"
+  echo "vibe audit --history: full-history scan (content + commit messages + identities, both tiers)"
   if awk -F'\t' '$1=="BLOCK"{f=1} END{exit !f}' "$tmp_content" "$tmp_messages" 2>/dev/null; then
     echo
     echo "BLOCK:"

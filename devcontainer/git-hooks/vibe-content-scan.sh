@@ -254,6 +254,40 @@ scan_blob_stdin() {
   done
 }
 
+# is_exempt_identity <email> — commit identities that are fine to publish:
+# GitHub noreply forms (ID-prefixed or bare-username), Anthropic's noreply,
+# and vibe's own synthetic placeholder fallback.
+is_exempt_identity() {
+  case "$1" in
+    *@users.noreply.github.com) return 0 ;;
+    *@*.users.noreply.github.com) return 0 ;;
+    noreply@anthropic.com) return 0 ;;
+    noreply@github.com) return 0 ;;
+    placeholder@vibe.local) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# check_identity <email> — WARN commit-identity finding unless the email is
+# an exempt (noreply-class) form or allowlisted. A real email in author/
+# committer metadata publishes to harvesters on every public push — the
+# root cause of the 2026-07-17 cross-org exposure (setup-git.sh inherited
+# the host's real user.email and nothing checked it).
+check_identity() {
+  local email="$1"
+  [ -z "$email" ] && return 0   # unset identity: git itself will refuse the commit
+  is_exempt_identity "$email" && return 0
+  if line_is_allowlisted "$email"; then
+    return 0
+  fi
+  printf '%s\t%s\t%s\t%s\n' "WARN" "identity" "commit-identity" "${email:0:60}" >&2
+  echo "vibe-content-scan.sh: commit email '$email' is not a GitHub noreply address and will publish on every public push." >&2
+  echo "  fix:   git config user.email '<ID>+<USER>@users.noreply.github.com'   (GitHub → Settings → Emails)" >&2
+  echo "  keep:  echo '^${email}\$' >> .vibe-content-allow   (deliberate identity for this repo)" >&2
+  FOUND=1
+  record_rule "commit-identity"
+}
+
 # ── Mode dispatch ────────────────────────────────────────────────────────────
 MODE="${1:-}"
 [ "$#" -gt 0 ] && shift
@@ -291,8 +325,17 @@ case "$MODE" in
     fi
     scan_blob_stdin "$TIER"
     ;;
+  --identity)
+    # With an argument: check that literal email (audit's per-identity path).
+    # Without: check the effective commit identity, `git config user.email`.
+    if [ "$#" -gt 0 ]; then
+      check_identity "$1"
+    else
+      check_identity "$(git config user.email 2>/dev/null || true)"
+    fi
+    ;;
   *)
-    echo "vibe-content-scan.sh: unknown mode '$MODE' (expected --staged|--message|--range|--blob-stdin)" >&2
+    echo "vibe-content-scan.sh: unknown mode '$MODE' (expected --staged|--message|--range|--blob-stdin|--identity)" >&2
     exit 1
     ;;
 esac

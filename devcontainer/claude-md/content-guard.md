@@ -14,6 +14,16 @@ replaces, `guard-bash.sh`'s force-push/branch-delete block.
   paths (`/Users/<name>/`, `/home/<name>/` — excluding the generic
   container users `node`/`root`), `.local` mDNS hostnames, and email
   addresses.
+- **WARN: commit identity** — `pre-commit` also checks the *effective*
+  `git config user.email`: anything that isn't a GitHub-noreply-class
+  address (`*@users.noreply.github.com`, `noreply@github.com`,
+  `noreply@anthropic.com`, or vibe's `placeholder@vibe.local`) fires a
+  `commit-identity` WARN, because a real email in author/committer
+  metadata publishes to harvesters on every public push. Fix with
+  `git config user.email '<ID>+<USER>@users.noreply.github.com'`, or
+  allowlist the address (`^you@corp\.com$` in `.vibe-content-allow`) if
+  it's deliberate for that repo. `vibe audit --history` runs the same
+  check over every author/committer identity in history.
 
 Because commits here run non-interactively via the Bash tool (no TTY for a
 y/n prompt), **both tiers exit non-zero by default** — WARN is not a softer

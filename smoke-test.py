@@ -8983,7 +8983,9 @@ def test_task019_ac10_real_hooks_block_commit() -> None:
         hooks_dir = repo / ".git" / "hooks"
 
         run(["git", "init"], cwd=repo)
-        run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+        # noreply form: the task_021 identity gate in pre-commit must stay
+        # quiet here so this test exercises only the content scan.
+        run(["git", "config", "user.email", "123+tester@users.noreply.github.com"], cwd=repo)
         run(["git", "config", "user.name", "Test User"], cwd=repo)
 
         # Install hooks locally
@@ -9160,6 +9162,95 @@ def _op_opted_in_result(env_vars: dict, setup: str) -> str:
     if "RESULT=OUT" in r.stdout:
         return "OUT"
     return f"ERR({r.stdout}{r.stderr})"
+
+
+def test_task021_ac1_identity_mode_warns_on_real_email() -> None:
+    """AC1: scanner --identity WARNs (exit 1) on a non-noreply user.email,
+    passes noreply forms, and respects the per-repo allowlist."""
+    print("\n[task_021 AC1: --identity mode]")
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        repo.mkdir()
+        run(["git", "init"], cwd=repo)
+        run(["git", "config", "user.name", "Test User"], cwd=repo)
+
+        # Real personal email -> WARN, exit 1
+        run(["git", "config", "user.email", "someone@example.com"], cwd=repo)
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--identity"], cwd=repo)
+        check("[task_021 AC1] real email exits 1", r.returncode == 1, r.stderr)
+        check("[task_021 AC1] rule is commit-identity", "commit-identity" in r.stderr, r.stderr)
+
+        # ID-form noreply -> clean
+        run(["git", "config", "user.email", "6342315+Aqueum@users.noreply.github.com"], cwd=repo)
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--identity"], cwd=repo)
+        check("[task_021 AC1] ID-form noreply exits 0", r.returncode == 0, r.stderr)
+
+        # Username-form noreply -> clean
+        run(["git", "config", "user.email", "Aqueum@users.noreply.github.com"], cwd=repo)
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--identity"], cwd=repo)
+        check("[task_021 AC1] username-form noreply exits 0", r.returncode == 0, r.stderr)
+
+        # Explicit value argument (audit path) -> WARN on real email
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--identity", "boss@corp.com"], cwd=repo)
+        check("[task_021 AC1] explicit value exits 1", r.returncode == 1, r.stderr)
+
+        # Allowlisted deliberate identity -> clean
+        run(["git", "config", "user.email", "someone@example.com"], cwd=repo)
+        (repo / ".vibe-content-allow").write_text("^someone@example\\.com$\n")
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--identity"], cwd=repo)
+        check("[task_021 AC1] allowlisted email exits 0", r.returncode == 0, r.stderr)
+
+
+def test_task021_ac2_precommit_warns_on_real_email_identity() -> None:
+    """AC2: real pre-commit hook rejects a commit made as a non-noreply
+    identity even when the diff itself is clean; passes after switching
+    the repo's user.email to a noreply form."""
+    print("\n[task_021 AC2: pre-commit identity gate]")
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        repo.mkdir()
+        hooks_dir = repo / ".git" / "hooks"
+        run(["git", "init"], cwd=repo)
+        run(["git", "config", "user.name", "Test User"], cwd=repo)
+        run(["git", "config", "user.email", "someone@example.com"], cwd=repo)
+
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        import shutil
+        for name in ["pre-commit", "vibe-content-scan.sh"]:
+            src = REPO / "devcontainer" / "git-hooks" / name
+            dst = hooks_dir / name
+            shutil.copy2(src, dst)
+            dst.chmod(0o755)
+
+        (repo / "good.txt").write_text("Hello world\n")
+        run(["git", "add", "good.txt"], cwd=repo)
+        r_bad = run(["git", "commit", "-m", "Good commit"], cwd=repo)
+        check("[task_021 AC2] commit as real email fails", r_bad.returncode != 0, r_bad.stderr)
+        check("[task_021 AC2] names commit-identity", "commit-identity" in r_bad.stderr, r_bad.stderr)
+
+        run(["git", "config", "user.email", "123+tester@users.noreply.github.com"], cwd=repo)
+        r_ok = run(["git", "commit", "-m", "Good commit"], cwd=repo)
+        check("[task_021 AC2] commit as noreply succeeds", r_ok.returncode == 0, r_ok.stderr)
+
+
+def test_task021_ac3_audit_history_reports_identities() -> None:
+    """AC3: vibe audit --history lists non-noreply author/committer
+    identities from history as WARN commit-identity findings (exit 0)."""
+    print("\n[task_021 AC3: audit identities pass]")
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        repo.mkdir()
+        run(["git", "init"], cwd=repo)
+        run(["git", "config", "user.name", "Test User"], cwd=repo)
+        run(["git", "config", "user.email", "hidden@personal.net"], cwd=repo)
+        (repo / "a.txt").write_text("clean content\n")
+        run(["git", "add", "a.txt"], cwd=repo)
+        run(["git", "commit", "-m", "Clean"], cwd=repo)
+
+        r = run(["bash", str(VIBE), "audit", "--history"], cwd=repo)
+        check("[task_021 AC3] WARN-only exits 0", r.returncode == 0, r.stdout + r.stderr)
+        check("[task_021 AC3] commit-identity reported", "commit-identity" in r.stdout, r.stdout)
+        check("[task_021 AC3] email named", "hidden@personal.net" in r.stdout, r.stdout)
 
 
 def test_task020_ac1_default_opted_out() -> None:
@@ -9569,6 +9660,14 @@ def main() -> int:
     test_task019_ac15_content_guard_md_exists()
     test_task019_ac16_audit_history_reports_warn_pii()
     test_task019_ac17_new_branch_push_blocks_only_block_tier()
+
+    # task_021: commit-identity guard — scanner --identity mode, pre-commit
+    # wiring, and the audit identities pass (root cause of the 2026-07-17
+    # cross-org email exposure: setup-git.sh inherited the host's real email
+    # and nothing checked it).
+    test_task021_ac1_identity_mode_warns_on_real_email()
+    test_task021_ac2_precommit_warns_on_real_email_identity()
+    test_task021_ac3_audit_history_reports_identities()
 
     test_task020_ac1_default_opted_out()
     test_task020_ac2_global_auto_opts_in()
