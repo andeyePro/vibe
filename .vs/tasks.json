@@ -1,143 +1,152 @@
 [
-  {
-    "id": "task_001",
-    "description": "Add --json output to code-check.py emitting machine-readable shellcheck findings",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "evaluator",
-    "mode": "rigorous",
-    "last_modified": "2026-04-23T01:00:00Z"
-  },
-  {
-    "id": "task_003",
-    "description": "Prize-worthy haiku about vibe \u2192 HAIKU.md (fuzzy mode)",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "evaluator",
-    "mode": "fuzzy",
-    "last_modified": "2026-04-23T05:00:00Z"
-  },
-  {
-    "id": "task_004",
-    "description": "Cross-org learning library (opt-in, host-only capture, public/private)",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "evaluator",
-    "mode": "rigorous",
-    "last_modified": "2026-04-23T09:15:00Z"
-  },
-  {
-    "id": "task_005",
-    "description": "OSC 52 clipboard bridge: vibe-copy shell helper + /copy slash command",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-04-23T19:57:00Z"
-  },
-  {
-    "id": "task_006",
-    "description": "/c (renamed from /copy) + host-side clipboard watcher (vibe-copy-watcher.sh)",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-04-23T22:00:00Z"
-  },
-  {
-    "id": "task_007",
-    "description": "Ship two operational rules (WebSearch-before-refusing + no-SSH-out-without-explicit-OK) to all vibe users via inline-prose CLAUDE.md fragments synced from devcontainer/claude-md/ by install-claude-extras.sh",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-04-25T14:32:00Z"
-  },
-  {
-    "id": "task_008",
-    "description": "vibe: drain clipboard scratch on exit (race fix in EXIT trap)",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "evaluator",
-    "mode": "rigorous",
-    "last_modified": "2026-04-25T17:00:00Z"
-  },
-  {
-    "id": "task_009",
-    "description": "In-container /learn slash command + /learnings write-confirm PreToolUse hook (Write/Edit/Bash all gated)",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "evaluator",
-    "mode": "rigorous",
-    "last_modified": "2026-04-26T18:30:00Z"
-  },
-  {
-    "id": "task_013",
-    "description": "/vs intelligent Spec Critic iteration cap (convergence/plateau/divergence + --max-iter flag, replaces hardcoded max 2)",
-    "implementation_status": "complete",
-    "test_status": "failing",
-    "assigned_to": "parked",
-    "mode": "rigorous",
-    "last_modified": "2026-04-27T00:00:00Z",
-    "parked_note": "Cycle 1 Step 6 escalation: AC10 spec defect (diff.patch from git diff includes Planner bookkeeping in .vs/spec.md + .vs/tasks.json, which AC10 didn't whitelist). 18/19 task_013 checks pass; only AC10 fails. Resume options documented in TODO.md task_013 entry."
-  },
-  {
-    "id": "task_010",
-    "description": "/learn smart-capture: semantic check phase (contradiction detection, quality gate, option scheme Z1/Z2/N)",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-05-07T00:00:00Z"
-  },
-  {
-    "id": "task_014",
-    "description": "Per-project Claude projects/ bind: each host project gets its own /home/node/.claude/projects/ inside the container so vibe X --continue scopes by project, not globally",
-    "implementation_status": "pending",
-    "test_status": "pending",
-    "assigned_to": "planner",
-    "mode": "rigorous",
-    "last_modified": "2026-04-29T00:00:00Z"
-  },
-  {
-    "id": "task_015",
-    "description": "Auto-recreate a project's container when it was built from a superseded vibe-dev:latest (image-drift detection before devcontainer up); fixes silent stale-container env claude ENOENT",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-05-27T00:00:00Z"
-  },
-  {
-    "id": "task_016",
-    "description": "--sessions auto-resume survives the out-of-credits block: heartbeat hooks + host-side stall watchdog (3-part gate), countdown Ctrl-C deactivate, claude exit-status propagation",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-07-10T12:22:14Z"
-  },
-  {
-    "id": "task_017",
-    "description": "shared-repos: declaration+registry, /repos/<name> mounts, rw single-writer lock, claim/handoff, seam fragment, per-repo PATs via useHttpPath",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-07-11T05:19:20Z",
-    "cycle_1_note": "Generator (sonnet) delivered AC1-AC7: registry/declaration helpers, vibe repos add|remove|list, shared_repos_scan single-classification-pass mount assembly (2 binds/repo, ro hard-pinned), runtime manifest + install-claude-extras.sh safe.directory wiring, gitignore ownership, README+CHANGELOG. code-check clean, smoke 1080/1080 (no Tester checks yet - append-only per /vs convention, lands next). implementation_status stays in_progress (C1 of 4); C2 (rw lock) not started.",
-    "cycle_2_note": "Tester (haiku) added 18 append-only smoke-test.py functions covering AC8 (rw-intent resolution: free-lock grant, live-holder contention fallback + named warning, ro-declared repos never touch the lock, shared_repo_declaration_set_mode at the helper level, PLUS CLI-level vibe repos add --rw: fresh-add-rw, upgrade-in-place, no-silent-downgrade on plain re-add, --rw position-agnostic - the flag wiring landed as an integrator edit mid-cycle after the Tester flagged it missing), AC9 (lock acquire/contend/stale-reclaim/release/torn-meta, all against real backgrounded processes), AC10 (exit dispatcher survives a refusing first hook via evidence files, single trap -p EXIT installer, no raw trap EXIT elsewhere, clipboard-flush + /learn tempfile cleanup both confirmed migrated into vibe_exit_hook_add), and one mode-coherence fixture tying manifest/override-JSON agreement together. Full suite: smoke-test.py 1273/1273 checks passing, 0 regressions in the frozen C1 suite; code-check.py shellcheck clean. Artifacts: .vs/cycle-2/test-output.log, .vs/cycle-2/summary.md.",
-    "cycle_3_note": "Tester (haiku) added 10 append-only smoke-test.py functions (61 checks) covering AC12 (/repo command file shape incl. host/container ~/.vibe boundary + negation-window regression guard, claim path/KEY=VALUE content shape, and a substituted-placeholder run of the documented mkdir+write proving syntactic validity + last-claim-wins overwrite since the claim flow has no sourced vibe helper - pure documentation), AC13 (statusLine \u26a0 rw:<requester> segment: structural regression guard on forceLoginMethod/defaultMode/guard-bash.sh/guard-fs.sh entries, byte-identical spot-check of two frozen fixtures with VIBE_REPOS_DIR pointed at an empty temp dir, and three functional fixtures - holder+request present, request present but not-us-the-holder, holder-but-no-request - all via VIBE_REPOS_DIR/VIBE_PROJECT_NAME env overrides), AC14 (shared-repos.md fragment shape + install-claude-extras.sh gating on VIBE_SHARED_REPOS_MANIFEST across missing/empty/non-empty), and VIBE_PROJECT_NAME plumbing (top-level export site before the _build_override_config command-substitution subshell, remoteEnv-only carriage in devcontainer.json, absent from containerEnv). Full suite: smoke-test.py 1334/1334 checks passing, 0 regressions in the frozen C1/C2 suite; code-check.py shellcheck clean. AC13(c)'s discriminating power verified by hand-running a deliberately broken statusLine variant (holder-equality check removed) and confirming the assertion fails against it. No AC12-AC15 mechanism found unimplemented. Artifacts: .vs/cycle-3/test-output.log, .vs/cycle-3/summary.md.",
-    "cycle_4_note": "Tester (haiku) added 28 append-only smoke-test.py functions (92 checks) covering AC16 (credential-helper.sh driven directly as a stdin->stdout filter: project-slug exact match, shared-slug match gated by the launcher-exported VIBE_SHARED_SLUG_* twin, unknown-repo silence, .git suffix, subdir suffix, trailing-slash-only (both unmatched and on the project's own slug), case-sensitivity, '..' traversal, embedded control byte, shell-metacharacter injection with a no-execution sentinel check, the post-security-review sanitisation-collision hardening (twin-mismatch silence is the gate-discriminating fixture; twin-match still serves correctly; twin-entirely-unset also silences), non-get ops, non-github host, lookalike subdomain host, http-not-https, empty-token-never-served, and a consolidated never-widen attack battery asserting $GITHUB_TOKEN never appears on stdout across 8 simultaneous non-project attempts), AC17 (useHttpPath registered at the same --global scope as credential.helper in setup-git.sh, plus a functional run of setup-git.sh against a fresh sandbox HOME confirming both settings land), AC18 (structural: GITHUB_REPO_SLUG / shared-token / shared-slug-twin exports all sit at column-0 top-level scope strictly outside and before the _build_override_config command-substitution call; functional: render_devcontainer_with_mounts injects matching VIBE_SHARED_TOKEN_*/VIBE_SHARED_SLUG_* remoteEnv passthroughs, remoteEnv-only never containerEnv), AC19 (CLAUDE.md + README text checks for the amended single-repo-PAT/launch-header-blast-radius/never-multi-repo-token wording). Full suite: smoke-test.py 1426/1426 checks passing, 0 regressions in the frozen C1-C3 suite; code-check.py shellcheck clean across 15 files. GAP FOUND: AC18's sanctioned C4 relaxation (missing token for an acked+registered ro repo should WARN and still MOUNT ro) is NOT implemented - shared_repos_scan still hard-blocks with 'B ... no token configured', so the C1 frozen test test_task017_delta_scan_b_token_absent is unchanged and still passes; no frozen-test amendment needed yet, this is UNIMPLEMENTED plumbing for the chair to pick up, not a Tester-side fix. AC20 (security-review) ran mid-cycle with a CLEAR verdict, closing one LOW (the sanitisation-collision twin-check) which this cycle's tests now cover as the gate-discriminating fixture. AC21's MANUAL-TESTS.md end-to-end push section (shared repo / project repo / undeclared repo) has not been authored yet - Generator/chair responsibility per spec, not Tester's. Artifacts: .vs/cycle-4/test-output.log, .vs/cycle-4/summary.md."
-  },
-  {
-    "id": "task_019",
-    "description": "regrettable-content guard: pre-commit/commit-msg/pre-push secret+PII scanner (block-by-default, two-tier, override/allowlist/opt-out) + vibe audit full-history scan; ships core",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-07-15",
-    "cycle_1_note": "Tester (haiku) added 15 append-only smoke-test.py functions (45 checks) covering AC1-AC17 (AC12/AC14 not testable via smoke-test: AC12 is regression guard on pre-existing guard-bash.sh, AC14 is pre-existing suite integrity - both verified separately). Scanner core tested: BLOCK tier (GitHub PAT, private-key), WARN tier (RFC1918 IP, home-path), clean content. Git hooks tested: real pre-commit blocks secrets; real commit-msg scans messages; pre-push new-branch permits WARN-tier PII (BLOCK-only backstop). Override (VIBE_CONTENT_GUARD=off) logs loudly. Allowlist (.vibe-content-allow regex) suppresses findings. Opt-out marker (.vibe-content-guard-off) immediate exit. Install wiring (install-claude-extras.sh + core.hooksPath) functional. Audit tested: --history finds deleted secrets (attributes to commit SHA), reports WARN-only with exit 0 (advisory). Trailer exemption verified on Co-Authored-By. All fixtures runtime-constructed (no literal secrets in test code). Full suite: smoke-test.py 1471/1471 checks passing (45 task_019 + 1426 pre-existing frozen), 0 regressions; code-check.py shellcheck clean on 15 files. Artifacts: .vs/cycle-1/test-output.log."
-  }
+ {
+  "id": "task_001",
+  "description": "Add --json output to code-check.py emitting machine-readable shellcheck findings",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-04-23T01:00:00Z"
+ },
+ {
+  "id": "task_003",
+  "description": "Prize-worthy haiku about vibe \u2192 HAIKU.md (fuzzy mode)",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "evaluator",
+  "mode": "fuzzy",
+  "last_modified": "2026-04-23T05:00:00Z"
+ },
+ {
+  "id": "task_004",
+  "description": "Cross-org learning library (opt-in, host-only capture, public/private)",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-04-23T09:15:00Z"
+ },
+ {
+  "id": "task_005",
+  "description": "OSC 52 clipboard bridge: vibe-copy shell helper + /copy slash command",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-04-23T19:57:00Z"
+ },
+ {
+  "id": "task_006",
+  "description": "/c (renamed from /copy) + host-side clipboard watcher (vibe-copy-watcher.sh)",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-04-23T22:00:00Z"
+ },
+ {
+  "id": "task_007",
+  "description": "Ship two operational rules (WebSearch-before-refusing + no-SSH-out-without-explicit-OK) to all vibe users via inline-prose CLAUDE.md fragments synced from devcontainer/claude-md/ by install-claude-extras.sh",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-04-25T14:32:00Z"
+ },
+ {
+  "id": "task_008",
+  "description": "vibe: drain clipboard scratch on exit (race fix in EXIT trap)",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-04-25T17:00:00Z"
+ },
+ {
+  "id": "task_009",
+  "description": "In-container /learn slash command + /learnings write-confirm PreToolUse hook (Write/Edit/Bash all gated)",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-04-26T18:30:00Z"
+ },
+ {
+  "id": "task_013",
+  "description": "/vs intelligent Spec Critic iteration cap (convergence/plateau/divergence + --max-iter flag, replaces hardcoded max 2)",
+  "implementation_status": "complete",
+  "test_status": "failing",
+  "assigned_to": "parked",
+  "mode": "rigorous",
+  "last_modified": "2026-04-27T00:00:00Z",
+  "parked_note": "Cycle 1 Step 6 escalation: AC10 spec defect (diff.patch from git diff includes Planner bookkeeping in .vs/spec.md + .vs/tasks.json, which AC10 didn't whitelist). 18/19 task_013 checks pass; only AC10 fails. Resume options documented in TODO.md task_013 entry."
+ },
+ {
+  "id": "task_010",
+  "description": "/learn smart-capture: semantic check phase (contradiction detection, quality gate, option scheme Z1/Z2/N)",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-05-07T00:00:00Z"
+ },
+ {
+  "id": "task_014",
+  "description": "Per-project Claude projects/ bind: each host project gets its own /home/node/.claude/projects/ inside the container so vibe X --continue scopes by project, not globally",
+  "implementation_status": "pending",
+  "test_status": "pending",
+  "assigned_to": "planner",
+  "mode": "rigorous",
+  "last_modified": "2026-04-29T00:00:00Z"
+ },
+ {
+  "id": "task_015",
+  "description": "Auto-recreate a project's container when it was built from a superseded vibe-dev:latest (image-drift detection before devcontainer up); fixes silent stale-container env claude ENOENT",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-05-27T00:00:00Z"
+ },
+ {
+  "id": "task_016",
+  "description": "--sessions auto-resume survives the out-of-credits block: heartbeat hooks + host-side stall watchdog (3-part gate), countdown Ctrl-C deactivate, claude exit-status propagation",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-07-10T12:22:14Z"
+ },
+ {
+  "id": "task_017",
+  "description": "shared-repos: declaration+registry, /repos/<name> mounts, rw single-writer lock, claim/handoff, seam fragment, per-repo PATs via useHttpPath",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-07-11T05:19:20Z",
+  "cycle_1_note": "Generator (sonnet) delivered AC1-AC7: registry/declaration helpers, vibe repos add|remove|list, shared_repos_scan single-classification-pass mount assembly (2 binds/repo, ro hard-pinned), runtime manifest + install-claude-extras.sh safe.directory wiring, gitignore ownership, README+CHANGELOG. code-check clean, smoke 1080/1080 (no Tester checks yet - append-only per /vs convention, lands next). implementation_status stays in_progress (C1 of 4); C2 (rw lock) not started.",
+  "cycle_2_note": "Tester (haiku) added 18 append-only smoke-test.py functions covering AC8 (rw-intent resolution: free-lock grant, live-holder contention fallback + named warning, ro-declared repos never touch the lock, shared_repo_declaration_set_mode at the helper level, PLUS CLI-level vibe repos add --rw: fresh-add-rw, upgrade-in-place, no-silent-downgrade on plain re-add, --rw position-agnostic - the flag wiring landed as an integrator edit mid-cycle after the Tester flagged it missing), AC9 (lock acquire/contend/stale-reclaim/release/torn-meta, all against real backgrounded processes), AC10 (exit dispatcher survives a refusing first hook via evidence files, single trap -p EXIT installer, no raw trap EXIT elsewhere, clipboard-flush + /learn tempfile cleanup both confirmed migrated into vibe_exit_hook_add), and one mode-coherence fixture tying manifest/override-JSON agreement together. Full suite: smoke-test.py 1273/1273 checks passing, 0 regressions in the frozen C1 suite; code-check.py shellcheck clean. Artifacts: .vs/cycle-2/test-output.log, .vs/cycle-2/summary.md.",
+  "cycle_3_note": "Tester (haiku) added 10 append-only smoke-test.py functions (61 checks) covering AC12 (/repo command file shape incl. host/container ~/.vibe boundary + negation-window regression guard, claim path/KEY=VALUE content shape, and a substituted-placeholder run of the documented mkdir+write proving syntactic validity + last-claim-wins overwrite since the claim flow has no sourced vibe helper - pure documentation), AC13 (statusLine \u26a0 rw:<requester> segment: structural regression guard on forceLoginMethod/defaultMode/guard-bash.sh/guard-fs.sh entries, byte-identical spot-check of two frozen fixtures with VIBE_REPOS_DIR pointed at an empty temp dir, and three functional fixtures - holder+request present, request present but not-us-the-holder, holder-but-no-request - all via VIBE_REPOS_DIR/VIBE_PROJECT_NAME env overrides), AC14 (shared-repos.md fragment shape + install-claude-extras.sh gating on VIBE_SHARED_REPOS_MANIFEST across missing/empty/non-empty), and VIBE_PROJECT_NAME plumbing (top-level export site before the _build_override_config command-substitution subshell, remoteEnv-only carriage in devcontainer.json, absent from containerEnv). Full suite: smoke-test.py 1334/1334 checks passing, 0 regressions in the frozen C1/C2 suite; code-check.py shellcheck clean. AC13(c)'s discriminating power verified by hand-running a deliberately broken statusLine variant (holder-equality check removed) and confirming the assertion fails against it. No AC12-AC15 mechanism found unimplemented. Artifacts: .vs/cycle-3/test-output.log, .vs/cycle-3/summary.md.",
+  "cycle_4_note": "Tester (haiku) added 28 append-only smoke-test.py functions (92 checks) covering AC16 (credential-helper.sh driven directly as a stdin->stdout filter: project-slug exact match, shared-slug match gated by the launcher-exported VIBE_SHARED_SLUG_* twin, unknown-repo silence, .git suffix, subdir suffix, trailing-slash-only (both unmatched and on the project's own slug), case-sensitivity, '..' traversal, embedded control byte, shell-metacharacter injection with a no-execution sentinel check, the post-security-review sanitisation-collision hardening (twin-mismatch silence is the gate-discriminating fixture; twin-match still serves correctly; twin-entirely-unset also silences), non-get ops, non-github host, lookalike subdomain host, http-not-https, empty-token-never-served, and a consolidated never-widen attack battery asserting $GITHUB_TOKEN never appears on stdout across 8 simultaneous non-project attempts), AC17 (useHttpPath registered at the same --global scope as credential.helper in setup-git.sh, plus a functional run of setup-git.sh against a fresh sandbox HOME confirming both settings land), AC18 (structural: GITHUB_REPO_SLUG / shared-token / shared-slug-twin exports all sit at column-0 top-level scope strictly outside and before the _build_override_config command-substitution call; functional: render_devcontainer_with_mounts injects matching VIBE_SHARED_TOKEN_*/VIBE_SHARED_SLUG_* remoteEnv passthroughs, remoteEnv-only never containerEnv), AC19 (CLAUDE.md + README text checks for the amended single-repo-PAT/launch-header-blast-radius/never-multi-repo-token wording). Full suite: smoke-test.py 1426/1426 checks passing, 0 regressions in the frozen C1-C3 suite; code-check.py shellcheck clean across 15 files. GAP FOUND: AC18's sanctioned C4 relaxation (missing token for an acked+registered ro repo should WARN and still MOUNT ro) is NOT implemented - shared_repos_scan still hard-blocks with 'B ... no token configured', so the C1 frozen test test_task017_delta_scan_b_token_absent is unchanged and still passes; no frozen-test amendment needed yet, this is UNIMPLEMENTED plumbing for the chair to pick up, not a Tester-side fix. AC20 (security-review) ran mid-cycle with a CLEAR verdict, closing one LOW (the sanitisation-collision twin-check) which this cycle's tests now cover as the gate-discriminating fixture. AC21's MANUAL-TESTS.md end-to-end push section (shared repo / project repo / undeclared repo) has not been authored yet - Generator/chair responsibility per spec, not Tester's. Artifacts: .vs/cycle-4/test-output.log, .vs/cycle-4/summary.md."
+ },
+ {
+  "id": "task_019",
+  "description": "regrettable-content guard: pre-commit/commit-msg/pre-push secret+PII scanner (block-by-default, two-tier, override/allowlist/opt-out) + vibe audit full-history scan; ships core",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-07-15",
+  "cycle_1_note": "Tester (haiku) added 15 append-only smoke-test.py functions (45 checks) covering AC1-AC17 (AC12/AC14 not testable via smoke-test: AC12 is regression guard on pre-existing guard-bash.sh, AC14 is pre-existing suite integrity - both verified separately). Scanner core tested: BLOCK tier (GitHub PAT, private-key), WARN tier (RFC1918 IP, home-path), clean content. Git hooks tested: real pre-commit blocks secrets; real commit-msg scans messages; pre-push new-branch permits WARN-tier PII (BLOCK-only backstop). Override (VIBE_CONTENT_GUARD=off) logs loudly. Allowlist (.vibe-content-allow regex) suppresses findings. Opt-out marker (.vibe-content-guard-off) immediate exit. Install wiring (install-claude-extras.sh + core.hooksPath) functional. Audit tested: --history finds deleted secrets (attributes to commit SHA), reports WARN-only with exit 0 (advisory). Trailer exemption verified on Co-Authored-By. All fixtures runtime-constructed (no literal secrets in test code). Full suite: smoke-test.py 1471/1471 checks passing (45 task_019 + 1426 pre-existing frozen), 0 regressions; code-check.py shellcheck clean on 15 files. Artifacts: .vs/cycle-1/test-output.log."
+ },
+ {
+  "id": "task_022",
+  "description": "vibe audit --history perf: scanner match primitives -> bash-native =~ (kill per-line grep forks) + --messages-stdin single-pass message scan; byte-identical findings gate",
+  "implementation_status": "in_progress",
+  "test_status": "pending",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-07-17T06:34:52Z"
+ }
 ]

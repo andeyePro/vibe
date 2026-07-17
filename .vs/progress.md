@@ -311,3 +311,14 @@ Evaluator (Opus chair) independent verification beyond the Tester's summary:
 Follow-up filed (not a blocker): `code-check.py` doesn't cover `devcontainer/git-hooks/` (frozen Tester fixture blocked the extension) — TODO Open.
 
 Verdict: PASS. Committing as `/vs cycle 1: pass`. Not pushed.
+
+## task_022 — vibe audit --history performance (2026-07-17)
+
+Cycle 1 start. Spec locked after 4 Spec Critic iterations (11 concerns -> 3 -> 1 -> pass;
+headline catches: old-scanner 10-min AC was empirically unaffordable (measured 0.0085s/line
+-> slice-based hard gate on a single captured stream), set -e + bare [[ =~ ]] script-killer
+pinned as A2b, nocasematch leak probe added to the corpus, AC7(b) static no-fork check
+extended to direct-invocation forms (herestring grep)). Spec approval: self-approved under
+/vss acts-as-user (autonomous /vsss run "deliver optimisations" iter 1; Fable rung NOT
+pre-authorised; Generator opus, Tester sonnet start per task_017/019 haiku quality history).
+Dispatching Generator (opus).
