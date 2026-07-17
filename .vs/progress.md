@@ -383,3 +383,16 @@ Evaluator (Fable 5 chair) beyond the Tester:
   2026-07-17), not "WARN-only findings" — contractually correct behaviour, predates task_023.
 
 Verdict: PASS. Committing as `/vs cycle 1: pass`. Not pushed.
+
+## task_024 — hunk-aware diff parsing (2026-07-17)
+
+Cycle 1 start (/vsss iter 3, optimiser-refined args: the header-spoof hardening filed from
+task_023's security review). Spec locked after 2 Spec Critic iterations. Iter-1 critic built a
+LIVE second exploit beyond the one in scope: diff.suppressBlankEmpty=true renders context
+blank lines zero-byte, leaking hunk budgets so a secret in file B reports against file A's
+path — now the load-bearing empty-line rule + permanent AC3b fixture. Also pinned: malformed-@@
+fail-safe now AC-tested; forged-budget +@@ regression fixture; AC6 objective oracle (untraceable
+diff = automatic fail); pre-change-sha capture file; binary + mode-change corpus sections.
+Design choice justified in-spec: hunk counting over follows-`---` (the two-line delete/add dance
+defeats the naive rule — AC4). Spec approval: self-approved under /vss acts-as-user.
+Dispatching Generator (opus per Model plan — security state machine).

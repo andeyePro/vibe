@@ -1,0 +1,55 @@
+# Spec — task_024: hunk-aware diff parsing — close the added-line header-spoof hole in the content scanner
+
+## Task summary
+
+Both diff parsers in `devcontainer/git-hooks/vibe-content-scan.sh` trust line SHAPE to classify diff-stream lines, but diff content is attacker-controlled: an ADDED line whose content begins `++ ` renders with its `+` prefix as `+++ …` and is misparsed as a file header. In `scan_diff_stream` (`--staged`/`--range`) a crafted `++ /dev/null` added line renders `+++ /dev/null` and sets `skip_file=1`, silently skipping EVERY finding — including BLOCK secrets — for the rest of that file's hunks (pre-existing, task_019); `++ b/<path>` similarly flips `current_file`/`current_file_tier` (WARN-demotion variant, task_023 security review INFO). In `scan_blob_stdin` (`--blob-stdin`, the audit history pass) the same shape is dropped as "header noise", so a secret on a line beginning `++ ` is never scanned at all. The fix: parse the `@@` hunk headers' line counts — which git generates and content cannot forge (every content line inside a hunk carries a `+`/`-`/space/`\` prefix) — and while inside a hunk's declared line budget, treat EVERY line as content, never as a header.
+
+## Design (settled)
+
+- **Mechanism**: on each real hunk header `@@ -<a>[,<c>] +<b>[,<d>] @@…`, record `old_remaining=<c>` (default 1 when omitted) and `new_remaining=<d>` (default 1). While `old_remaining + new_remaining > 0` the parser is INSIDE the hunk: a line starting `-` decrements `old_remaining`; a line starting `+` decrements `new_remaining` AND is scanned as content (strip exactly one `+`, even if the content itself starts `++ ` or `-- ` or `@@ `); a line starting with a space (context, present in `git log -p`'s U3 output) decrements BOTH; a **zero-byte (empty) line** inside a hunk is a context line too — git renders context blank lines EMPTY (no leading space) under the live `diff.suppressBlankEmpty=true` config, so the empty check runs BEFORE prefix classification (an empty string matches no prefix case) and decrements BOTH; a line starting `\` (the `\ No newline at end of file` annotation) decrements NOTHING and is not scanned. Header classification (`+++ `, `--- `, `@@ `, `commit `, `diff `) applies ONLY when outside a hunk (both counters zero). The Spec Critic proved the empty-line rule is load-bearing: without it, a suppressed blank context line leaks one unit of budget per side and a secret in the NEXT file gets attributed to the previous file's path.
+- **Where**: BOTH stream parsers — `scan_diff_stream` (used by `--staged` and `--range`) and `scan_blob_stdin` (used by `vibe audit --history` pass 1 over `git log -p --all`). The messages parser (`--messages-stdin`) is NUL-delimited and immune — untouched.
+- **Zero-count edge**: `-U0` hunks emit `,0` counts (e.g. `@@ -5,0 +6,3 @@`); `<c>` or `<d>` may be 0. A hunk with both counts 0 cannot occur, but parse it safely (immediately outside).
+- **Malformed `@@` line**: if the counts cannot be parsed, fail SAFE for the guard's purpose — treat the line as not-a-header (content of no hunk; scanning continues under the previous state) rather than crashing (`set -euo pipefail` is active — an unguarded `$(( ))` on a non-numeric capture is an instant hard failure) and never fail open by entering an unbounded "inside hunk" state. This claim is AC-tested (AC8), not just asserted.
+- **Forged-budget vector pinned closed**: an ADDED line whose content begins `@@ …` renders as `+@@ …` (leading `+`), so hostile content can never case-match a real hunk header and re-arm the counters to attacker-chosen values. Provably safe by construction TODAY — but it is the single most dangerous theoretical forgery in this design, so it gets a permanent regression fixture (AC3 set) to keep it closed under future refactors.
+- **Line-number tracking** in `scan_diff_stream` keeps working exactly as today for real hunks (`current_line` from the `+<b>` field, incremented per added line).
+- **Behaviour change is deliberate and narrow**: findings on spoof-shaped content lines CHANGE — previously mis-skipped/mis-parsed lines are now scanned (MORE findings possible: a secret behind a `++ ` prefix is now caught in every diff-based mode), and forged headers no longer flip file/tier/skip state. All other lines behave byte-identically. Pure-bash parsing only (no forks on the per-line path — task_022's shape gates stay green; per-hunk count parsing must also be builtin-only).
+- **bash 3.2 + nounset safe** (macOS host shell): no bash-4+ constructs, no empty-array `"${arr[@]}"` expansions without a `${#arr[@]}` guard (the iter-2 crash class), arithmetic via `$(( ))` on validated numerics only.
+
+## Files in scope
+
+- `devcontainer/git-hooks/vibe-content-scan.sh` — the two stream parsers + header comment.
+- `smoke-test.py` — Tester appends (append-only; Generator never touches).
+- `TODO.md` (tick the 2026-07-17 hardening item) + `CHANGELOG.md` (2026-07-17 entry) — same commit.
+
+## Acceptance criteria
+
+1. **Spoof neutralised — skip-state**: a fixture diff where an added line's content is `++ /dev/null` (rendering `+++ /dev/null`) followed in the same hunk by an added line carrying a runtime-built BLOCK secret → `--staged` reports the BLOCK finding with the CORRECT original file path and exits 1. Same via `--range`.
+2. **Spoof neutralised — tier/file flip**: an added line `++ b/.vs/x` (rendering `+++ b/.vs/x`) inside a hunk of a NON-path-warn file, followed by added WARN-class content (runtime-built RFC1918 IP) → the WARN finding still fires, attributed to the REAL file path, exit 1 (with a `path-warn:.vs/*`-bearing allowlist present in the fixture).
+3. **Spoofed content is itself scanned**: an added line whose content is `++ token: <runtime-built ghp_ shape>` (rendering `+++ token: ghp_…`) → BLOCK finding fires in `--staged` AND in `--blob-stdin` (where the old parser dropped the line as header noise). This is the deliberate MORE-findings change. Same fixture set includes the forged-budget probe: an added line whose content begins `@@ -99,5 +99,5 @@` (rendering `+@@ …`) is scanned as ordinary content and does NOT re-arm the hunk counters (subsequent real lines keep correct attribution).
+3b. **Zero-byte context line (the suppressBlankEmpty exploit)**: a two-file `git -c diff.suppressBlankEmpty=true diff -U3` style stream (or hand-built equivalent) where file A's hunk contains an EMPTY context line and file B adds a runtime-built BLOCK secret → the secret is attributed to FILE B's path with the correct line number, exit 1. This is the Spec Critic's live exploit; it must be a permanent test.
+4. **Deleted-line forgery bounded**: a hunk deleting a line whose content was `-- a/x` (rendering `--- a/x`) followed by an added `++ b/evil` (rendering `+++ b/evil`) — i.e. the two-line dance that defeats a naive "header must follow `--- `" rule — does NOT flip `current_file`; subsequent real findings keep the real path. (This is WHY hunk counting was chosen over the follows-`---` rule; the AC pins the stronger property.)
+5. **Real headers still work**: multi-file fixture diffs (file boundaries, new files `--- /dev/null`, deleted files `+++ /dev/null`, multiple hunks per file, `-U0` zero-count hunks incl. explicit `,0` on either side, a `\ No newline at end of file` annotation, a BINARY-file section (`Binary files … differ` — no `@@` at all), and a mode-change-only section (`old mode`/`new mode`, no hunks)) all parse exactly as before — per-file attribution, line numbers, path-warn demotion, and deleted-file skipping unchanged. Proven by differential vs the OLD scanner on a spoof-free corpus: byte-identical (`LC_ALL=C sort`). Baseline pinned: capture `git rev-parse HEAD` to `.vs/cycle-1/pre-change-sha.txt` BEFORE the first edit of cycle 1; every differential in every cycle uses that recorded sha.
+6. **History differential with carve-out (objective oracle)**: old-vs-new over a single captured `git log -p --no-color --all | head -n 12000` slice — every output difference must be mechanically traceable to a spoof-shaped line (a line the hunk-aware parser classifies as content but the old parser classified as header noise, or vice versa); the Tester lists each differing line WITH the stream line it traces to. Any difference NOT so traceable is an AUTOMATIC FAIL — not Tester's judgment to waive. Zero differences is also a pass. End-of-stream note: the `head -n 12000` capture may cut a hunk mid-way — the parser must simply hit EOF while "inside" a hunk without error; that truncated-tail state is expected for the capture and must not itself produce findings differences before the cut point.
+7. **Context lines (U3) handled**: a `git log -p` style fixture with context lines confirms context decrements both counters and is not scanned (unchanged behaviour: only `+` lines are scanned).
+8. **Static + portability gates + malformed-header fail-safe**: task_022's permanent no-fork/no-`\b`/no-bash-4 shape checks stay green; the new counting logic introduces no external-command invocation on any per-line path; nounset-safe empty-array discipline (no unguarded `"${arr[@]}"`). PLUS: a fixture stream containing a malformed hunk header (`@@ -abc,def +xyz @@`, and a truncated `@@ -5,` variant) neither crashes the scanner (exit stays 0/1, never a `set -e` death) nor wedges it "inside" a hunk — a real `+++ b/…` header AFTER the malformed line is classified as a header again and subsequent findings carry the correct path.
+9. **Suite + lint + timing**: full `python3 smoke-test.py` green (zero regressions incl. task_023's 19 functions), `python3 code-check.py` clean, direct `shellcheck devcontainer/git-hooks/vibe-content-scan.sh` clean, `vibe audit --history` still under 60s on the vibe repo.
+10. **Docs + bookkeeping**: scanner header comment documents hunk-aware parsing; TODO hardening item ticked (removed); CHANGELOG 2026-07-17 entry — same commit.
+
+## Out of scope
+
+- `--messages-stdin` (NUL-delimited, immune), `--identity`, hook files, `vibe` launcher, `code-check.py` (queue item 3), mount-drift (queue item 4).
+- Rename-detection awareness (`+++ b/` path trust for RENAMED files — separate pre-existing note from task_023, unchanged).
+- Any rule/tier/allowlist semantics change beyond the pinned more-findings carve-out.
+
+## Test location
+
+`smoke-test.py` — append-only per task_019/022/023 conventions; runtime-built literals only. Differentials are one-off (log); permanent tests freeze expected findings on the spoof fixtures. Once committed, tests are immutable.
+
+## Proposed budget
+
+2 cycles.
+
+## Model plan
+
+- Generator: **opus**, ceiling opus. Rationale: security-boundary state machine with fiddly count edge cases (omitted counts, `,0`, context lines, `\` annotations) — the plausible-but-wrong failure mode is exactly what a cheaper tier ships here; same routing as task_022. Fable rung: **not pre-authorised**.
+- Tester: **sonnet**, ceiling sonnet. Spec Critic: sonnet. Planner/Evaluator: session model (Fable 5 chair).
