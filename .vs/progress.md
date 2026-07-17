@@ -396,3 +396,30 @@ diff = automatic fail); pre-change-sha capture file; binary + mode-change corpus
 Design choice justified in-spec: hunk counting over follows-`---` (the two-line delete/add dance
 defeats the naive rule — AC4). Spec approval: self-approved under /vss acts-as-user.
 Dispatching Generator (opus per Model plan — security state machine).
+
+## task_024 — cycle 1 — PASS (2026-07-17)
+
+Hunk-aware diff parsing (close added-line header-spoof hole in both scanner diff parsers).
+Generator: opus (passed at opus). Tester: sonnet, blind — 17 new permanent smoke functions.
+Full suite green after the chair's AC10 TODO-tick close-out (1701 checks); code-check + direct
+scanner shellcheck clean; audit --history 30.3s (<60s). 0 regressions.
+
+AC6 objective-oracle (the strong result): old-vs-new differential over a 12k-line real-history
+slice produced EXACTLY ONE differing line, mechanically traced to stream line 7612 - an added
+line `+++        test_file.write_text("... /Users/myname/project")` inside a real hunk (an
+archived diff.patch being committed) whose text renders `"+++ "` and so was DROPPED as header
+noise by the old parser, now correctly scanned as content by the hunk-aware parser. An organic,
+in-the-wild occurrence of the exact vulnerability class this task closes - the deliberate
+spec-sanctioned more-findings behaviour, not a false positive. Zero other differences.
+
+Evaluator (Fable 5 chair) beyond the Tester:
+- Diff reviewed: hunk-count state machine in both parsers, [0-9]+-only captures (no set -e
+  arithmetic crash), omitted-count=1 / ,0 preserved, empty-line-before-prefix context rule,
+  malformed-@@ fail-safe in the outside branch only (counters already 0), builtin-only per line.
+- AC10 red was the chair's own close-out step (Generator correctly forbidden from ticking TODO);
+  ticked, suite re-green, test_status flipped passing.
+- security-review agent: CLEAR on all four probed vectors (counter leak, content re-arming,
+  fail-open-to-less-scanning, BLOCK/discipline). One INFO (benign parser asymmetry: scan_diff_stream
+  has no outside `+*)` arm, unreachable with -U0) - documented in-tree with a clarifying comment.
+
+Verdict: PASS. Committing as `/vs cycle 1: pass`. Not pushed.

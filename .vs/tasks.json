@@ -161,8 +161,8 @@
  {
   "id": "task_024",
   "description": "content guard: hunk-aware diff parsing in scan_diff_stream + scan_blob_stdin - close added-line header-spoof hole (incl. suppressBlankEmpty zero-byte context exploit); BLOCK unhideable via ++ /dev/null spoof",
-  "implementation_status": "in_progress",
-  "test_status": "pending",
+  "implementation_status": "complete",
+  "test_status": "passing",
   "assigned_to": "generator",
   "mode": "rigorous",
   "last_modified": "2026-07-17T08:10:42Z"

@@ -55,9 +55,37 @@
 # --messages-stdin, --blob-stdin, or --identity — no file path exists
 # there. See devcontainer/claude-md/content-guard.md for the full contract.
 #
-# See .vs/spec.md (task_019, task_023) for the full pinned contract this
-# implements, and devcontainer/claude-md/content-guard.md for the
-# in-session summary.
+# task_024: both diff parsers (scan_diff_stream, scan_blob_stdin) are
+# HUNK-AWARE. Diff content is attacker-controlled, so line SHAPE alone
+# cannot be trusted to tell a header from content: an ADDED line whose
+# content begins `++ ` renders `+++ …` and used to be misparsed as a
+# `+++ ` file header (silently skipping the rest of a file's findings), and
+# an added `@@ …`/`--- ` line rendered `+@@ …`/`+--- …`. The fix parses the
+# `@@ -a[,c] +b[,d] @@` hunk headers' line COUNTS — which git generates and
+# content cannot forge (every in-hunk line carries a `+`/`-`/space/`\`
+# prefix). On each real hunk header the parser records old_remaining=<c>
+# (default 1 when omitted, `,0` legal) and new_remaining=<d>; while
+# old_remaining+new_remaining>0 it is INSIDE the hunk and classifies purely
+# by first byte: `-` decrements old; `+` decrements new AND is scanned as
+# content (exactly one `+` stripped, even if the content itself starts
+# `++ `/`@@ `); a leading space (U3 context) decrements BOTH; a ZERO-BYTE
+# empty line is a suppressBlankEmpty context line — checked BEFORE prefix
+# classification — and decrements BOTH; a leading `\` (`\ No newline…`)
+# decrements NOTHING and is not scanned. Header classification (`+++ `,
+# `commit `, `@@ `) applies ONLY when both counters are zero. A malformed
+# `@@` whose counts don't parse fails SAFE: treated as not-a-header,
+# counters stay zero, scanning continues under the prior state — never a
+# `set -e` crash, never a wedged unbounded "inside" state. EOF mid-hunk is
+# tolerated. Deliberate, narrow behaviour change: spoof-shaped added lines
+# are now scanned as content (a secret behind a `++ ` prefix is caught in
+# every diff-based mode) and forged headers no longer flip file/tier/skip
+# state. All other lines behave byte-identically to the pre-task_024 parser.
+# Per-hunk count parsing is builtin-only ([[ =~ ]] + BASH_REMATCH, no fork
+# on the per-line path — task_022 shape gates stay green).
+#
+# See .vs/spec.md (task_019, task_023, task_024) for the full pinned
+# contract this implements, and devcontainer/claude-md/content-guard.md for
+# the in-session summary.
 
 set -euo pipefail
 
@@ -336,8 +364,46 @@ scan_line() {
 scan_diff_stream() {
   local tier="$1"
   local current_file="" current_line=0 skip_file=1 current_file_tier="$tier"
+  local old_remaining=0 new_remaining=0
+  # POSIX ERE (no word-boundary escape, no logic-bearing backref) held in a
+  # variable so its literal spaces survive unquoted-RHS =~ matching; portable
+  # to BSD regcomp (bash 3.2) and glibc alike.
+  local hunk_re='^@@ -([0-9]+)(,([0-9]+))? [+]([0-9]+)(,([0-9]+))? @@'
   local diffline
   while IFS= read -r diffline || [ -n "$diffline" ]; do
+    if [ "$((old_remaining + new_remaining))" -gt 0 ]; then
+      # INSIDE a hunk: every line is body, classified by first byte only,
+      # never a header. Zero-byte (empty) context line checked FIRST — under
+      # diff.suppressBlankEmpty=true git emits blank context lines with no
+      # leading space, and an empty string matches no prefix case.
+      if [ -z "$diffline" ]; then
+        [ "$old_remaining" -gt 0 ] && old_remaining=$((old_remaining - 1))
+        [ "$new_remaining" -gt 0 ] && new_remaining=$((new_remaining - 1))
+        continue
+      fi
+      case "${diffline:0:1}" in
+        \\) : ;;  # `\ No newline at end of file` — no budget, not content
+        '-')
+          [ "$old_remaining" -gt 0 ] && old_remaining=$((old_remaining - 1))
+          ;;
+        '+')
+          [ "$new_remaining" -gt 0 ] && new_remaining=$((new_remaining - 1))
+          if [ "$skip_file" -eq 0 ] && [ -n "$current_file" ]; then
+            local content="${diffline#+}"
+            scan_line "$content" "${current_file}:${current_line}" "$current_file_tier"
+            current_line=$((current_line + 1))
+          fi
+          ;;
+        *)
+          # leading space (U3 context) or any unexpected byte — decrement both,
+          # draining the budget so a malformed body can never wedge us inside.
+          [ "$old_remaining" -gt 0 ] && old_remaining=$((old_remaining - 1))
+          [ "$new_remaining" -gt 0 ] && new_remaining=$((new_remaining - 1))
+          ;;
+      esac
+      continue
+    fi
+    # OUTSIDE any hunk (both counters zero): headers classify normally.
     case "$diffline" in
       "+++ "*)
         local f="${diffline#+++ }"
@@ -354,18 +420,23 @@ scan_diff_stream() {
         fi
         ;;
       "@@ "*)
-        local hunk="${diffline#@@ }"
-        hunk="${hunk%% @@*}"
-        local plus="${hunk#*+}"
-        current_line="${plus%%,*}"
-        ;;
-      +*)
-        if [ "$skip_file" -eq 0 ] && [ -n "$current_file" ]; then
-          local content="${diffline#+}"
-          scan_line "$content" "${current_file}:${current_line}" "$current_file_tier"
-          current_line=$((current_line + 1))
+        if [[ $diffline =~ $hunk_re ]]; then
+          local c="${BASH_REMATCH[3]}" d="${BASH_REMATCH[6]}"
+          [ -n "$c" ] || c=1
+          [ -n "$d" ] || d=1
+          old_remaining="$c"
+          new_remaining="$d"
+          current_line="${BASH_REMATCH[4]}"
         fi
+        # Malformed @@ (no regex match): fail safe — treat as not-a-header,
+        # counters stay zero, we remain outside; no crash, no wedge.
         ;;
+      # NB: unlike scan_blob_stdin, there is deliberately no OUTSIDE `+*)`
+      # scan arm here — a `+` line can only legitimately occur INSIDE a hunk
+      # in `git diff -U0` output (every added line follows a well-formed @@),
+      # so an outside `+` is unreachable with real input. scan_blob_stdin
+      # keeps its outside `+*)` arm only to stay byte-identical with the
+      # frozen task_022 headerless corpus; the asymmetry is intentional.
       *) : ;;
     esac
   done
@@ -375,20 +446,67 @@ scan_diff_stream() {
 scan_blob_stdin() {
   local tier="$1"
   local current_commit="stdin"
+  local old_remaining=0 new_remaining=0
+  local hunk_re='^@@ -([0-9]+)(,([0-9]+))? [+]([0-9]+)(,([0-9]+))? @@'
   local line
   while IFS= read -r line || [ -n "$line" ]; do
+    if [ "$((old_remaining + new_remaining))" -gt 0 ]; then
+      # INSIDE a hunk: body lines only, classified by first byte. A line
+      # rendering `+++ …`/`+@@ …` here is an ADDED line (leading `+`) and is
+      # scanned as content — the task_024 fix. Empty (zero-byte) context line
+      # checked before prefix classification.
+      if [ -z "$line" ]; then
+        [ "$old_remaining" -gt 0 ] && old_remaining=$((old_remaining - 1))
+        [ "$new_remaining" -gt 0 ] && new_remaining=$((new_remaining - 1))
+        continue
+      fi
+      case "${line:0:1}" in
+        \\) : ;;  # `\ No newline at end of file` — no budget, not content
+        '-')
+          [ "$old_remaining" -gt 0 ] && old_remaining=$((old_remaining - 1))
+          ;;
+        '+')
+          [ "$new_remaining" -gt 0 ] && new_remaining=$((new_remaining - 1))
+          local content="${line#+}"
+          scan_line "$content" "$current_commit" "$tier"
+          ;;
+        *)
+          [ "$old_remaining" -gt 0 ] && old_remaining=$((old_remaining - 1))
+          [ "$new_remaining" -gt 0 ] && new_remaining=$((new_remaining - 1))
+          ;;
+      esac
+      continue
+    fi
+    # OUTSIDE any hunk (both counters zero): headers classify normally.
     case "$line" in
       commit\ *)
         current_commit="commit ${line#commit }"
         # Trim any trailing " (something)" merge annotation down to the sha token.
         current_commit="commit $(printf '%s' "${current_commit#commit }" | awk '{print $1}')"
         ;;
-      "+++ "*|"---"*|"@@ "*) : ;;  # header noise, not content
+      "@@ "*)
+        if [[ $line =~ $hunk_re ]]; then
+          local c="${BASH_REMATCH[3]}" d="${BASH_REMATCH[6]}"
+          [ -n "$c" ] || c=1
+          [ -n "$d" ] || d=1
+          old_remaining="$c"
+          new_remaining="$d"
+        fi
+        # Malformed @@ fails safe: counters stay zero, remain outside.
+        ;;
+      "+++ "*|"---"*) : ;;  # real file headers (outside a hunk) — noise, as before
       +*)
+        # A `+`-prefixed content line OUTSIDE any hunk: this occurs only in
+        # synthetic/degenerate streams that carry no `@@` header (e.g. the
+        # frozen task_022 corpus of `commit` + bare `+lines`). Scan it as
+        # content exactly as the pre-task_024 parser did — byte-identical.
+        # In real `git log -p` every added line sits inside a hunk, so this
+        # path is inert there; the spoof fix (a `+++ …`/`+@@ …` added line)
+        # is handled by the INSIDE-hunk classification above, never here.
         local content="${line#+}"
         scan_line "$content" "$current_commit" "$tier"
         ;;
-      *) : ;;
+      *) : ;;  # `diff `/`index `/Binary/mode lines — header noise
     esac
   done
 }

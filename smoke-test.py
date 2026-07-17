@@ -10314,6 +10314,446 @@ def test_task023_glob_metachar_question_mark_semantics() -> None:
               any(f[1].startswith("fixtures/ab.txt:") for f in findings), str(findings))
 
 
+# ── task_024: hunk-aware diff parsing — close the added-line header-spoof
+# hole in scan_diff_stream (--staged/--range) and scan_blob_stdin
+# (--blob-stdin) ─────────────────────────────────────────────────────────
+# Tester-authored (independent of the Generator's cycle-1 diff/report —
+# spec only), verified against the live scanner with real git before being
+# written down here (not guessed). Permanent suite members per .vs/spec.md
+# "Test location": AC1 (skip-state spoof neutralised, staged+range), AC2
+# (tier/file-flip spoof neutralised), AC3 (spoofed content itself scanned,
+# staged+blob-stdin, plus the forged-budget probe), AC3b (the
+# diff.suppressBlankEmpty zero-byte context-line exploit), AC4 (deleted-
+# line/added-line two-line dance bounded), AC5 (real-header corpus frozen —
+# multi-file/new/deleted/multi-hunk/-U0 zero-count/no-newline/binary/mode-
+# change, exact findings pinned), AC7 (U3 context decrements both, only `+`
+# scanned), AC8 (malformed `@@` fail-safe, no crash/no wedge), AC10 (TODO/
+# CHANGELOG bookkeeping). The spoof-free differential (AC5) and the
+# full-history objective-oracle differential (AC6) are one-offs and live in
+# the Tester's log only, not here — a permanent test must not depend on the
+# vibe repo's own mutable history. All BLOCK/WARN-shaped literals below are
+# assembled at runtime (string concatenation), never embedded raw.
+
+def _t24_ghp(c: str = "M") -> str:
+    return "ghp_" + c * 36
+
+
+def _t24_akia(c: str = "Q") -> str:
+    return "AKIA" + c * 16
+
+
+def _t24_ip(parts: tuple = ("192", "168", "44", "5")) -> str:
+    return ".".join(parts)
+
+
+def _t24_init_repo(repo: Path) -> None:
+    repo.mkdir(parents=True, exist_ok=True)
+    run(["git", "init"], cwd=repo)
+    run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+    run(["git", "config", "user.name", "Test User"], cwd=repo)
+
+
+def test_task024_ac1_spoof_neutralised_skip_state_staged() -> None:
+    """AC1: an added line whose content is '++ /dev/null' (rendering
+    '+++ /dev/null' inside a real hunk) does NOT set skip_file — a
+    runtime-built BLOCK secret added in the SAME hunk right after it is
+    still found, attributed to the correct real file path, exit 1. Staged
+    variant. Pre-task_024 this spoof made the scanner treat the rest of the
+    file as a deleted-file no-op, silently dropping the secret."""
+    print("\n[task_024 AC1: ++ /dev/null skip-state spoof neutralised — staged]")
+    token = _t24_ghp("A")
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        _t24_init_repo(repo)
+        (repo / "secret.txt").write_text(f"++ /dev/null\nleaked: {token}\n")
+        run(["git", "add", "-A"], cwd=repo)
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
+        findings = _task022_parse_findings(r.stderr)
+        check("[task_024 AC1 staged] exit 1", r.returncode == 1, r.stderr)
+        check("[task_024 AC1 staged] BLOCK finding attributed to secret.txt (correct path)",
+              any(f[0] == "BLOCK" and f[1].startswith("secret.txt:") for f in findings), str(findings))
+        check("[task_024 AC1 staged] exactly 1 finding (spoof line itself yields none)",
+              len(findings) == 1, str(findings))
+
+
+def test_task024_ac1_spoof_neutralised_skip_state_range() -> None:
+    """AC1: same spoof via --range (block-tier, two committed shas)."""
+    print("\n[task_024 AC1: ++ /dev/null skip-state spoof neutralised — range]")
+    token = _t24_ghp("B")
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        _t24_init_repo(repo)
+        (repo / "secret.txt").write_text("base\n")
+        run(["git", "add", "-A"], cwd=repo)
+        run(["git", "commit", "-m", "base"], cwd=repo)
+        sha1 = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+        (repo / "secret.txt").write_text(f"base\n++ /dev/null\nleaked: {token}\n")
+        run(["git", "add", "-A"], cwd=repo)
+        run(["git", "commit", "-m", "add spoof+secret"], cwd=repo)
+        sha2 = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--range", sha1, sha2], cwd=repo)
+        findings = _task022_parse_findings(r.stderr)
+        check("[task_024 AC1 range] exit 1", r.returncode == 1, r.stderr)
+        check("[task_024 AC1 range] BLOCK finding attributed to secret.txt (correct path)",
+              any(f[0] == "BLOCK" and f[1].startswith("secret.txt:") for f in findings), str(findings))
+        check("[task_024 AC1 range] exactly 1 finding", len(findings) == 1, str(findings))
+
+
+def test_task024_ac2_spoof_neutralised_tier_file_flip() -> None:
+    """AC2: an added line whose content is '++ b/.vs/x' (rendering
+    '+++ b/.vs/x' inside a real hunk of a NON-path-warn file) does not flip
+    current_file/current_file_tier — a runtime-built WARN-class RFC1918 IP
+    added right after it in the SAME hunk still fires, attributed to the
+    REAL file. A path-warn:.vs/* allowlist entry is present specifically to
+    prove the demotion-to-block-tier the spoof would have triggered (had it
+    been misparsed as a real header) never happens."""
+    print("\n[task_024 AC2: ++ b/.vs/x tier/file-flip spoof neutralised]")
+    ip = _t24_ip(("192", "168", "44", "5"))
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        _t24_init_repo(repo)
+        (repo / ".vibe-content-allow").write_text("path-warn:.vs/*\n")
+        (repo / "notes.txt").write_text(f"++ b/.vs/x\nServer ip {ip} today\n")
+        run(["git", "add", "-A"], cwd=repo)
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
+        findings = _task022_parse_findings(r.stderr)
+        check("[task_024 AC2] exit 1", r.returncode == 1, r.stderr)
+        check("[task_024 AC2] WARN finding attributed to notes.txt (real path, not .vs/x)",
+              any(f[0] == "WARN" and f[1].startswith("notes.txt:") and f[2] == "rfc1918-ip"
+                  for f in findings), str(findings))
+        check("[task_024 AC2] no finding located in .vs/x (the spoofed path)",
+              all(not f[1].startswith(".vs/x") for f in findings), str(findings))
+
+
+def test_task024_ac3_spoofed_content_scanned_staged() -> None:
+    """AC3: an added line whose content is '++ token: <ghp_ shape>'
+    (rendering '+++ token: ghp_…') is itself scanned as content and fires
+    BLOCK — the deliberate MORE-findings change. Same fixture set includes
+    the forged-budget probe: an added line beginning literally
+    '@@ -99,5 +99,5 @@' (rendering '+@@ …') is scanned as ordinary content
+    (no finding of its own) and does NOT re-arm the hunk counters — proven
+    by a SECOND file's real secret still being attributed to its own
+    correct path afterward."""
+    print("\n[task_024 AC3: spoofed content scanned as content — staged]")
+    token1 = _t24_ghp("H")
+    token2 = _t24_akia("N")
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        _t24_init_repo(repo)
+        (repo / "spoofed.txt").write_text(
+            f"++ token: {token1}\n"
+            "@@ -99,5 +99,5 @@ trailing junk\n"
+        )
+        (repo / "zzz_real.txt").write_text(f"leaked: {token2}\n")
+        run(["git", "add", "-A"], cwd=repo)
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
+        findings = _task022_parse_findings(r.stderr)
+        check("[task_024 AC3 staged] exit 1", r.returncode == 1, r.stderr)
+        check("[task_024 AC3 staged] BLOCK finding(s) in spoofed.txt for the spoofed token",
+              any(f[0] == "BLOCK" and f[1].startswith("spoofed.txt:") for f in findings), str(findings))
+        check("[task_024 AC3 staged] BLOCK finding in zzz_real.txt (correct attribution AFTER the forged-budget probe)",
+              any(f[0] == "BLOCK" and f[1].startswith("zzz_real.txt:") for f in findings), str(findings))
+        check("[task_024 AC3 staged] no finding attributed to a bogus '99' line/location from the forged header",
+              all(":99" not in f[1] for f in findings), str(findings))
+
+
+def test_task024_ac3_spoofed_content_scanned_blob_stdin() -> None:
+    """AC3: same spoof + forged-budget probe via --blob-stdin, where the
+    OLD parser dropped a '+++ token: …'-shaped added line entirely as
+    header noise (never scanned at all). Hand-built stream, single hunk
+    with declared budget new_remaining=2 consumed exactly by the two added
+    lines."""
+    print("\n[task_024 AC3: spoofed content scanned as content — blob-stdin]")
+    token1 = _t24_ghp("H")
+    stream = (
+        "commit deadbeefcafefeedfacefeeddeadbeefcafefeed\n"
+        "diff --git a/x b/x\n"
+        "--- a/x\n"
+        "+++ b/x\n"
+        "@@ -0,0 +1,2 @@\n"
+        f"+++ token: {token1}\n"
+        "+@@ -99,5 +99,5 @@ trailing junk\n"
+    )
+    with tempfile.TemporaryDirectory() as td:
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--blob-stdin"], cwd=td, input=stream)
+        findings = _task022_parse_findings(r.stderr)
+        check("[task_024 AC3 blob-stdin] exit 1", r.returncode == 1, r.stderr)
+        check("[task_024 AC3 blob-stdin] BLOCK finding present for the spoofed content",
+              any(f[0] == "BLOCK" for f in findings), str(findings))
+        check("[task_024 AC3 blob-stdin] finding attributed to the commit (old parser dropped this line entirely)",
+              any(f[1] == "commit deadbeefcafefeedfacefeeddeadbeefcafefeed" for f in findings), str(findings))
+        check("[task_024 AC3 blob-stdin] forged-budget probe line produced no finding of its own "
+              "(exactly the github-pat + secret-assignment pair from the token line, nothing extra)",
+              {f[2] for f in findings} <= {"github-pat", "secret-assignment"}, str(findings))
+
+
+def test_task024_ac3b_zero_byte_context_line_suppressblankempty() -> None:
+    """AC3b (the Spec Critic's live exploit): a two-file
+    `git -c diff.suppressBlankEmpty=true diff -U3` stream where file A's
+    hunk contains a genuinely zero-byte (no leading space) blank context
+    line, followed by file B adding a runtime-built BLOCK secret. Without
+    the empty-line-decrements-both rule, one unit of hunk budget leaks per
+    side and the parser is still (falsely) "inside" file A's hunk when file
+    B's real headers arrive — swallowing them as fake content instead of
+    recognising them as headers. Asserts the secret is found, exit 1, and
+    attributed to the SAME commit the fixture actually used (scan_blob_stdin
+    tracks commit-level location only, not per-file paths — this fixture
+    exercises the exact repro from the spec's Critic, at commit
+    granularity, which is the attribution unit this parser has)."""
+    print("\n[task_024 AC3b: zero-byte suppressBlankEmpty context-line exploit]")
+    token = _t24_ghp("Z")
+    sha = "cafed00dcafed00dcafed00dcafed00dcafed00"
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        _t24_init_repo(repo)
+        (repo / "fileA.txt").write_text("A\nB\nC\n\nD\nE\n")
+        (repo / "fileB.txt").write_text("secretfile\n")
+        run(["git", "add", "-A"], cwd=repo)
+        run(["git", "commit", "-m", "setup"], cwd=repo)
+        (repo / "fileA.txt").write_text("A\nB\nCHANGED\n\nD\nE\n")
+        (repo / "fileB.txt").write_text(f"secretfile\n{token}\n")
+        run(["git", "add", "-A"], cwd=repo)
+        run(["git", "commit", "-m", "trigger"], cwd=repo)
+        sha2 = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+        diffout = run(["git", "-c", "diff.suppressBlankEmpty=true", "diff", "-U3", "--no-color",
+                       f"{sha2}~1", sha2, "--", "fileA.txt", "fileB.txt"], cwd=repo).stdout
+        # A zero-byte context line must actually be present (no leading space) —
+        # pin the fixture's own shape before trusting the scanner's verdict on it.
+        check("[task_024 AC3b] fixture genuinely contains a zero-byte context line",
+              "\n\n" in diffout, repr(diffout))
+        stream = f"commit {sha}\n" + diffout
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--blob-stdin"], cwd=td, input=stream)
+        findings = _task022_parse_findings(r.stderr)
+        check("[task_024 AC3b] exit 1", r.returncode == 1, r.stderr)
+        check("[task_024 AC3b] BLOCK github-pat finding present",
+              any(f[0] == "BLOCK" and f[2] == "github-pat" for f in findings), str(findings))
+        check("[task_024 AC3b] finding correctly attributed to the commit (budget did not leak across the file boundary)",
+              any(f[1] == f"commit {sha}" for f in findings), str(findings))
+        check("[task_024 AC3b] exactly one BLOCK finding (no duplicate/misfired scans from a leaked window)",
+              len([f for f in findings if f[0] == "BLOCK"]) == 1, str(findings))
+
+
+def test_task024_ac4_deleted_line_forgery_two_line_dance() -> None:
+    """AC4: a hunk deleting a line whose content is '-- a/x' (rendering
+    '--- a/x') immediately followed by an added line '++ b/evil' (rendering
+    '+++ b/evil') — the two-line dance that defeats a naive "header must
+    follow --- " rule — does NOT flip current_file. A real secret added
+    later in the SAME staged change stays attributed to the real file
+    (orig.txt), never to 'evil'."""
+    print("\n[task_024 AC4: deleted-line + added-line two-line dance bounded]")
+    token = _t24_ghp("E")
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        _t24_init_repo(repo)
+        (repo / "orig.txt").write_text("keep1\n-- a/x\nkeep2\n")
+        run(["git", "add", "-A"], cwd=repo)
+        run(["git", "commit", "-m", "base"], cwd=repo)
+        (repo / "orig.txt").write_text(f"keep1\n++ b/evil\nkeep2\nleaked: {token}\n")
+        run(["git", "add", "-A"], cwd=repo)
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
+        findings = _task022_parse_findings(r.stderr)
+        check("[task_024 AC4] exit 1", r.returncode == 1, r.stderr)
+        check("[task_024 AC4] BLOCK finding attributed to orig.txt (current_file never flipped to evil)",
+              any(f[0] == "BLOCK" and f[1].startswith("orig.txt:") for f in findings), str(findings))
+        check("[task_024 AC4] no finding attributed to a file named evil",
+              all("evil" not in f[1] for f in findings), str(findings))
+
+
+def test_task024_ac5_real_headers_corpus_frozen_findings() -> None:
+    """AC5: a real multi-shape corpus (file boundary, new file via
+    '--- /dev/null', deleted file via '+++ /dev/null' with a non-secret
+    decoy string that must never be scanned, multiple hunks in one file,
+    -U0 zero-count hunks with EXPLICIT ',0' on both the old side
+    (zerocount_del.txt, a pure deletion: '@@ -1,3 +0,0 @@') and the new
+    side (insertonly.txt, a pure insertion: '@@ -1,0 +2,2 @@'), a
+    '\\ No newline at end of file' annotation, a BINARY-file section
+    ('Binary files … differ', no @@ at all), and a mode-change-only section
+    ('old mode'/'new mode', no hunks)) parses via --range EXACTLY as
+    before: pinned exact finding set, no crash, no misattribution. This is
+    the freeze half of AC5 — the differential against the OLD scanner on
+    this exact corpus is a one-off, logged separately."""
+    print("\n[task_024 AC5: real-header corpus — frozen findings via --range]")
+    token = _t24_ghp("K")
+    ip = _t24_ip(("192", "168", "77", "9"))
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        _t24_init_repo(repo)
+        (repo / "modme.txt").write_text("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n")
+        (repo / "todelete.txt").write_text("some content\nleaked-like-marker\n")
+        (repo / "modechange.txt").write_text("static content\n")
+        (repo / "nonewline.txt").write_text("content without trailing newline")
+        (repo / "zerocount_del.txt").write_text("line1\nline2\nline3\n")
+        (repo / "insertonly.txt").write_text("start\nend\n")
+        (repo / "binaryfile.bin").write_bytes(b"BIN\x00DATA\x01\x02")
+        run(["git", "add", "-A"], cwd=repo)
+        run(["git", "commit", "-m", "base"], cwd=repo)
+        sha1 = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+
+        (repo / "modme.txt").write_text(
+            f"one\nTWO-CHANGED\nthree\nfour\nfive\nsix\nSEVEN-CHANGED {token}\neight\n"
+        )
+        run(["git", "rm", "-q", "todelete.txt"], cwd=repo)
+        (repo / "modechange.txt").chmod(0o755)
+        (repo / "nonewline.txt").write_text("content still no trailing newline CHANGED")
+        (repo / "zerocount_del.txt").write_text("")
+        (repo / "insertonly.txt").write_text("start\nNEWLINE1\nNEWLINE2\nend\n")
+        (repo / "binaryfile.bin").write_bytes(b"BIN\x00DATA-CHANGED\x01\x02\x03")
+        (repo / "newfile.txt").write_text(f"Server ip {ip} today\n")
+        run(["git", "add", "-A"], cwd=repo)
+        run(["git", "commit", "-m", "second"], cwd=repo)
+        sha2 = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--range", sha1, sha2], cwd=repo)
+        findings = _task022_parse_findings(r.stderr)
+        check("[task_024 AC5] exit 1", r.returncode == 1, r.stderr)
+        check("[task_024 AC5] exactly 1 finding (--range is block-tier only; the WARN in newfile.txt is skipped)",
+              len(findings) == 1, str(findings))
+        check("[task_024 AC5] BLOCK github-pat in modme.txt at the SECOND hunk's real line (multi-hunk attribution)",
+              findings == [("BLOCK", "modme.txt:7", "github-pat", token)], str(findings))
+
+        # Same corpus via --staged (both-tier) additionally proves the new-file
+        # WARN fires and the deleted-file decoy string never gets scanned.
+        r2 = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
+        findings2 = _task022_parse_findings(r2.stderr)
+        check("[task_024 AC5 staged-tier] no finding ever attributed to todelete.txt (deleted file skipped)",
+              all(not f[1].startswith("todelete.txt") for f in findings2), str(findings2))
+        check("[task_024 AC5 staged-tier] no finding from modechange.txt/binaryfile.bin/nonewline.txt/zerocount_del.txt",
+              all(not any(f[1].startswith(p) for p in
+                          ("modechange.txt", "binaryfile.bin", "nonewline.txt", "zerocount_del.txt"))
+                  for f in findings2), str(findings2))
+
+
+def test_task024_ac7_context_lines_u3_handled_blob_stdin() -> None:
+    """AC7: a git-log--p-style fixture (default U3 context) confirms a
+    context line decrements BOTH counters and is NEVER scanned — a
+    WARN-shaped RFC1918 IP planted on an UNCHANGED context line produces no
+    finding, while a genuine secret on the adjacent ADDED line in the same
+    hunk still fires. Unchanged behaviour: only '+' lines are scanned."""
+    print("\n[task_024 AC7: U3 context lines decrement both, not scanned]")
+    token = _t24_ghp("Y")
+    ip = _t24_ip(("192", "168", "9", "9"))
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        _t24_init_repo(repo)
+        (repo / "f.txt").write_text(
+            f"line1\nContext with ip {ip} here\nline3\nline4\nline5\nline6\nline7\n"
+        )
+        run(["git", "add", "-A"], cwd=repo)
+        run(["git", "commit", "-m", "base"], cwd=repo)
+        (repo / "f.txt").write_text(
+            f"line1\nContext with ip {ip} here\nCHANGED3 {token}\nline4\nline5\nline6\nline7\n"
+        )
+        run(["git", "add", "-A"], cwd=repo)
+        run(["git", "commit", "-m", "second"], cwd=repo)
+        logout = run(["git", "log", "-p", "-1", "--no-color", "--", "f.txt"], cwd=repo).stdout
+        check("[task_024 AC7] fixture's hunk genuinely carries U3 context (leading-space) lines",
+              "\n Context with ip" in logout, repr(logout))
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--blob-stdin"], cwd=td, input=logout)
+        findings = _task022_parse_findings(r.stderr)
+        check("[task_024 AC7] exit 1", r.returncode == 1, r.stderr)
+        check("[task_024 AC7] exactly one finding — the added-line secret",
+              len(findings) == 1 and findings[0][0] == "BLOCK" and findings[0][2] == "github-pat",
+              str(findings))
+        check("[task_024 AC7] no WARN finding from the context line's IP (context never scanned)",
+              all(f[0] != "WARN" for f in findings), str(findings))
+
+
+def test_task024_ac8_malformed_hunk_header_failsafe() -> None:
+    """AC8: a malformed '@@ -abc,def +xyz @@' header (non-numeric counts)
+    and a truncated '@@ -5,' header (no closing '@@', no new-side count) —
+    neither crashes the scanner (no set -e death, exit stays 0/1) nor
+    wedges it "inside" a hunk (lines following each malformed header, which
+    are outside any hunk at that point, are harmless). A real, well-formed
+    hunk header AFTER both malformed lines is classified as a header again
+    and a genuine secret inside IT is found and correctly reported — proof
+    that header classification resumed, not more content wrongly consumed
+    from a phantom unbounded hunk."""
+    print("\n[task_024 AC8: malformed @@ header fail-safe]")
+    token = _t24_ghp("D")
+    stream = (
+        "commit deadbeefcafefeedfacefeeddeadbeefcafefeed\n"
+        "diff --git a/x b/x\n"
+        "--- a/x\n"
+        "+++ b/x\n"
+        "@@ -abc,def +xyz @@\n"
+        "+harmless added line, no secret here\n"
+        "diff --git a/y b/y\n"
+        "--- a/y\n"
+        "+++ b/y\n"
+        "@@ -5,\n"
+        "+another harmless line\n"
+        "diff --git a/z b/z\n"
+        "--- a/z\n"
+        "+++ b/z\n"
+        "@@ -1,1 +1,1 @@\n"
+        "-old real content\n"
+        f"+leaked {token}\n"
+    )
+    with tempfile.TemporaryDirectory() as td:
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--blob-stdin"], cwd=td, input=stream)
+        check("[task_024 AC8] no crash: exit code is 0 or 1, not a bash/set -e death",
+              r.returncode in (0, 1), f"rc={r.returncode} stderr={r.stderr!r}")
+        findings = _task022_parse_findings(r.stderr)
+        check("[task_024 AC8] exit 1 (the real secret after the malformed headers is found)",
+              r.returncode == 1, r.stderr)
+        check("[task_024 AC8] exactly one finding: the real secret, nothing from either malformed-header region",
+              findings == [("BLOCK", "commit deadbeefcafefeedfacefeeddeadbeefcafefeed", "github-pat", token)],
+              str(findings))
+
+
+def test_task024_ac8_new_hunk_logic_no_forks_in_scan_blob_stdin() -> None:
+    """AC8/design: the new per-hunk count-parsing + inside-hunk
+    classification logic added to scan_blob_stdin introduces no external-
+    command invocation (task_022's no-fork hot-path discipline extended to
+    the new logic). scan_blob_stdin retains ONE pre-existing, documented,
+    out-of-scope fork (the 'commit ' header's trailing-annotation trim via
+    `awk '{print $1}'`, predating task_024) — this test excludes exactly
+    that one known line and asserts the REMAINDER of the function body is
+    fork-free, so a fork silently reappearing in the new counting/
+    classification code would be caught."""
+    print("\n[task_024 AC8: no forks in scan_blob_stdin's new hunk-parsing logic]")
+    src = VIBE_CONTENT_SCANNER.read_text(encoding="utf-8")
+    body = _task022_extract_function_body(src, "scan_blob_stdin")
+    lines = [ln for ln in body.splitlines() if "awk '{print $1}'" not in ln]
+    remainder = "\n".join(lines)
+    forbidden_names = ["grep", "sed", "awk", "head", "cut", "tr"]
+    bad = [n for n in forbidden_names if re.search(r'\b' + n + r'\b', remainder)]
+    check("[task_024 AC8] scan_blob_stdin (minus the one documented pre-existing awk line): "
+          "no forbidden external-command names", bad == [], str(bad))
+    check("[task_024 AC8] the one documented pre-existing awk line is actually still there "
+          "(proves the exclusion above is discriminating, not accidentally matching nothing)",
+          "awk '{print $1}'" in body, body)
+
+
+def test_task024_ac10_changelog_entry_present() -> None:
+    """AC10: CHANGELOG.md carries a 2026-07-17 task_024 entry documenting
+    the hunk-aware fix (bookkeeping half of AC10 — same commit as the code
+    change per repo convention)."""
+    print("\n[task_024 AC10: CHANGELOG.md entry present]")
+    check("[task_024 AC10] CHANGELOG.md exists", CHANGELOG_MD.exists(), str(CHANGELOG_MD))
+    if CHANGELOG_MD.exists():
+        c = CHANGELOG_MD.read_text(encoding="utf-8")
+        check("[task_024 AC10] CHANGELOG.md mentions task_024", "task_024" in c, "")
+        check("[task_024 AC10] CHANGELOG.md mentions hunk-aware parsing", "hunk-aware" in c, "")
+
+
+def test_task024_ac10_todo_hardening_item_ticked() -> None:
+    """AC10: the 2026-07-17 TODO.md hardening item this task exists to
+    close ('harden scan_diff_stream against added-line header spoofing')
+    must be ticked off ([x]) or removed — an open '- [ ]' entry describing
+    work this very task just landed is a stale backlog item that will
+    confuse a future maintainer into re-doing it."""
+    print("\n[task_024 AC10: TODO.md hardening item ticked/removed]")
+    todo_md = REPO / "TODO.md"
+    check("[task_024 AC10] TODO.md exists", todo_md.exists(), str(todo_md))
+    if todo_md.exists():
+        t = todo_md.read_text(encoding="utf-8")
+        open_marker = "- [ ] **content-guard scanner: harden `scan_diff_stream` against added-line header spoofing**"
+        check("[task_024 AC10] the hardening item is no longer open ('- [ ]') in TODO.md — "
+              "either ticked to [x] or removed entirely now that task_024 has landed the fix",
+              open_marker not in t, "still present as an open TODO item" if open_marker in t else "")
+
+
 def main() -> int:
     test_help()
     test_version()
@@ -10725,6 +11165,29 @@ def main() -> int:
     test_task023_ac7_scan_diff_stream_still_shape_clean()
     test_task023_pathwarn_star_repo_wide_accepted()
     test_task023_glob_metachar_question_mark_semantics()
+
+    # task_024 (sonnet Tester): hunk-aware diff parsing in scan_diff_stream
+    # (--staged/--range) and scan_blob_stdin (--blob-stdin) — closes the
+    # added-line header-spoof hole (AC1 skip-state, AC2 tier/file-flip, AC3
+    # spoofed-content-scanned + forged-budget probe, AC3b suppressBlankEmpty
+    # zero-byte context exploit, AC4 deleted/added two-line dance, AC5 real-
+    # header corpus freeze, AC7 U3 context, AC8 malformed-@@ fail-safe +
+    # no-fork, AC10 TODO/CHANGELOG bookkeeping). AC6's full-history
+    # objective-oracle differential and AC5's spoof-free differential vs the
+    # OLD scanner are one-offs in the Tester's log only.
+    test_task024_ac1_spoof_neutralised_skip_state_staged()
+    test_task024_ac1_spoof_neutralised_skip_state_range()
+    test_task024_ac2_spoof_neutralised_tier_file_flip()
+    test_task024_ac3_spoofed_content_scanned_staged()
+    test_task024_ac3_spoofed_content_scanned_blob_stdin()
+    test_task024_ac3b_zero_byte_context_line_suppressblankempty()
+    test_task024_ac4_deleted_line_forgery_two_line_dance()
+    test_task024_ac5_real_headers_corpus_frozen_findings()
+    test_task024_ac7_context_lines_u3_handled_blob_stdin()
+    test_task024_ac8_malformed_hunk_header_failsafe()
+    test_task024_ac8_new_hunk_logic_no_forks_in_scan_blob_stdin()
+    test_task024_ac10_changelog_entry_present()
+    test_task024_ac10_todo_hardening_item_ticked()
 
     print()
     if FAILURES:
