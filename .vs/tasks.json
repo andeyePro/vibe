@@ -148,5 +148,14 @@
   "assigned_to": "generator",
   "mode": "rigorous",
   "last_modified": "2026-07-17T07:16:00Z"
+ },
+ {
+  "id": "task_023",
+  "description": "content guard: path-warn:<glob> allowlist entries - per-file WARN-tier demotion in diff modes so vibe's repo is self-clean; BLOCK never path-suppressible; path-warn lines never enter the ERE loop",
+  "implementation_status": "in_progress",
+  "test_status": "pending",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-07-17T07:29:34Z"
  }
 ]

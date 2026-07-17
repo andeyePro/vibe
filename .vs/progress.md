@@ -344,3 +344,14 @@ Evaluator (Fable 5 chair) independent verification beyond the Tester's summary:
   `git log -z` output. Gates re-run green after the fix.
 
 Verdict: PASS. Committing as `/vs cycle 1: pass`. Not pushed (session policy).
+
+## task_023 — path-scoped WARN allowlisting (2026-07-17)
+
+Cycle 1 start (/vsss iter 2, optimiser-refined args). Spec locked after 2 Spec Critic
+iterations (4 BLOCKING -> pass; headline catches: path-warn entries feeding the ERE loop
+would be a BLOCK-suppression hole (structural exclusion + AC3b now mandatory); iter-1's
+back-compat demo was itself wrong (old scanner greps the WHOLE line, prefix included) -
+corrected claim verified against line_is_allowlisted; unquoted-case-glob /-crossing pinned
+with a mandatory 3-level nested-path test; degenerate globs decided (empty=skip,
+*=accepted+documented)). Spec approval: self-approved under /vss acts-as-user.
+Dispatching Generator (sonnet, ceiling opus).
