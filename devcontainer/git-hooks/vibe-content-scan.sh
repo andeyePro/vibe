@@ -41,8 +41,23 @@
 # per line (# comments / blank lines ignored, case-sensitive); a finding is
 # suppressed iff its whole flagged line matches (grep -E) any entry.
 #
-# See .vs/spec.md (task_019) for the full pinned contract this implements,
-# and devcontainer/claude-md/content-guard.md for the in-session summary.
+# task_023: a line of the form `path-warn:<glob>` is a DIFFERENT entry kind
+# — a bash case-style glob matched against the repo-relative file path
+# (`*` crosses `/`), not an ERE. In `--staged`/`--range` only, a file whose
+# path matches a path-warn glob is scanned at tier `block` for its added
+# lines: WARN-class rules are skipped for that file, BLOCK rules always
+# still fire (path never suppresses a secret). path-warn lines are
+# structurally excluded from the ERE allowlist loop — neither the whole
+# line nor the glob remainder is ever handed to grep -E as a content
+# pattern (a glob like `smoke-test.py` used as an ERE would be a live
+# literal-substring suppressor for ANY finding, including BLOCK, on any
+# line merely mentioning the filename). Not applied in --message,
+# --messages-stdin, --blob-stdin, or --identity — no file path exists
+# there. See devcontainer/claude-md/content-guard.md for the full contract.
+#
+# See .vs/spec.md (task_019, task_023) for the full pinned contract this
+# implements, and devcontainer/claude-md/content-guard.md for the
+# in-session summary.
 
 set -euo pipefail
 
@@ -67,14 +82,18 @@ FOUND=0
 declare -a FOUND_RULES=()
 
 # line_is_allowlisted <content> — true iff the whole line matches any ERE
-# in $ALLOWLIST_FILE (comments/blanks ignored, case-sensitive).
+# in $ALLOWLIST_FILE (comments/blanks/path-warn: entries ignored,
+# case-sensitive). path-warn: entries are a structurally different kind
+# (task_023, see file header) and MUST NEVER reach grep -E here — this is
+# what keeps a path glob from acting as a live literal-substring suppressor
+# for arbitrary content (AC3b).
 line_is_allowlisted() {
   local content="$1"
   [ -f "$ALLOWLIST_FILE" ] || return 1
   local pattern
   while IFS= read -r pattern || [ -n "$pattern" ]; do
     case "$pattern" in
-      ""|\#*) continue ;;
+      ""|\#*|path-warn:*) continue ;;
     esac
     if printf '%s' "$content" | grep -qE -- "$pattern" 2>/dev/null; then
       return 0
@@ -83,12 +102,67 @@ line_is_allowlisted() {
   return 1
 }
 
+# ── path-warn glob parsing (task_023) ───────────────────────────────────────
+# Structurally separate from the ERE loop above — path-warn lines never
+# reach grep -E in any form. Populated once (lazy, idempotent) and reused
+# per-file by scan_diff_stream's per-FILE tier-demotion check.
+PATH_WARN_GLOBS_LOADED=0
+declare -a PATH_WARN_GLOBS=()
+
+# load_path_warn_globs — parses $ALLOWLIST_FILE once, extracting the glob
+# remainder of every path-warn:<glob> line (leading/trailing whitespace
+# trimmed). An empty/whitespace-only glob is malformed and skipped — it
+# matches nothing, never treated as match-all.
+load_path_warn_globs() {
+  [ "$PATH_WARN_GLOBS_LOADED" -eq 1 ] && return 0
+  PATH_WARN_GLOBS_LOADED=1
+  [ -f "$ALLOWLIST_FILE" ] || return 0
+  local pattern glob
+  while IFS= read -r pattern || [ -n "$pattern" ]; do
+    case "$pattern" in
+      path-warn:*)
+        glob="${pattern#path-warn:}"
+        glob="${glob#"${glob%%[![:space:]]*}"}"
+        glob="${glob%"${glob##*[![:space:]]}"}"
+        [ -n "$glob" ] && PATH_WARN_GLOBS+=("$glob")
+        ;;
+      *) : ;;
+    esac
+  done < "$ALLOWLIST_FILE"
+  return 0
+}
+
+# file_is_path_warn <repo-relative-path> — true iff the path matches any
+# path-warn glob. Unquoted bash case-style pattern match (no external
+# command, no fork): `*` crosses `/`, so `path-warn:.vs/*` matches a file
+# nested arbitrarily deep under .vs/.
+file_is_path_warn() {
+  local path="$1" glob
+  load_path_warn_globs
+  # Length check BEFORE expanding: under bash 3.2 + set -u (macOS host),
+  # "${arr[@]}" on an EMPTY array is an "unbound variable" fatal — only
+  # bash 4.4 made it safe. ${#arr[@]} is safe everywhere.
+  [ "${#PATH_WARN_GLOBS[@]}" -eq 0 ] && return 1
+  for glob in "${PATH_WARN_GLOBS[@]}"; do
+    # shellcheck disable=SC2254  # intentional glob match, not literal
+    case "$path" in
+      $glob) return 0 ;;
+    esac
+  done
+  return 1
+}
+
 # record_rule <rule> — append to FOUND_RULES if not already present.
 record_rule() {
   local rule="$1" r
-  for r in "${FOUND_RULES[@]}"; do
-    [ "$r" = "$rule" ] && return 0
-  done
+  # Same bash 3.2 + set -u empty-array guard as file_is_path_warn: the
+  # FIRST finding reaches this loop with FOUND_RULES still empty, which is
+  # fatal on the macOS host shell (pre-4.4 "${arr[@]}" nounset gotcha).
+  if [ "${#FOUND_RULES[@]}" -gt 0 ]; then
+    for r in "${FOUND_RULES[@]}"; do
+      [ "$r" = "$rule" ] && return 0
+    done
+  fi
   FOUND_RULES+=("$rule")
   return 0
 }
@@ -252,9 +326,16 @@ scan_line() {
 # scan_diff_stream <tier> — reads a `git diff -U0` stream on stdin, tracks
 # current file + line number from the hunk headers, and scans every added
 # (+) line. Deleted files (+++ /dev/null) are skipped (nothing added).
+#
+# task_023: at each `+++ b/<path>` header, current_file_tier is set to the
+# mode's tier and then demoted to "block" if <path> matches a path-warn
+# glob — a per-FILE, one-way floor (never raises tier above what the mode
+# already requested; --range is already "block" so this is a no-op there,
+# pinning AC3c). BLOCK rules run unconditionally inside scan_line
+# regardless of tier, so this only ever suppresses WARN-class findings.
 scan_diff_stream() {
   local tier="$1"
-  local current_file="" current_line=0 skip_file=1
+  local current_file="" current_line=0 skip_file=1 current_file_tier="$tier"
   local diffline
   while IFS= read -r diffline || [ -n "$diffline" ]; do
     case "$diffline" in
@@ -266,6 +347,10 @@ scan_diff_stream() {
         else
           current_file="${f#b/}"
           skip_file=0
+          current_file_tier="$tier"
+          if file_is_path_warn "$current_file"; then
+            current_file_tier="block"
+          fi
         fi
         ;;
       "@@ "*)
@@ -277,7 +362,7 @@ scan_diff_stream() {
       +*)
         if [ "$skip_file" -eq 0 ] && [ -n "$current_file" ]; then
           local content="${diffline#+}"
-          scan_line "$content" "${current_file}:${current_line}" "$tier"
+          scan_line "$content" "${current_file}:${current_line}" "$current_file_tier"
           current_line=$((current_line + 1))
         fi
         ;;

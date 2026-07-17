@@ -355,3 +355,31 @@ corrected claim verified against line_is_allowlisted; unquoted-case-glob /-cross
 with a mandatory 3-level nested-path test; degenerate globs decided (empty=skip,
 *=accepted+documented)). Spec approval: self-approved under /vss acts-as-user.
 Dispatching Generator (sonnet, ceiling opus).
+
+## task_023 — cycle 1 — PASS (2026-07-17)
+
+path-warn:<glob> allowlist entries (path-scoped WARN suppression; repo self-clean). Generator:
+sonnet (started + passed at sonnet). Tester: sonnet, blind — 19 new permanent smoke functions,
+full suite 1656/1656, code-check clean, direct scanner shellcheck clean, 0 regressions.
+One-off gates in test-output.log: old-vs-new differentials byte-identical (no-path-warn
+allowlist + non-diff modes with entries present); audit --history 27.4s; real-tree self-clean
+proof on a scratch clone (staged WARN literals in .vs/spec.md + smoke-test.py -> exit 0,
+no override; planted PAT -> exit 1).
+
+Evaluator (Fable 5 chair) beyond the Tester:
+- Diff hunk-by-hunk: structural ERE-loop exclusion (case skip), lazy glob loader pure-bash,
+  unquoted case glob (SC2254 pinned), per-file one-way tier floor at +++ headers, BLOCK rules
+  unconditional in scan_line. No scope creep.
+- CHAIR CAPABILITY CATCH the container CANNOT test: bash 3.2 + set -u fatal on empty-array
+  "${arr[@]}" expansion (fixed only in 4.4) — file_is_path_warn would have crashed --staged
+  host-side on macOS for every repo WITHOUT path-warn entries; record_rule carried the same
+  latent task_019 bug (first finding = empty FOUND_RULES loop). Both fixed with ${#arr[@]}
+  length guards; all gates re-run green.
+- security-review agent: CLEAR, BLOCK guarantee proven intact; 2 INFO notes sharing a
+  PRE-EXISTING root cause (added-line "+++ b/..." header spoofing, already a full-skip vector
+  via /dev/null pre-task_023) — filed as a new TODO Open hardening item, not scope-crept here.
+- Tester log nit corrected for the record: audit --history exits 1 on this repo due to
+  BLOCK-class de-fanged fixture markers in HISTORY (task_019 archive artifacts committed
+  2026-07-17), not "WARN-only findings" — contractually correct behaviour, predates task_023.
+
+Verdict: PASS. Committing as `/vs cycle 1: pass`. Not pushed.

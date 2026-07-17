@@ -9840,6 +9840,480 @@ def test_task022_ac7_no_perline_forks_in_hot_path_functions() -> None:
           "grep -qE" in allow_body, allow_body)
 
 
+# ── task_023: path-warn:<glob> allowlist entries — per-file WARN-tier
+# demotion in --staged/--range so vibe's own repo is self-clean under its
+# own content guard ──────────────────────────────────────────────────────
+# Tester-authored (independent of the Generator's cycle-1 diff/report —
+# spec only). Permanent suite members per .vs/spec.md "Test location": AC1
+# parser + ERE-regression, AC2 (all 4 WARN categories, 3-level nested path,
+# empty-glob skip), AC3 (BLOCK under path-warn, staged + range), AC3b (no
+# ERE double-parse, both literal shapes), AC3c (--range idempotency), AC4
+# (non-diff-mode byte-parity with path-warn present), AC5 (self-clean
+# end-to-end fixture simulation), AC7 (path-warn-specific no-fork shape
+# guards), plus path-warn:* accepted and glob-metacharacter sanity. The
+# differential against the OLD (pre-task_023) scanner and the audit
+# --history timing gate are one-offs and live in the Tester's log only, not
+# here — a permanent test must not depend on the vibe repo's own mutable
+# history. WARN/BLOCK-shaped literals below are assembled at runtime
+# (string concatenation / join), never embedded as raw dotted-quad IPs,
+# emails, .local hostnames, or ghp_/AKIA-shaped tokens — so this file's own
+# fixtures never masquerade as real findings independent of the feature
+# under test, regardless of this repo's own path-warn:smoke-test.py entry.
+
+def _t23_ip() -> str:
+    return ".".join(["192", "168", "50", "7"])
+
+
+def _t23_ip_alt() -> str:
+    return ".".join(["10", "1", "2", "3"])
+
+
+def _t23_email() -> str:
+    return "warnuser" + "@" + "example" + "." + "com"
+
+
+def _t23_mdns() -> str:
+    return "buildhost" + ".local"
+
+
+def _t23_homepath_line() -> str:
+    return "Path is /" + "Users" + "/" + "alice" + "/project file"
+
+
+def _t23_ghp() -> str:
+    return "ghp_" + "B" * 36
+
+
+def _t23_init_repo(repo: Path) -> None:
+    repo.mkdir(parents=True, exist_ok=True)
+    run(["git", "init"], cwd=repo)
+    run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+    run(["git", "config", "user.name", "Test User"], cwd=repo)
+
+
+def test_task023_ac1_ere_allowlist_regression_with_pathwarn_lines_interspersed() -> None:
+    """AC1: every non-path-warn allowlist line keeps exact whole-line ERE
+    suppression semantics even when path-warn: lines (including a malformed
+    whitespace-only one) are interspersed in the same file — the parser
+    split must not disturb the pre-existing ERE loop for ordinary entries.
+    Converse: with ONLY a path-warn:* entry present (no ERE entry at all),
+    --message (no file path) is completely unaffected — proving path-warn
+    entries are structurally invisible to the ERE loop in both directions."""
+    print("\n[task_023 AC1: ERE regression corpus with path-warn lines interspersed]")
+    ip = _t23_ip()
+    with tempfile.TemporaryDirectory() as td:
+        allow = Path(td) / ".vibe-content-allow"
+        allow.write_text(
+            "# a comment\n"
+            "\n"
+            "path-warn:some/other/glob/*\n"
+            + ip.replace(".", r"\.") + "\n"
+            "path-warn:  \n"
+        )
+        msg_file = Path(td) / "msg.txt"
+        msg_file.write_text(f"Server ip {ip} today\n")
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--message", str(msg_file)], cwd=td)
+        check("[task_023 AC1] ERE entry still suppresses despite interspersed path-warn lines",
+              r.returncode == 0 and len(r.stderr.strip()) == 0, r.stderr)
+
+    with tempfile.TemporaryDirectory() as td:
+        allow = Path(td) / ".vibe-content-allow"
+        allow.write_text("path-warn:*\n")
+        msg_file = Path(td) / "msg.txt"
+        msg_file.write_text(f"Server ip {ip} today\n")
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--message", str(msg_file)], cwd=td)
+        check("[task_023 AC1] path-warn entries have zero effect on --message (ERE loop only sees ERE lines)",
+              r.returncode == 1 and "rfc1918-ip" in r.stderr, r.stderr)
+
+
+def test_task023_ac1_pathwarn_prefix_whitespace_tolerant() -> None:
+    """AC1: path-warn:<glob> is recognised with arbitrary internal
+    whitespace after the prefix (leading/trailing trimmed off the glob
+    before the case-pattern match)."""
+    print("\n[task_023 AC1: path-warn prefix whitespace tolerance]")
+    ip = _t23_ip_alt()
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        _t23_init_repo(repo)
+        (repo / ".vibe-content-allow").write_text("path-warn:   fixtures/*   \n")
+        (repo / "fixtures").mkdir()
+        (repo / "fixtures" / "f.txt").write_text(f"Server ip {ip} today\n")
+        run(["git", "add", "-A"], cwd=repo)
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
+        check("[task_023 AC1] whitespace-padded glob still suppresses WARN",
+              r.returncode == 0 and len(r.stderr.strip()) == 0, r.stderr)
+
+
+def test_task023_ac2_staged_suppression_matching_vs_nonmatching() -> None:
+    """AC2: all four WARN-class categories (RFC1918 IP, non-noreply email,
+    /Users|home/<name>/ path, mdns .local hostname) in a path-warn-matched
+    file produce NO finding under --staged; the identical content in a
+    non-matching file in the SAME commit still produces the normal WARN
+    findings and exit 1."""
+    print("\n[task_023 AC2: staged suppression — all 4 WARN categories, matching vs non-matching]")
+    ip = _t23_ip()
+    email = _t23_email()
+    mdns = _t23_mdns()
+    homepath_line = _t23_homepath_line()
+    content = (
+        f"Server ip {ip} today\n"
+        f"Contact {email} please\n"
+        f"{homepath_line}\n"
+        f"Host {mdns} is up\n"
+    )
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        _t23_init_repo(repo)
+        (repo / ".vibe-content-allow").write_text("path-warn:fixtures/*\n")
+        (repo / "fixtures").mkdir()
+        (repo / "fixtures" / "warn.txt").write_text(content)
+        (repo / "other.txt").write_text(content)
+        run(["git", "add", "-A"], cwd=repo)
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
+        findings = _task022_parse_findings(r.stderr)
+        check("[task_023 AC2] exit 1 (non-matching file still WARNs)", r.returncode == 1, r.stderr)
+        check("[task_023 AC2] no finding located in fixtures/warn.txt",
+              all(not f[1].startswith("fixtures/warn.txt:") for f in findings), str(findings))
+        other_rules = {f[2] for f in findings if f[1].startswith("other.txt:")}
+        check("[task_023 AC2] other.txt still fires all 4 WARN rules",
+              other_rules == {"rfc1918-ip", "email-address", "home-path", "mdns-local"},
+              str(other_rules))
+
+
+def test_task023_ac2_nested_path_glob_crosses_slash() -> None:
+    """AC2: `*` in a path-warn glob crosses `/` — path-warn:.vs/* must
+    suppress a WARN 3 levels deep under .vs/, catching a quoted-glob
+    implementation (which would silently kill the feature)."""
+    print("\n[task_023 AC2: nested-path glob (3 levels deep)]")
+    email = _t23_email()
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        _t23_init_repo(repo)
+        (repo / ".vibe-content-allow").write_text("path-warn:.vs/*\n")
+        nested = repo / ".vs" / "archive" / "task_099" / "critiques"
+        nested.mkdir(parents=True)
+        (nested / "foo.md").write_text(f"Contact {email} for details\n")
+        run(["git", "add", "-A"], cwd=repo)
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
+        check("[task_023 AC2] 3-level nested path suppressed: exit 0", r.returncode == 0, r.stderr)
+        check("[task_023 AC2] 3-level nested path suppressed: no findings", len(r.stderr.strip()) == 0, r.stderr)
+
+
+def test_task023_ac2_empty_glob_no_crash_no_matchall() -> None:
+    """AC2: `path-warn:` with an empty/whitespace-only glob is malformed —
+    skipped, matches nothing (never treated as match-all across the whole
+    repo)."""
+    print("\n[task_023 AC2: empty-glob path-warn line is inert]")
+    ip = _t23_ip_alt()
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        _t23_init_repo(repo)
+        (repo / ".vibe-content-allow").write_text("path-warn:\npath-warn:   \n")
+        (repo / "anything.txt").write_text(f"Server ip {ip} today\n")
+        run(["git", "add", "-A"], cwd=repo)
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
+        check("[task_023 AC2] empty-glob does not crash: exit 1 (still WARNs)", r.returncode == 1, r.stderr)
+        check("[task_023 AC2] empty-glob is not match-all", "rfc1918-ip" in r.stderr, r.stderr)
+
+
+def test_task023_ac3_block_fires_staged_under_pathwarn() -> None:
+    """AC3: a runtime-built BLOCK secret added to a path-warn-matched file
+    in --staged still produces the BLOCK finding + exit 1 — path never
+    suppresses a secret."""
+    print("\n[task_023 AC3: BLOCK still fires under path-warn — staged]")
+    token = _t23_ghp()
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        _t23_init_repo(repo)
+        (repo / ".vibe-content-allow").write_text("path-warn:fixtures/*\n")
+        (repo / "fixtures").mkdir()
+        (repo / "fixtures" / "secret.txt").write_text(f"leaked: {token}\n")
+        run(["git", "add", "-A"], cwd=repo)
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
+        check("[task_023 AC3 staged] exit 1", r.returncode == 1, r.stderr)
+        check("[task_023 AC3 staged] BLOCK finding present", "BLOCK" in r.stderr, r.stderr)
+        check("[task_023 AC3 staged] github-pat rule named", "github-pat" in r.stderr, r.stderr)
+
+
+def test_task023_ac3_block_fires_range_under_pathwarn() -> None:
+    """AC3: same via --range (already block-tier — also pins that path-warn
+    never accidentally RAISES a tier)."""
+    print("\n[task_023 AC3: BLOCK still fires under path-warn — range]")
+    token = _t23_ghp()
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        _t23_init_repo(repo)
+        (repo / ".vibe-content-allow").write_text("path-warn:fixtures/*\n")
+        (repo / "fixtures").mkdir()
+        (repo / "fixtures" / "secret.txt").write_text("base\n")
+        run(["git", "add", "-A"], cwd=repo)
+        run(["git", "commit", "-m", "base"], cwd=repo)
+        sha1 = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+        (repo / "fixtures" / "secret.txt").write_text(f"leaked: {token}\n")
+        run(["git", "add", "-A"], cwd=repo)
+        run(["git", "commit", "-m", "add secret"], cwd=repo)
+        sha2 = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--range", sha1, sha2], cwd=repo)
+        check("[task_023 AC3 range] exit 1", r.returncode == 1, r.stderr)
+        check("[task_023 AC3 range] BLOCK finding present", "BLOCK" in r.stderr, r.stderr)
+
+
+def test_task023_ac3b_no_ere_double_parse_fullline_literal() -> None:
+    """AC3b: with path-warn:smoke-test.py in the allowlist, a BLOCK secret
+    staged in a NON-matching file on a line that also contains the literal
+    text 'smoke-test.py' still fires — proving the glob remainder never
+    reaches grep -E as a content pattern (it would otherwise act as a live
+    literal-substring suppressor for ANY finding, including BLOCK, on any
+    line merely mentioning the filename)."""
+    print("\n[task_023 AC3b: no ERE double-parse — literal 'smoke-test.py' on the flagged line]")
+    token = _t23_ghp()
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        _t23_init_repo(repo)
+        (repo / ".vibe-content-allow").write_text("path-warn:smoke-test.py\n")
+        (repo / "other.txt").write_text(f"see smoke-test.py for the leaked {token}\n")
+        run(["git", "add", "-A"], cwd=repo)
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
+        check("[task_023 AC3b fullline] exit 1 (not suppressed)", r.returncode == 1, r.stderr)
+        check("[task_023 AC3b fullline] BLOCK finding present", "BLOCK" in r.stderr, r.stderr)
+
+
+def test_task023_ac3b_no_ere_double_parse_stripped_prefix_literal() -> None:
+    """AC3b variant: the flagged line contains the literal text
+    'path-warn:smoke-test.py' (the WHOLE entry, prefix included) — still
+    fires. Covers both the glob-remainder-as-ERE and whole-line-as-ERE
+    failure modes."""
+    print("\n[task_023 AC3b: no ERE double-parse — literal 'path-warn:smoke-test.py' on the flagged line]")
+    token = _t23_ghp()
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        _t23_init_repo(repo)
+        (repo / ".vibe-content-allow").write_text("path-warn:smoke-test.py\n")
+        (repo / "other.txt").write_text(f"entry is path-warn:smoke-test.py leaked {token}\n")
+        run(["git", "add", "-A"], cwd=repo)
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
+        check("[task_023 AC3b stripped] exit 1 (not suppressed)", r.returncode == 1, r.stderr)
+        check("[task_023 AC3b stripped] BLOCK finding present", "BLOCK" in r.stderr, r.stderr)
+
+
+def test_task023_ac3c_range_idempotent_with_and_without_pathwarn() -> None:
+    """AC3c: --range output is byte-identical with and without path-warn
+    entries present in the allowlist — tier demotion is a one-way floor and
+    --range is already block-tier, so path-warn entries must be a pure
+    no-op there (regression-pins the floor property)."""
+    print("\n[task_023 AC3c: --range idempotency with/without path-warn entries]")
+    ip = _t23_ip()
+    token = _t23_ghp()
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        _t23_init_repo(repo)
+        (repo / "fixtures").mkdir()
+        (repo / "fixtures" / "f.txt").write_text("base\n")
+        run(["git", "add", "-A"], cwd=repo)
+        run(["git", "commit", "-m", "base"], cwd=repo)
+        sha1 = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+        (repo / "fixtures" / "f.txt").write_text(f"Server ip {ip} today, leaked {token}\n")
+        run(["git", "add", "-A"], cwd=repo)
+        run(["git", "commit", "-m", "dirty"], cwd=repo)
+        sha2 = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+
+        r_without = run(["bash", str(VIBE_CONTENT_SCANNER), "--range", sha1, sha2], cwd=repo)
+
+        (repo / ".vibe-content-allow").write_text("path-warn:fixtures/*\n")
+        r_with = run(["bash", str(VIBE_CONTENT_SCANNER), "--range", sha1, sha2], cwd=repo)
+
+        check("[task_023 AC3c] exit codes match", r_without.returncode == r_with.returncode,
+              f"{r_without.returncode} vs {r_with.returncode}")
+        check("[task_023 AC3c] stderr byte-identical",
+              r_without.stderr == r_with.stderr,
+              f"without={r_without.stderr!r} with={r_with.stderr!r}")
+
+
+def test_task023_ac4_message_mode_unaffected_by_pathwarn() -> None:
+    """AC4: --message output is byte-identical whether or not path-warn
+    entries are present in the allowlist — no file path exists in this
+    mode, so path-warn must be invisible there."""
+    print("\n[task_023 AC4: --message unaffected by path-warn entries]")
+    ip = _t23_ip()
+    with tempfile.TemporaryDirectory() as td:
+        msg_file = Path(td) / "msg.txt"
+        msg_file.write_text(f"Server ip {ip} today, mentions smoke-test.py and .vs/spec.md\n")
+        r_without = run(["bash", str(VIBE_CONTENT_SCANNER), "--message", str(msg_file)], cwd=td)
+        (Path(td) / ".vibe-content-allow").write_text("path-warn:*\n")
+        r_with = run(["bash", str(VIBE_CONTENT_SCANNER), "--message", str(msg_file)], cwd=td)
+        check("[task_023 AC4 message] byte-identical stderr",
+              r_without.stderr == r_with.stderr, f"{r_without.stderr!r} vs {r_with.stderr!r}")
+        check("[task_023 AC4 message] byte-identical exit code",
+              r_without.returncode == r_with.returncode, "")
+
+
+def test_task023_ac4_blob_stdin_unaffected_by_pathwarn() -> None:
+    """AC4: same parity check for --blob-stdin."""
+    print("\n[task_023 AC4: --blob-stdin unaffected by path-warn entries]")
+    ip = _t23_ip_alt()
+    stream = f"commit deadbeefcafefeedfacefeeddeadbeefcafefeed\n+Server ip {ip} today\n"
+    with tempfile.TemporaryDirectory() as td:
+        r_without = run(["bash", str(VIBE_CONTENT_SCANNER), "--blob-stdin"], cwd=td, input=stream)
+        (Path(td) / ".vibe-content-allow").write_text("path-warn:*\n")
+        r_with = run(["bash", str(VIBE_CONTENT_SCANNER), "--blob-stdin"], cwd=td, input=stream)
+        check("[task_023 AC4 blob-stdin] byte-identical stderr",
+              r_without.stderr == r_with.stderr, f"{r_without.stderr!r} vs {r_with.stderr!r}")
+        check("[task_023 AC4 blob-stdin] byte-identical exit code",
+              r_without.returncode == r_with.returncode, "")
+
+
+def test_task023_ac4_messages_stdin_unaffected_by_pathwarn() -> None:
+    """AC4: same parity check for --messages-stdin."""
+    print("\n[task_023 AC4: --messages-stdin unaffected by path-warn entries]")
+    ip = _t23_ip()
+    sha = "3333333333333333333333333333333333cccc"
+    stream = sha.encode() + b"\nServer ip " + ip.encode() + b" today\x00"
+    with tempfile.TemporaryDirectory() as td:
+        r_without = subprocess.run(["bash", str(VIBE_CONTENT_SCANNER), "--messages-stdin"],
+                                    input=stream, capture_output=True, cwd=td)
+        (Path(td) / ".vibe-content-allow").write_text("path-warn:*\n")
+        r_with = subprocess.run(["bash", str(VIBE_CONTENT_SCANNER), "--messages-stdin"],
+                                 input=stream, capture_output=True, cwd=td)
+        check("[task_023 AC4 messages-stdin] byte-identical stderr",
+              r_without.stderr == r_with.stderr, f"{r_without.stderr!r} vs {r_with.stderr!r}")
+        check("[task_023 AC4 messages-stdin] byte-identical exit code",
+              r_without.returncode == r_with.returncode, "")
+
+
+def test_task023_ac4_identity_unaffected_by_pathwarn() -> None:
+    """AC4: same parity check for --identity."""
+    print("\n[task_023 AC4: --identity unaffected by path-warn entries]")
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        _t23_init_repo(repo)
+        run(["git", "config", "user.email", "real" + "@" + "example.com"], cwd=repo)
+        r_without = run(["bash", str(VIBE_CONTENT_SCANNER), "--identity"], cwd=repo)
+        (repo / ".vibe-content-allow").write_text("path-warn:*\n")
+        r_with = run(["bash", str(VIBE_CONTENT_SCANNER), "--identity"], cwd=repo)
+        check("[task_023 AC4 identity] byte-identical stderr",
+              r_without.stderr == r_with.stderr, f"{r_without.stderr!r} vs {r_with.stderr!r}")
+        check("[task_023 AC4 identity] byte-identical exit code",
+              r_without.returncode == r_with.returncode, "")
+
+
+def test_task023_ac5_self_clean_fixture_simulation() -> None:
+    """AC5: fixture-repo simulation of vibe's own tree shape with the
+    shipped path-warn entries — staging WARN-class example literals in a
+    .vs/*-shaped file and a smoke-test.py-shaped file produces NO findings
+    and exit 0 (no override needed); planting a runtime-built secret in
+    EACH of those same files still exits 1 with BLOCK findings located in
+    both files."""
+    print("\n[task_023 AC5: self-clean end-to-end fixture simulation]")
+    ip = _t23_ip()
+    email = _t23_email()
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        _t23_init_repo(repo)
+        (repo / ".vibe-content-allow").write_text(
+            "path-warn:.vs/*\npath-warn:smoke-test.py\n"
+        )
+        (repo / ".vs").mkdir()
+        (repo / ".vs" / "spec.md").write_text(f"Example WARN IP: {ip}\n")
+        (repo / "smoke-test.py").write_text(f"# fixture literal: {email}\n")
+        run(["git", "add", "-A"], cwd=repo)
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
+        check("[task_023 AC5 clean] exit 0", r.returncode == 0, r.stderr)
+        check("[task_023 AC5 clean] no findings, no override needed", len(r.stderr.strip()) == 0, r.stderr)
+        run(["git", "commit", "-m", "clean baseline"], cwd=repo)
+
+        token1 = _t23_ghp()
+        token2 = "AKIA" + "D" * 16
+        (repo / ".vs" / "spec.md").write_text(f"Example WARN IP: {ip}\nleaked: {token1}\n")
+        (repo / "smoke-test.py").write_text(f"# fixture literal: {email}\nleaked: {token2}\n")
+        run(["git", "add", "-A"], cwd=repo)
+        r2 = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
+        check("[task_023 AC5 secret] exit 1", r2.returncode == 1, r2.stderr)
+        check("[task_023 AC5 secret] BLOCK finding present", "BLOCK" in r2.stderr, r2.stderr)
+        findings = _task022_parse_findings(r2.stderr)
+        check("[task_023 AC5 secret] BLOCK finding in .vs/spec.md",
+              any(f[0] == "BLOCK" and f[1].startswith(".vs/spec.md:") for f in findings), str(findings))
+        check("[task_023 AC5 secret] BLOCK finding in smoke-test.py",
+              any(f[0] == "BLOCK" and f[1].startswith("smoke-test.py:") for f in findings), str(findings))
+
+
+def test_task023_ac7_pathwarn_functions_no_forks() -> None:
+    """AC7: the new path-warn glob-matching functions (load_path_warn_globs,
+    file_is_path_warn) introduce no external-command invocation — bash
+    case/pattern match only, same no-fork discipline as task_022's hot-path
+    guard."""
+    print("\n[task_023 AC7: path-warn functions have no forks]")
+    src = VIBE_CONTENT_SCANNER.read_text(encoding="utf-8")
+    forbidden_names = ["grep", "sed", "awk", "head", "cut", "tr"]
+    for name in ["load_path_warn_globs", "file_is_path_warn"]:
+        body = _task022_extract_function_body(src, name)
+        bad = [n for n in forbidden_names if re.search(r'\b' + n + r'\b', body)]
+        check(f"[task_023 AC7] {name}: no forbidden external-command names", bad == [], str(bad))
+        check(f"[task_023 AC7] {name}: no $( command substitution", "$(" not in body, body)
+        check(f"[task_023 AC7] {name}: no backtick command substitution", "`" not in body, body)
+
+
+def test_task023_ac7_scan_diff_stream_still_shape_clean() -> None:
+    """AC7: scan_diff_stream (which now calls file_is_path_warn per +++
+    header) was not in task_022's original hot-path fork-check list —
+    verify directly here that the per-file tier-demotion addition didn't
+    introduce a fork on that path either."""
+    print("\n[task_023 AC7: scan_diff_stream shape guard]")
+    src = VIBE_CONTENT_SCANNER.read_text(encoding="utf-8")
+    body = _task022_extract_function_body(src, "scan_diff_stream")
+    forbidden_names = ["grep", "sed", "awk", "head", "cut", "tr"]
+    bad = [n for n in forbidden_names if re.search(r'\b' + n + r'\b', body)]
+    check("[task_023 AC7] scan_diff_stream: no forbidden external-command names", bad == [], str(bad))
+
+
+def test_task023_pathwarn_star_repo_wide_accepted() -> None:
+    """Design note: path-warn:* (repo-wide WARN-off) is ACCEPTED — same
+    trust model as an already-possible overbroad ERE entry. Verify it
+    behaves exactly as documented: suppresses WARN in every file at any
+    depth, BLOCK still fires everywhere."""
+    print("\n[task_023: path-warn:* repo-wide accepted]")
+    ip = _t23_ip()
+    token = _t23_ghp()
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        _t23_init_repo(repo)
+        (repo / ".vibe-content-allow").write_text("path-warn:*\n")
+        (repo / "anywhere" / "deep").mkdir(parents=True)
+        (repo / "anywhere" / "deep" / "f.txt").write_text(f"Server ip {ip} today\n")
+        (repo / "top.txt").write_text(f"leaked: {token}\n")
+        run(["git", "add", "-A"], cwd=repo)
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
+        findings = _task022_parse_findings(r.stderr)
+        check("[task_023 path-warn:*] exit 1 (BLOCK still fires)", r.returncode == 1, r.stderr)
+        check("[task_023 path-warn:*] no WARN finding anywhere",
+              all(f[0] != "WARN" for f in findings), str(findings))
+        check("[task_023 path-warn:*] BLOCK finding present", any(f[0] == "BLOCK" for f in findings), str(findings))
+
+
+def test_task023_glob_metachar_question_mark_semantics() -> None:
+    """Glob metacharacter sanity: `?` matches exactly one character in a
+    bash case-style pattern — path-warn:fixtures/?.txt suppresses WARN in
+    fixtures/a.txt (one char) but NOT in fixtures/ab.txt (two chars),
+    proving the glob is matched as a genuine case pattern, not a literal
+    substring or an ERE."""
+    print("\n[task_023: glob metacharacter ? semantics]")
+    ip = _t23_ip_alt()
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        _t23_init_repo(repo)
+        (repo / ".vibe-content-allow").write_text("path-warn:fixtures/?.txt\n")
+        (repo / "fixtures").mkdir()
+        (repo / "fixtures" / "a.txt").write_text(f"Server ip {ip} today\n")
+        (repo / "fixtures" / "ab.txt").write_text(f"Server ip {ip} today\n")
+        run(["git", "add", "-A"], cwd=repo)
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
+        findings = _task022_parse_findings(r.stderr)
+        check("[task_023 glob ?] exit 1 (ab.txt still WARNs)", r.returncode == 1, r.stderr)
+        check("[task_023 glob ?] a.txt (one char) suppressed",
+              all(not f[1].startswith("fixtures/a.txt:") for f in findings), str(findings))
+        check("[task_023 glob ?] ab.txt (two chars) still WARNs",
+              any(f[1].startswith("fixtures/ab.txt:") for f in findings), str(findings))
+
+
 def main() -> int:
     test_help()
     test_version()
@@ -10232,6 +10706,25 @@ def main() -> int:
     test_task022_ac6_override_and_optout_new_primitives()
     test_task022_ac7_no_bash4_constructs()
     test_task022_ac7_no_perline_forks_in_hot_path_functions()
+    test_task023_ac1_ere_allowlist_regression_with_pathwarn_lines_interspersed()
+    test_task023_ac1_pathwarn_prefix_whitespace_tolerant()
+    test_task023_ac2_staged_suppression_matching_vs_nonmatching()
+    test_task023_ac2_nested_path_glob_crosses_slash()
+    test_task023_ac2_empty_glob_no_crash_no_matchall()
+    test_task023_ac3_block_fires_staged_under_pathwarn()
+    test_task023_ac3_block_fires_range_under_pathwarn()
+    test_task023_ac3b_no_ere_double_parse_fullline_literal()
+    test_task023_ac3b_no_ere_double_parse_stripped_prefix_literal()
+    test_task023_ac3c_range_idempotent_with_and_without_pathwarn()
+    test_task023_ac4_message_mode_unaffected_by_pathwarn()
+    test_task023_ac4_blob_stdin_unaffected_by_pathwarn()
+    test_task023_ac4_messages_stdin_unaffected_by_pathwarn()
+    test_task023_ac4_identity_unaffected_by_pathwarn()
+    test_task023_ac5_self_clean_fixture_simulation()
+    test_task023_ac7_pathwarn_functions_no_forks()
+    test_task023_ac7_scan_diff_stream_still_shape_clean()
+    test_task023_pathwarn_star_repo_wide_accepted()
+    test_task023_glob_metachar_question_mark_semantics()
 
     print()
     if FAILURES:

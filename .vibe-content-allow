@@ -37,3 +37,12 @@ test@example\.com
 # MANUAL-TESTS ZOTERO_API_KEY fixture value (a documented placeholder, not a
 # real key — matches the secret-named-assignment rule).
 TESTKEY0001testkey0002zz
+
+# task_023 path-warn entries (WARN-tier only — a real secret in either path
+# still BLOCKs; see devcontainer/claude-md/content-guard.md). Harness prose
+# under .vs/ and smoke-test.py's runtime fixtures deliberately discuss/hold
+# WARN-class example literals (RFC1918 IPs, example emails, .local
+# hostnames) as part of teaching or exercising the guard's own rules — not
+# real leaked PII.
+path-warn:.vs/*
+path-warn:smoke-test.py

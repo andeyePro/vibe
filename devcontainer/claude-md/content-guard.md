@@ -68,6 +68,57 @@ The scanner also has a **built-in allowlist that needs no configuration**:
 and `*.users.noreply.github.com` are always exempt — this is what stops the
 guard firing on its own commit convention.
 
+## Per-file WARN allowlist: `path-warn:<glob>` entries (task_023)
+
+A `.vibe-content-allow` line of the form `path-warn:<glob>` is a
+**different entry kind** from the ERE lines above — it is a bash
+`case`-style glob matched against the repo-relative file path, not a
+regex matched against content. In `--staged` and `--range` only, when a
+file's path matches a `path-warn` glob, that file's added lines are
+scanned at BLOCK tier only: WARN-class rules (IP, home-path, mdns,
+email) are skipped for that file; **BLOCK rules always still fire** — a
+real secret in a path-warn-matched file is still a shipped secret, no
+path ever suppresses a BLOCK finding, in any mode.
+
+- **Glob semantics**: `*` crosses `/` — `path-warn:.vs/*` matches a file
+  nested arbitrarily deep, e.g. `.vs/archive/task_099/critiques/foo.md`.
+  Literal path characters that are also glob metacharacters (`[`, `]`,
+  `?`) need escaping if you want them matched literally — the scanner
+  does not do this for you.
+- **Empty glob is malformed and inert**: `path-warn:` with nothing (or
+  only whitespace) after the prefix matches no file — never treated as
+  match-all. `path-warn:*` (repo-wide WARN-off) IS accepted deliberately:
+  it carries the same trust model as an equally-overbroad ERE entry (a
+  lone `.`) already could — `.vibe-content-allow` is a PR-reviewable
+  committed file, and the scanner does not police how broad an entry is.
+- **Structural exclusion from the ERE loop**: `path-warn:` lines
+  (whole line or the glob remainder) are NEVER handed to `grep -E` as a
+  content pattern. A glob like `smoke-test.py` used as an ERE would be a
+  live literal-substring match suppressing ANY finding — including a
+  BLOCK secret — on any line merely mentioning the filename, so the
+  parser structurally skips these lines before they can reach that loop.
+- **Diff modes only**: `--message`, `--messages-stdin`, `--blob-stdin`
+  (history scans), and `--identity` have no file path to match against —
+  `path-warn` entries are invisible there; history findings deliberately
+  keep full WARN visibility for the Private→Public flip case.
+- **Stale-scanner caveat**: a pre-task_023 scanner reading a
+  `.vibe-content-allow` with `path-warn:` entries doesn't know the
+  syntax — it falls back to its normal ERE-whole-line matching and feeds
+  the WHOLE line, prefix included, to `grep -E`. That means an entry like
+  `path-warn:smoke-test.py` only suppresses a finding on a stale scanner
+  if the flagged content line contains the literal text
+  `path-warn:smoke-test.py` — a narrow, accepted window (in practice:
+  documentation quoting the allowlist entry itself). Never put a
+  `path-warn:` entry's literal text on the same line as anything
+  sensitive, and don't rely on stale-scanner suppression for anything —
+  it is not the mechanism, just a documented edge case.
+- **vibe's own repo ships two entries**: `path-warn:.vs/*` and
+  `path-warn:smoke-test.py` — the `/vs` harness prose and the runtime
+  test fixtures both deliberately discuss/hold WARN-class example
+  literals (RFC1918 IPs, example emails, `.local` hostnames) as part of
+  teaching or exercising the guard's own categories, not real leaked PII.
+  A real secret in either path still BLOCKs.
+
 ## `vibe audit [--history|--staged]`
 
 Host-side command (run from the project directory, like `vibe repos`) that
