@@ -33,3 +33,6 @@ __pycache__/
 
 # Claude Code agent worktrees (transient, harness-managed)
 .claude/worktrees/
+
+# per-project OpenProject opt-in marker (task_020) - always untracked
+.vibe-allow-op

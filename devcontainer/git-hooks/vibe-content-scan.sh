@@ -7,8 +7,22 @@
 # Invocation:
 #   vibe-content-scan.sh --staged
 #   vibe-content-scan.sh --message <file>
+#   vibe-content-scan.sh --messages-stdin
 #   vibe-content-scan.sh --range <a> <b>
 #   vibe-content-scan.sh --blob-stdin [--tier block]
+#   vibe-content-scan.sh --identity [<email>]
+#
+# --messages-stdin reads NUL-delimited records on stdin, each record being a
+# commit sha on the first line and the raw message body on the remaining lines
+# (produced by `git log --all -z --format='%H%n%B'`). It scans every message
+# line with the same both-tier + trailer-exemption semantics as --message, but
+# emits the location as `commit <sha>` directly — one scanner process for the
+# whole history instead of one per commit (task_022).
+#
+# Match primitives are bash-native `[[ =~ ]]` + BASH_REMATCH (task_022): no
+# per-line subprocess forks on the hot path. Patterns stay POSIX ERE only
+# (no word-boundary or other GNU escapes) so they compile under BSD regcomp
+# (macOS bash 3.2) and glibc (container bash 5) alike.
 #
 # Output: one line per finding on STDERR, tab-separated:
 #   <CLASS>\t<location>\t<rule>\t<snippet>
@@ -83,11 +97,18 @@ record_rule() {
 # Emits a finding line to stderr (unless allowlisted) and marks FOUND=1.
 check_rule() {
   local class="$1" rule="$2" pattern="$3" icase="$4" content="$5" location="$6"
-  local m
+  local m=""
+  # BASH_REMATCH[0] is the leftmost match — the same substring the old
+  # first-match primitive returned. The && m= guard keeps the no-match test
+  # (exit 1) off set -e (A2b); shopt -u nocasematch runs on EVERY path out of
+  # the icase branch, since a leaked nocasematch would silently make later
+  # case-sensitive rules case-insensitive.
   if [ "$icase" = "1" ]; then
-    m=$(printf '%s' "$content" | grep -oiE -- "$pattern" 2>/dev/null | head -n1) || true
+    shopt -s nocasematch
+    [[ $content =~ $pattern ]] && m="${BASH_REMATCH[0]}"
+    shopt -u nocasematch
   else
-    m=$(printf '%s' "$content" | grep -oE -- "$pattern" 2>/dev/null | head -n1) || true
+    [[ $content =~ $pattern ]] && m="${BASH_REMATCH[0]}"
   fi
   [ -z "$m" ] && return 0
 
@@ -104,14 +125,20 @@ check_rule() {
 # is_named_trailer <content> — Co-Authored-By: / Signed-off-by: lines are
 # fully exempt from ALL rules (built-in allowlist (a)).
 is_named_trailer() {
-  printf '%s' "$1" | grep -qiE '^(Co-authored-by|Signed-off-by):[[:space:]]'
+  local pat='^(Co-authored-by|Signed-off-by):[[:space:]]' rc=1
+  shopt -s nocasematch
+  [[ $1 =~ $pat ]] && rc=0
+  shopt -u nocasematch
+  return "$rc"
 }
 
 # is_trailer_line <content> — a generic git-trailer-shaped line
 # (^[A-Z][A-Za-z-]+:\s). Built-in allowlist (b): suppresses email/IP
 # findings specifically (not BLOCK findings) on lines shaped like this.
 is_trailer_line() {
-  printf '%s' "$1" | grep -qE '^[A-Za-z][A-Za-z-]+:[[:space:]]'
+  local pat='^[A-Za-z][A-Za-z-]+:[[:space:]]'
+  [[ $1 =~ $pat ]] && return 0
+  return 1
 }
 
 # is_noreply_email <matched-address> — the literal exemptions in the
@@ -130,8 +157,8 @@ is_noreply_email() {
 check_email_rule() {
   local content="$1" location="$2"
   is_trailer_line "$content" && return 0
-  local m
-  m=$(printf '%s' "$content" | grep -oE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' 2>/dev/null | head -n1) || true
+  local m="" pat='[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
+  [[ $content =~ $pat ]] && m="${BASH_REMATCH[0]}"
   [ -z "$m" ] && return 0
   is_noreply_email "$m" && return 0
   if line_is_allowlisted "$content"; then
@@ -147,10 +174,15 @@ check_email_rule() {
 # the generic container users node/root.
 check_home_path_rule() {
   local content="$1" location="$2"
-  local m user
-  m=$(printf '%s' "$content" | grep -oE '/(Users|home)/[^/ ]+/' 2>/dev/null | head -n1) || true
+  # Capture group 2 is the username (previously extracted by a subprocess);
+  # group 0 is the full /Users|home/<user>/ snippet, byte-identical to the
+  # old match.
+  local m="" user="" pat='/(Users|home)/([^/ ]+)/'
+  if [[ $content =~ $pat ]]; then
+    m="${BASH_REMATCH[0]}"
+    user="${BASH_REMATCH[2]}"
+  fi
   [ -z "$m" ] && return 0
-  user=$(printf '%s' "$m" | sed -E 's#^/(Users|home)/([^/]+)/#\2#')
   case "$user" in
     node|root) return 0 ;;
   esac
@@ -161,6 +193,28 @@ check_home_path_rule() {
   printf '%s\t%s\t%s\t%s\n' "WARN" "$location" "home-path" "$snippet" >&2
   FOUND=1
   record_rule "home-path"
+}
+
+# check_mdns_rule <content> <location> — WARN mdns-local rule. POSIX-ERE
+# equivalent of the old word-boundary form (the boundary escape is a GNU
+# extension, absent from POSIX regcomp): match up to `.local`, then require a
+# non-word char ([^A-Za-z0-9_], the word set) or end-of-string. The reported
+# snippet is taken from capture group 1, which stops at `.local` and excludes
+# that boundary char — byte-identical to the old match. `foo.localhost` (word
+# char `h` after `.local`) correctly does NOT match; `foo.local.` and a
+# trailing `.local` at end-of-line do.
+check_mdns_rule() {
+  local content="$1" location="$2"
+  local m="" pat='([A-Za-z0-9-]+\.local)([^A-Za-z0-9_]|$)'
+  [[ $content =~ $pat ]] && m="${BASH_REMATCH[1]}"
+  [ -z "$m" ] && return 0
+  if line_is_allowlisted "$content"; then
+    return 0
+  fi
+  local snippet="${m:0:60}"
+  printf '%s\t%s\t%s\t%s\n' "WARN" "$location" "mdns-local" "$snippet" >&2
+  FOUND=1
+  record_rule "mdns-local"
 }
 
 # check_ip_rule <content> <location> — WARN rfc1918-ip rule, suppressed on
@@ -189,7 +243,7 @@ scan_line() {
   if [ "$tier" = "both" ]; then
     check_ip_rule "$content" "$location"
     check_home_path_rule "$content" "$location"
-    check_rule "WARN" "mdns-local" '[A-Za-z0-9-]+\.local\b' "0" "$content" "$location"
+    check_mdns_rule "$content" "$location"
     check_email_rule "$content" "$location"
   fi
 }
@@ -254,6 +308,32 @@ scan_blob_stdin() {
   done
 }
 
+# scan_messages_stdin — reads NUL-delimited records on stdin, each record being
+# a commit sha on the first line followed by the raw message body (produced by
+# `git log --all -z --format='%H%n%B'`). Every body line is scanned with
+# scan_line "…" "commit <sha>" both — same both-tier + trailer-exemption
+# semantics as --message, but the location is attributed to the commit sha
+# directly (no awk relabel). The NUL delimiter — not line-shape sniffing — is
+# the record boundary, so a body line like `commit deadbeef` or `+foo` is
+# scanned as ordinary content and never mistaken for a header (B3). An empty
+# body, or a malformed record with no body/sha, is skipped without error.
+scan_messages_stdin() {
+  local record sha body line
+  while IFS= read -r -d '' record || [ -n "$record" ]; do
+    sha="${record%%$'\n'*}"
+    [ -n "$sha" ] || continue          # malformed / empty record — skip
+    [ "$sha" = "$record" ] && continue # sha-only record, empty body — skip
+    body="${record#*$'\n'}"
+    [ -n "$body" ] || continue
+    # Here-string (builtin redirect, no fork/subshell): the while loop runs in
+    # THIS shell so FOUND/FOUND_RULES survive. A body line equal to a heredoc
+    # delimiter can't break it (here-strings have no delimiter).
+    while IFS= read -r line || [ -n "$line" ]; do
+      scan_line "$line" "commit $sha" "both"
+    done <<< "$body"
+  done
+}
+
 # is_exempt_identity <email> — commit identities that are fine to publish:
 # GitHub noreply forms (ID-prefixed or bare-username), Anthropic's noreply,
 # and vibe's own synthetic placeholder fallback.
@@ -310,6 +390,9 @@ case "$MODE" in
       scan_line "$line" "message" "both"
     done < "$MSG_FILE"
     ;;
+  --messages-stdin)
+    scan_messages_stdin
+    ;;
   --range)
     A="${1:-}"; B="${2:-}"
     if [ -z "$A" ] || [ -z "$B" ]; then
@@ -335,7 +418,7 @@ case "$MODE" in
     fi
     ;;
   *)
-    echo "vibe-content-scan.sh: unknown mode '$MODE' (expected --staged|--message|--range|--blob-stdin|--identity)" >&2
+    echo "vibe-content-scan.sh: unknown mode '$MODE' (expected --staged|--message|--messages-stdin|--range|--blob-stdin|--identity)" >&2
     exit 1
     ;;
 esac

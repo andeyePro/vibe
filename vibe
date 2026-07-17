@@ -2223,11 +2223,12 @@ _audit_staged() {
 #   1. Content: `git log -p --all` piped through --blob-stdin (default tier
 #      "both"), which tracks `commit <sha>` headers itself and attributes
 #      each finding's location to that commit.
-#   2. Messages: `--message` doesn't know which commit it's scanning (its
-#      location is always the literal "message"), so this loop calls it
-#      once per commit and rewrites the location field to "commit <sha>"
-#      before appending - preserving --message's own both-tier + trailer-
-#      exemption logic without duplicating it.
+#   2. Messages: a single `--messages-stdin` invocation fed by one
+#      `git log --all -z --format='%H%n%B'` pipe (task_022). The scanner reads
+#      each NUL-delimited <sha>\n<body> record and attributes findings to
+#      "commit <sha>" itself - same both-tier + trailer-exemption logic as
+#      --message, but one scanner process for the whole history instead of the
+#      old fork-per-commit loop.
 #
 # Audit's own exit code is computed HERE, independent of either scanner
 # invocation's exit code (which would return 1 on ANY finding, WARN
@@ -2239,28 +2240,31 @@ _audit_history() {
   local scanner
   scanner="$(_audit_scanner_path)"
 
-  local tmp_content tmp_messages tmp_msgfile
+  local tmp_content tmp_messages
   tmp_content="$(mktemp)"
   tmp_messages="$(mktemp)"
-  tmp_msgfile="$(mktemp)"
   # Register through the single EXIT-trap dispatcher (see "Exit-hook
   # dispatcher" above) — never a raw `trap ... EXIT` here, which would
   # silently replace whatever trap slot a later hook installs.
-  vibe_exit_hook_add "rm -f '$tmp_content' '$tmp_messages' '$tmp_msgfile'"
+  vibe_exit_hook_add "rm -f '$tmp_content' '$tmp_messages'"
 
   # Pass 1: full-history content, both tiers, commit-sha location tracking.
   git log -p --no-color --all 2>/dev/null | "$scanner" --blob-stdin >/dev/null 2>"$tmp_content" || true
 
-  # Pass 2: every commit message, attributed to its own commit sha.
+  # Pass 2: every commit message in a single scanner invocation. The NUL-
+  # delimited stream carries each commit's sha + raw body; --messages-stdin
+  # attributes findings to "commit <sha>" directly (task_022 - the old loop
+  # forked one scanner per commit, the dominant cost of the 280s timeout).
   : > "$tmp_messages"
-  local sha
-  while IFS= read -r sha; do
-    [ -n "$sha" ] || continue
-    git log -1 --format=%B "$sha" > "$tmp_msgfile" 2>/dev/null || true
-    "$scanner" --message "$tmp_msgfile" 2>&1 1>/dev/null \
-      | awk -F'\t' -v sha="$sha" 'BEGIN{OFS="\t"} NF>=4{$2="commit " sha; print}' \
-      >> "$tmp_messages" || true
-  done < <(git log --all --format=%H 2>/dev/null)
+  # Exit 1 = findings (expected, captured above). Anything higher is a
+  # mid-stream abort - unlike the old per-commit loop, a crash here would
+  # silently drop every remaining message (fail-open), so say so loudly.
+  local msg_rc=0
+  git log --all -z --format='%H%n%B' 2>/dev/null \
+    | "$scanner" --messages-stdin 2>>"$tmp_messages" 1>/dev/null || msg_rc=$?
+  if [ "$msg_rc" -gt 1 ]; then
+    echo "vibe audit: WARNING - message scan aborted mid-stream (scanner exit $msg_rc); pass-2 findings may be incomplete" >&2
+  fi
 
   # Pass 3: author/committer identities across all refs (task_021). The
   # content passes can't see metadata, so each unique email goes through

@@ -143,10 +143,10 @@
  {
   "id": "task_022",
   "description": "vibe audit --history perf: scanner match primitives -> bash-native =~ (kill per-line grep forks) + --messages-stdin single-pass message scan; byte-identical findings gate",
-  "implementation_status": "in_progress",
-  "test_status": "pending",
+  "implementation_status": "complete",
+  "test_status": "passing",
   "assigned_to": "generator",
   "mode": "rigorous",
-  "last_modified": "2026-07-17T06:34:52Z"
+  "last_modified": "2026-07-17T07:16:00Z"
  }
 ]

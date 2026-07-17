@@ -9301,6 +9301,545 @@ def test_task020_ac5_cred_load_gated() -> None:
           len(guarded) == 2 and 'OPENPROJECT_MCP_URL=""' in guarded[1][:400], "")
 
 
+# ── task_022: scanner match-primitive swap + --messages-stdin + audit perf ──
+# Tester-authored (independent of the Generator's cycle-1 diff/report — spec
+# only). Permanent suite members per .vs/spec.md "Test location": the AC2
+# corpus re-expressed as fixed expected-findings assertions, the AC3/AC5
+# fixture-repo tests, and the AC7 static shape checks. AC1 (real-history
+# slice differential) and AC4 (60s timing gate) are one-offs and live in the
+# Tester's log, not here — a permanent test must not depend on the vibe
+# repo's own mutable history.
+
+TASK022_CLEAN_LINES = [
+    "Just a normal line of code here",
+    "def hello(): pass",
+    "This has numbers 12345 but nothing sensitive at all",
+    "# a comment explaining the algorithm in plain English",
+    "x = 1 + 2  # simple arithmetic",
+]
+
+# (line, [(class, rule), ...]) — every rule id, mdns boundary cases, email
+# exemptions, both trailer exemption shapes, and the nocasematch-leak probe
+# (mixed-case secret-assignment trigger + uppercase FOO.LOCAL on one line —
+# the case-sensitive mdns-local rule must NOT fire, which it would iff
+# nocasematch leaked out of check_rule's icase branch). Clean lines are
+# appended so the corpus also proves A2b (set -e survival: a bare unguarded
+# `[[ =~ ]]` would die on the first clean line — clean lines are scattered
+# through this file, not only trailing).
+TASK022_CORPUS: list[tuple[str, list[tuple[str, str]]]] = [
+    ("Just a normal line of code here", []),
+    ("GitHub PAT sample ghp_" + "A" * 36 + " end", [("BLOCK", "github-pat")]),
+    ("def hello(): pass", []),
+    ("OpenAI API sample sk-ABCDEFGHIJKLMNOPQRSTUVWX end", [("BLOCK", "openai-key")]),
+    ("AWS access sample AKIAABCD1234EFGH5678 end", [("BLOCK", "aws-access-key")]),
+    ("-----BEGIN OPENSSH PRIVATE KEY-----", [("BLOCK", "private-key")]),
+    ("This has numbers 12345 but nothing sensitive at all", []),
+    ("Config token: ABCDEFGHIJKLMNOPQRSTUVWX1234", [("BLOCK", "secret-assignment")]),
+    # nocasematch-leak probe (AC2): secret-assignment fires (icase); mdns-local
+    # (case-sensitive) must NOT fire on the uppercase FOO.LOCAL in the same line.
+    ("MyPaSsWoRd: abcdefghijklmnopqrstuvwxyz1234 seen near FOO.LOCAL host",
+     [("BLOCK", "secret-assignment")]),
+    ("# a comment explaining the algorithm in plain English", []),
+    ("Server ip 10.0.0.5 today", [("WARN", "rfc1918-ip")]),
+    ("Server ip 172.20.5.9 today", [("WARN", "rfc1918-ip")]),
+    ("Server ip 192.168.50.7 today", [("WARN", "rfc1918-ip")]),
+    ("Server ip 169.254.1.2 today", [("WARN", "rfc1918-ip")]),
+    ("Path is /Users/martin/project file", [("WARN", "home-path")]),
+    ("Path is /home/alice/project file", [("WARN", "home-path")]),
+    ("Path is /home/node/project file", []),  # node excluded
+    ("Path is /Users/root/project file", []),  # root excluded
+    ("x = 1 + 2  # simple arithmetic", []),
+    ("Host foo.local is up", [("WARN", "mdns-local")]),
+    ("Host foo.localhost is up", []),  # word char after .local: must NOT match
+    ("Host foo.local. end", [("WARN", "mdns-local")]),  # trailing non-word char
+    ("Host at foo.local", [("WARN", "mdns-local")]),  # end-of-line boundary
+    ("Contact me at test@example.com please", [("WARN", "email-address")]),
+    ("noreply@anthropic.com", []),  # built-in noreply exemption
+    ("backup contact x@y.users.noreply.github.com here", []),  # github noreply exemption
+    # Named-trailer full exemption (Co-authored-by/Signed-off-by): suppresses
+    # EVERY rule on the line, including a non-exempt email + an RFC1918 IP.
+    ("Co-authored-by: Real Name <someone@example.com> 192.168.9.9", []),
+    ("Signed-off-by: Someone <bob@example.org> 10.1.2.3", []),
+    # Generic trailer-shaped line (not a named trailer): suppresses email/ip
+    # ONLY (built-in allowlist (b)) — no BLOCK-tier trigger here, so clean.
+    ("Reviewed-by: bob@example.org 192.168.4.4", []),
+    # Same generic trailer shape, but with a BLOCK-tier trigger: proves the
+    # generic-trailer suppression does NOT extend to BLOCK findings, unlike
+    # the named-trailer full exemption above.
+    ("Reviewed-by: token=ABCDEFGHIJKLMNOPQRSTUVWX1234", [("BLOCK", "secret-assignment")]),
+] + [(l, []) for l in TASK022_CLEAN_LINES]
+
+TASK022_EXPECTED_ALL: dict = {}
+for _line, _exp in TASK022_CORPUS:
+    for _c, _r in _exp:
+        TASK022_EXPECTED_ALL[(_c, _r)] = TASK022_EXPECTED_ALL.get((_c, _r), 0) + 1
+TASK022_EXPECTED_BLOCK_ONLY = {k: v for k, v in TASK022_EXPECTED_ALL.items() if k[0] == "BLOCK"}
+
+
+def _task022_parse_findings(stderr: str) -> list[tuple[str, str, str, str]]:
+    """Parse tab-separated <CLASS>\\t<location>\\t<rule>\\t<snippet> finding
+    lines out of scanner stderr, ignoring any non-finding lines (e.g. the
+    OVERRIDE banner)."""
+    out = []
+    for line in stderr.splitlines():
+        parts = line.split("\t")
+        if len(parts) == 4 and parts[0] in ("BLOCK", "WARN"):
+            out.append((parts[0], parts[1], parts[2], parts[3]))
+    return out
+
+
+def _task022_counts(findings: list[tuple[str, str, str, str]]) -> dict:
+    counts: dict = {}
+    for f in findings:
+        key = (f[0], f[2])
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def test_task022_ac2_corpus_message_mode() -> None:
+    """AC2: frozen expected-findings corpus via --message (canonical, one
+    location per finding — 'message'). Every rule id, mdns boundary cases,
+    email exemptions, both trailer exemption shapes, and the nocasematch-leak
+    probe are exercised; exact (class, rule) multiset is pinned."""
+    print("\n[task_022 AC2: corpus via --message]")
+    with tempfile.TemporaryDirectory() as td:
+        msg_file = Path(td) / "msg.txt"
+        msg_file.write_text("\n".join(l for l, _ in TASK022_CORPUS) + "\n")
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--message", str(msg_file)], cwd=td)
+        findings = _task022_parse_findings(r.stderr)
+        actual = _task022_counts(findings)
+        check("[task_022 AC2 msg] exit 1 (BLOCK findings present)", r.returncode == 1, r.stderr)
+        check("[task_022 AC2 msg] finding multiset matches frozen corpus",
+              actual == TASK022_EXPECTED_ALL,
+              f"expected={TASK022_EXPECTED_ALL} actual={actual}")
+        check("[task_022 AC2 msg] total finding count == 17", len(findings) == 17, str(len(findings)))
+        # A2 leftmost-match parity: exact snippet for a couple of rules.
+        gh = [f for f in findings if f[2] == "github-pat"]
+        check("[task_022 AC2 msg] github-pat snippet exact",
+              bool(gh) and gh[0][3] == "ghp_" + "A" * 36, str(gh))
+        # nocasematch-leak proof: only 3 mdns-local findings total (the leak
+        # probe line's uppercase FOO.LOCAL must not add a 4th).
+        mdns = [f for f in findings if f[2] == "mdns-local"]
+        check("[task_022 AC2 msg] exactly 3 mdns-local (no leak from icase probe)",
+              len(mdns) == 3, str(mdns))
+
+
+def test_task022_ac2_corpus_blob_stdin_mode() -> None:
+    """AC2: same corpus via --blob-stdin (git log -p shape: 'commit <sha>'
+    header + '+'-prefixed content lines) — same frozen multiset."""
+    print("\n[task_022 AC2: corpus via --blob-stdin]")
+    with tempfile.TemporaryDirectory() as td:
+        stream = "commit deadbeefcafefeedfacefeeddeadbeefcafefeed\n"
+        stream += "\n".join("+" + l for l, _ in TASK022_CORPUS) + "\n"
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--blob-stdin"], cwd=td, input=stream)
+        findings = _task022_parse_findings(r.stderr)
+        actual = _task022_counts(findings)
+        check("[task_022 AC2 blob] exit 1", r.returncode == 1, r.stderr)
+        check("[task_022 AC2 blob] finding multiset matches frozen corpus",
+              actual == TASK022_EXPECTED_ALL,
+              f"expected={TASK022_EXPECTED_ALL} actual={actual}")
+
+
+def test_task022_ac2_corpus_staged_mode() -> None:
+    """AC2: same corpus via --staged on a fixture repo (tier=both, diff-based
+    file:line location tracking) — same frozen multiset."""
+    print("\n[task_022 AC2: corpus via --staged]")
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        repo.mkdir()
+        run(["git", "init"], cwd=repo)
+        run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+        run(["git", "config", "user.name", "Test User"], cwd=repo)
+        f = repo / "corpus.txt"
+        f.write_text("\n".join(l for l, _ in TASK022_CORPUS) + "\n")
+        run(["git", "add", "corpus.txt"], cwd=repo)
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
+        findings = _task022_parse_findings(r.stderr)
+        actual = _task022_counts(findings)
+        check("[task_022 AC2 staged] exit 1", r.returncode == 1, r.stderr)
+        check("[task_022 AC2 staged] finding multiset matches frozen corpus",
+              actual == TASK022_EXPECTED_ALL,
+              f"expected={TASK022_EXPECTED_ALL} actual={actual}")
+        check("[task_022 AC2 staged] locations are file:line",
+              all(f[1].startswith("corpus.txt:") for f in findings), str(findings[:3]))
+
+
+def test_task022_ac2_corpus_range_block_tier_only() -> None:
+    """AC2: same corpus via --range on a fixture repo — tier=block, so ONLY
+    BLOCK-tier rules may fire; every WARN-tier corpus line must be silent.
+    This is the direct proof of the tier-block path the other three entry
+    points don't exercise."""
+    print("\n[task_022 AC2: corpus via --range (BLOCK tier only)]")
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        repo.mkdir()
+        run(["git", "init"], cwd=repo)
+        run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+        run(["git", "config", "user.name", "Test User"], cwd=repo)
+        f = repo / "corpus.txt"
+        f.write_text("placeholder\n")
+        run(["git", "add", "corpus.txt"], cwd=repo)
+        run(["git", "commit", "-m", "base"], cwd=repo)
+        sha1 = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+        f.write_text("\n".join(l for l, _ in TASK022_CORPUS) + "\n")
+        run(["git", "add", "corpus.txt"], cwd=repo)
+        run(["git", "commit", "-m", "add corpus"], cwd=repo)
+        sha2 = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--range", sha1, sha2], cwd=repo)
+        findings = _task022_parse_findings(r.stderr)
+        actual = _task022_counts(findings)
+        check("[task_022 AC2 range] exit 1 (BLOCK findings present)", r.returncode == 1, r.stderr)
+        check("[task_022 AC2 range] finding multiset == BLOCK-only subset",
+              actual == TASK022_EXPECTED_BLOCK_ONLY,
+              f"expected={TASK022_EXPECTED_BLOCK_ONLY} actual={actual}")
+        check("[task_022 AC2 range] no WARN finding leaked through tier=block",
+              all(f[0] != "WARN" for f in findings), str(findings))
+
+
+def test_task022_ac2_clean_block_no_crash() -> None:
+    """AC2/A2b: a block of lines matching no rule at all must exit 0 with
+    zero findings — the direct set -e survival proof (a bare unguarded
+    `[[ =~ ]]` would die on the first clean line)."""
+    print("\n[task_022 AC2: clean block exits 0, no crash]")
+    with tempfile.TemporaryDirectory() as td:
+        msg_file = Path(td) / "msg.txt"
+        msg_file.write_text("\n".join(TASK022_CLEAN_LINES) + "\n")
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--message", str(msg_file)], cwd=td)
+        check("[task_022 AC2 clean] exit 0", r.returncode == 0, r.stderr)
+        check("[task_022 AC2 clean] no findings", len(r.stderr.strip()) == 0, r.stderr)
+
+
+def test_task022_ac2_allowlist_suppression() -> None:
+    """AC2: .vibe-content-allow suppresses a corpus-shaped finding under the
+    new primitives; without the allowlist the same content still fires."""
+    print("\n[task_022 AC2: allowlist suppression]")
+    with tempfile.TemporaryDirectory() as td:
+        (Path(td) / ".vibe-content-allow").write_text(r"10\.0\.0\.5" + "\n")
+        msg_file = Path(td) / "msg.txt"
+        msg_file.write_text("Server ip 10.0.0.5 today\n")
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--message", str(msg_file)], cwd=td)
+        check("[task_022 AC2 allow] exit 0 with allowlist", r.returncode == 0, r.stderr)
+        check("[task_022 AC2 allow] no findings", len(r.stderr.strip()) == 0, r.stderr)
+
+    with tempfile.TemporaryDirectory() as td:
+        msg_file = Path(td) / "msg.txt"
+        msg_file.write_text("Server ip 10.0.0.5 today\n")
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--message", str(msg_file)], cwd=td)
+        check("[task_022 AC2 allow] exit 1 without allowlist", r.returncode == 1, r.stderr)
+
+
+def test_task022_ac3_messages_stdin_parity_and_attribution() -> None:
+    """AC3: for a fixture repo with a secret commit, a PII commit, a
+    Co-authored-by trailer, and a body line starting with 'commit deadbeef',
+    the new --messages-stdin pass produces a byte-identical sorted finding
+    set to the old per-commit --message+relabel loop, with correct per-sha
+    attribution (never misattributed to the literal 'deadbeef' text)."""
+    print("\n[task_022 AC3: message parity + attribution]")
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        repo.mkdir()
+        run(["git", "init"], cwd=repo)
+        run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+        run(["git", "config", "user.name", "Test User"], cwd=repo)
+
+        (repo / "a.txt").write_text("x\n")
+        run(["git", "add", "a.txt"], cwd=repo)
+        run(["git", "commit", "-m",
+             "Add AWS creds AKIAABCD1234EFGH5678 by mistake\n\n"
+             "Co-authored-by: Claude <noreply@anthropic.com>"], cwd=repo)
+        sha_a = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+
+        (repo / "a.txt").write_text("y\n")
+        run(["git", "add", "a.txt"], cwd=repo)
+        run(["git", "commit", "-m", "PII drop: server at 192.168.7.7"], cwd=repo)
+        sha_b = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+
+        (repo / "a.txt").write_text("z\n")
+        run(["git", "add", "a.txt"], cwd=repo)
+        run(["git", "commit", "-m",
+             "commit deadbeef was reverted, token: ABCDEFGHIJKLMNOPQRSTUVWX1234"], cwd=repo)
+        sha_c = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+
+        # OLD-style: per-commit --message, then relabel 'message' -> 'commit <sha>'.
+        shas = run(["git", "log", "--all", "--format=%H"], cwd=repo).stdout.split()
+        old_lines = []
+        for sha in shas:
+            body = run(["git", "show", "-s", "--format=%B", sha], cwd=repo).stdout
+            mf = Path(td) / f"msg-{sha}.txt"
+            mf.write_text(body)
+            r = run(["bash", str(VIBE_CONTENT_SCANNER), "--message", str(mf)], cwd=repo)
+            for line in r.stderr.splitlines():
+                parts = line.split("\t")
+                if len(parts) == 4 and parts[1] == "message":
+                    parts[1] = f"commit {sha}"
+                    old_lines.append("\t".join(parts))
+        old_sorted = sorted(old_lines)
+
+        # NEW: single --messages-stdin pipe.
+        logp = run(["git", "log", "--all", "-z", "--format=%H%n%B"], cwd=repo)
+        r_new = subprocess.run(
+            ["bash", str(VIBE_CONTENT_SCANNER), "--messages-stdin"],
+            input=logp.stdout.encode(), capture_output=True, cwd=repo,
+        )
+        new_stderr = r_new.stderr.decode()
+        new_lines = [l for l in new_stderr.splitlines() if l.count("\t") == 3]
+        new_sorted = sorted(new_lines)
+
+        check("[task_022 AC3] old vs new sorted finding sets byte-identical",
+              old_sorted == new_sorted, f"old={old_sorted} new={new_sorted}")
+        check("[task_022 AC3] exactly 3 findings", len(new_lines) == 3, str(new_lines))
+
+        locs = [l.split("\t")[1] for l in new_lines]
+        check("[task_022 AC3] every location attributed to a real commit sha",
+              all(loc in (f"commit {sha_a}", f"commit {sha_b}", f"commit {sha_c}") for loc in locs),
+              str(locs))
+        check("[task_022 AC3] no misattribution to the literal 'deadbeef' text",
+              all("deadbeef" not in loc for loc in locs), str(locs))
+        check("[task_022 AC3] aws-access-key attributed to sha_a",
+              f"commit {sha_a}" in [l.split("\t")[1] for l in new_lines if "aws-access-key" in l], str(new_lines))
+        check("[task_022 AC3] rfc1918-ip attributed to sha_b",
+              f"commit {sha_b}" in [l.split("\t")[1] for l in new_lines if "rfc1918-ip" in l], str(new_lines))
+        check("[task_022 AC3] secret-assignment (in the 'commit deadbeef' body line) attributed to sha_c",
+              f"commit {sha_c}" in [l.split("\t")[1] for l in new_lines if "secret-assignment" in l], str(new_lines))
+
+
+def test_task022_ac5_messages_stdin_malformed_inputs() -> None:
+    """AC5: --messages-stdin must not crash (set -euo pipefail is active) and
+    must not misattribute findings on three malformed shapes in one stream:
+    an empty record, a body-only record with no sha line, a normal valid
+    record, and — with no trailing NUL — a truncated final record."""
+    print("\n[task_022 AC5: --messages-stdin malformed inputs]")
+    sha1 = "1111111111111111111111111111111111aaaa"
+    sha2 = "2222222222222222222222222222222222bbbb"
+
+    record_empty = b""
+    record_bodyonly = b"\nBody text sk-" + b"C" * 24  # no sha line -> skip
+    record_valid = sha1.encode() + b"\nSecret: token=" + b"B" * 20
+    record_truncated = sha2.encode() + b"\nAWS key: AKIA" + b"Z" * 16  # no trailing NUL
+
+    stream = (record_empty + b"\x00" + record_bodyonly + b"\x00"
+              + record_valid + b"\x00" + record_truncated)
+
+    r = subprocess.run(["bash", str(VIBE_CONTENT_SCANNER), "--messages-stdin"],
+                        input=stream, capture_output=True)
+    check("[task_022 AC5 malformed] does not crash (exit 0 or 1, never 2)",
+          r.returncode in (0, 1), str(r.returncode))
+    check("[task_022 AC5 malformed] exit 1 (the two valid records both fire)",
+          r.returncode == 1, r.stderr.decode())
+    check("[task_022 AC5 malformed] stdout empty", r.stdout == b"", str(r.stdout))
+
+    stderr = r.stderr.decode()
+    findings = [l for l in stderr.splitlines() if l.count("\t") == 3]
+    check("[task_022 AC5 malformed] exactly 2 findings (malformed records silently skipped)",
+          len(findings) == 2, str(findings))
+    locs = [l.split("\t")[1] for l in findings]
+    check("[task_022 AC5 malformed] valid record attributed to sha1",
+          f"commit {sha1}" in locs, str(locs))
+    check("[task_022 AC5 malformed] truncated final record (no trailing NUL) still processed, attributed to sha2",
+          f"commit {sha2}" in locs, str(locs))
+    check("[task_022 AC5 malformed] no finding attributed to an empty/malformed location",
+          all(loc in (f"commit {sha1}", f"commit {sha2}") for loc in locs), str(locs))
+
+
+def test_task022_ac5_exit_codes_all_modes() -> None:
+    """AC5: every scanner mode retains (or, for --messages-stdin, establishes)
+    correct 0/1 exit-code behaviour on crafted clean + dirty fixtures."""
+    print("\n[task_022 AC5: exit codes across all modes]")
+    token = "ghp_" + "A" * 36
+
+    # --staged
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        repo.mkdir()
+        run(["git", "init"], cwd=repo)
+        run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+        run(["git", "config", "user.name", "Test User"], cwd=repo)
+        (repo / "clean.txt").write_text("hello world\n")
+        run(["git", "add", "clean.txt"], cwd=repo)
+        r_clean = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
+        check("[task_022 AC5 --staged] clean exits 0", r_clean.returncode == 0, r_clean.stderr)
+        (repo / "dirty.txt").write_text(f"{token}\n")
+        run(["git", "add", "dirty.txt"], cwd=repo)
+        r_dirty = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
+        check("[task_022 AC5 --staged] dirty exits 1", r_dirty.returncode == 1, r_dirty.stderr)
+
+    # --message
+    with tempfile.TemporaryDirectory() as td:
+        clean_f = Path(td) / "clean.txt"
+        clean_f.write_text("hello world\n")
+        r_clean = run(["bash", str(VIBE_CONTENT_SCANNER), "--message", str(clean_f)], cwd=td)
+        check("[task_022 AC5 --message] clean exits 0", r_clean.returncode == 0, r_clean.stderr)
+        dirty_f = Path(td) / "dirty.txt"
+        dirty_f.write_text(f"{token}\n")
+        r_dirty = run(["bash", str(VIBE_CONTENT_SCANNER), "--message", str(dirty_f)], cwd=td)
+        check("[task_022 AC5 --message] dirty exits 1", r_dirty.returncode == 1, r_dirty.stderr)
+
+    # --messages-stdin
+    clean_stream = b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nnothing sensitive here\x00"
+    r_clean = subprocess.run(["bash", str(VIBE_CONTENT_SCANNER), "--messages-stdin"],
+                              input=clean_stream, capture_output=True)
+    check("[task_022 AC5 --messages-stdin] clean exits 0", r_clean.returncode == 0, r_clean.stderr.decode())
+    dirty_stream = ("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n" + token + "\x00").encode()
+    r_dirty = subprocess.run(["bash", str(VIBE_CONTENT_SCANNER), "--messages-stdin"],
+                              input=dirty_stream, capture_output=True)
+    check("[task_022 AC5 --messages-stdin] dirty exits 1", r_dirty.returncode == 1, r_dirty.stderr.decode())
+
+    # --blob-stdin (+ --tier block)
+    clean_blob = "commit aaaa\n+nothing sensitive here\n"
+    r_clean = run(["bash", str(VIBE_CONTENT_SCANNER), "--blob-stdin"], input=clean_blob)
+    check("[task_022 AC5 --blob-stdin] clean exits 0", r_clean.returncode == 0, r_clean.stderr)
+    dirty_blob = f"commit bbbb\n+{token}\n"
+    r_dirty = run(["bash", str(VIBE_CONTENT_SCANNER), "--blob-stdin"], input=dirty_blob)
+    check("[task_022 AC5 --blob-stdin] dirty exits 1", r_dirty.returncode == 1, r_dirty.stderr)
+    r_dirty_block = run(["bash", str(VIBE_CONTENT_SCANNER), "--blob-stdin", "--tier", "block"], input=dirty_blob)
+    check("[task_022 AC5 --blob-stdin --tier block] dirty (BLOCK rule) exits 1",
+          r_dirty_block.returncode == 1, r_dirty_block.stderr)
+    warn_blob = "commit cccc\n+Server at 192.168.0.99\n"
+    r_warn_block = run(["bash", str(VIBE_CONTENT_SCANNER), "--blob-stdin", "--tier", "block"], input=warn_blob)
+    check("[task_022 AC5 --blob-stdin --tier block] WARN-only content exits 0 (tier gate)",
+          r_warn_block.returncode == 0, r_warn_block.stderr)
+
+    # --range
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        repo.mkdir()
+        run(["git", "init"], cwd=repo)
+        run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+        run(["git", "config", "user.name", "Test User"], cwd=repo)
+        (repo / "f.txt").write_text("base\n")
+        run(["git", "add", "f.txt"], cwd=repo)
+        run(["git", "commit", "-m", "base"], cwd=repo)
+        sha1 = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+        (repo / "f.txt").write_text("base\nhello world\n")
+        run(["git", "add", "f.txt"], cwd=repo)
+        run(["git", "commit", "-m", "clean add"], cwd=repo)
+        sha2 = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+        r_clean = run(["bash", str(VIBE_CONTENT_SCANNER), "--range", sha1, sha2], cwd=repo)
+        check("[task_022 AC5 --range] clean exits 0", r_clean.returncode == 0, r_clean.stderr)
+        (repo / "f.txt").write_text(f"base\nhello world\n{token}\n")
+        run(["git", "add", "f.txt"], cwd=repo)
+        run(["git", "commit", "-m", "dirty add"], cwd=repo)
+        sha3 = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+        r_dirty = run(["bash", str(VIBE_CONTENT_SCANNER), "--range", sha2, sha3], cwd=repo)
+        check("[task_022 AC5 --range] dirty exits 1", r_dirty.returncode == 1, r_dirty.stderr)
+
+    # --identity
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        repo.mkdir()
+        run(["git", "init"], cwd=repo)
+        run(["git", "config", "user.name", "Test User"], cwd=repo)
+        run(["git", "config", "user.email", "123+tester@users.noreply.github.com"], cwd=repo)
+        r_clean = run(["bash", str(VIBE_CONTENT_SCANNER), "--identity"], cwd=repo)
+        check("[task_022 AC5 --identity] noreply exits 0", r_clean.returncode == 0, r_clean.stderr)
+        run(["git", "config", "user.email", "real@example.com"], cwd=repo)
+        r_dirty = run(["bash", str(VIBE_CONTENT_SCANNER), "--identity"], cwd=repo)
+        check("[task_022 AC5 --identity] real email exits 1", r_dirty.returncode == 1, r_dirty.stderr)
+
+
+def test_task022_ac6_override_and_optout_new_primitives() -> None:
+    """AC6: VIBE_CONTENT_GUARD=off still exits 0 with the loud override line
+    naming skipped rules, and .vibe-content-guard-off still short-circuits to
+    0 — both re-verified against the new bash-native match primitives."""
+    print("\n[task_022 AC6: override + opt-out under new primitives]")
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        repo.mkdir()
+        run(["git", "init"], cwd=repo)
+        run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+        run(["git", "config", "user.name", "Test User"], cwd=repo)
+        token = "ghp_" + "A" * 36
+        (repo / "secret.txt").write_text(f"My secret is {token}\n")
+        run(["git", "add", "secret.txt"], cwd=repo)
+
+        env = {**os.environ, "VIBE_CONTENT_GUARD": "off"}
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo, env=env)
+        check("[task_022 AC6] override exits 0", r.returncode == 0, r.stderr)
+        check("[task_022 AC6] override logs OVERRIDE line", "OVERRIDE" in r.stderr, r.stderr)
+        check("[task_022 AC6] override names github-pat", "github-pat" in r.stderr, r.stderr)
+
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        repo.mkdir()
+        run(["git", "init"], cwd=repo)
+        run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+        run(["git", "config", "user.name", "Test User"], cwd=repo)
+        (repo / ".vibe-content-guard-off").write_text("")
+        token = "ghp_" + "A" * 36
+        (repo / "secret.txt").write_text(f"My secret is {token}\n")
+        run(["git", "add", "secret.txt"], cwd=repo)
+        r = run(["bash", str(VIBE_CONTENT_SCANNER), "--staged"], cwd=repo)
+        check("[task_022 AC6] opt-out marker exits 0", r.returncode == 0, r.stderr)
+        check("[task_022 AC6] opt-out marker: no stderr output", len(r.stderr.strip()) == 0, r.stderr)
+
+
+def _task022_extract_function_body(src: str, name: str) -> str:
+    """AC7-pinned extraction: the text from the line matching '^name() {' to
+    the first subsequent line matching '^}'."""
+    lines = src.splitlines()
+    start = None
+    for i, line in enumerate(lines):
+        if line == f"{name}() {{":
+            start = i
+            break
+    if start is None:
+        raise AssertionError(f"function {name}() {{ not found in scanner source")
+    end = None
+    for j in range(start + 1, len(lines)):
+        if lines[j] == "}":
+            end = j
+            break
+    if end is None:
+        raise AssertionError(f"no closing }} found for {name}")
+    return "\n".join(lines[start:end + 1])
+
+
+def test_task022_ac7_no_bash4_constructs() -> None:
+    """AC7(a): the scanner contains no bash-4+ constructs (associative
+    arrays, ${var,,}/${var^^} case conversion, mapfile/readarray) and no \\b
+    (or other GNU-only regex escapes) inside [[ =~ ]] patterns — the
+    portability gate for macOS bash 3.2 + BSD regcomp."""
+    print("\n[task_022 AC7a: no bash-4+ constructs, no \\b escapes]")
+    src = VIBE_CONTENT_SCANNER.read_text(encoding="utf-8")
+    check("[task_022 AC7a] no literal \\b anywhere in the scanner", "\\b" not in src, "")
+    check("[task_022 AC7a] no declare -A (associative arrays)", "declare -A" not in src, "")
+    check("[task_022 AC7a] no mapfile", "mapfile" not in src, "")
+    check("[task_022 AC7a] no readarray", "readarray" not in src, "")
+    case_conv = re.search(r'\$\{[^}]*(,,|\^\^)[^}]*\}', src)
+    check("[task_022 AC7a] no ${var,,} / ${var^^} case-conversion expansion",
+          case_conv is None, str(case_conv))
+
+
+def test_task022_ac7_no_perline_forks_in_hot_path_functions() -> None:
+    """AC7(b), A2c: the five named hot-path functions' bodies (extracted per
+    the spec's pinned method: '^name() {' to the first subsequent '^}')
+    contain no external-command invocation of grep/sed/awk/head/cut/tr in any
+    form (piped, command-substituted, herestring/heredoc-fed, or bare), and
+    no $( or backtick command substitution at all. line_is_allowlisted is
+    exempt (A3: it keeps grep -qE, off the hot path). This is the permanent
+    guard against the fork-storm quietly reappearing."""
+    print("\n[task_022 AC7b: no per-line subprocess forks in hot-path functions]")
+    src = VIBE_CONTENT_SCANNER.read_text(encoding="utf-8")
+    forbidden_names = ["grep", "sed", "awk", "head", "cut", "tr"]
+    hot_path_funcs = [
+        "check_rule", "check_email_rule", "check_home_path_rule",
+        "is_named_trailer", "is_trailer_line",
+    ]
+    for name in hot_path_funcs:
+        body = _task022_extract_function_body(src, name)
+        bad = [n for n in forbidden_names if re.search(r'\b' + n + r'\b', body)]
+        check(f"[task_022 AC7b] {name}: no forbidden external-command names", bad == [], str(bad))
+        check(f"[task_022 AC7b] {name}: no $( command substitution", "$(" not in body, body)
+        check(f"[task_022 AC7b] {name}: no backtick command substitution", "`" not in body, body)
+
+    # line_is_allowlisted is the documented exemption (A3) — confirm it still
+    # legitimately uses grep -qE, proving the check above is discriminating
+    # and not just accidentally silent everywhere.
+    allow_body = _task022_extract_function_body(src, "line_is_allowlisted")
+    check("[task_022 AC7b] line_is_allowlisted still uses grep -qE (A3 exemption intact)",
+          "grep -qE" in allow_body, allow_body)
+
+
 def main() -> int:
     test_help()
     test_version()
@@ -9675,6 +10214,24 @@ def main() -> int:
     test_task020_ac4_committed_marker_refused()
     test_task020_ac6_non_git_workspace_refused()
     test_task020_ac5_cred_load_gated()
+
+    # task_022: scanner match-primitive swap (bash-native [[ =~ ]], no
+    # per-line subprocess forks) + --messages-stdin single-pass message scan
+    # + _audit_history pass-2 rewrite. Fidelity (byte-identical findings) is
+    # the security boundary; AC1 (real-history slice) and AC4 (60s timing)
+    # are one-offs in the Tester's log, not permanent tests.
+    test_task022_ac2_corpus_message_mode()
+    test_task022_ac2_corpus_blob_stdin_mode()
+    test_task022_ac2_corpus_staged_mode()
+    test_task022_ac2_corpus_range_block_tier_only()
+    test_task022_ac2_clean_block_no_crash()
+    test_task022_ac2_allowlist_suppression()
+    test_task022_ac3_messages_stdin_parity_and_attribution()
+    test_task022_ac5_messages_stdin_malformed_inputs()
+    test_task022_ac5_exit_codes_all_modes()
+    test_task022_ac6_override_and_optout_new_primitives()
+    test_task022_ac7_no_bash4_constructs()
+    test_task022_ac7_no_perline_forks_in_hot_path_functions()
 
     print()
     if FAILURES:

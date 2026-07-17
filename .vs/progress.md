@@ -322,3 +322,25 @@ extended to direct-invocation forms (herestring grep)). Spec approval: self-appr
 /vss acts-as-user (autonomous /vsss run "deliver optimisations" iter 1; Fable rung NOT
 pre-authorised; Generator opus, Tester sonnet start per task_017/019 haiku quality history).
 Dispatching Generator (opus).
+
+## task_022 — cycle 1 — PASS (2026-07-17)
+
+vibe audit --history performance. Generator: opus (started + passed at opus per Model plan).
+Tester: sonnet, blind — 12 new smoke functions / 68 checks + full pre-existing suite green
+(code-check 15 files clean), 0 regressions. Hard gates verified raw in test-output.log:
+AC1 slice differential byte-identical (35/35 findings; old 98.8s vs new 4.3s on the same
+captured 12k-line stream), AC4 full `vibe audit --history` 21.9s real (baseline >280s timeout).
+
+Evaluator (Fable 5 chair) independent verification beyond the Tester's summary:
+- Diff reviewed hunk-by-hunk: `[[ =~ ]]` guard discipline correct under set -e (`&&` lists
+  never terminal), nocasematch bracketed on every path incl. is_named_trailer's rc capture,
+  mdns capture-group form equivalent on the `_`/`-`/EOL boundary cases, home-path group-2
+  extraction replaces the sed fork with identical semantics, NUL-record parser can't have
+  its `commit <sha>` location forged by body content (`%H` first-line-only). No scope creep.
+- security-review agent (mandatory for scanner changes): CLEAR, 2 low notes. The LOW
+  (single-pipe pass 2 widens fail-open blast radius on a mid-stream crash vs the old
+  per-commit loop) closed in-tree by the chair: exit-status capture + loud incomplete-scan
+  warning for rc>1. INFO (non-git input shape) noted, not actioned — input is pinned to
+  `git log -z` output. Gates re-run green after the fix.
+
+Verdict: PASS. Committing as `/vs cycle 1: pass`. Not pushed (session policy).
