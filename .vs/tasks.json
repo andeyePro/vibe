@@ -166,5 +166,14 @@
   "assigned_to": "generator",
   "mode": "rigorous",
   "last_modified": "2026-07-17T08:10:42Z"
+ },
+ {
+  "id": "task_025",
+  "description": "code-check.py shellchecks devcontainer/git-hooks/ (scanner + 3 extensionless bash hooks via shebang detection) + CODE_CHECK_SCRIPTS env seam retiring the brittle scripts()-body text-patch fixture",
+  "implementation_status": "in_progress",
+  "test_status": "pending",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-07-17T09:19:00Z"
  }
 ]

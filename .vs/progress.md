@@ -423,3 +423,16 @@ Evaluator (Fable 5 chair) beyond the Tester:
   has no outside `+*)` arm, unreachable with -U0) - documented in-tree with a clarifying comment.
 
 Verdict: PASS. Committing as `/vs cycle 1: pass`. Not pushed.
+
+## task_025 — code-check.py git-hooks coverage (2026-07-17)
+
+Cycle 1 start (/vsss iter 4, optimiser-refined args: queue item 3). Spec locked after 3 Spec
+Critic iterations. Key catches: shebang "contains sh" false-positives on fish (fi-SH) -> pinned
+interpreter-basename whitelist {sh,bash,dash,ksh,zsh,ash} with env-unwrap + degenerate-shebang
+guards (env alone / -S / bare #!); the env seam bypasses the default branch so the shebang test
+needs a NAMED importable is_shell_script() to be AC2-testable; one flat sorted() shebang-gated
+default algorithm pinned (no separate *.sh glob); CODE_CHECK_SCRIPTS env-leak isolation required
+(two frozen code-check-clean tests run later in main()'s fixed sequence). Fixture reshape of
+_patched_code_check sanctioned under the freeze-anchor exception. NOT security-review-gated
+(dev-lint file selector, not a guard). Spec approval: self-approved under /vss acts-as-user.
+Dispatching Generator (sonnet).
