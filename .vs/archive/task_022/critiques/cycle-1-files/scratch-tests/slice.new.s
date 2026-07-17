@@ -1,0 +1,35 @@
+BLOCK	commit c32eee0d01ed4b081e5f571e8f703f98a5184c9e	private-key	-----BEGIN OPENSSH PRIVATE KEY-----
+BLOCK	commit c32eee0d01ed4b081e5f571e8f703f98a5184c9e	private-key	-----BEGIN OPENSSH PRIVATE KEY-----
+BLOCK	commit c32eee0d01ed4b081e5f571e8f703f98a5184c9e	secret-assignment	PASSWD: /usr/local/bin/init-firewall
+BLOCK	commit c32eee0d01ed4b081e5f571e8f703f98a5184c9e	secret-assignment	password=ghp_shared_for_foo_bar_baz
+WARN	commit 06fa7473dd9255ed11955d860f3d0d54ce9b1c08	home-path	/Users/[^/
+WARN	commit 06fa7473dd9255ed11955d860f3d0d54ce9b1c08	home-path	/Users/myname/
+WARN	commit a99a8930a76051e30c8fc14fe3ad360a25cbaecf	mdns-local	foo.local
+WARN	commit b4596c1ea50e75bbe05feded3d7cb781ea393672	rfc1918-ip	192.168.0.99
+WARN	commit b4596c1ea50e75bbe05feded3d7cb781ea393672	rfc1918-ip	192.168.0.99
+WARN	commit b4596c1ea50e75bbe05feded3d7cb781ea393672	rfc1918-ip	192.168.0.99
+WARN	commit b4596c1ea50e75bbe05feded3d7cb781ea393672	rfc1918-ip	192.168.0.99
+WARN	commit b4596c1ea50e75bbe05feded3d7cb781ea393672	rfc1918-ip	192.168.0.99
+WARN	commit b4596c1ea50e75bbe05feded3d7cb781ea393672	rfc1918-ip	192.168.0.99
+WARN	commit c32eee0d01ed4b081e5f571e8f703f98a5184c9e	email-address	t@example.com
+WARN	commit c32eee0d01ed4b081e5f571e8f703f98a5184c9e	email-address	t@example.com
+WARN	commit c32eee0d01ed4b081e5f571e8f703f98a5184c9e	home-path	/Users/[^/
+WARN	commit c32eee0d01ed4b081e5f571e8f703f98a5184c9e	home-path	/Users/myname/
+WARN	commit c32eee0d01ed4b081e5f571e8f703f98a5184c9e	home-path	/Users/myname/
+WARN	commit ff6f673711e9d5d6950340f3f193082438c4662f	email-address	123+tester@users.noreply.github.com
+WARN	commit ff6f673711e9d5d6950340f3f193082438c4662f	email-address	123+tester@users.noreply.github.com
+WARN	commit ff6f673711e9d5d6950340f3f193082438c4662f	email-address	6342315+Aqueum@users.noreply.github.com
+WARN	commit ff6f673711e9d5d6950340f3f193082438c4662f	email-address	Aqueum@users.noreply.github.com
+WARN	commit ff6f673711e9d5d6950340f3f193082438c4662f	email-address	boss@corp.com
+WARN	commit ff6f673711e9d5d6950340f3f193082438c4662f	email-address	hidden@personal.net
+WARN	commit ff6f673711e9d5d6950340f3f193082438c4662f	email-address	hidden@personal.net
+WARN	commit ff6f673711e9d5d6950340f3f193082438c4662f	email-address	noreply@github.com
+WARN	commit ff6f673711e9d5d6950340f3f193082438c4662f	email-address	noreply@github.com
+WARN	commit ff6f673711e9d5d6950340f3f193082438c4662f	email-address	noreply@github.com
+WARN	commit ff6f673711e9d5d6950340f3f193082438c4662f	email-address	placeholder@vibe.local
+WARN	commit ff6f673711e9d5d6950340f3f193082438c4662f	email-address	someone@example.com
+WARN	commit ff6f673711e9d5d6950340f3f193082438c4662f	email-address	someone@example.com
+WARN	commit ff6f673711e9d5d6950340f3f193082438c4662f	email-address	someone@example.com
+WARN	commit ff6f673711e9d5d6950340f3f193082438c4662f	mdns-local	vibe.local
+WARN	commit ff6f673711e9d5d6950340f3f193082438c4662f	mdns-local	vibe.local
+WARN	commit ff6f673711e9d5d6950340f3f193082438c4662f	mdns-local	vibe.local

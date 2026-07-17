@@ -1,0 +1,2414 @@
+==========================================================
+task_022 Tester log — vibe audit --history performance
+Independence: spec.md + current source tree only. Did NOT
+read generator-report.md, diff.patch, or scratch-tests/.
+==========================================================
+
+---------- ONE-OFF: AC1 real-history slice differential ----------
+Captured ONCE: git log -p --no-color --all | head -n 12000 > slice.txt
+12000 /tmp/claude-1000/-workspace/e8ec3dad-4a52-424c-b836-c1e9d890d84e/scratchpad/task022/slice.txt
+
+OLD scanner = git show HEAD:devcontainer/git-hooks/vibe-content-scan.sh
+(HEAD = a99a893, 'vs: task_022 spec locked' — confirmed pre-change baseline;
+ working tree has the uncommitted Part A/B changes on top of it.)
+
+old scanner --blob-stdin timing:
+
+real	1m38.790s
+user	1m47.260s
+sys	0m47.879s
+old scanner exit code (rerun, /dev/null): 1
+old findings count:
+35
+
+new scanner --blob-stdin timing: 4.306s real (measured directly, see below)
+new scanner exit code (rerun, /dev/null): 1
+new findings count:
+35
+
+LC_ALL=C sort old-err.txt > old-sorted.txt; LC_ALL=C sort new-err.txt > new-sorted.txt; diff:
+RESULT: BYTE-IDENTICAL (35/35 findings match)
+
+AC1 HARD GATE: PASS — byte-identical finding sets over the captured 12k-line slice.
+Bonus speed data point: old ~98.8s vs new ~4.3s over the same 12k lines (~23x).
+
+---------- ONE-OFF: AC4 timing (vibe audit --history, <60s hard gate) ----------
+
+real	0m21.871s
+user	0m20.471s
+sys	0m2.273s
+
+vibe audit --history output (head/tail; full command run against the live
+vibe repo — pre-existing WARN/BLOCK findings are the repo's own history
+content, unrelated to task_022's correctness, not a task_022 regression):
+vibe audit --history: full-history scan (content + commit messages + identities, both tiers)
+
+BLOCK:
+...
+WARN	commit e1e7bfb886725f5f29cea63892210f67483ccbbd	home-path	/home/runner/
+WARN	commit 628166c755c16ab4e63aeeb2fa3d9eb6d77d5432	home-path	/home/user/
+WARN	commit 628166c755c16ab4e63aeeb2fa3d9eb6d77d5432	home-path	/home/user/
+WARN	commit f9722ef4ef83c25af8c7033a6c73f6e070726440	mdns-local	Settings.local
+WARN	commit 511efe4fc4b00a8a5be9a6f2833e6850b4970cda	email-address	git@github.com
+WARN	commit b4596c1ea50e75bbe05feded3d7cb781ea393672	rfc1918-ip	192.168.0.99
+WARN	commit e1e7bfb886725f5f29cea63892210f67483ccbbd	home-path	/home/runner/
+WARN	identity	commit-identity	redacted@localhost
+
+AC4 HARD GATE: PASS — 21.871s real, well under the 60s gate (baseline was >280s timeout).
+
+---------- MANDATORY REGRESSION: full python3 smoke-test.py ----------
+
+[vibe --help]
+  ✓ exit 0
+  ✓ header present
+  ✓ usage section present
+
+[vibe --version]
+  ✓ --version exit 0
+  ✓ --version prints 'vibe <semver>' single line
+  ✓ -V exit 0
+  ✓ -V matches --version
+  ✓ VERSION file exists
+  ✓ VERSION file is bare semver
+  ✓ VERSION matches --version output
+
+[web/vibe-andeye.md]
+  ✓ page exists
+  ✓ first line is a DRAFT sentinel comment
+  ✓ sentinel says not for publication
+
+[repo owner selection]
+  ✓ [owner] helper runs cleanly
+  ✓ [owner] falls back to gh user when unset
+  ✓ [owner] VIBE_GITHUB_OWNER wins when set
+  ✓ [owner] empty VIBE_GITHUB_OWNER falls back
+  ✓ [owner] create flow prompts for owner (account or org)
+  ✓ [owner] owner existence validated via gh api users/
+  ✓ [owner] mistyped owner gets a retry message
+  ✓ [owner] unvalidatable owner offers proceed-anyway (network-down path)
+  ✓ [owner] failure hint mentions org repo-creation permission
+  ✓ [owner] README documents VIBE_GITHUB_OWNER
+
+[install.sh preflight]
+  ✓ preflight_deps function present
+  ✓ preflight invoked before clone
+  ✓ preflight exits non-zero when deps missing
+  ✓ preflight prints the re-run guidance
+  ✓ preflight did not reach the symlink step
+
+[licence state]
+  ✓ active LICENSE is MIT
+  ✓ AGPL draft removed
+  ✓ CLA draft removed
+  ✓ README.md does not announce an AGPL move
+  ✓ CONTRIBUTING.md does not announce an AGPL move
+  ✓ web/vibe-andeye.md does not announce an AGPL move
+
+[write-env-hint.sh: fresh file]
+  ✓ exit 0
+  ✓ CLAUDE.md created
+  ✓ has start marker
+  ✓ has end marker
+  ✓ mentions SSH
+  ✓ mentions firewall allowlist
+
+[write-env-hint.sh: idempotent]
+  ✓ stable across re-runs
+
+[write-env-hint.sh: preserves user content]
+  ✓ exit 0
+  ✓ user content survives
+  ✓ vibe block present
+
+[ensure_docker_hints_off: no config]
+  ✓ exit 0
+  ✓ config created
+  ✓ hints is string 'false'
+
+[ensure_docker_hints_off: heals legacy bool]
+  ✓ exit 0
+  ✓ hints coerced to string
+  ✓ other bool coerced
+  ✓ unrelated field preserved
+
+[ensure_docker_hints_off: respects user choice]
+  ✓ exit 0
+  ✓ hints='true' preserved
+  ✓ file not rewritten
+
+[ensure_docker_hints_off: malformed JSON is left alone]
+  ✓ exit 0
+  ✓ malformed file untouched
+
+[ensure_docker_hints_off: features field is not a dict]
+  ✓ exit 0
+  ✓ features reset to dict with hints='false'
+
+[install.sh: detects local clone]
+  ✓ exit 0
+  ✓ announces in-place use
+  ✓ did NOT create ~/.vibe-src
+  ✓ bin/vibe symlink created
+  ✓ symlink points at repo checkout
+
+[install.sh: non-clone falls through to ~/.vibe-src path]
+  ✓ took clone/pull path (not in-place)
+  ✓ attempted to clone to ~/.vibe-src
+
+[vibe token helpers]
+  ✓ helpers run cleanly
+  ✓ lookup returns saved token
+  ✓ save replaces on second call
+  ✓ tokens file has one entry
+  ✓ tokens file chmod 600
+
+[vibe: OpenProject MCP creds lookup]
+  ✓ helpers run cleanly
+  ✓ OP URL resolves whole (keeps ://)
+  ✓ bearer keeps trailing '=' (cut -f2- fix)
+  ✓ repo PAT still resolves (no slash-free collision)
+
+[json AC1: clean exit + valid JSON]
+  ✓ [json] AC1 exit-0 on clean repo
+  ✓ [json] AC1 stdout is valid JSON
+  ✓ [json] AC1 no findings on clean repo
+
+[json AC2: top-level keys + types]
+  ✓ [json] AC2 key 'tool' == 'shellcheck'
+  ✓ [json] AC2 key 'shellcheck_version' is str
+  ✓ [json] AC2 key 'files_checked' is list
+  ✓ [json] AC2 key 'findings' is list
+  ✓ [json] AC2 key 'summary' is dict
+  ✓ [json] AC2 summary.files is int
+  ✓ [json] AC2 summary.files_with_issues is int
+  ✓ [json] AC2 summary.total_findings is int
+
+[json AC3: finding schema]
+  ✓ [json] AC3 at least one finding present
+  ✓ [json] AC3 finding has 'file' str
+  ✓ [json] AC3 finding has 'line' int
+  ✓ [json] AC3 finding has 'column' int
+  ✓ [json] AC3 finding has 'level' str
+  ✓ [json] AC3 finding 'code' is int (not str)
+  ✓ [json] AC3 finding has 'message' str
+  ✓ [json] AC3 finding 'level' value in allowed set
+
+[json AC4: findings → exit 1 + count matches]
+  ✓ [json] AC4 exit 1 when findings present
+  ✓ [json] AC4 total_findings > 0
+  ✓ [json] AC4 total_findings == len(findings)
+
+[json AC5: stdout is exactly one JSON object]
+  ✓ [json] AC5 stdout parses as single JSON object
+  ✓ [json] AC5 no '→ shellcheck' progress lines in stdout
+  ✓ [json] AC5 no '✓ shellcheck clean' human line in stdout
+  ✓ [json] AC5 no '✗ shellcheck' human line in stdout
+  ✓ [json] AC5 no extra text after JSON object
+
+[json AC6: human mode output unchanged]
+  ✓ [json] AC6 human mode exits 0 on clean repo
+  ✓ [json] AC6 human mode has '→ shellcheck' progress lines
+  ✓ [json] AC6 human mode has '✓ shellcheck clean' summary
+  ✓ [json] AC6 --json mode has NO '→ shellcheck' lines
+  ✓ [json] AC6 --json mode has NO '✓ shellcheck clean' line
+
+[json AC7: missing shellcheck → JSON error object]
+  ✓ [json] AC7 exit 2 when shellcheck missing
+  ✓ [json] AC7 stdout is valid JSON error object
+  ✓ [json] AC7 error object has 'error' key == 'shellcheck-not-installed'
+  ✓ [json] AC7 error object has 'tool' key == 'shellcheck'
+
+[json AC8: --help mentions --json]
+  ✓ [json] AC8 --help exits 0
+  ✓ [json] AC8 help text mentions '--json'
+
+[json AC9: summary counts accuracy]
+  ✓ [json] AC9 summary.files == len(files_checked)
+  ✓ [json] AC9 files_checked has 3 entries
+  ✓ [json] AC9 summary.files_with_issues matches distinct finding files
+  ✓ [json] AC9 files_with_issues == 2 (two bad scripts)
+
+[json AC10: same target list with/without --json]
+  ✓ [json] AC10 human mode produced at least one path
+  ✓ [json] AC10 --json files_checked == human mode paths
+
+[vibe build_claude_resume_args: fresh]
+  ✓ fresh exits 0
+  ✓ fresh emits empty arg fragment
+
+[vibe build_claude_resume_args: --continue]
+  ✓ --continue exits 0
+  ✓ --continue emits '--continue'
+
+[vibe build_claude_resume_args: --resume (picker)]
+  ✓ --resume exits 0
+  ✓ --resume emits '--resume'
+
+[vibe build_claude_resume_args: --resume <uuid>]
+  ✓ --resume <uid> exits 0
+  ✓ --resume <uid> emits '--resume <uid>'
+
+[vibe is_uuid]
+  ✓ is_uuid '12345678-1234-1234-1234-123456789abc' → True (valid lowercase)
+  ✓ is_uuid 'ABCDEF12-3456-7890-ABCD-EF1234567890' → True (valid uppercase)
+  ✓ is_uuid 'not-a-uuid' → False (obvious non-uuid)
+  ✓ is_uuid '' → False (empty string)
+  ✓ is_uuid '12345678-1234-1234-1234-123456789ab' → False (too short)
+  ✓ is_uuid '12345678-1234-1234-1234-123456789abcd' → False (too long)
+  ✓ is_uuid '--continue' → False (looks like a flag)
+  ✓ is_uuid 'my-project' → False (project name)
+
+[vibe --help mentions --continue and --resume]
+  ✓ --help exits 0
+  ✓ help mentions --continue
+  ✓ help mentions --resume
+  ✓ help notes positional+flag any-order
+
+[parse_vibe_args: no args → all defaults]
+  ✓ exits 0
+  ✓ REBUILD=false
+  ✓ CONTINUE=false
+  ✓ RESUME=false
+  ✓ RESUME_UID empty
+  ✓ PROJECT_ARG empty
+
+[parse_vibe_args: --continue (no project)]
+  ✓ exits 0
+  ✓ CONTINUE=true
+  ✓ PROJECT_ARG empty
+
+[parse_vibe_args: vibe (project only)]
+  ✓ exits 0
+  ✓ PROJECT_ARG=vibe
+  ✓ CONTINUE=false
+
+[parse_vibe_args: vibe --continue (regression: was silently dropped)]
+  ✓ exits 0
+  ✓ PROJECT_ARG=vibe
+  ✓ CONTINUE=true (the fix)
+
+[parse_vibe_args: --continue vibe (leading-flag form, must still work)]
+  ✓ exits 0
+  ✓ PROJECT_ARG=vibe
+  ✓ CONTINUE=true
+
+[parse_vibe_args: vibe --resume <uuid>]
+  ✓ exits 0
+  ✓ PROJECT_ARG=vibe
+  ✓ RESUME=true
+  ✓ RESUME_UID=12345678-1234-1234-1234-123456789abc
+
+[parse_vibe_args: vibe --resume (no uuid → picker)]
+  ✓ exits 0
+  ✓ PROJECT_ARG=vibe
+  ✓ RESUME=true
+  ✓ RESUME_UID empty
+
+[parse_vibe_args: vibe --rebuild]
+  ✓ exits 0
+  ✓ PROJECT_ARG=vibe
+  ✓ REBUILD=true
+
+[parse_vibe_args: two positionals rejected]
+  ✓ exits 1
+  ✓ error mentions extra
+
+[parse_vibe_args: unknown trailing flag rejected]
+  ✓ exits 1
+  ✓ error mentions unknown
+
+[parse_vibe_args: vibe --fable → MODEL_ARG=claude-fable-5]
+  ✓ exits 0
+  ✓ PROJECT_ARG=vibe
+  ✓ MODEL_ARG=claude-fable-5
+
+[parse_vibe_args: --model claude-opus-4-8]
+  ✓ exits 0
+  ✓ MODEL_ARG=claude-opus-4-8
+  ✓ PROJECT_ARG=vibe
+
+[parse_vibe_args: --model with no value rejected]
+  ✓ exits 1
+  ✓ error mentions model id
+
+[parse_vibe_args: --model with shell metachars rejected]
+  ✓ --model 'claude; rm -rf /' exits 1
+  ✓ --model 'a b' exits 1
+  ✓ --model '$(whoami)' exits 1
+  ✓ --model 'claude`x`' exits 1
+  ✓ --model '--continue' exits 1
+
+[vibe is_model_id]
+  ✓ is_model_id 'claude-fable-5' → True (fable id)
+  ✓ is_model_id 'claude-opus-4-8' → True (opus id)
+  ✓ is_model_id 'claude-3-5-haiku-20241022' → True (dated id)
+  ✓ is_model_id 'opus' → True (alias)
+  ✓ is_model_id '' → False (empty)
+  ✓ is_model_id 'a b' → False (space)
+  ✓ is_model_id 'a;b' → False (semicolon)
+  ✓ is_model_id '$(x)' → False (command substitution)
+  ✓ is_model_id 'a`b`' → False (backticks)
+  ✓ is_model_id 'a'b' → False (quote)
+
+[vibe build_claude_model_args: no model → empty]
+  ✓ exits 0
+  ✓ emits empty fragment
+
+[vibe build_claude_model_args: MODEL_ARG set]
+  ✓ exits 0
+  ✓ emits '--model claude-fable-5'
+
+[vibe fable_billing_phase: free until 7 Jul 2026, credits after]
+  ✓ 20260609 → free (launch day)
+  ✓ 20260707 → free (last free day)
+  ✓ 20260708 → credits (cutover day)
+  ✓ 20270101 → credits (well after)
+
+[vibe auto-resume marker helpers]
+  ✓ exits 0
+  ✓ numeric field read
+  ✓ missing key → empty
+  ✓ pending when active + remaining
+  ✓ decrement twice → 0
+  ✓ not pending at remaining=0
+  ✓ non-numeric value rejected
+  ✓ not pending on malformed marker
+  ✓ not pending on missing file
+
+[task_016 AC1: auto_resume_deactivate]
+  ✓ AC1: deactivate exits 0
+  ✓ AC1: sets active=0
+  ✓ AC1: idempotent
+  ✓ AC1: missing file → no create
+  ✓ AC1: no .tmp residue
+
+[task_016 AC2: auto_resume_heartbeat_write]
+  ✓ AC2: exits 0
+  ✓ AC2: writes epoch in range
+
+[task_016 AC3: auto_resume_stalled]
+  ✓ AC3: exits 0
+  ✓ AC3: gap > threshold → stalled
+  ✓ AC3: gap < threshold → not stalled
+  ✓ AC3: gap == threshold (boundary) → not stalled
+  ✓ AC3: missing file → not stalled
+  ✓ AC3: future epoch → not stalled
+  ✓ AC3: garbage content → not stalled
+
+[task_016 AC4: heartbeat hook entries in settings.local.json]
+  ✓ AC4: valid JSON
+  ✓ AC4: PreToolUse heartbeat hook present
+  ✓ AC4: PostToolUse heartbeat hook present
+  ✓ AC4: Stop heartbeat hook present
+  ✓ AC4: guard-bash entry preserved
+  ✓ AC4: guard-fs entry preserved
+  ✓ AC4: bell Stop command present
+  ✓ AC4: bell Notification entry present
+  ✓ AC4: forceLoginMethod=claudeai
+  ✓ AC4: permissions.defaultMode=bypassPermissions
+
+[task_016 AC5/AC7/AC8: supervised launch and trap text]
+  ✓ AC5: launch_claude body has 'exec devcontainer exec'
+  ✓ AC5: at least one bare 'devcontainer exec' line
+  ✓ AC5: launch_claude_supervised function exists
+  ✓ AC5: VIBE_SESSION_REF created with mktemp
+  ✓ AC5: AUTO_RESUME_MARKER defined
+  ✓ AC7: INT trap armed for deactivate
+  ✓ AC7: trap - INT reset present
+  ✓ AC8: final 'exit "$CLAUDE_EXIT"' statement
+
+[task_016 AC6: watchdog functional tests]
+  ✓ AC6 T1: positive kill case exits 0
+  ✓ AC6 T1: vibe_container_kill_claude invoked
+  ✓ AC6 T1: fake claude actually terminated (host-PID fallback)
+  ✓ AC6 T2: negative active=0 exits 0
+  ✓ AC6 T2: fake claude still alive after two live polls
+  ✓ AC6 T2: kill never invoked
+  ✓ AC6 T3: negative stale ref gate exits 0
+  ✓ AC6 T3: crash-left marker - fake claude still alive after two live polls
+  ✓ AC6 T3: kill never invoked
+  ✓ AC6 T4: negative empty ref exits 0
+  ✓ AC6 T4: empty ref - fake claude still alive after two live polls
+  ✓ AC6 T4: empty ref never arms kill
+
+[task_016 AC12: .gitignore heartbeat pattern]
+  ✓ AC12: .gitignore contains '.vss/heartbeat*'
+
+[task_016 AC11/AC13: documentation presence]
+  ✓ AC11: MANUAL-TESTS.md has stall watchdog section
+  ✓ AC13: vibe comment block mentions heartbeat and watchdog
+  ✓ AC13: vsss.md documents Auto-resume
+  ✓ AC13: vsss.md documents VIBE_STALL_SECS
+
+[statusLine: single-letter model in the vibe TUI]
+  ✓ [status] settings heredoc found
+  ✓ [status] statusLine.type == command
+  ✓ [status] command reads model.display_name
+  ✓ [status] 'F' fixture exact output
+  ✓ [status] 'O' fixture exact output
+  ✓ [status] 'S' fixture exact output
+  ✓ [status] 'H' fixture exact output
+  ✓ [status] 'GPT-9' fixture exact output
+  ✓ [status] '?' fixture exact output
+
+[statusLine: rate-limit side-effect file]
+  ✓ [status-rl] command extracted
+  ✓ [status-rl] command honours VIBE_VSS_DIR
+  ✓ [status-rl] display exact with side effect
+  ✓ [status-rl] rate-limit file written
+  ✓ [status-rl] exactly two KEY=VALUE lines
+  ✓ [status-rl] epoch= is a plausible current epoch
+  ✓ [status-rl] used= carries the floored percent
+  ✓ [status-rl] no tmp file left behind
+  ✓ [status-rl] fractional display exact
+  ✓ [status-rl] fractional used= floored
+  ✓ [status-rl] no rate_limits → display exact
+  ✓ [status-rl] no rate_limits → no file written
+  ✓ [status-rl] missing dir → display identical
+  ✓ [status-rl] missing dir → nothing created
+
+[vibe auto_resume_effective_wait: rate-limit-aware countdown]
+  ✓ [eff-wait] exits 0
+  ✓ [eff-wait] fresh + low → capped at 120
+  ✓ [eff-wait] headroom echoes used%
+  ✓ [eff-wait] fresh + high(51) → uncapped
+  ✓ [eff-wait] stale + low → uncapped
+  ✓ [eff-wait] missing file → base wait preserved
+  ✓ [eff-wait] garbage epoch → uncapped
+  ✓ [eff-wait] garbage used → uncapped
+  ✓ [eff-wait] VIBE_RATE_READING_MAX_AGE honoured
+  ✓ [eff-wait] VIBE_RESUME_USED_MAX honoured
+  ✓ [eff-wait] default refuses what the knob allowed
+  ✓ [eff-wait] garbage knob → default behaviour
+  ✓ [eff-wait] resume_at past → 120 grace
+  ✓ [eff-wait] no resume_at → 1800 default
+
+[vibe --help mentions --fable and --model]
+  ✓ --help exits 0
+  ✓ help mentions --fable
+  ✓ help mentions --model
+  ✓ help mentions the credits cutover
+
+[task_015 AC1: no container → no-op]
+  ✓ AC1 exits 0
+  ✓ AC1 emits nothing
+
+[task_015 AC2: matching image → no-op]
+  ✓ AC2 exits 0
+  ✓ AC2 emits nothing
+
+[task_015 AC3: drifted image → emit '1']
+  ✓ AC3 exits 0
+  ✓ AC3 emits '1'
+
+[task_015 AC4a: (true, '1') → one token]
+  ✓ AC4a exits 0
+  ✓ AC4a emits exactly one line
+  ✓ AC4a token is --remove-existing-container
+
+[task_015 AC4b: (true, '') → one token]
+  ✓ AC4b exits 0
+  ✓ AC4b emits exactly one line
+  ✓ AC4b token is --remove-existing-container
+
+[task_015 AC4c: (false, '1') → one token]
+  ✓ AC4c exits 0
+  ✓ AC4c emits exactly one line
+  ✓ AC4c token is --remove-existing-container
+
+[task_015 AC4d: (false, '') → empty]
+  ✓ AC4d exits 0
+  ✓ AC4d emits nothing
+
+[task_015 AC5a: all docker calls fail → emit nothing]
+  ✓ AC5a exits 0 (no abort)
+  ✓ AC5a emits nothing
+
+[task_015 AC5b: ps ok, inspect fails → emit nothing]
+  ✓ AC5b exits 0
+  ✓ AC5b emits nothing
+
+[task_015 AC5c: ps+inspect ok, tag inspect fails → emit nothing]
+  ✓ AC5c exits 0
+  ✓ AC5c emits nothing
+
+[task_015 AC5d: ref inspect fails (image pruned) → emit '1']
+  ✓ AC5d exits 0
+  ✓ AC5d emits '1'
+
+[task_015 AC6: multiple containers uses first]
+  ✓ AC6 exits 0
+  ✓ AC6 emits '1' (drifted, uses first)
+
+[task_015 AC8: comment mentions drift/superseded]
+  ✓ AC8 comment present
+
+[learning AC1: config format + strict parse]
+  ✓ [learn] AC1 exit 0
+  ✓ [learn] AC1 ENABLED='true'
+  ✓ [learn] AC1 PATH='/tmp/learning'
+  ✓ [learn] AC1 VIS='private'
+  ✓ [learn] AC1 REMOTE='origin'
+
+[learning AC2: strict parser, no shell injection]
+  ✓ [learn] AC2 no injection exit 0
+  ✓ [learn] AC2 canary file NOT created
+
+[learning AC3: --init interactive + reinit]
+  ✓ [learn] AC3 --init exits 0
+  ✓ [learn] AC3 config created
+  ✓ [learn] AC3 config chmod 600
+  ✓ [learn] AC3 config has ENABLED=true
+
+[learning AC3: --init mkdir offer]
+  ✓ [learn] AC3 mkdir exit 0
+  ✓ [learn] AC3 mkdir created path
+
+[learning AC3: --reinit overwrites]
+  ✓ [learn] AC3 first init exit 0
+  ✓ [learn] AC3 second init fails without --reinit
+  ✓ [learn] AC3 --reinit succeeds
+  ✓ [learn] AC3 --reinit updated path
+
+[learning AC4: default-off behavior]
+  ✓ [learn] AC4 no config not enabled
+
+[learning AC4: learn without init refusal]
+  ✓ [learn] AC4 learn without init exits 1
+  ✓ [learn] AC4 error message present
+
+[learning AC5: mount via override config]
+  ✓ [learn] AC5 render exit 0
+  ✓ [learn] AC5 output file created
+  ✓ [learn] AC5 learning mount present
+  ✓ [learn] AC6 readonly=true
+
+[learning AC7: learn dispatch before preflight]
+  ✓ [learn] AC7 learn --init works without docker
+
+[learning AC8: capture confirm flow]
+  ✓ [learn] AC8 capture with 'y' exits 0
+  ✓ [learn] AC8 entry file created
+  ✓ [learn] AC8 file contains pattern
+
+[learning AC8: EOF cancel]
+  ✓ [learn] AC8 EOF exits 0
+  ✓ [learn] AC8 cancelled message
+  ✓ [learn] AC8 EOF no write
+
+[learning AC8: confirm 'n' cancels]
+  ✓ [learn] AC8 confirm 'n' exits 0
+  ✓ [learn] AC8 'n' no write
+
+[learning AC9: public mode push]
+  ✓ [learn] AC9 public mode exits 0 even with git failure
+  ✓ [learn] AC9 push prompt shown
+  ✓ [learn] AC9 entry saved locally despite git failure
+
+[learning AC9: git failure survives locally]
+  ✓ [learn] AC9 git failure exits 0
+  ✓ [learn] AC9 entry saved despite git failure
+
+[learning AC10: private mode skips git]
+  ✓ [learn] AC10 private mode exits 0
+  ✓ [learn] AC10 no git calls in private mode
+
+[learning AC11: marker blocks capture]
+  ✓ [learn] AC11 marker blocks capture
+  ✓ [learn] AC11 opted out message
+
+[learning AC11: marker walk stops at $HOME]
+  ✓ [learn] AC11 walk stops at $HOME, marker above doesn't block
+
+[learning AC11: $HOME unset fail-safe]
+  ✓ [learn] AC11 $HOME unset fails safe
+
+[learning AC12: help mentions learn]
+  ✓ [learn] AC12 help exit 0
+  ✓ [learn] AC12 help mentions 'learn "<pattern>"'
+  ✓ [learn] AC12 help mentions 'learn --init'
+
+[learning AC12: banner with opt-in]
+  ✓ [learn] AC12 learning_should_mount returns 0 when opted in
+
+[learning AC13: chmod 600 on config]
+  ✓ [learn] AC13 init success
+  ✓ [learn] AC13 config is chmod 600
+
+[learning AC14: 10 helpers present]
+  ✓ [learn] AC14 helper 'learning_config_path' exists
+  ✓ [learn] AC14 helper 'learning_load' exists
+  ✓ [learn] AC14 helper 'learning_is_enabled' exists
+  ✓ [learn] AC14 helper 'learning_project_opted_out' exists
+  ✓ [learn] AC14 helper 'learning_should_mount' exists
+  ✓ [learn] AC14 helper 'learning_entry_path' exists
+  ✓ [learn] AC14 helper 'learning_format_entry' exists
+  ✓ [learn] AC14 helper 'learning_commit_message' exists
+  ✓ [learn] AC14 helper 'render_devcontainer_with_mounts' exists
+  ✓ [learn] AC14 helper 'learning_handle_subcommand' exists
+
+[learning helper: entry_path composition]
+  ✓ [learn] entry_path composition
+
+[learning helper: format_entry]
+  ✓ [learn] format_entry has timestamp
+  ✓ [learn] format_entry has pattern
+
+[learning helper: commit_message]
+  ✓ [learn] commit_message formats correctly
+
+[learning helper: config_path]
+  ✓ [learn] config_path helper
+
+[learning AC15: code-check.py passes]
+  ✓ [learn] AC15 code-check passes
+
+[learning rename: .no-learn blocks capture]
+  ✓ [learn] short .no-learn marker blocks capture
+
+[learning --exclude]
+  ✓ [learn] --exclude exits 0
+  ✓ [learn] --exclude creates .no-learn
+  ✓ [learn] --exclude idempotent
+  ✓ [learn] --exclude says already excluded
+
+[learning --include]
+  ✓ [learn] --include exits 0
+  ✓ [learn] --include removes .no-learn
+  ✓ [learn] --include removes legacy .vibe-no-learn
+  ✓ [learn] --include idempotent
+  ✓ [learn] --include says was not excluded
+
+[learning --exclude refuses $HOME]
+  ✓ [learn] --exclude refuses in $HOME
+  ✓ [learn] --exclude $HOME error mentions refusing
+  ✓ [learn] --exclude $HOME left no marker
+
+[learning --help mentions exclude/include]
+  ✓ [learn] --help mentions --exclude
+  ✓ [learn] --help mentions --include
+
+[learning --help says host-only]
+  ✓ [learn] --help mentions 'on the HOST shell'
+  ✓ [learn] --help warns 'not available inside the container'
+
+[learning bare-learn usage says host-only]
+  ✓ [learn] bare-learn exits 1
+  ✓ [learn] bare-learn usage mentions host shell
+
+[learning banner_state: silent / excluded / enabled]
+  ✓ [learn] banner_state silent when no config
+  ✓ [learn] banner_state enabled when opted in
+  ✓ [learn] banner_state excluded when .no-learn present
+  ✓ [learn] banner_state excluded when legacy .vibe-no-learn present
+
+[learning banner: parent-shell load before override-config subshell]
+  ✓ [learn] banner marker present in source
+  ✓ [learn] override-config subshell present in source
+  ✓ [learn] VIBE_SOURCE_ONLY guard present
+  ✓ [learn] parent-shell learning_load call exists
+
+[vibe-copy AC4: stdin roundtrip]
+  ✓ [copy] stdin roundtrip exit 0
+  ✓ [copy] stdin OSC 52 prefix
+  ✓ [copy] stdin OSC 52 suffix
+  ✓ [copy] stdin base64 decodes to input
+
+[vibe-copy AC4: file arg roundtrip]
+  ✓ [copy] file arg exit 0
+  ✓ [copy] file arg OSC 52 prefix
+  ✓ [copy] file arg OSC 52 suffix
+  ✓ [copy] file arg base64 decodes to input
+
+[vibe-copy AC5: scratch file write]
+  ✓ [copy] scratch write exit 0
+  ✓ [copy] scratch file exists
+  ✓ [copy] scratch file matches input
+
+[vibe-copy AC9: empty input]
+  ✓ [copy] empty input exit 0
+  ✓ [copy] empty input emits correct OSC 52
+  ✓ [copy] empty input scratch exists
+  ✓ [copy] empty input scratch is zero bytes
+  ✓ [copy] empty input stderr empty
+
+[vibe-copy AC6: 8 KiB warn]
+  ✓ [copy] 8k+1 exit 0
+  ✓ [copy] 8k+1 warns 8193 bytes
+  ✓ [copy] 8k+1 mentions 8192 threshold
+  ✓ [copy] 8k+1 still emits OSC 52
+  ✓ [copy] 8k+1 payload matches input
+  ✓ [copy] 8k+1 scratch written
+
+[vibe-copy AC7: 1 MiB refuse]
+  ✓ [copy] 1m+1 exit 1
+  ✓ [copy] 1m+1 error mentions 1048577 bytes
+  ✓ [copy] 1m+1 error mentions 1048576 threshold
+  ✓ [copy] 1m+1 no OSC 52 emitted
+  ✓ [copy] 1m+1 scratch still written
+  ✓ [copy] 1m+1 scratch contains all input
+
+[vibe-copy AC2: refuses two args]
+  ✓ [copy] two args exit 2
+  ✓ [copy] two args stderr starts with usage
+
+[vibe-copy AC2: refuses missing file]
+  ✓ [copy] missing file exit 2
+  ✓ [copy] missing file stderr starts with error prefix
+
+[vibe-copy AC16: TTY absent fallback]
+  ✓ [copy] TTY absent exit 0
+  ✓ [copy] TTY absent note present
+  ✓ [copy] TTY absent scratch written
+  ✓ [copy] TTY absent scratch matches input
+
+[vibe-copy AC5: scratch write failure]
+  ✓ [copy] scratch failure exit 1
+  ✓ [copy] scratch failure error prefix
+
+[/c AC19a: extras sync deletes copy.md, syncs c.md]
+  ✓ [/c] extras sync exit 0
+  ✓ [/c] copy.md was deleted
+  ✓ [/c] c.md was synced
+  ✓ [/c] c.md preserves content
+
+[/c AC19f: c.md body matches spec]
+  ✓ [/c] c.md file exists
+  ✓ [/c] c.md mentions scratch path
+  ✓ [/c] c.md mentions refusal message
+  ✓ [/c] c.md mentions UTF-8
+  ✓ [/c] no Bash-tool invocation of vibe-copy
+
+[Dockerfile: vibe-copy installation]
+  ✓ [vibe-copy] Dockerfile exists
+  ✓ [vibe-copy] Dockerfile has canonical COPY line
+  ✓ [vibe-copy] Dockerfile chmod includes vibe-copy
+
+[/c AC19g: copy.md absent from repo]
+  ✓ [/c] copy.md does not exist
+
+[/c AC19h: vibe exec dropped]
+  ✓ [/c] vibe does not have 'exec devcontainer exec'
+  ✓ [/c] vibe has 'devcontainer exec' (without exec prefix)
+
+[/c AC19d: watcher is no-op on non-Darwin]
+  ✓ [/c] watcher exits 0 on non-Darwin
+  ✓ [/c] no lingering watcher process
+
+[/c AC19e: watcher polling detects change]
+  ✓ [/c] watcher wrote sentinel file
+  ✓ [/c] watcher copied correct content
+  ✓ [/c] watcher process terminated
+
+[/c AC19b: user commands preserved during sync]
+  ✓ [/c] sync exit 0
+  ✓ [/c] user command preserved
+  ✓ [/c] user command content unchanged
+  ✓ [/c] c.md was synced
+
+[/c AC19c: agents directory not touched by retirement]
+  ✓ [/c] sync exit 0
+  ✓ [/c] old agent not deleted
+  ✓ [/c] old agent content preserved
+
+[/c AC19i: path-prefix collision isolation]
+  ✓ [/c] both watchers initially running
+  ✓ [/c] proj1 watcher killed
+  ✓ [/c] proj2 watcher still running
+
+[/c AC19j: vibe exit code propagation]
+  ✓ [/c] vibe propagates inner command exit code
+
+[task_007/t1: web-research.md content validation]
+  ✓ [task007/t1] web-research.md exists
+  ✓ [task007/t1] contains 'WebSearch'
+  ✓ [task007/t1] contains 'WebFetch'
+  ✓ [task007/t1] contains sequencing sentinel
+  ✓ [task007/t1] ≥50 non-blank lines
+
+[task_007/t2: Dockerfile COPY claude-md]
+  ✓ [task007/t2] Dockerfile exists
+  ✓ [task007/t2] exactly one canonical COPY line
+
+[task_007/t3: install with single fragment]
+  ✓ [task007/t3] install exit 0
+  ✓ [task007/t3] CLAUDE.md created
+  ✓ [task007/t3] opening delimiter present
+  ✓ [task007/t3] closing delimiter present
+  ✓ [task007/t3] fragment header present
+  ✓ [task007/t3] no non-blank lines after closing delimiter
+  ✓ [task007/t3] exactly one newline after closing delimiter
+
+[task_007/t4: create CLAUDE.md from scratch]
+  ✓ [task007/t4] CLAUDE.md does not exist initially
+  ✓ [task007/t4] install exit 0
+  ✓ [task007/t4] CLAUDE.md created
+  ✓ [task007/t4] file ends with exactly one newline
+
+[task_007/t5: idempotency]
+  ✓ [task007/t5] first install exit 0
+  ✓ [task007/t5] second install exit 0
+  ✓ [task007/t5] sha256 hash identical
+  ✓ [task007/t5] file size identical
+
+[task_007/t6: user content preservation]
+  ✓ [task007/t6] first install exit 0
+  ✓ [task007/t6] second install exit 0
+  ✓ [task007/t6] user content preserved
+  ✓ [task007/t6] both fragments in block
+
+[task_007/t7: empty-source cleanup]
+  ✓ [task007/t7] first install exit 0
+  ✓ [task007/t7] block present after first install
+  ✓ [task007/t7] second install (empty source) exit 0
+  ✓ [task007/t7] block removed on empty source
+  ✓ [task007/t7] third install exit 0
+  ✓ [task007/t7] no blank-line accumulation on re-run
+
+[task_007/t8: missing-source handling]
+  ✓ [task007/t8] install exit 0 (no claude-md dir)
+  ✓ [task007/t8] first install (with fragment) exit 0
+  ✓ [task007/t8] block present after first install
+  ✓ [task007/t8] install exit 0 (missing claude-md)
+  ✓ [task007/t8] block removed when source directory missing
+
+[task_007/t9: POSIX byte-order sort]
+  ✓ [task007/t9] install exit 0
+  ✓ [task007/t9] both fragment headers present
+  ✓ [task007/t9] Z-fragment before a-fragment (POSIX order)
+
+[task_007/t10: agents + commands + claude-md coexistence]
+  ✓ [task007/t10] install exit 0
+  ✓ [task007/t10] agent file copied
+  ✓ [task007/t10] command file copied
+  ✓ [task007/t10] CLAUDE.md created
+  ✓ [task007/t10] claude-md block present
+
+[task_007/t11: write-env-hint coexistence]
+  ✓ [task007/t11] write-env-hint exit 0
+  ✓ [task007/t11] write-env-hint block present
+  ✓ [task007/t11] install-claude-extras exit 0
+  ✓ [task007/t11] write-env-hint block still present
+  ✓ [task007/t11] vibe-managed block present
+  ✓ [task007/t11] write-env-hint block byte-identical after install
+  ✓ [task007/t11] second install exit 0
+  ✓ [task007/t11] write-env-hint block unchanged after second install
+
+[task_007/t12: fragment removal and blank-line separation]
+  ✓ [task007/t12] first install exit 0
+  ✓ [task007/t12] both fragment headers present initially
+  ✓ [task007/t12] exactly one blank line separates fragments
+  ✓ [task007/t12] second install (after removal) exit 0
+  ✓ [task007/t12] first fragment removed
+  ✓ [task007/t12] second fragment still present
+
+[task_007/t13: absent source + pre-existing block removal]
+  ✓ [task007/t13] first install exit 0
+  ✓ [task007/t13] block present initially
+  ✓ [task007/t13] install exit 0 (after dir deletion)
+  ✓ [task007/t13] block removed when source directory absent
+  ✓ [task007/t13] CLAUDE.md exists after cleanup
+
+[task_007/t14: ssh-discipline.md content validation]
+  ✓ [task007/t14] ssh-discipline.md exists
+  ✓ [task007/t14] contains literal 'ssh'
+  ✓ [task007/t14] contains literal 'scp'
+  ✓ [task007/t14] contains prohibition sentinel
+  ✓ [task007/t14] ≥50 non-blank lines
+
+[learning: capture confirm 'yes']
+  ✓ [learn] confirm 'yes' exits 0
+  ✓ [learn] confirm 'yes' wrote file
+
+[learning: capture confirm 'Y']
+  ✓ [learn] confirm 'Y' exits 0
+  ✓ [learn] confirm 'Y' wrote file
+
+[learning: capture confirm 'YES']
+  ✓ [learn] confirm 'YES' exits 0
+  ✓ [learn] confirm 'YES' wrote file
+
+[learnings.md fragment: present + content]
+  ✓ [learnings.md] file exists
+  ✓ [learnings.md] mentions /learnings path
+  ✓ [learnings.md] explains read-only nature
+  ✓ [learnings.md] references vibe learn host command
+  ✓ [learnings.md] >= 30 non-blank lines (substantive)
+
+[task_008: AC3 block scoping]
+  ✓ [task008/AC3] Darwin block found
+  ✓ [task008/AC3] CLIP only declared once (in block)
+  ✓ [task008/AC3] WATCHER_SEED_MTIME only declared once (in block)
+
+[task_008: AC11 direct read]
+  ✓ [task008/AC11] trap contains pbcopy < "$CLIP"
+  ✓ [task008/AC11] trap does NOT use cat pipe
+  ✓ [task008/AC11] trap does NOT use cp through TMP
+
+[task_008: clipboard drain on exit — source checks]
+  ✓ [task008] exactly one CLIP=... line
+  ✓ [task008] exactly one WATCHER_SEED_MTIME=$(stat...) line
+  ✓ [task008] source contains pbcopy < "$CLIP"
+  ✓ [task008] source contains kill "$WATCHER_PID" 2>/dev/null || true
+  ✓ [task008] seed line precedes drain (offset order)
+  ✓ [task008] drain precedes kill (offset order)
+  ✓ [task008] no arithmetic -gt comparison for mtime
+  ✓ [task008] no standalone WATCHER_SEED_MTIME=0 literal
+
+[task_009/AC1: guard-fs.sh exists]
+  ✓ [task009/AC1] guard-fs.sh exists
+  ✓ [task009/AC1] guard-fs.sh is executable
+  ✓ [task009/AC1] has set -euo pipefail
+  ✓ [task009/AC1] uses jq -r .tool_input.file_path
+  ✓ [task009/AC1] uses realpath -m
+
+[task_009/AC10: guard-fs.sh ask fixtures]
+  ✓ [task009] /learnings file path: exit 0
+  ✓ [task009] /learnings file path: stdout is valid JSON
+  ✓ [task009] /learnings file path: hookEventName == PreToolUse
+  ✓ [task009] /learnings file path: permissionDecision == ask
+  ✓ [task009] /learnings file path: permissionDecisionReason non-empty
+  ✓ [task009] /learnings file path: reason contains /learnings/
+  ✓ [task009] /learnings exact: exit 0
+  ✓ [task009] /learnings exact: stdout is valid JSON
+  ✓ [task009] /learnings exact: hookEventName == PreToolUse
+  ✓ [task009] /learnings exact: permissionDecision == ask
+  ✓ [task009] /learnings exact: permissionDecisionReason non-empty
+  ✓ [task009] /learnings exact: reason contains /learnings/
+  ✓ [task009] /learnings deep path: exit 0
+  ✓ [task009] /learnings deep path: stdout is valid JSON
+  ✓ [task009] /learnings deep path: hookEventName == PreToolUse
+  ✓ [task009] /learnings deep path: permissionDecision == ask
+  ✓ [task009] /learnings deep path: permissionDecisionReason non-empty
+  ✓ [task009] /learnings deep path: reason contains /learnings/
+
+[task_009/AC11: guard-fs.sh non-/learnings fixtures]
+  ✓ [task009] /workspace path: exit 0
+  ✓ [task009] /workspace path: empty stdout
+  ✓ [task009] traversal attempt /etc/passwd: exit 0
+  ✓ [task009] traversal attempt /etc/passwd: empty stdout
+  ✓ [task009] traversal attempt /tmp/x: exit 0
+  ✓ [task009] traversal attempt /tmp/x: empty stdout
+  ✓ [task009] no file_path key: exit 0
+  ✓ [task009] no file_path key: empty stdout
+
+[task_009/AC12: guard-bash.sh /learnings write fixtures]
+  ✓ [task009] bash write: redirect >: exit 0
+  ✓ [task009] bash write: redirect >: stdout is valid JSON
+  ✓ [task009] bash write: redirect >: hookEventName == PreToolUse
+  ✓ [task009] bash write: redirect >: permissionDecision == ask
+  ✓ [task009] bash write: redirect >: permissionDecisionReason non-empty
+  ✓ [task009] bash write: redirect >>: exit 0
+  ✓ [task009] bash write: redirect >>: stdout is valid JSON
+  ✓ [task009] bash write: redirect >>: hookEventName == PreToolUse
+  ✓ [task009] bash write: redirect >>: permissionDecision == ask
+  ✓ [task009] bash write: redirect >>: permissionDecisionReason non-empty
+  ✓ [task009] bash write: tee pipe: exit 0
+  ✓ [task009] bash write: tee pipe: stdout is valid JSON
+  ✓ [task009] bash write: tee pipe: hookEventName == PreToolUse
+  ✓ [task009] bash write: tee pipe: permissionDecision == ask
+  ✓ [task009] bash write: tee pipe: permissionDecisionReason non-empty
+  ✓ [task009] bash write: tee -a: exit 0
+  ✓ [task009] bash write: tee -a: stdout is valid JSON
+  ✓ [task009] bash write: tee -a: hookEventName == PreToolUse
+  ✓ [task009] bash write: tee -a: permissionDecision == ask
+  ✓ [task009] bash write: tee -a: permissionDecisionReason non-empty
+  ✓ [task009] bash write: cp: exit 0
+  ✓ [task009] bash write: cp: stdout is valid JSON
+  ✓ [task009] bash write: cp: hookEventName == PreToolUse
+  ✓ [task009] bash write: cp: permissionDecision == ask
+  ✓ [task009] bash write: cp: permissionDecisionReason non-empty
+  ✓ [task009] bash write: cp -r: exit 0
+  ✓ [task009] bash write: cp -r: stdout is valid JSON
+  ✓ [task009] bash write: cp -r: hookEventName == PreToolUse
+  ✓ [task009] bash write: cp -r: permissionDecision == ask
+  ✓ [task009] bash write: cp -r: permissionDecisionReason non-empty
+  ✓ [task009] bash write: mv: exit 0
+  ✓ [task009] bash write: mv: stdout is valid JSON
+  ✓ [task009] bash write: mv: hookEventName == PreToolUse
+  ✓ [task009] bash write: mv: permissionDecision == ask
+  ✓ [task009] bash write: mv: permissionDecisionReason non-empty
+  ✓ [task009] bash write: rm: exit 0
+  ✓ [task009] bash write: rm: stdout is valid JSON
+  ✓ [task009] bash write: rm: hookEventName == PreToolUse
+  ✓ [task009] bash write: rm: permissionDecision == ask
+  ✓ [task009] bash write: rm: permissionDecisionReason non-empty
+  ✓ [task009] bash write: rm -rf: exit 0
+  ✓ [task009] bash write: rm -rf: stdout is valid JSON
+  ✓ [task009] bash write: rm -rf: hookEventName == PreToolUse
+  ✓ [task009] bash write: rm -rf: permissionDecision == ask
+  ✓ [task009] bash write: rm -rf: permissionDecisionReason non-empty
+  ✓ [task009] bash write: ln -s: exit 0
+  ✓ [task009] bash write: ln -s: stdout is valid JSON
+  ✓ [task009] bash write: ln -s: hookEventName == PreToolUse
+  ✓ [task009] bash write: ln -s: permissionDecision == ask
+  ✓ [task009] bash write: ln -s: permissionDecisionReason non-empty
+  ✓ [task009] bash write: mkdir: exit 0
+  ✓ [task009] bash write: mkdir: stdout is valid JSON
+  ✓ [task009] bash write: mkdir: hookEventName == PreToolUse
+  ✓ [task009] bash write: mkdir: permissionDecision == ask
+  ✓ [task009] bash write: mkdir: permissionDecisionReason non-empty
+  ✓ [task009] bash write: chmod: exit 0
+  ✓ [task009] bash write: chmod: stdout is valid JSON
+  ✓ [task009] bash write: chmod: hookEventName == PreToolUse
+  ✓ [task009] bash write: chmod: permissionDecision == ask
+  ✓ [task009] bash write: chmod: permissionDecisionReason non-empty
+  ✓ [task009] bash write: chown: exit 0
+  ✓ [task009] bash write: chown: stdout is valid JSON
+  ✓ [task009] bash write: chown: hookEventName == PreToolUse
+  ✓ [task009] bash write: chown: permissionDecision == ask
+  ✓ [task009] bash write: chown: permissionDecisionReason non-empty
+  ✓ [task009] bash write: truncate: exit 0
+  ✓ [task009] bash write: truncate: stdout is valid JSON
+  ✓ [task009] bash write: truncate: hookEventName == PreToolUse
+  ✓ [task009] bash write: truncate: permissionDecision == ask
+  ✓ [task009] bash write: truncate: permissionDecisionReason non-empty
+  ✓ [task009] bash write: dd: exit 0
+  ✓ [task009] bash write: dd: stdout is valid JSON
+  ✓ [task009] bash write: dd: hookEventName == PreToolUse
+  ✓ [task009] bash write: dd: permissionDecision == ask
+  ✓ [task009] bash write: dd: permissionDecisionReason non-empty
+  ✓ [task009] bash write: sed -i: exit 0
+  ✓ [task009] bash write: sed -i: stdout is valid JSON
+  ✓ [task009] bash write: sed -i: hookEventName == PreToolUse
+  ✓ [task009] bash write: sed -i: permissionDecision == ask
+  ✓ [task009] bash write: sed -i: permissionDecisionReason non-empty
+  ✓ [task009] bash write: sed -ri combined flag: exit 0
+  ✓ [task009] bash write: sed -ri combined flag: stdout is valid JSON
+  ✓ [task009] bash write: sed -ri combined flag: hookEventName == PreToolUse
+  ✓ [task009] bash write: sed -ri combined flag: permissionDecision == ask
+  ✓ [task009] bash write: sed -ri combined flag: permissionDecisionReason non-empty
+
+[task_009/AC13: guard-bash.sh /learnings read fixtures]
+  ✓ [task009] bash read: cat: exit 0
+  ✓ [task009] bash read: cat: empty stdout
+  ✓ [task009] bash read: ls: exit 0
+  ✓ [task009] bash read: ls: empty stdout
+  ✓ [task009] bash read: grep -r: exit 0
+  ✓ [task009] bash read: grep -r: empty stdout
+  ✓ [task009] bash read: head: exit 0
+  ✓ [task009] bash read: head: empty stdout
+  ✓ [task009] bash read: sed -n (read, no -i): exit 0
+  ✓ [task009] bash read: sed -n (read, no -i): empty stdout
+
+[task_009/AC14: guard-bash.sh git-push + block-beats-ask]
+  ✓ [task009/AC14] force push: exit 2
+  ✓ [task009/AC14] force push: stderr contains 'git push --force'
+  ✓ [task009/AC14] branch delete: exit 2
+  ✓ [task009/AC14] branch delete: stderr contains 'git push'
+  ✓ [task009] normal push: exit 0
+  ✓ [task009] normal push: empty stdout
+  ✓ [task009/AC14] block-beats-ask (rm+force-push): exit 2
+  ✓ [task009/AC14] block-beats-ask (force-push+echo): exit 2
+
+[task_009/AC4: vibe heredoc has Write|Edit|MultiEdit matcher]
+  ✓ [task009/AC4] vibe script exists
+  ✓ [task009/AC4] Bash matcher present in vibe heredoc
+  ✓ [task009/AC4] Write|Edit|MultiEdit matcher present in vibe heredoc
+  ✓ [task009/AC4] /usr/local/bin/guard-fs.sh present in vibe heredoc
+  ✓ [task009/AC4] Write|Edit|MultiEdit entry is after Bash entry
+  ✓ [task009/AC4] guard-fs.sh entry is after Bash matcher
+
+[task_009/AC5: Dockerfile updated]
+  ✓ [task009/AC5] Dockerfile exists
+  ✓ [task009/AC5a] exactly one canonical COPY guard-fs.sh line
+  ✓ [task009/AC5b] /usr/local/bin/guard-fs.sh in chmod +x chain
+
+[task_009/AC6: commands/learn.md]
+  ✓ [task009/AC6] learn.md exists
+  ✓ [task009/AC6] mentions /learnings/ path
+  ✓ [task009/AC6] ts= one-liner present
+  ✓ [task009/AC6] rand= one-liner present
+  ✓ [task009/AC6] printf format present
+  ✓ [task009/AC6] refusal message present
+  ✓ [task009/AC6] mentions vibe learn --push
+  ✓ [task009/AC6] instructs preview before Write
+
+[task_009/AC7: claude-md/learn-hook.md]
+  ✓ [task009/AC7] learn-hook.md exists
+  ✓ [task009/AC7] >= 30 non-blank lines
+  ✓ [task009/AC7] contains 'permissionDecision'
+  ✓ [task009/AC7] contains 'do not bypass'
+  ✓ [task009/AC7] contains 'host-only'
+
+[regression: /learn docs have no host stage-all footgun]
+  ✓ [learn-footgun] learn.md has no 'git add .' (stages $HOME)
+  ✓ [learn-footgun] learn.md does not reference $VIBE_LEARNING_PATH in host instructions (container-only var)
+  ✓ [learn-footgun] learn-hook.md has no 'git add .' (stages $HOME)
+  ✓ [learn-footgun] learn-hook.md does not reference $VIBE_LEARNING_PATH in host instructions (container-only var)
+
+[task_009/AC8: README.md updated]
+  ✓ [task009/AC8] README.md exists
+  ✓ [task009/AC8] contains 'PreToolUse hook gates writes'
+
+[task_009/AC15: code-check.py clean]
+  ✓ [task009/AC15] code-check.py exits 0
+
+[task_009/hardening: NotebookEdit excluded from matcher]
+  ✓ [task009] guard-fs.sh matcher exactly 'Write|Edit|MultiEdit' (no NotebookEdit)
+
+[task_009/hardening: guard-bash.sh 'set -euo pipefail']
+  ✓ [task009] guard-bash.sh has 'set -euo pipefail'
+
+[task_009/hardening: guard-fs.sh uses 'realpath -m']
+  ✓ [task009] guard-fs.sh uses 'realpath -m' (with -m flag)
+
+[task_013/AC5: intelligent stopping rules]
+  ✓ [task013/AC5] Convergence sentinel present
+  ✓ [task013/AC5] iterate until Spec Critic returns `pass` sentinel
+  ✓ [task013/AC5] no hardcoded cap sentinel
+  ✓ [task013/AC5] Plateau detection sentinel
+  ✓ [task013/AC5] Spec Critic plateaued at iter- sentinel
+  ✓ [task013/AC5] (a) accept residuals sentinel
+  ✓ [task013/AC5] (b) restart with a revised brief sentinel
+  ✓ [task013/AC5] (c) drop the task sentinel
+  ✓ [task013/AC5] plateau option labels in same paragraph
+  ✓ [task013/AC5] Divergence detection sentinel
+  ✓ [task013/AC5] Spec Critic divergent sentinel
+  ✓ [task013/AC5] concern count growing sentinel
+  ✓ [task013/AC5] three consecutive iterations sentinel
+
+[task_013/AC6: --max-iter flag documentation]
+  ✓ [task013/AC6] AC3: same-line co-occurrence of '--max-iter' and 'Spec Critic loop'
+  ✓ [task013/AC6] AC4: --max-iter substring
+  ✓ [task013/AC6] AC4: cap fires before convergence substring
+  ✓ [task013/AC6] AC4: do NOT silently auto-pass substring
+
+[task_013/AC7: no hardcoded cap string]
+  ✓ [task013/AC7] 'max 2 iterations' not present in vs.md
+
+[check-sp-current: file shape]
+  ✓ [sp-probe] script exists
+  ✓ [sp-probe] script is executable
+
+[check-sp-current: offline silent]
+  ✓ [sp-probe] --offline exits 0
+  ✓ [sp-probe] --offline silent on stderr
+
+[check-sp-current: fixture exact match]
+  ✓ [sp-probe] no-drift fixture exits 0
+  ✓ [sp-probe] no-drift fixture silent
+
+[check-sp-current: fixture missing skill]
+  ✓ [sp-probe] missing-skill exits 0 (informational)
+  ✓ [sp-probe] missing-skill stderr says DRIFT
+  ✓ [sp-probe] missing-skill names the new skill
+  ✓ [sp-probe] missing-skill labels it 'Missing from sp.md'
+
+[check-sp-current: fixture extra in sp.md]
+  ✓ [sp-probe] extra-skill exits 0
+  ✓ [sp-probe] extra-skill stderr says DRIFT
+  ✓ [sp-probe] extra-skill names the dropped skill
+  ✓ [sp-probe] extra-skill labels it 'Extra in sp.md'
+
+[check-sp-current: fixture nonexistent]
+  ✓ [sp-probe] nonexistent fixture exit 1
+  ✓ [sp-probe] nonexistent fixture explains itself
+
+[check-sp-current: unknown arg]
+  ✓ [sp-probe] unknown arg exit 1
+  ✓ [sp-probe] unknown arg names the bad flag
+
+[check-sp-current: container-start wiring]
+  ✓ [sp-wire] Dockerfile COPYs check-sp-current.sh to /usr/local/bin
+  ✓ [sp-wire] Dockerfile chmods the checker
+  ✓ [sp-wire] extras script defines check_sp_drift
+  ✓ [sp-wire] check_sp_drift is invoked
+  ✓ [sp-wire] honours VIBE_PLUGINS=0 opt-out
+  ✓ [sp-wire] guards on checker executable (old-image safe)
+  ✓ [sp-wire] points SP_MD at the synced commands dir
+
+[/sp: sp.md present + complete]
+  ✓ [sp] sp.md exists
+  ✓ [sp] frontmatter description present
+  ✓ [sp] mentions superpowers:using-superpowers
+  ✓ [sp] mentions superpowers:brainstorming
+  ✓ [sp] mentions superpowers:writing-plans
+  ✓ [sp] mentions superpowers:executing-plans
+  ✓ [sp] mentions superpowers:subagent-driven-development
+  ✓ [sp] mentions superpowers:dispatching-parallel-agents
+  ✓ [sp] mentions superpowers:test-driven-development
+  ✓ [sp] mentions superpowers:systematic-debugging
+  ✓ [sp] mentions superpowers:requesting-code-review
+  ✓ [sp] mentions superpowers:receiving-code-review
+  ✓ [sp] mentions superpowers:verification-before-completion
+  ✓ [sp] mentions superpowers:finishing-a-development-branch
+  ✓ [sp] mentions superpowers:using-git-worktrees
+  ✓ [sp] mentions superpowers:writing-skills
+  ✓ [sp] documents official marketplace install
+  ✓ [sp] documents fallback obra marketplace
+
+[/sp: README mentions /sp]
+  ✓ [sp] README.md exists
+  ✓ [sp] README mentions `/sp`
+
+[skipped: literal path round-trip]
+  ✓ [skipped] mark+check round-trip exits 0
+  ✓ [skipped] is_github_skipped returns true after mark
+
+[skipped: trailing-slash tolerance]
+  ✓ [skipped] trailing-slash WORKSPACE matches no-slash entry
+
+[skipped: symlink-equivalent path]
+  ✓ [skipped] symlinked WORKSPACE matches canonical entry
+
+[skipped: mark writes canonical path]
+  ✓ [skipped] mark exits 0
+  ✓ [skipped] file contains canonical (no trailing slash) path
+
+[skipped: unrelated path rejected]
+  ✓ [skipped] unrelated WORKSPACE returns false
+
+[skipped: back-compat with non-canonical entries]
+  ✓ [skipped] literal-with-slash entry still matches its own path
+
+[check-numbering: file shape]
+  ✓ [numbering] script exists
+  ✓ [numbering] script is executable
+  ✓ [numbering] starts with bash shebang
+
+[check-numbering: silent on numbered-only]
+  ✓ [numbering] exits 0
+  ✓ [numbering] silent on numbered-only
+
+[check-numbering: silent on lettered-only]
+  ✓ [numbering] exits 0
+  ✓ [numbering] silent on lettered-only
+
+[check-numbering: warns on mixed]
+  ✓ [numbering] exits 0 (non-blocking)
+  ✓ [numbering] stderr contains 'numbering warning'
+
+[check-numbering: ignores code fences]
+  ✓ [numbering] exits 0
+  ✓ [numbering] silent when only fenced numbering
+
+[check-numbering: edge cases]
+  ✓ [numbering] empty stdin: exit 0
+  ✓ [numbering] empty stdin: silent
+  ✓ [numbering] no transcript_path: exit 0
+  ✓ [numbering] no transcript_path: silent
+  ✓ [numbering] unreadable transcript: exit 0
+  ✓ [numbering] unreadable transcript: silent
+
+[copy-last-block: file shape]
+  ✓ [copy-block] script exists
+  ✓ [copy-block] script is executable
+  ✓ [copy-block] starts with bash shebang
+
+[copy-last-block: single block]
+  ✓ [copy-block] single: exit 0
+  ✓ [copy-block] single: file content matches
+
+[copy-last-block: language-tagged fence]
+  ✓ [copy-block] langtag: exit 0
+  ✓ [copy-block] langtag: language line dropped
+
+[copy-last-block: multiple blocks, last wins]
+  ✓ [copy-block] multi: exit 0
+  ✓ [copy-block] multi: last block wins (B not A)
+
+[copy-last-block: no fence, no write]
+  ✓ [copy-block] nofence: exit 0
+  ✓ [copy-block] nofence: file NOT written
+
+[copy-last-block: no marker = silent]
+  ✓ [copy-block] no-marker: exit 0
+  ✓ [copy-block] no-marker: file NOT written without sentinel
+
+[copy-last-block: multi-line preservation]
+  ✓ [copy-block] multiline: exit 0
+  ✓ [copy-block] multiline: interior newlines preserved
+
+[copy-last-block: empty stdin]
+  ✓ [copy-block] empty stdin: exit 0
+  ✓ [copy-block] empty stdin: no file
+
+[check-numbering: hooks/README.md]
+  ✓ [numbering] hooks/README.md exists
+  ✓ [numbering] readme names hook script path
+  ✓ [numbering] readme explains working-list/action-pick split
+
+[/vss: file shape]
+  ✓ [vss] vss.md exists
+  ✓ [vss] frontmatter open delimiter
+  ✓ [vss] description: in frontmatter
+  ✓ [vss] declares Mode A header
+  ✓ [vss] declares Mode B header
+  ✓ [vss] cites 270s redirect window
+  ✓ [vss] mentions terminal bell
+  ✓ [vss] announce includes skip-the-wait instruction
+  ✓ [vss] documents approval-phrase recognition (go/y/yes/...)
+  ✓ [vss] documents redirect branch
+  ✓ [vss] documents cancel branch
+  ✓ [vss] outcome labels named in session file rules
+
+[/vss: hard-escalate sentinels]
+  ✓ [vss-escalate] physical hardware actuation
+  ✓ [vss-escalate] SSH-out idiom
+  ✓ [vss-escalate] Pioreactor named in actuation context
+  ✓ [vss-escalate] /vs --fuzzy subjective verdict
+  ✓ [vss-escalate] force-push named
+  ✓ [vss-escalate] hook bypass --no-verify
+  ✓ [vss-escalate] /learnings writes
+  ✓ [vss-escalate] firewall/hook/settings scope
+  ✓ [vss-escalate] scope creep
+
+[/vss: audit trail + push policy]
+  ✓ [vss-policy] § Session audit format header
+  ✓ [vss-policy] sessions/ path declared
+  ✓ [vss-policy] format names per-iter blocks
+  ✓ [vss-policy] § Push policy header
+  ✓ [vss-policy] explicit no-autonomous-push wording
+  ✓ [vss-policy] --push-on-pass override flag named
+  ✓ [vss-policy] sessions file marked Committed
+
+[TODO/CHANGELOG split convention]
+  ✓ [todo-cl] CLAUDE.md names TODO.md and CHANGELOG.md split
+  ✓ [todo-cl] CLAUDE.md says don't put done in TODO
+  ✓ [todo-cl] CLAUDE.md retains [!] for abandoned in Open
+  ✓ [todo-cl] CHANGELOG.md exists
+  ✓ [todo-cl] CHANGELOG.md has header
+  ✓ [todo-cl] CHANGELOG.md is non-trivial (migrated entries)
+  ✓ [todo-cl] cross-project fragment ships
+  ✓ [todo-cl-frag] explains TODO is open + abandoned
+  ✓ [todo-cl-frag] explains CHANGELOG is reader-facing
+  ✓ [todo-cl-frag] cites the AEP-Plugin trigger
+  ✓ [todo-cl] TODO.md no longer has ## Done section
+
+[project-hygiene fragment]
+  ✓ [hygiene] fragment exists
+  ✓ [hygiene] flags .claude/settings.local.json
+  ✓ [hygiene] flags .vibe/ runtime dir
+  ✓ [hygiene] flags hardcoded local IPs
+  ✓ [hygiene] flags hostname/.local pattern
+  ✓ [hygiene] consent rule for system-patching scripts
+  ✓ [hygiene] cites the PR review trigger (AEP-Plugin)
+  ✓ [hygiene] pre-commit checklist present
+
+[install-extras: ensure_project_gitignore]
+  ✓ [gi-fn] function defined
+  ✓ [gi-fn] honours VIBE_AUTO_GITIGNORE=0 opt-out
+  ✓ [gi-fn] checks for git repo before acting
+  ✓ [gi-fn] managed-block sentinel present
+  ✓ [gi-fn] excludes .claude/settings.local.json
+  ✓ [gi-fn] excludes .vibe/
+  ✓ [gi-fn] called from main script body
+
+[feedback-auto-promote: fragment shape]
+  ✓ [auto-promote] fragment file exists
+  ✓ [auto-promote] § When to propose promotion present
+  ✓ [auto-promote] IS/NOT examples present
+  ✓ [auto-promote] cross-repo-applicable filter named
+  ✓ [auto-promote] Y/n/never-ask three-option prompt
+  ✓ [auto-promote] VIBE_AUTO_PROMOTE opt-out env var
+  ✓ [auto-promote] PreToolUse hook still gates the write
+  ✓ [auto-promote] uses /learn command for the write
+  ✓ [auto-promote] explicit no-auto-write rule
+  ✓ [auto-promote] one-prompt-per-memory rule
+
+[/vs: --plain / --techy / --verbosity flags]
+  ✓ [vs-flags] --plain flag named
+  ✓ [vs-flags] --plain default ON documented
+  ✓ [vs-flags] --techy inverse flag named
+  ✓ [vs-flags] --verbosity N global flag named
+  ✓ [vs-flags] verbosity scale 0-9 documented
+  ✓ [vs-flags] verbosity default 5
+  ✓ [vs-flags] level 0 anchor (one-line pass/fail)
+  ✓ [vs-flags] level 5 anchor (default)
+  ✓ [vs-flags] level 9 anchor (full verbose)
+  ✓ [vs-flags] --vN-spec per-output override
+  ✓ [vs-flags] --vN-test per-output override
+  ✓ [vs-flags] --vN-eval per-output override
+  ✓ [vs-flags] flags propagate to subagent briefs
+
+[/vs+/vss+/vsss: --fable-subagents standing pre-auth flag]
+  ✓ [fable-flag] vs.md documents --fable-subagents
+  ✓ [fable-flag] vs.md: Model plan records the grant
+  ✓ [fable-flag] vs.md: never mechanical roles
+  ✓ [fable-flag] vs.md: permission, not blanket routing
+  ✓ [fable-flag] vs.md: without it the ask-gate is unchanged
+  ✓ [fable-flag] vs.md: ladder honours the standing grant
+  ✓ [fable-flag] vs.md: distinct from vibe --fable launcher flag
+  ✓ [fable-flag] vss.md: hard-escalate carve-out names the flag
+  ✓ [fable-flag] vsss.md: flag documented with alias
+  ✓ [fable-flag] vsss.md: propagates into every wrapped /vss
+  ✓ [fable-flag] vsss.md: session-audit recording required
+  ✓ [fable-flag] vsss.md: distinct from vibe --fable
+  ✓ [fable-flag] vs.md: alias documented, does not imply --fable-gen
+  ✓ [fable-flag] vs.md: Step-2 point-of-use honours the flag
+  ✓ [fable-flag] vss.md: planner-brief carve-out present
+  ✓ [fable-flag] vss.md: threads into whatever tool it picks
+  ✓ [fable-flag] vss.md: launcher distinction pinned
+  ✓ [fable-flag] vsss.md: grant persists across --sessions relaunches
+
+[/vs: --panel blind review panel]
+  ✓ [vs-panel] --panel flag named
+  ✓ [vs-panel] default 3, odd
+  ✓ [vs-panel] Step 5c section present
+  ✓ [vs-panel] panellists dispatched in one parallel batch
+  ✓ [vs-panel] read-only code-reviewer panellist dispatch
+  ✓ [vs-panel] briefs identical except output-path token
+  ✓ [vs-panel] no assigned personas (differentiation must emerge)
+  ✓ [vs-panel] per-panellist artifact path
+  ✓ [vs-panel] chair aggregation artifact
+  ✓ [vs-panel] sycophancy/correlated-agreement check named
+  ✓ [vs-panel] correlated consensus = low-information (weakens, not strengthens)
+  ✓ [vs-panel] unrefuted blocking dissent blocks pass
+  ✓ [vs-panel] Sonnet panellists (not all-Opus)
+  ✓ [vs-panel] panellists never touch tasks.json
+  ✓ [vs-panel] rigorous mode keeps mechanical gate
+  ✓ [vs-panel] cost role panel_reviewer
+  ✓ [vs-panel] panel disagreement never escalates ladder by itself
+  ✓ [vs-panel] 5b explicitly skipped under --panel
+  ✓ [vs-panel] rigorous interaction: sink green, never rescue red
+  ✓ [vs-panel] N validated: odd integer between 3 and 7
+  ✓ [vs-panel] Step 6 mandates reading all N panel verdicts
+  ✓ [vs-panel] flow diagram shows panel variants
+  ✓ [vs-panel] upstream 4-6 divergence annotated
+
+[/vs: multi-task archive convention]
+  ✓ [vs-archive] § Multi-task state convention header
+  ✓ [vs-archive] documents .vs/archive/<task-id>/ path
+  ✓ [vs-archive] names spec.md as per-task (archived)
+  ✓ [vs-archive] names tasks.json as repo-wide (NOT archived)
+  ✓ [vs-archive] explicit MUST NOT for tasks.json/progress.md
+  ✓ [vs-archive] critiques rename to bypass gitignore documented
+  ✓ [vs-archive] archive procedure references git mv
+  ✓ [vs-archive] resume procedure documented
+  ✓ [vs-archive] inherits no-autonomous-push
+
+[/vsss: inherited escalate + budget]
+  ✓ [vsss] vsss.md exists
+  ✓ [vsss] frontmatter open delimiter
+  ✓ [vsss] inherits /vss escalate list
+  ✓ [vsss] BUDGET_HOURS=5 default
+  ✓ [vsss] no stale 4h default
+  ✓ [vsss] safety floor section present
+  ✓ [vsss-floor] physical hardware
+  ✓ [vsss-floor] SSH-out
+  ✓ [vsss-floor] force-push
+  ✓ [vsss-floor] hook disable
+  ✓ [vsss-floor] /learnings
+  ✓ [vsss-floor] --fuzzy auto-pass refusal
+  ✓ [vsss] points at .vss/sessions/ audit trail
+  ✓ [vsss] --hours N flag canonical
+  ✓ [vsss] --budget Nh alias preserved
+  ✓ [vsss] --budget Nm minutes form
+  ✓ [vsss] § Resumption protocol header
+  ✓ [vsss] resumption detects in-progress session
+  ✓ [vsss] --resume flag named
+  ✓ [vsss] resume budget arithmetic documented
+  ✓ [vsss] --sessions flag + launcher integration documented
+  ✓ [vsss] --sessions semantics are total windows (X-1 relaunches)
+  ✓ [vsss] auto-resume marker cleared on clean exit
+  ✓ [vsss] auto-resume marker file path named
+  ✓ [vsss] no stale .vss/loop.md references
+  ✓ [vsss] three-no-op exit condition
+  ✓ [vsss] inherits no-autonomous-push rule
+
+[hooks: install-claude-extras.sh syncs every shipped hook]
+  ✓ [hooks] install-extras exits 0
+  ✓ [hooks] check-numbering.sh installed at $DEST_ROOT/hooks/
+  ✓ [hooks] check-numbering.sh is executable
+  ✓ [hooks] copy-last-block.sh installed at $DEST_ROOT/hooks/
+  ✓ [hooks] copy-last-block.sh is executable
+  ✓ [hooks] README.md NOT installed (only *.sh synced)
+
+[conversation-history: fragment shape]
+  ✓ [conv-history] fragment file exists
+  ✓ [conv-history] names the JSONL path glob
+  ✓ [conv-history] names the -workspace slug
+  ✓ [conv-history] documents user-prompt schema (string content)
+  ✓ [conv-history] documents assistant-text schema
+  ✓ [conv-history] mentions skipping thinking and tool_use blocks
+  ✓ [conv-history] ships a jq recipe
+  ✓ [conv-history] tells Claude to filter tool_result entries
+  ✓ [conv-history] mentions Docker volume single-machine limit
+  ✓ [conv-history] warns against duplicating into a parallel file
+
+[ssh-opt-in: install-claude-extras.sh honours VIBE_SSH_AUTO]
+  ✓ [ssh-opt-in] install exits 0 with VIBE_SSH_AUTO unset
+  ✓ [ssh-opt-in] ssh-discipline.md marker present when opt-in unset
+  ✓ [ssh-opt-in] ssh-discipline.md body present when opt-in unset
+  ✓ [ssh-opt-in] other fragments still installed (sanity)
+  ✓ [ssh-opt-in] install exits 0 with VIBE_SSH_AUTO=1
+  ✓ [ssh-opt-in] ssh-discipline.md marker ABSENT with VIBE_SSH_AUTO=1
+  ✓ [ssh-opt-in] other fragments still present with opt-in
+
+[brain2: _brain2_source / _zotero_source resolution]
+  ✓ [brain2] default brain2 path is $HOME/brain2
+  ✓ [brain2] default zotero path is $HOME/Zotero/storage
+  ✓ [brain2] VIBE_BRAIN2_PATH override honoured
+  ✓ [brain2] VIBE_BRAIN2_PATH=off disables (empty)
+  ✓ [brain2] VIBE_ZOTERO_PATH=off disables (empty)
+
+[brain2: render_devcontainer_with_mounts]
+  ✓ [brain2] render exits 0
+  ✓ [brain2] existing mount preserved
+  ✓ [brain2] /brain2 mount appended
+  ✓ [brain2] /brain2 is read-write (no readonly key)
+  ✓ [brain2] /brain2 source correct
+  ✓ [brain2] /zotero mount appended read-only
+  ✓ [brain2] /zotero source with space preserved
+
+[op-mcp: add-host injection]
+  ✓ [op-mcp] render (with host) exits 0
+  ✓ [op-mcp] --add-host appended
+  ✓ [op-mcp] existing runArgs preserved
+  ✓ [op-mcp] render (no host) exits 0
+  ✓ [op-mcp] no add-host when unset
+  ✓ [op-mcp] add-host not duplicated
+
+[brain2: _build_override_config gating]
+  ✓ [brain2] _build_override_config exits 0
+  ✓ [brain2] generated override under HOME/.vibe/run
+  ✓ [brain2] /brain2 injected (non-gardener)
+  ✓ [brain2] /zotero injected
+  ✓ [brain2] gardener+no-zotero falls back to base devcontainer.json
+  ✓ [brain2] zotero-only: /zotero present, /brain2 absent
+
+[brain2: install-claude-extras.sh gates brain2.md on the mount]
+  ✓ [brain2] install exits 0 (no mount)
+  ✓ [brain2] brain2.md ABSENT when mount dir missing
+  ✓ [brain2] other fragments still present (sanity)
+  ✓ [brain2] install exits 0 (mount present)
+  ✓ [brain2] brain2.md PRESENT when mount dir exists
+  ✓ [brain2] brain2.md mentions the credential boundary
+
+[brain2: install-claude-extras.sh syncs vibe-tagged skills]
+  ✓ [brain2] install exits 0 (mount present)
+  ✓ [brain2] vibe-tagged 'ol' synced (frontmatter)
+  ✓ [brain2] body-line '## Surfaces' fallback 'bodyform' synced
+  ✓ [brain2] desktop-only 'deskonly' excluded
+  ✓ [brain2] untagged 'md' excluded
+  ✓ [brain2] pre-existing 'script' left untouched
+  ✓ [brain2] install exits 0 (no mount)
+  ✓ [brain2] no skills synced without the mount
+
+[brain2: brain2.md fragment content]
+  ✓ [brain2] brain2.md exists
+  ✓ [brain2] documents no-push credential boundary
+  ✓ [brain2] documents zotero read-only + DOI queue
+  ✓ [brain2] documents authorised-field trust rule
+
+[task_010: /learn smart-capture]
+  ✓ [task010/AC1] '## Semantic check' section heading present
+  ✓ [task010/AC2] 'Formats the entry body' appears before 'Runs the semantic check'
+  ✓ [task010/AC2] 'Runs the semantic check' appears before 'Prints a preview'
+  ✓ [task010/AC3] 'Runs the semantic check' phrase present
+  ✓ [task010/AC3a] 'existing /learnings entries' phrase in semantic check section
+  ✓ [task010/AC4] Low-quality input explicitly addressed
+  ✓ [task010/AC5] 'zero friction' (case-insensitive) present
+  ✓ [task010/AC5] 'no options' or equivalent present
+  ✓ [task010/AC6] Z1 and 'user-verbatim'/'user verbatim' within 200 chars
+  ✓ [task010/AC6] Z2 label present
+  ✓ [task010/AC6] 'edit existing' or 'edit an existing' present
+  ✓ [task010/AC6] N label and drop/drops/cancel/cancels within 200 chars
+  ✓ [task010/AC7] 'Z1 is always' or 'Z1 is ALWAYS' AND 'verbatim'
+  ✓ [task010/AC8] '2-5k tokens' or '2–5k tokens' or '2 to 5k tokens' present
+  ✓ [task010/AC9] 'preview' and 'hook' both present
+  ✓ [task010/AC10] 'every /learn invocation' or equivalent AND no skip/bypass/omit
+  ✓ [task010/AC11] Z-options capped (cap n at 3, no more than 3, etc.)
+  ✓ [task010/AC12] ts=$(date -u present
+  ✓ [task010/AC12] binascii.hexlify present
+  ✓ [task010/AC12] ${ts}-${rand}.md present
+  ✓ [task010/AC13] printf format present
+  ✓ [task010/AC13] '# <timestamp> header line' mentioned
+  ✓ [task010/AC14] '## Multi-line patterns' section present
+  ✓ [task010/AC15] 'vibe learn --push' present
+  ✓ [task010/AC15] 'host-only' present
+  ✓ [task010/AC16] '/learn: /learnings is not mounted' refusal message
+  ✓ [task010/AC17] 'PreToolUse hook' mentioned
+  ✓ [task010/AC18] No scope creep (only allowed files modified)
+  ✓ [task010/AC19] test_task010_smart_capture function exists
+
+[FOSS contributor onboarding artifacts]
+  ✓ [onboard] SECURITY.md exists
+  ✓ [onboard] SECURITY.md points at the repo Security tab
+  ✓ [onboard] SECURITY.md marks Claude Code + Docker out-of-scope upstream
+  ✓ [onboard] SECURITY.md names the in-scope classes
+  ✓ [onboard] bug_report.md template exists
+  ✓ [onboard] bug template asks for vibe --version
+  ✓ [onboard] bug template asks OS + container runtime
+  ✓ [onboard] feature_request.md template exists
+  ✓ [onboard] feature template points at CONTRIBUTING.md
+  ✓ [onboard] PULL_REQUEST_TEMPLATE.md exists
+  ✓ [onboard] PR template names both gate scripts
+  ✓ [onboard] PR template cites CHANGELOG + MANUAL-TESTS conventions
+  ✓ [onboard] ONBOARDING.md exists
+  ✓ [onboard] ONBOARDING.md addresses the assisting Claude
+  ✓ [onboard] ONBOARDING.md installs from andeyePro/vibe
+  ✓ [onboard] ONBOARDING.md verifies with vibe --version
+  ✓ [onboard] CONTRIBUTORS.md exists
+  ✓ [onboard] CONTRIBUTORS.md carries the revenue-share ledger framing
+  ✓ [onboard] CLAUDE.md routes arriving Claudes to ONBOARDING.md
+
+[task_017 AC2: shared_repos_parse: valid line]
+  ✓ exits 0
+  ✓ parses valid line
+
+[task_017 AC2: shared_repos_parse: default mode]
+  ✓ exits 0
+  ✓ defaults to ro
+
+[task_017 AC2: shared_repos_parse: comments and blanks]
+  ✓ exits 0
+  ✓ skips comments/blanks
+
+[task_017 AC2: shared_repos_parse: bad slug]
+  ✓ exits 0
+  ✓ warns on bad slug
+
+[task_017 AC2: shared_repos_parse: bad mode]
+  ✓ exits 0
+  ✓ warns on bad mode
+
+[task_017 AC2: shared_repos_parse: extra content]
+  ✓ exits 0
+  ✓ warns on extra content
+
+[task_017 AC2: shared_repos_parse: missing file]
+  ✓ exits 0
+  ✓ missing file echoes nothing
+
+[task_017 AC2: shared_repos_parse: injection strings rejected]
+  ✓ rejects semicolon injection
+  ✓ semicolon injection produces warning
+  ✓ rejects command substitution
+  ✓ command substitution produces warning
+  ✓ rejects backtick injection
+  ✓ backtick injection produces warning
+  ✓ rejects embedded newline
+  ✓ embedded newline produces warning
+
+[task_017 AC2: shared_repos_parse: dot-prefix basenames skipped]
+  ✓ exits 0
+
+[task_017 AC2: repos_registry_lookup: valid entry]
+  ✓ exits 0
+  ✓ looks up path
+
+[task_017 AC2: repos_registry_lookup: missing file]
+  ✓ exits 0
+  ✓ missing file returns nothing
+
+[task_017 AC2: repos_registry_lookup: bad slug]
+  ✓ exits 0
+  ✓ bad slug returns nothing
+
+[task_017 AC2: repos_registry_lookup: malformed entry gracefully ignored]
+  ✓ exits 0
+  ✓ good entry resolved
+
+[task_017 AC2: repos_registry_lookup: quote in path rejected]
+  ✓ exits 0
+  ✓ quote in path rejected
+
+[task_017 AC2: repos_registry_lookup: relative path rejected]
+  ✓ exits 0
+  ✓ relative path rejected
+
+[task_017 AC2: shared_repo_env_name: valid slug]
+  ✓ exits 0
+  ✓ produces VIBE_SHARED_TOKEN_* name
+  ✓ correct transformation
+
+[task_017 AC2: shared_repo_env_name: sanitisation cases]
+  ✓ sanitises owner/repo
+  ✓ sanitises owner_repo/pkg-name
+  ✓ sanitises owner.io/repo.py
+
+[task_017 AC2: shared_repo_env_name: collision detection]
+  ✓ exits 0
+  ✓ detects collision
+
+[task_017 AC2: shared_repo_ensure_signals: creates sidecar]
+  ✓ exits 0
+  ✓ creates sidecar
+
+[task_017 AC2: shared_repo_ensure_signals: adds gitignore]
+  ✓ exits 0
+  ✓ adds to .gitignore
+
+[task_017 AC2: shared_repo_ensure_signals: idempotent]
+  ✓ exits 0
+  ✓ idempotent
+
+[task_017 AC2: shared_repo_ensure_signals: fails soft on unwritable dir]
+  ✓ exits 0
+  ✓ fails soft
+
+[task_017 AC6: ensure_project_gitignore contains .vibe-signals/]
+  ✓ function exists
+  ✓ .vibe-signals/ mentioned
+
+[task_017 AC1: repos dispatch block placement]
+  ✓ repos dispatch found
+  ✓ parse_vibe_args call found
+  ✓ repos dispatch before parse_vibe_args
+
+[task_017 delta AC3/AC4: shared_repos_scan — M: fully valid chain]
+  ✓ exits 0
+  ✓ emits exactly one M line, correctly shaped
+  ✓ sidecar mkdir'd as a scan side effect
+
+[task_017 delta AC3/AC4: shared_repos_scan — N: never registered, total silence]
+  ✓ exits 0
+  ✓ emits exactly 'N <slug>' and NOTHING else
+
+[task_017 delta AC3/AC4: shared_repos_scan — U: registered+token but unacked]
+  ✓ exits 0
+  ✓ emits exactly 'U <slug>'
+  ✓ NO sidecar created for an unacked repo (consent contract)
+
+[task_017 delta AC3: shared_repos_scan — B: registered path missing/.git absent]
+  ✓ exits 0
+  ✓ classified B: path missing / not a git checkout
+
+[task_017 delta AC3->AC18: shared_repos_scan — token absent: warn, still mount ro]
+  ✓ exits 0
+  ✓ tokenless repo still mounts (M, ro)
+  ✓ list notes the missing PAT
+
+[task_017 delta AC3: shared_repos_scan — B: sidecar mkdir fails soft]
+  ✓ exits 0
+  ✓ classified B: sidecar unwritable
+
+[task_017 delta AC3: shared_repos_scan — B: reserved dot-prefixed basename]
+  ✓ exits 0
+  ✓ classified B: reserved dot-prefixed name, no registry lookup needed
+
+[task_017 delta AC3: shared_repos_scan — B: basename collision vs an already-mounted repo]
+  ✓ exits 0
+  ✓ first repo mounts (M)
+  ✓ second repo demoted to B: basename collision
+
+[task_017 delta AC2: shared_repo_acked/ack — exact (slug, workspace) pair only]
+  ✓ exits 0
+  ✓ right slug + right workspace -> true
+  ✓ right slug + wrong workspace -> false
+  ✓ wrong slug + right workspace -> false
+
+[task_017 delta AC2: shared_repo_ack — idempotent double-ack, chmod 600]
+  ✓ exits 0
+  ✓ three acks of the same pair -> exactly one line
+  ✓ repos-acks is chmod 600
+
+[task_017 delta security-review regression: repos_registry_lookup is fixed-string, not regex]
+  ✓ exits 0
+  ✓ exact slug resolves
+  ✓ regex-dangerous-but-charset-valid slug does NOT resolve the other entry
+
+[task_017 delta security-review regression: lookup_token is fixed-string, not regex]
+  ✓ exits 0
+  ✓ exact slug resolves the token
+  ✓ regex-dangerous-but-charset-valid slug does NOT resolve the token
+
+[task_017 delta security-review regression: _vibe_repos_decl_remove is prefix-safe]
+  ✓ exits 0
+  ✓ removes the exact 'a/b' line
+  ✓ does NOT remove 'a/bb' (longer slug sharing the prefix)
+  ✓ does NOT remove 'axb' (no slash, shares no real prefix)
+
+[task_017 delta AC3: _build_override_config — acked repo contributes code+sidecar binds]
+  ✓ exits 0
+  ✓ override generated under HOME/.vibe/run
+  ✓ code bind at /repos/<name> present
+  ✓ code bind is readonly
+  ✓ code bind source is the registered checkout
+  ✓ sidecar bind at /repos/.signals/<name> present
+  ✓ sidecar bind is rw (no readonly key)
+  ✓ sidecar bind source is <checkout>/.vibe-signals
+
+[task_017 delta AC3: _build_override_config — unacked repo contributes NEITHER bind]
+  ✓ exits 0
+  ✓ neither code nor sidecar bind present when unacked
+
+[task_017 delta AC5: shared_repos_manifest_lines — M+B+N+U mix emits only M lines]
+  ✓ exits 0
+  ✓ emits exactly the M repos' 'name mode slug' lines, in order
+
+[task_017 delta AC4: launch header — M/B/N/U case arms, N silent, U names the remedy]
+  ✓ header block located between the scan gate and UP_BASE_ARGS
+  ✓ M case arm present (mounted -> ◆ line)
+  ✓ B case arm present (broken -> ⚠ line)
+  ✓ N case arm is a no-op comment (deliberate silence)
+  ✓ U case arm present and loud, naming the remedy
+
+[task_017 AC9: shared_repo_lock_acquire — success writes meta; holder reads digits-only]
+  ✓ exits 0
+  ✓ acquire returns 0 (acquired)
+  ✓ holder echoes 'projA 424242 <digits-only-epoch>'
+  ✓ meta file created
+  ✓ meta: project=projA
+  ✓ meta: pid=424242
+  ✓ meta: since=<digits>
+
+[task_017 AC9: shared_repo_lock_acquire — contend: different project, live holder pid -> refused, holder named, lock untouched]
+  ✓ exits 0
+  ✓ contended acquire refused (rc=1)
+  ✓ refusal echoes the ORIGINAL holder's details (holderProj, not otherProj)
+  ✓ lock meta still names the original live holder (never reclaimed while pid alive)
+
+[task_017 AC9: shared_repo_lock_acquire — stale-reclaim: dead holder pid reclaimed exactly once]
+  ✓ exits 0
+  ✓ initial acquire (as the soon-to-die holder) succeeded
+  ✓ holder pid is provably dead before reclaim
+  ✓ reclaim by a new project/pid succeeds (rc=0)
+  ✓ post-reclaim holder is the NEW project/pid, not the dead one
+
+[task_017 AC9: shared_repo_lock_release — matching project+pid removes the lock]
+  ✓ exits 0
+  ✓ release returns 0
+  ✓ lock directory is gone after a matching release
+
+[task_017 AC9: shared_repo_lock_release — wrong project refused, lock intact]
+  ✓ exits 0
+  ✓ release with wrong project refused (rc=1)
+  ✓ lock left intact (still projA)
+
+[task_017 AC9: shared_repo_lock_release — wrong pid refused, lock intact]
+  ✓ exits 0
+  ✓ release with wrong pid refused (rc=1)
+  ✓ lock left intact (still pid=999999)
+
+[task_017 AC9: torn meta (empty/garbage pid) — never stolen, never crashes]
+  ✓ [empty pid] script exits 0 (no crash)
+  ✓ [empty pid] acquire refused rather than stealing a torn lock (rc=1)
+  ✓ [empty pid] meta left byte-for-byte untouched
+  ✓ [garbage pid] script exits 0 (no crash)
+  ✓ [garbage pid] acquire refused rather than stealing a torn lock (rc=1)
+  ✓ [garbage pid] meta left byte-for-byte untouched
+
+[task_017 AC8: rw declared + free lock + apply_rw_intents run -> scan emits 'M <name> rw ...']
+  ✓ exits 0
+  ✓ scan emits rw bindmode when the lock is free
+  ✓ lock acquired and held by the requesting project (read while still held, pre-exit-release)
+
+[task_017 AC8: rw declared, lock held by another LIVE process -> scan falls back to ro + named contention warning]
+  ✓ exits 0
+  ✓ scan falls back to ro bindmode (lock held elsewhere)
+  ✓ contention warning names the holder project ('otherProj')
+  ✓ contention warning names the repo slug
+  ✓ original holder's lock is untouched by the refused contender
+
+[task_017 AC8: a declared-ro repo never touches the lock (no lock dir created)]
+  ✓ exits 0
+  ✓ scan reports ro for a declared-ro repo
+  ✓ lock directory was NEVER created for a ro-declared repo (a broken impl that always locks would fail this)
+
+[task_017 AC8: shared_repo_declaration_set_mode — flips ro->rw in-place, other lines untouched (vibe repos add --rw, helper level)]
+  ✓ exits 0
+  ✓ helper returns 0
+  ✓ target slug flipped to rw
+  ✓ target slug's old ro line is gone
+  ✓ comment line preserved verbatim
+  ✓ unrelated declaration untouched
+
+[task_017 AC8: shared_repo_declaration_set_mode — rejects an invalid mode, no file created]
+  ✓ exits 0
+  ✓ helper refuses an invalid mode (rc=1)
+  ✓ no file created on rejection
+
+[task_017 AC10: exit dispatcher — a refusing FIRST hook does not suppress later hooks]
+  ✓ subshell exits 0 despite a refusing first hook (set -euo pipefail survives)
+  ✓ second-registered hook ran (evidence file exists)
+  ✓ third-registered hook ran (evidence file exists)
+
+[task_017 AC10: trap -p EXIT shows exactly the vibe_on_exit dispatcher]
+  ✓ exits 0
+  ✓ trap -p EXIT names vibe_on_exit as the (sole) EXIT handler
+
+[task_017 AC10: exactly one literal 'trap ... EXIT' in the whole script (the dispatcher installer)]
+  ✓ exactly one literal EXIT-trap installation site in the script
+  ✓ that one site is 'trap vibe_on_exit EXIT' (inside vibe_exit_hook_add, the sanctioned installer)
+  ✓ at least one dedicated INT/TERM trap exists (separate from the EXIT dispatcher)
+  ✓ no INT/TERM trap line also mentions EXIT
+
+[task_017 AC10: Darwin clipboard-flush body and /learn tempfile cleanup both migrated into vibe_exit_hook_add registrations]
+  ✓ clipboard-flush body is registered via vibe_exit_hook_add (not a raw trap)
+  ✓ clipboard-flush body text is intact: drains to pbcopy
+  ✓ clipboard-flush body text is intact: reaps the watcher
+  ✓ vibe learn's tempfile cleanup is ALSO registered via vibe_exit_hook_add
+  ✓ vibe learn keeps a direct INT/TERM trap for the same tempfile (dispatcher owns only EXIT)
+
+[task_017 mode coherence: rw granted -> manifest says rw AND override JSON code bind has readonly absent while sidecar stays rw]
+  ✓ exits 0
+  ✓ manifest line reports rw for the granted repo
+  ✓ code bind present
+  ✓ code bind's readonly key is ABSENT (rw granted agrees with the manifest)
+  ✓ sidecar bind present and rw regardless (no readonly key)
+
+[task_017 AC8: vibe repos add --rw at the CLI level — fresh-add-rw, upgrade-in-place, no-silent-downgrade, position-agnostic]
+  ✓ [fresh-add-rw] exits 0
+  ✓ [fresh-add-rw] fresh declaration line is 'slug rw'
+  ✓ [fresh-add-rw] no ro line was written
+  ✓ [upgrade] exits 0
+  ✓ [upgrade] existing declaration upgraded to rw in place
+  ✓ [upgrade] exactly one line for the slug (no duplicate append)
+  ✓ [upgrade] comment and unrelated declaration untouched
+  ✓ [no-downgrade] exits 0
+  ✓ [no-downgrade] plain re-add does NOT downgrade an existing rw declaration
+  ✓ [position] exits 0 with trailing --rw
+  ✓ [position] trailing --rw still declares rw
+  ✓ [position] exits 0 with mid-position --rw (slug --rw path)
+  ✓ [position] mid-position --rw still declares rw
+  ✓ [usage] usage line documents the --rw flag
+
+[task_017 AC12: /repo command file shape]
+  ✓ [c3-repo-md] repo.md exists
+  ✓ [c3-repo-md] frontmatter open delimiter
+  ✓ [c3-repo-md] description: in frontmatter
+  ✓ [c3-repo-md] documents /repo add
+  ✓ [c3-repo-md] documents /repo remove
+  ✓ [c3-repo-md] documents /repo claim
+  ✓ [c3-repo-md] states the container cannot touch ~/.vibe on the host
+  ✓ [c3-repo-md] claim documents the rw-request path under the signals sidecar
+  ✓ [c3-repo-md] claim documents KEY=VALUE project= field
+  ✓ [c3-repo-md] claim documents KEY=VALUE since= field
+  ✓ [c3-repo-md] relaunch note present for add
+  ✓ [c3-repo-md] no ~/.vibe mention lacks a negation cue (never instructs writing there from the container)
+
+[task_017 AC13: settings heredoc structural regressions unchanged]
+  ✓ [c3-status-struct] heredoc still parses as valid JSON
+  ✓ [c3-status-struct] forceLoginMethod is claudeai
+  ✓ [c3-status-struct] permissions.defaultMode is bypassPermissions
+  ✓ [c3-status-struct] guard-bash.sh hook present under the Bash matcher
+  ✓ [c3-status-struct] guard-fs.sh hook present under the Write|Edit|MultiEdit matcher
+  ✓ [c3-status-struct] statusLine.type is still 'command'
+  ✓ [c3-status-struct] command still reads model.display_name
+  ✓ [c3-status-struct] the best-effort bell escape is present in the command source
+
+[task_017 AC13(a): no signals tree -> byte-identical to frozen fixtures]
+  ✓ [c3-status-a] 'F · vibe · ctx 42% · 5h 63%' byte-identical with no .signals tree present
+  ✓ [c3-status-a] '? · vibe' byte-identical with no .signals tree present
+
+[task_017 AC13(b): holder + pending request -> rw segment shown]
+  ✓ [c3-status-b] exits 0
+  ✓ [c3-status-b] output contains the rw warning segment naming the requester
+  ✓ [c3-status-b] output is exactly the base segment plus the rw segment (no extra drift)
+
+[task_017 AC13(c): request present but WE are not the holder -> segment absent]
+  ✓ [c3-status-c] exits 0
+  ✓ [c3-status-c] no rw warning segment leaks when we are not the lock holder
+  ✓ [c3-status-c] output is exactly the base segment, unchanged
+
+[task_017 AC13(d): we hold the lock but no request exists -> segment absent]
+  ✓ [c3-status-d] exits 0
+  ✓ [c3-status-d] no rw warning segment when there is no pending request
+  ✓ [c3-status-d] output is exactly the base segment, unchanged
+
+[task_017 AC14: shared-repos.md fragment shape]
+  ✓ [c3-fragment] shared-repos.md exists
+  ✓ [c3-fragment] documents the runtime manifest path
+  ✓ [c3-fragment] states never copy code from /repos/*
+  ✓ [c3-fragment] names the seam/interface/feature-flag consumption discipline
+  ✓ [c3-fragment] documents ro etiquette: commit/push happens elsewhere
+  ✓ [c3-fragment] documents /repo claim etiquette
+  ✓ [c3-fragment] documents the ⚠ rw: statusLine segment to the holder
+
+[task_017 AC14/AC15: install-claude-extras.sh gates shared-repos.md on the manifest]
+  ✓ [c3-gate] install exits 0 (missing manifest)
+  ✓ [c3-gate] shared-repos.md ABSENT when manifest file is missing
+  ✓ [c3-gate] other fragments still present (sanity)
+  ✓ [c3-gate] install exits 0 (empty manifest)
+  ✓ [c3-gate] shared-repos.md ABSENT when manifest file is empty
+  ✓ [c3-gate] install exits 0 (non-empty manifest)
+  ✓ [c3-gate] shared-repos.md PRESENT when manifest is non-empty
+  ✓ [c3-gate] installed body mentions the manifest path
+
+[task_017 AC12: /repo claim's documented request-file flow is syntactically runnable]
+  ✓ [c3-claim] no sourced vibe helper implements /repo claim (pure documentation)
+  ✓ [c3-claim] repo.md documents the exact rw-request path template
+  ✓ [c3-claim] repo.md pins unconditional overwrite (last-claim-wins)
+  ✓ [c3-claim] documented mkdir+write runs cleanly (syntactically valid)
+  ✓ [c3-claim] rw-request file created at the documented path
+  ✓ [c3-claim] rw-request content matches KEY=VALUE project=<name>
+  ✓ [c3-claim] rw-request content matches KEY=VALUE since=<digits>
+  ✓ [c3-claim] second claim overwrite runs cleanly
+  ✓ [c3-claim] last-claim-wins: newest claimant fully replaces the old request
+
+[task_017 AC13: VIBE_PROJECT_NAME export site + remoteEnv plumbing]
+  ✓ [c3-plumb] exactly one literal 'export VIBE_PROJECT_NAME' line in the script
+  ✓ [c3-plumb] export line sits at column 0 (top-level scope, not inside a function body)
+  ✓ [c3-plumb] preceding line assigns VIBE_PROJECT_NAME="$PROJECT_NAME" (plain assignment, not inside a command substitution)
+  ✓ [c3-plumb] export happens BEFORE the _build_override_config command-substitution call (exports inside $(...) die with the subshell)
+  ✓ [c3-plumb] devcontainer.json remoteEnv carries VIBE_PROJECT_NAME via ${localEnv:...}
+  ✓ [c3-plumb] VIBE_PROJECT_NAME is NOT in containerEnv (remoteEnv-only, mirrors GITHUB_TOKEN discipline)
+
+[task_017 C4 AC16: project slug exact match -> $GITHUB_TOKEN]
+  ✓ project exact match: exits 0
+  ✓ project exact match: serves username=x-access-token
+  ✓ project exact match: serves password=ghp_project
+
+[task_017 C4 AC16: configured shared slug (twin verified) -> its OWN token, never $GITHUB_TOKEN]
+  ✓ shared match: exits 0
+  ✓ shared match: serves username=x-access-token
+  ✓ shared match: serves password=ghp_shared
+  ✓ shared match: NEVER serves the project token instead
+
+[task_017 C4 AC16: unconfigured repo -> NOTHING (central invariant)]
+  ✓ unknown repo: exits 0
+  ✓ unknown repo: emits NOTHING on stdout
+
+[task_017 C4 AC17 no-path compat: no path + no shared repos configured -> $GITHUB_TOKEN]
+  ✓ no-path compat: exits 0
+  ✓ no-path compat: serves username=x-access-token
+  ✓ no-path compat: serves password=ghp_project
+
+[task_017 C4 AC17 no-path fail-closed: no path + a shared repo IS configured -> NOTHING]
+  ✓ no-path + shared configured (mis-set useHttpPath must not widen): exits 0
+  ✓ no-path + shared configured (mis-set useHttpPath must not widen): emits NOTHING on stdout
+
+[task_017 C4 AC16: '.git' suffix on a shared slug still matches]
+  ✓ .git suffix: exits 0
+  ✓ .git suffix: serves username=x-access-token
+  ✓ .git suffix: serves password=ghp_shared
+
+[task_017 C4 AC16: useHttpPath subdir suffix (owner/repo/info/refs) still matches]
+  ✓ subdir suffix: exits 0
+  ✓ subdir suffix: serves username=x-access-token
+  ✓ subdir suffix: serves password=ghp_shared
+
+[task_017 C4 AC16: trailing-slash-only path on an UNCONFIGURED repo -> still NOTHING]
+  ✓ trailing-slash-only, unmatched: exits 0
+  ✓ trailing-slash-only, unmatched: emits NOTHING on stdout
+
+[task_017 C4 AC16: trailing-slash-only on the PROJECT's own slug still matches (documented, not a leak)]
+  ✓ trailing-slash on project's own slug: exits 0
+  ✓ trailing-slash on project's own slug: serves username=x-access-token
+  ✓ trailing-slash on project's own slug: serves password=ghp_project
+
+[task_017 C4 AC16: differently-cased project slug must NOT match (case-sensitive)]
+  ✓ case-differing project slug: exits 0
+  ✓ case-differing project slug: emits NOTHING on stdout
+
+[task_017 C4 AC16: '..' traversal segments -> NOTHING even when it resolves to a configured slug]
+  ✓ traversal segments: exits 0
+  ✓ traversal segments: emits NOTHING on stdout
+
+[task_017 C4 AC16: embedded control byte (CR) in an otherwise-matching path -> NOTHING]
+  ✓ embedded CR: exits 0
+  ✓ embedded CR: emits NOTHING on stdout
+
+[task_017 C4 AC16: shell-metacharacter injection string in path -> NOTHING, no execution]
+  ✓ injection string: exits 0
+  ✓ injection string: emits NOTHING on stdout
+  ✓ injection string: no side-effect execution (sentinel file NOT created)
+
+[task_017 C4 AC16: sanitisation-collision, twin mismatch -> NOTHING (post-security-review hardening)]
+  ✓ sanitisation-collision, twin holds the OTHER slug: exits 0
+  ✓ sanitisation-collision, twin holds the OTHER slug: emits NOTHING on stdout
+
+[task_017 C4 AC16: sanitisation-collision, twin MATCHES the request -> its token served]
+  ✓ sanitisation-collision, twin matches the request: exits 0
+  ✓ sanitisation-collision, twin matches the request: serves username=x-access-token
+  ✓ sanitisation-collision, twin matches the request: serves password=ghp_shared_for_foo_bar_baz
+
+[task_017 C4 AC16: twin var entirely unset (stale container/launcher mismatch) -> NOTHING]
+  ✓ twin var unset: exits 0
+  ✓ twin var unset: emits NOTHING on stdout
+
+[task_017 C4 AC16: non-'get' git credential ops (store/erase) -> NOTHING]
+  ✓ op=store: exits 0
+  ✓ op=store: emits NOTHING on stdout
+  ✓ op=erase: exits 0
+  ✓ op=erase: emits NOTHING on stdout
+
+[task_017 C4 AC16: non-github.com host -> NOTHING]
+  ✓ non-github host: exits 0
+  ✓ non-github host: emits NOTHING on stdout
+
+[task_017 C4 AC16: lookalike host (github.com.evil.com) -> NOTHING (exact host match only)]
+  ✓ lookalike subdomain host: exits 0
+  ✓ lookalike subdomain host: emits NOTHING on stdout
+
+[task_017 C4 AC16: http (not https) -> NOTHING]
+  ✓ http not https: exits 0
+  ✓ http not https: emits NOTHING on stdout
+
+[task_017 C4 AC16: matched shared slug but its token var is EMPTY -> NOTHING, never falls back]
+  ✓ empty shared token: exits 0
+  ✓ empty shared token: emits NOTHING on stdout
+
+[task_017 C4 AC16: never-widen attack battery — $GITHUB_TOKEN must NEVER appear for a non-project path]
+  ✓ [never-widen] plain unrelated repo: $GITHUB_TOKEN never appears on stdout
+  ✓ [never-widen] shared repo configured, wrong twin: $GITHUB_TOKEN never appears on stdout
+  ✓ [never-widen] traversal into project-adjacent path: $GITHUB_TOKEN never appears on stdout
+  ✓ [never-widen] case-flipped project slug: $GITHUB_TOKEN never appears on stdout
+  ✓ [never-widen] project slug with control byte suffix: $GITHUB_TOKEN never appears on stdout
+  ✓ [never-widen] empty path key present but blank: $GITHUB_TOKEN never appears on stdout
+  ✓ [never-widen] non-github host claiming project path: $GITHUB_TOKEN never appears on stdout
+  ✓ [never-widen] http claiming project path: $GITHUB_TOKEN never appears on stdout
+
+[task_017 C4 AC17: credential.useHttpPath set at the SAME scope as credential.helper registration]
+  ✓ [ac17] setup-git.sh sets credential.helper
+  ✓ [ac17] setup-git.sh sets credential.useHttpPath
+  ✓ [ac17] credential.helper registered at --global scope
+  ✓ [ac17] credential.useHttpPath set at --global scope (same as the helper)
+  ✓ [ac17] useHttpPath value is literally 'true'
+
+[task_017 C4 AC17: setup-git.sh is runnable in a sandbox HOME and produces both settings]
+  ✓ [ac17] setup-git.sh exits 0 in a fresh sandbox HOME (no ~/.gitconfig-host present)
+  ✓ [ac17] resulting ~/.gitconfig has credential.helper = vibe-credential-helper
+  ✓ [ac17] resulting ~/.gitconfig has credential.useHttpPath = true
+
+[task_017 C4 AC18: GITHUB_REPO_SLUG / VIBE_SHARED_TOKEN_* / VIBE_SHARED_SLUG_* exports sit OUTSIDE _build_override_config (top-level scope; exports inside $(...) die with the subshell)]
+  ✓ [ac18] _build_override_config function start found
+  ✓ [ac18] _build_override_config function end found
+  ✓ [ac18] 'export GITHUB_REPO_SLUG' line found
+  ✓ [ac18] shared-token export line found
+  ✓ [ac18] shared-slug-twin export line found
+  ✓ [ac18] GITHUB_REPO_SLUG export is OUTSIDE _build_override_config
+  ✓ [ac18] GITHUB_REPO_SLUG export is at column 0 (top-level, not inside any function)
+  ✓ [ac18] shared-token export is OUTSIDE _build_override_config
+  ✓ [ac18] shared-slug-twin export is OUTSIDE _build_override_config
+  ✓ [ac18] _build_override_config command-substitution call site found
+  ✓ [ac18] GITHUB_REPO_SLUG export happens BEFORE the command-substitution call
+  ✓ [ac18] shared-token export loop happens BEFORE the command-substitution call
+
+[task_017 C4 AC18: override-config generator injects matching VIBE_SHARED_TOKEN_*/VIBE_SHARED_SLUG_* remoteEnv passthroughs]
+  ✓ [ac18] exits 0
+  ✓ [ac18] remoteEnv carries VIBE_SHARED_TOKEN_ANDEYEPRO_ANDEYEPRO -> ${localEnv:...} passthrough
+  ✓ [ac18] remoteEnv ALSO carries the VIBE_SHARED_SLUG_ANDEYEPRO_ANDEYEPRO twin passthrough
+  ✓ [ac18] neither the token nor the twin land in containerEnv (remoteEnv-only, mirrors GITHUB_TOKEN)
+
+[task_017 C4 AC19: CLAUDE.md invariant text amended for per-repo tokens / launch-header blast radius]
+  ✓ [ac19] CLAUDE.md still says each PAT stays scoped to one repo
+  ✓ [ac19] CLAUDE.md ties blast radius to the launch header
+  ✓ [ac19] CLAUDE.md explicitly rules out a multi-repo token
+
+[task_017 C4 AC19: README security section consistent with the amended invariant]
+  ✓ [ac19] README says every fine-grained PAT stays scoped to a single repo
+  ✓ [ac19] README ties blast radius to the launch header
+  ✓ [ac19] README explicitly rules out a multi-repo token
+
+[task_019 AC1: staged GHP token blocks]
+  ✓ [task_019 AC1] exit 1
+  ✓ [task_019 AC1] BLOCK in stderr
+  ✓ [task_019 AC1] github-pat rule named
+
+[task_019 AC2: message with private key blocks]
+  ✓ [task_019 AC2] exit 1
+  ✓ [task_019 AC2] BLOCK in stderr
+  ✓ [task_019 AC2] private-key rule named
+
+[task_019 AC3: staged RFC1918 IP warns]
+  ✓ [task_019 AC3] exit 1
+  ✓ [task_019 AC3] WARN in stderr
+  ✓ [task_019 AC3] rfc1918-ip rule named
+
+[task_019 AC4: clean diff passes]
+  ✓ [task_019 AC4] exit 0
+  ✓ [task_019 AC4] no findings
+
+[task_019 AC5: override bypasses and logs]
+  ✓ [task_019 AC5] exit 0
+  ✓ [task_019 AC5] logs OVERRIDE
+  ✓ [task_019 AC5] names rule(s)
+
+[task_019 AC6: allowlist suppresses]
+  ✓ [task_019 AC6] exit 0 with allowlist
+  ✓ [task_019 AC6] no findings
+  ✓ [task_019 AC6] exit 1 without allowlist
+
+[task_019 AC7: guard-off marker skips]
+  ✓ [task_019 AC7] exit 0 with marker
+  ✓ [task_019 AC7] no stderr output
+
+[task_019 AC8: install hooks]
+  ✓ [task_019 AC8] install exits 0
+  ✓ [task_019 AC8] hooks dir created
+  ✓ [task_019 AC8] scanner executable
+  ✓ [task_019 AC8] pre-commit executable
+  ✓ [task_019 AC8] commit-msg executable
+  ✓ [task_019 AC8] pre-push executable
+  ✓ [task_019 AC8] core.hooksPath set
+
+[task_019 AC9: audit finds deleted secret]
+  ✓ [task_019 AC9] audit exit 1
+  ✓ [task_019 AC9] BLOCK finding reported
+  ✓ [task_019 AC9] commit sha in output
+
+[task_019 AC10: real hooks block commit]
+  ✓ [task_019 AC10] clean commit succeeds
+  ✓ [task_019 AC10] secret commit fails
+
+[task_019 AC11: Co-Authored-By trailer exempt]
+  ✓ [task_019 AC11] exit 0
+  ✓ [task_019 AC11] no findings
+
+[task_019 AC13: shellcheck clean]
+  ✓ [task_019 AC13] shellcheck exits 0
+
+[task_019 AC15: content-guard.md exists]
+  ✓ [task_019 AC15] file exists
+  ✓ [task_019 AC15] mentions BLOCK tier
+  ✓ [task_019 AC15] mentions WARN tier
+  ✓ [task_019 AC15] mentions override
+  ✓ [task_019 AC15] mentions allowlist
+  ✓ [task_019 AC15] mentions opt-out
+  ✓ [task_019 AC15] mentions vibe audit
+
+[task_019 AC16: audit reports WARN findings]
+  ✓ [task_019 AC16] audit exit 0 on WARN-only
+  ✓ [task_019 AC16] WARN finding reported
+  ✓ [task_019 AC16] commit sha in output
+
+[task_019 AC17: pre-push BLOCK-tier-only on new branch]
+  ✓ [task_019 AC17] new branch push succeeds
+
+[task_021 AC1: --identity mode]
+  ✓ [task_021 AC1] real email exits 1
+  ✓ [task_021 AC1] rule is commit-identity
+  ✓ [task_021 AC1] ID-form noreply exits 0
+  ✓ [task_021 AC1] username-form noreply exits 0
+  ✓ [task_021 AC1] explicit value exits 1
+  ✓ [task_021 AC1] allowlisted email exits 0
+
+[task_021 AC2: pre-commit identity gate]
+  ✓ [task_021 AC2] commit as real email fails
+  ✓ [task_021 AC2] names commit-identity
+  ✓ [task_021 AC2] commit as noreply succeeds
+
+[task_021 AC3: audit identities pass]
+  ✓ [task_021 AC3] WARN-only exits 0
+  ✓ [task_021 AC3] commit-identity reported
+  ✓ [task_021 AC3] email named
+
+[task_020 AC1: default (no signal) -> OP opted OUT]
+  ✓ [task_020 AC1] no VIBE_OP_AUTO + no marker -> OUT
+
+[task_020 AC2: VIBE_OP_AUTO=1 -> opted IN]
+  ✓ [task_020 AC2] VIBE_OP_AUTO=1 -> IN
+
+[task_020 AC3: untracked .vibe-allow-op -> opted IN]
+  ✓ [task_020 AC3] untracked marker -> IN
+
+[task_020 AC4: COMMITTED .vibe-allow-op refused (forge-resistant)]
+  ✓ [task_020 AC4] committed marker -> OUT (refused)
+
+[task_020 AC6: marker in a NON-git workspace refused (fail closed)]
+  ✓ [task_020 AC6] non-git marker -> OUT (fail closed)
+
+[task_020 AC5: OP cred load is gated on _op_opted_in]
+  ✓ [task_020 AC5] cred load guarded by _op_opted_in
+  ✓ [task_020 AC5] opted-out branch empties the creds
+
+[task_022 AC2: corpus via --message]
+  ✓ [task_022 AC2 msg] exit 1 (BLOCK findings present)
+  ✓ [task_022 AC2 msg] finding multiset matches frozen corpus
+  ✓ [task_022 AC2 msg] total finding count == 17
+  ✓ [task_022 AC2 msg] github-pat snippet exact
+  ✓ [task_022 AC2 msg] exactly 3 mdns-local (no leak from icase probe)
+
+[task_022 AC2: corpus via --blob-stdin]
+  ✓ [task_022 AC2 blob] exit 1
+  ✓ [task_022 AC2 blob] finding multiset matches frozen corpus
+
+[task_022 AC2: corpus via --staged]
+  ✓ [task_022 AC2 staged] exit 1
+  ✓ [task_022 AC2 staged] finding multiset matches frozen corpus
+  ✓ [task_022 AC2 staged] locations are file:line
+
+[task_022 AC2: corpus via --range (BLOCK tier only)]
+  ✓ [task_022 AC2 range] exit 1 (BLOCK findings present)
+  ✓ [task_022 AC2 range] finding multiset == BLOCK-only subset
+  ✓ [task_022 AC2 range] no WARN finding leaked through tier=block
+
+[task_022 AC2: clean block exits 0, no crash]
+  ✓ [task_022 AC2 clean] exit 0
+  ✓ [task_022 AC2 clean] no findings
+
+[task_022 AC2: allowlist suppression]
+  ✓ [task_022 AC2 allow] exit 0 with allowlist
+  ✓ [task_022 AC2 allow] no findings
+  ✓ [task_022 AC2 allow] exit 1 without allowlist
+
+[task_022 AC3: message parity + attribution]
+  ✓ [task_022 AC3] old vs new sorted finding sets byte-identical
+  ✓ [task_022 AC3] exactly 3 findings
+  ✓ [task_022 AC3] every location attributed to a real commit sha
+  ✓ [task_022 AC3] no misattribution to the literal 'deadbeef' text
+  ✓ [task_022 AC3] aws-access-key attributed to sha_a
+  ✓ [task_022 AC3] rfc1918-ip attributed to sha_b
+  ✓ [task_022 AC3] secret-assignment (in the 'commit deadbeef' body line) attributed to sha_c
+
+[task_022 AC5: --messages-stdin malformed inputs]
+  ✓ [task_022 AC5 malformed] does not crash (exit 0 or 1, never 2)
+  ✓ [task_022 AC5 malformed] exit 1 (the two valid records both fire)
+  ✓ [task_022 AC5 malformed] stdout empty
+  ✓ [task_022 AC5 malformed] exactly 2 findings (malformed records silently skipped)
+  ✓ [task_022 AC5 malformed] valid record attributed to sha1
+  ✓ [task_022 AC5 malformed] truncated final record (no trailing NUL) still processed, attributed to sha2
+  ✓ [task_022 AC5 malformed] no finding attributed to an empty/malformed location
+
+[task_022 AC5: exit codes across all modes]
+  ✓ [task_022 AC5 --staged] clean exits 0
+  ✓ [task_022 AC5 --staged] dirty exits 1
+  ✓ [task_022 AC5 --message] clean exits 0
+  ✓ [task_022 AC5 --message] dirty exits 1
+  ✓ [task_022 AC5 --messages-stdin] clean exits 0
+  ✓ [task_022 AC5 --messages-stdin] dirty exits 1
+  ✓ [task_022 AC5 --blob-stdin] clean exits 0
+  ✓ [task_022 AC5 --blob-stdin] dirty exits 1
+  ✓ [task_022 AC5 --blob-stdin --tier block] dirty (BLOCK rule) exits 1
+  ✓ [task_022 AC5 --blob-stdin --tier block] WARN-only content exits 0 (tier gate)
+  ✓ [task_022 AC5 --range] clean exits 0
+  ✓ [task_022 AC5 --range] dirty exits 1
+  ✓ [task_022 AC5 --identity] noreply exits 0
+  ✓ [task_022 AC5 --identity] real email exits 1
+
+[task_022 AC6: override + opt-out under new primitives]
+  ✓ [task_022 AC6] override exits 0
+  ✓ [task_022 AC6] override logs OVERRIDE line
+  ✓ [task_022 AC6] override names github-pat
+  ✓ [task_022 AC6] opt-out marker exits 0
+  ✓ [task_022 AC6] opt-out marker: no stderr output
+
+[task_022 AC7a: no bash-4+ constructs, no \b escapes]
+  ✓ [task_022 AC7a] no literal \b anywhere in the scanner
+  ✓ [task_022 AC7a] no declare -A (associative arrays)
+  ✓ [task_022 AC7a] no mapfile
+  ✓ [task_022 AC7a] no readarray
+  ✓ [task_022 AC7a] no ${var,,} / ${var^^} case-conversion expansion
+
+[task_022 AC7b: no per-line subprocess forks in hot-path functions]
+  ✓ [task_022 AC7b] check_rule: no forbidden external-command names
+  ✓ [task_022 AC7b] check_rule: no $( command substitution
+  ✓ [task_022 AC7b] check_rule: no backtick command substitution
+  ✓ [task_022 AC7b] check_email_rule: no forbidden external-command names
+  ✓ [task_022 AC7b] check_email_rule: no $( command substitution
+  ✓ [task_022 AC7b] check_email_rule: no backtick command substitution
+  ✓ [task_022 AC7b] check_home_path_rule: no forbidden external-command names
+  ✓ [task_022 AC7b] check_home_path_rule: no $( command substitution
+  ✓ [task_022 AC7b] check_home_path_rule: no backtick command substitution
+  ✓ [task_022 AC7b] is_named_trailer: no forbidden external-command names
+  ✓ [task_022 AC7b] is_named_trailer: no $( command substitution
+  ✓ [task_022 AC7b] is_named_trailer: no backtick command substitution
+  ✓ [task_022 AC7b] is_trailer_line: no forbidden external-command names
+  ✓ [task_022 AC7b] is_trailer_line: no $( command substitution
+  ✓ [task_022 AC7b] is_trailer_line: no backtick command substitution
+  ✓ [task_022 AC7b] line_is_allowlisted still uses grep -qE (A3 exemption intact)
+
+✓ smoke tests passed
+
+---------- MANDATORY REGRESSION: python3 code-check.py ----------
+→ shellcheck vibe
+→ shellcheck install.sh
+→ shellcheck devcontainer/check-sp-current.sh
+→ shellcheck devcontainer/credential-helper.sh
+→ shellcheck devcontainer/guard-bash.sh
+→ shellcheck devcontainer/guard-fs.sh
+→ shellcheck devcontainer/init-firewall.sh
+→ shellcheck devcontainer/install-claude-extras.sh
+→ shellcheck devcontainer/register-op-mcp.sh
+→ shellcheck devcontainer/setup-git.sh
+→ shellcheck devcontainer/setup-ssh.sh
+→ shellcheck devcontainer/vibe-copy.sh
+→ shellcheck devcontainer/write-env-hint.sh
+→ shellcheck devcontainer/hooks/check-numbering.sh
+→ shellcheck devcontainer/hooks/copy-last-block.sh
+
+✓ shellcheck clean across 15 files

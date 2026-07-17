@@ -1,0 +1,277 @@
+diff --git a/.vs/tasks.json b/.vs/tasks.json
+index bb75baf..b35ba92 100644
+--- a/.vs/tasks.json
++++ b/.vs/tasks.json
+@@ -143,7 +143,7 @@
+  {
+   "id": "task_022",
+   "description": "vibe audit --history perf: scanner match primitives -> bash-native =~ (kill per-line grep forks) + --messages-stdin single-pass message scan; byte-identical findings gate",
+-  "implementation_status": "in_progress",
++  "implementation_status": "complete",
+   "test_status": "pending",
+   "assigned_to": "generator",
+   "mode": "rigorous",
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 208af57..4e1a202 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -6,6 +6,8 @@ Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion
+ 
+ ## 2026-07-17
+ 
++- [x] **task_022: `vibe audit --history` performance — fork-storm removal + single-pass message scan** — `vibe audit --history` timed out at 280s on the vibe repo (~230 commits). Two causes, both in the task_019 content guard, both fixed with the finding set held byte-identical (the scanner is a security boundary shared by pre-commit/commit-msg/pre-push and `vibe audit` — a silently-narrowed rule is a shipped hole). (1) **Match primitives (Part A):** the five hot-path functions (`check_rule`, `check_email_rule`, `check_home_path_rule`, `is_named_trailer`, `is_trailer_line`) forked a `printf | grep -oE` (plus a `sed`) per rule per line — ~400k+ subprocesses over `git log -p --all` in pass 1 alone. Swapped to bash-native `[[ =~ ]]` + `BASH_REMATCH`; those bodies now contain zero external-command invocations or command substitutions (a permanent static-shape test guards against the fork-storm returning). Portability held to POSIX ERE for BSD `regcomp` (macOS bash 3.2) and glibc (container bash 5) alike — no bash-4 features, and the `mdns-local` rule's GNU `\b` word-boundary was rewritten to a capture-group POSIX form (`([A-Za-z0-9-]+\.local)([^A-Za-z0-9_]|$)`, snippet taken from group 1 so `foo.localhost` still doesn't match and reported snippets are unchanged). `set -euo pipefail` survival: every match test is guarded in an `if`/`&&`; `nocasematch` is set and restored on every path out of the icase branch (a leak would silently make later case-sensitive rules case-insensitive — an adversarial corpus line with a mixed-case secret trigger and an uppercase `FOO.LOCAL` proves it doesn't). (2) **Single-pass message scan (Part B):** new scanner mode `--messages-stdin` reads NUL-delimited `<sha>\n<body>` records (from `git log --all -z --format='%H%n%B'`), scanning each message line as `commit <sha>` — the NUL delimiter, not line-shape sniffing, is the record boundary, so a body line like `commit deadbeef` or `+foo` is scanned as content and never misparsed; empty/malformed records are skipped without crashing. `_audit_history` pass 2 collapsed from a fork-per-commit `--message`+awk loop (and its dead `tmp_msgfile`) to one pipe into `--messages-stdin`; passes 1 (`--blob-stdin`) and 3 (`--identity`) unchanged. Result: full `vibe audit --history` ~20.7s (was >280s), scanner ~24x faster on a 12k-line real-history slice; old-vs-new byte-identical across `--blob-stdin`/`--staged`/`--message`/`--range`/`--messages-stdin` on an every-rule adversarial corpus and on the real repo history. `--message` (commit-msg hook) retained unchanged; override/opt-out paths unchanged. shellcheck clean; full smoke suite green; scanner header comment + usage text updated.
++
+ - [x] **task_021: commit-identity guard — scanner `--identity` mode + pre-commit gate + audit identities pass** — root cause of the 2026-07-17 cross-org email exposure was `setup-git.sh` silently inheriting the host's real `user.email` while nothing checked identity (≈2,300 public commits carried real addresses; the content guard and `vibe audit` only saw blob/message content, never metadata). Now: `vibe-content-scan.sh --identity [email]` WARNs (`commit-identity`) on any non-noreply-class commit email (exempt: `*@users.noreply.github.com`, `noreply@github.com`, `noreply@anthropic.com`, `placeholder@vibe.local`; `.vibe-content-allow` whole-line entries suppress deliberate identities); `pre-commit` runs it alongside `--staged` (both run, either fails the commit, fix/keep instructions printed); `vibe audit --history` gains a pass 3 that feeds every unique author+committer email from all refs through the same check as WARN findings. TDD: smoke tests task_021 AC1–AC3 written first and watched fail; AC10 fixture email moved to a noreply form (now correctly gated). Docs: content-guard.md fragment gains the commit-identity tier.
+ 
+ ## 2026-07-16
+diff --git a/devcontainer/git-hooks/vibe-content-scan.sh b/devcontainer/git-hooks/vibe-content-scan.sh
+index b5a8695..6c4f67a 100755
+--- a/devcontainer/git-hooks/vibe-content-scan.sh
++++ b/devcontainer/git-hooks/vibe-content-scan.sh
+@@ -7,8 +7,22 @@
+ # Invocation:
+ #   vibe-content-scan.sh --staged
+ #   vibe-content-scan.sh --message <file>
++#   vibe-content-scan.sh --messages-stdin
+ #   vibe-content-scan.sh --range <a> <b>
+ #   vibe-content-scan.sh --blob-stdin [--tier block]
++#   vibe-content-scan.sh --identity [<email>]
++#
++# --messages-stdin reads NUL-delimited records on stdin, each record being a
++# commit sha on the first line and the raw message body on the remaining lines
++# (produced by `git log --all -z --format='%H%n%B'`). It scans every message
++# line with the same both-tier + trailer-exemption semantics as --message, but
++# emits the location as `commit <sha>` directly — one scanner process for the
++# whole history instead of one per commit (task_022).
++#
++# Match primitives are bash-native `[[ =~ ]]` + BASH_REMATCH (task_022): no
++# per-line subprocess forks on the hot path. Patterns stay POSIX ERE only
++# (no word-boundary or other GNU escapes) so they compile under BSD regcomp
++# (macOS bash 3.2) and glibc (container bash 5) alike.
+ #
+ # Output: one line per finding on STDERR, tab-separated:
+ #   <CLASS>\t<location>\t<rule>\t<snippet>
+@@ -83,11 +97,18 @@ record_rule() {
+ # Emits a finding line to stderr (unless allowlisted) and marks FOUND=1.
+ check_rule() {
+   local class="$1" rule="$2" pattern="$3" icase="$4" content="$5" location="$6"
+-  local m
++  local m=""
++  # BASH_REMATCH[0] is the leftmost match — the same substring the old
++  # first-match primitive returned. The && m= guard keeps the no-match test
++  # (exit 1) off set -e (A2b); shopt -u nocasematch runs on EVERY path out of
++  # the icase branch, since a leaked nocasematch would silently make later
++  # case-sensitive rules case-insensitive.
+   if [ "$icase" = "1" ]; then
+-    m=$(printf '%s' "$content" | grep -oiE -- "$pattern" 2>/dev/null | head -n1) || true
++    shopt -s nocasematch
++    [[ $content =~ $pattern ]] && m="${BASH_REMATCH[0]}"
++    shopt -u nocasematch
+   else
+-    m=$(printf '%s' "$content" | grep -oE -- "$pattern" 2>/dev/null | head -n1) || true
++    [[ $content =~ $pattern ]] && m="${BASH_REMATCH[0]}"
+   fi
+   [ -z "$m" ] && return 0
+ 
+@@ -104,14 +125,20 @@ check_rule() {
+ # is_named_trailer <content> — Co-Authored-By: / Signed-off-by: lines are
+ # fully exempt from ALL rules (built-in allowlist (a)).
+ is_named_trailer() {
+-  printf '%s' "$1" | grep -qiE '^(Co-authored-by|Signed-off-by):[[:space:]]'
++  local pat='^(Co-authored-by|Signed-off-by):[[:space:]]' rc=1
++  shopt -s nocasematch
++  [[ $1 =~ $pat ]] && rc=0
++  shopt -u nocasematch
++  return "$rc"
+ }
+ 
+ # is_trailer_line <content> — a generic git-trailer-shaped line
+ # (^[A-Z][A-Za-z-]+:\s). Built-in allowlist (b): suppresses email/IP
+ # findings specifically (not BLOCK findings) on lines shaped like this.
+ is_trailer_line() {
+-  printf '%s' "$1" | grep -qE '^[A-Za-z][A-Za-z-]+:[[:space:]]'
++  local pat='^[A-Za-z][A-Za-z-]+:[[:space:]]'
++  [[ $1 =~ $pat ]] && return 0
++  return 1
+ }
+ 
+ # is_noreply_email <matched-address> — the literal exemptions in the
+@@ -130,8 +157,8 @@ is_noreply_email() {
+ check_email_rule() {
+   local content="$1" location="$2"
+   is_trailer_line "$content" && return 0
+-  local m
+-  m=$(printf '%s' "$content" | grep -oE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' 2>/dev/null | head -n1) || true
++  local m="" pat='[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
++  [[ $content =~ $pat ]] && m="${BASH_REMATCH[0]}"
+   [ -z "$m" ] && return 0
+   is_noreply_email "$m" && return 0
+   if line_is_allowlisted "$content"; then
+@@ -147,10 +174,15 @@ check_email_rule() {
+ # the generic container users node/root.
+ check_home_path_rule() {
+   local content="$1" location="$2"
+-  local m user
+-  m=$(printf '%s' "$content" | grep -oE '/(Users|home)/[^/ ]+/' 2>/dev/null | head -n1) || true
++  # Capture group 2 is the username (previously extracted by a subprocess);
++  # group 0 is the full /Users|home/<user>/ snippet, byte-identical to the
++  # old match.
++  local m="" user="" pat='/(Users|home)/([^/ ]+)/'
++  if [[ $content =~ $pat ]]; then
++    m="${BASH_REMATCH[0]}"
++    user="${BASH_REMATCH[2]}"
++  fi
+   [ -z "$m" ] && return 0
+-  user=$(printf '%s' "$m" | sed -E 's#^/(Users|home)/([^/]+)/#\2#')
+   case "$user" in
+     node|root) return 0 ;;
+   esac
+@@ -163,6 +195,28 @@ check_home_path_rule() {
+   record_rule "home-path"
+ }
+ 
++# check_mdns_rule <content> <location> — WARN mdns-local rule. POSIX-ERE
++# equivalent of the old word-boundary form (the boundary escape is a GNU
++# extension, absent from POSIX regcomp): match up to `.local`, then require a
++# non-word char ([^A-Za-z0-9_], the word set) or end-of-string. The reported
++# snippet is taken from capture group 1, which stops at `.local` and excludes
++# that boundary char — byte-identical to the old match. `foo.localhost` (word
++# char `h` after `.local`) correctly does NOT match; `foo.local.` and a
++# trailing `.local` at end-of-line do.
++check_mdns_rule() {
++  local content="$1" location="$2"
++  local m="" pat='([A-Za-z0-9-]+\.local)([^A-Za-z0-9_]|$)'
++  [[ $content =~ $pat ]] && m="${BASH_REMATCH[1]}"
++  [ -z "$m" ] && return 0
++  if line_is_allowlisted "$content"; then
++    return 0
++  fi
++  local snippet="${m:0:60}"
++  printf '%s\t%s\t%s\t%s\n' "WARN" "$location" "mdns-local" "$snippet" >&2
++  FOUND=1
++  record_rule "mdns-local"
++}
++
+ # check_ip_rule <content> <location> — WARN rfc1918-ip rule, suppressed on
+ # trailer-shaped lines (built-in allowlist (b)).
+ check_ip_rule() {
+@@ -189,7 +243,7 @@ scan_line() {
+   if [ "$tier" = "both" ]; then
+     check_ip_rule "$content" "$location"
+     check_home_path_rule "$content" "$location"
+-    check_rule "WARN" "mdns-local" '[A-Za-z0-9-]+\.local\b' "0" "$content" "$location"
++    check_mdns_rule "$content" "$location"
+     check_email_rule "$content" "$location"
+   fi
+ }
+@@ -254,6 +308,32 @@ scan_blob_stdin() {
+   done
+ }
+ 
++# scan_messages_stdin — reads NUL-delimited records on stdin, each record being
++# a commit sha on the first line followed by the raw message body (produced by
++# `git log --all -z --format='%H%n%B'`). Every body line is scanned with
++# scan_line "…" "commit <sha>" both — same both-tier + trailer-exemption
++# semantics as --message, but the location is attributed to the commit sha
++# directly (no awk relabel). The NUL delimiter — not line-shape sniffing — is
++# the record boundary, so a body line like `commit deadbeef` or `+foo` is
++# scanned as ordinary content and never mistaken for a header (B3). An empty
++# body, or a malformed record with no body/sha, is skipped without error.
++scan_messages_stdin() {
++  local record sha body line
++  while IFS= read -r -d '' record || [ -n "$record" ]; do
++    sha="${record%%$'\n'*}"
++    [ -n "$sha" ] || continue          # malformed / empty record — skip
++    [ "$sha" = "$record" ] && continue # sha-only record, empty body — skip
++    body="${record#*$'\n'}"
++    [ -n "$body" ] || continue
++    # Here-string (builtin redirect, no fork/subshell): the while loop runs in
++    # THIS shell so FOUND/FOUND_RULES survive. A body line equal to a heredoc
++    # delimiter can't break it (here-strings have no delimiter).
++    while IFS= read -r line || [ -n "$line" ]; do
++      scan_line "$line" "commit $sha" "both"
++    done <<< "$body"
++  done
++}
++
+ # is_exempt_identity <email> — commit identities that are fine to publish:
+ # GitHub noreply forms (ID-prefixed or bare-username), Anthropic's noreply,
+ # and vibe's own synthetic placeholder fallback.
+@@ -310,6 +390,9 @@ case "$MODE" in
+       scan_line "$line" "message" "both"
+     done < "$MSG_FILE"
+     ;;
++  --messages-stdin)
++    scan_messages_stdin
++    ;;
+   --range)
+     A="${1:-}"; B="${2:-}"
+     if [ -z "$A" ] || [ -z "$B" ]; then
+@@ -335,7 +418,7 @@ case "$MODE" in
+     fi
+     ;;
+   *)
+-    echo "vibe-content-scan.sh: unknown mode '$MODE' (expected --staged|--message|--range|--blob-stdin|--identity)" >&2
++    echo "vibe-content-scan.sh: unknown mode '$MODE' (expected --staged|--message|--messages-stdin|--range|--blob-stdin|--identity)" >&2
+     exit 1
+     ;;
+ esac
+diff --git a/vibe b/vibe
+index e4be374..1304921 100755
+--- a/vibe
++++ b/vibe
+@@ -2223,11 +2223,12 @@ _audit_staged() {
+ #   1. Content: `git log -p --all` piped through --blob-stdin (default tier
+ #      "both"), which tracks `commit <sha>` headers itself and attributes
+ #      each finding's location to that commit.
+-#   2. Messages: `--message` doesn't know which commit it's scanning (its
+-#      location is always the literal "message"), so this loop calls it
+-#      once per commit and rewrites the location field to "commit <sha>"
+-#      before appending - preserving --message's own both-tier + trailer-
+-#      exemption logic without duplicating it.
++#   2. Messages: a single `--messages-stdin` invocation fed by one
++#      `git log --all -z --format='%H%n%B'` pipe (task_022). The scanner reads
++#      each NUL-delimited <sha>\n<body> record and attributes findings to
++#      "commit <sha>" itself - same both-tier + trailer-exemption logic as
++#      --message, but one scanner process for the whole history instead of the
++#      old fork-per-commit loop.
+ #
+ # Audit's own exit code is computed HERE, independent of either scanner
+ # invocation's exit code (which would return 1 on ANY finding, WARN
+@@ -2239,28 +2240,24 @@ _audit_history() {
+   local scanner
+   scanner="$(_audit_scanner_path)"
+ 
+-  local tmp_content tmp_messages tmp_msgfile
++  local tmp_content tmp_messages
+   tmp_content="$(mktemp)"
+   tmp_messages="$(mktemp)"
+-  tmp_msgfile="$(mktemp)"
+   # Register through the single EXIT-trap dispatcher (see "Exit-hook
+   # dispatcher" above) — never a raw `trap ... EXIT` here, which would
+   # silently replace whatever trap slot a later hook installs.
+-  vibe_exit_hook_add "rm -f '$tmp_content' '$tmp_messages' '$tmp_msgfile'"
++  vibe_exit_hook_add "rm -f '$tmp_content' '$tmp_messages'"
+ 
+   # Pass 1: full-history content, both tiers, commit-sha location tracking.
+   git log -p --no-color --all 2>/dev/null | "$scanner" --blob-stdin >/dev/null 2>"$tmp_content" || true
+ 
+-  # Pass 2: every commit message, attributed to its own commit sha.
++  # Pass 2: every commit message in a single scanner invocation. The NUL-
++  # delimited stream carries each commit's sha + raw body; --messages-stdin
++  # attributes findings to "commit <sha>" directly (task_022 - the old loop
++  # forked one scanner per commit, the dominant cost of the 280s timeout).
+   : > "$tmp_messages"
+-  local sha
+-  while IFS= read -r sha; do
+-    [ -n "$sha" ] || continue
+-    git log -1 --format=%B "$sha" > "$tmp_msgfile" 2>/dev/null || true
+-    "$scanner" --message "$tmp_msgfile" 2>&1 1>/dev/null \
+-      | awk -F'\t' -v sha="$sha" 'BEGIN{OFS="\t"} NF>=4{$2="commit " sha; print}' \
+-      >> "$tmp_messages" || true
+-  done < <(git log --all --format=%H 2>/dev/null)
++  git log --all -z --format='%H%n%B' 2>/dev/null \
++    | "$scanner" --messages-stdin 2>>"$tmp_messages" 1>/dev/null || true
+ 
+   # Pass 3: author/committer identities across all refs (task_021). The
+   # content passes can't see metadata, so each unique email goes through

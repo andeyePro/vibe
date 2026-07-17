@@ -1,0 +1,35 @@
+github pat ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 here
+fine github_pat_ABCDEFGHIJKLMNOPQRSTUV1234 token
+openai sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ key
+aws AKIAABCDEFGHIJKLMNOP key
+-----BEGIN PRIVATE KEY-----
+-----BEGIN RSA PRIVATE KEY-----
+SeCreT = "abcdefghijklmnop1234567"
+my_password: hunter2hunter2hunter2
+API_KEY=ABCDEFGHIJKLMNOP0123456789
+bearer   xZ9abcdefghijklmnop_valuehere
+ip ten 10.1.2.3 addr
+ip 172.16.5.9 addr
+ip 172.31.200.1 addr
+ip 172.15.0.1 not-private
+ip 192.168.0.35 nas
+ip 169.254.1.1 linklocal
+path /Users/martin/secret/file here
+path /home/bob/thing here
+path /home/node/ok skip
+path /Users/root/ok skip
+host foo.local end
+host foo.localhost nomatch
+host foo.local. trailing
+host bar-baz.local
+email person@example.com contact
+email noreply@anthropic.com exempt
+email 12345+martin@users.noreply.github.com exempt
+email dev@sub.users.noreply.github.com exempt
+Co-authored-by: Someone <someone@corp.com>
+Reviewed-by: someone at 192.168.1.1 and boss@corp.com
+ALLOWLISTED_192.168.5.5 suppressed line
+SeCret = "abcdefghijklmnop1234" and FOO.LOCAL leakprobe
+just a clean line of prose nothing here
+another clean line 12345 numbers only
+final clean tail line
