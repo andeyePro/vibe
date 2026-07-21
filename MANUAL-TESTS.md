@@ -929,4 +929,25 @@ Needs OP creds staged in `~/.vibe/tokens` (`OPENPROJECT_MCP_URL` / `OPENPROJECT_
 - [ ] In a project with **no** `.vibe-allow-op` and `VIBE_OP_AUTO` unset, launch `vibe`: the banner shows **no** `op :` line; inside, `claude mcp list` does **not** list `openproject`; `env | grep OPENPROJECT` shows the bearer is **absent** from the container env.
 - [ ] `touch .vibe-allow-op` in that project (leave it untracked), relaunch: banner shows `op : /op enabled (opted in via .vibe-allow-op)`; `claude mcp list` shows `openproject` connected; `/op` works.
 - [ ] `git add .vibe-allow-op && git commit`, relaunch: the launcher warns the committed marker is ignored, the `op :` line is gone, and `/op` is unavailable again (a committed marker must not enable OP).
+
+---
+
+### Test 37: `vibe pat` PAT rotation + launch-time 401 reprompt (task_026)
+
+Needs a real GitHub repo with a fine-grained PAT already stored in `~/.vibe/tokens`, and a browser (`vibe pat` and `setup_token` both open `https://github.com/settings/personal-access-tokens`).
+
+**37a — manual rotation via `vibe pat`:**
+- [ ] From that project's directory, run `vibe pat` (no arg) — output shows `Repo: <owner/repo>` then `stored token found — it will be replaced`, then the settings-tokens URL, then a hidden-input prompt (nothing you type echoes)
+- [ ] Paste a valid new fine-grained PAT for the same repo — output ends with `✓ Token saved for <owner/repo>. Takes effect on the next vibe launch (no rebuild needed).`, exit 0
+- [ ] `vibe pat owner/repo` (explicit slug) behaves identically
+- [ ] Ctrl-D (EOF) or Enter on an empty prompt aborts with `aborted — token store unchanged` on stderr, exit 1, and `~/.vibe/tokens` is unchanged (diff it before/after)
+- [ ] `vibe pat --help` prints usage and exits 0; `vibe pat too many args here` exits 1 with a one-line stderr error
+
+**37b — end-to-end revoked-PAT launch reprompt:**
+- [ ] On github.com, revoke/delete the fine-grained PAT currently stored for the project (so GitHub now returns `401` for it)
+- [ ] Plain `vibe` launch in that project: after GitHub setup resolves the stored token, a line `⚠ Stored PAT for <owner/repo> was rejected by GitHub (expired or revoked) — let's replace it.` appears, then the same `setup_token` prompt/browser-open flow as a fresh repo — paste a new valid token and the launch proceeds normally with the new token in effect (`git push` works inside the container)
+- [ ] A launch with a currently-valid stored PAT shows **no** rejection warning and no reprompt — silent pass-through
+
+**37c — `VIBE_PAT_CHECK=0` suppression:**
+- [ ] With the same revoked PAT still stored, set `VIBE_PAT_CHECK=0` in `~/.vibe/config` (or export it for one launch) and launch `vibe` again — no warning, no reprompt; the launch proceeds with the (still-revoked) stored token, and any in-container `git push` fails on GitHub's side as expected — confirms the opt-out actually disables the probe rather than just suppressing the message.
 - [ ] Set `VIBE_OP_AUTO=1` in `~/.vibe/config`, relaunch a project with no marker: `op :` line shows `opted in via VIBE_OP_AUTO`; `/op` works everywhere.

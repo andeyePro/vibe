@@ -175,5 +175,14 @@
   "assigned_to": "generator",
   "mode": "rigorous",
   "last_modified": "2026-07-17T09:19:00Z"
+ },
+ {
+  "id": "task_026",
+  "description": "vibe pat [repo] PAT rotation subcommand + launch-time 401 stored-token reprompt (fail-open probe, -K - stdin auth header, VIBE_PAT_CHECK=0 opt-out)",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-07-21T15:54:05Z"
  }
 ]

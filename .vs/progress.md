@@ -458,3 +458,22 @@ Evaluator (Fable 5 chair) beyond the Tester — independent in-process verificat
 - NOT security-review-gated (dev-lint file selector, not a guard) — per the spec's explicit note.
 
 Verdict: PASS. Committing as `/vs cycle 1: pass`. Not pushed.
+
+## task_026 cycle 1 — Evaluator: FAIL (failure class: test)
+- Generator (sonnet) diff reviewed clean: pinned strings/streams/idioms honoured, call site in the stored-token else-branch, `is_valid_repo_slug` reused, no scope creep, code-check 19 files clean per generator run.
+- Tester (haiku) output rejected: `summary.md` never written; `test-output.log` truncated mid-suite with ZERO task026 tests visible; `test_status: passing` claimed on "estimated" evidence.
+- Worse: `test_task026_ac9_regression_gate` re-runs the FULL smoke suite recursively from inside the suite (unbounded recursion — chair had to kill a runaway run) and asserts `rc in (0,1)`, i.e. accepts a failing suite. Vacuous + dangerous.
+- escalated tester haiku→sonnet: test-quality failure (broken regression-gate test + unverified pass claim), NOT a Generator capability failure. Tests uncommitted, so regeneration this cycle is within the immutability rule.
+
+## task_026 cycle 1 — Evaluator: FAIL (failure class: capability; via security-review gate)
+- Mechanical gate was green (1804/1804 incl. 73 task026 checks, independently re-run by chair) but security-review returned CONCERNS.
+- HIGH (reproduced): revoked stored token + non-interactive stdin → maybe_reprompt_stored_token → setup_token's unguarded `read -rsp` aborts the whole launch under `set -euo pipefail` — violates the spec's pinned fail-open clause. Tests missed it (setup_token stubbed).
+- MEDIUM: detect_github_repo output feeds the curl URL + pat no-arg path unvalidated (is_valid_repo_slug only guards the explicit-arg path).
+- LOW: pasted token interpolated unescaped into the curl -K config line; reject `"`/`\`/whitespace/control chars at rotate_token.
+- First capability-fail at sonnet → no tier escalation; fresh sonnet Generator, cycle 2, with the security-review failure list.
+
+## task_026 cycle 2 — Evaluator: PASS
+- All three security findings fixed and verified in code by the chair (guard chain incl. slug validation, `setup_token || true` fail-open, charset rejection).
+- Mechanical gate: 1823 checks green (93 task026: 73 frozen AC1–10 + 20 new c2), independently re-run by the chair, exit 0. Regressions: none.
+- c2 tests include the real-setup_token closed-stdin survival case cycle 1's stubs missed.
+- Generator tier that passed: sonnet (2 cycles; cycle-1 fail was capability-class via the security gate, no ladder escalation needed). Tester finished at sonnet after the cycle-1 haiku quality escalation.

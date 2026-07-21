@@ -29,6 +29,14 @@
 # is a host binary and the per-project .no-learn marker is written to
 # the bind-mounted project tree from outside.
 #
+#   vibe pat [owner/repo]    # rotate/overwrite the stored GitHub PAT
+#
+# `vibe pat` runs on the HOST shell too, same as `vibe learn` above — not
+# available inside the container. With no argument the repo is detected
+# from the current directory's origin remote. A launch also auto-reprompts
+# (same setup_token flow) when a stored PAT is definitively rejected (401)
+# by GitHub; VIBE_PAT_CHECK=0 skips that check.
+#
 # Note: --continue and --resume are opt-in. Default is fresh — the durable
 # handover lives in TODO.md, CLAUDE.md, and Claude's auto-memory, not in
 # resumed conversations (which accumulate compaction debt over weeks).
@@ -398,6 +406,180 @@ MSG
   save_token "$repo" "$input_token"
   echo "  ✓ Token saved — you won't be asked again for this repo."
   GITHUB_TOKEN="$input_token"
+}
+
+# rotate_token <repo> — core of `vibe pat`: re-prompt (hidden input) and
+# overwrite the stored PAT for <repo>. Never launches a container; always
+# exits (never returns). NEVER prints any part of the token value.
+#
+# The read is errexit-guarded with the established `_learning_capture` idiom
+# (see vibe ~1438: `if ! IFS= read -r ...; then ... fi`) so immediate EOF on
+# stdin can't abort the script via `set -euo pipefail` before the abort
+# message prints — `read`'s own non-zero return on EOF would otherwise kill
+# the whole launcher. A lone newline (successful read of an empty string)
+# and immediate EOF (failed read) both funnel into the same empty-token
+# check below, since both are "nothing was pasted".
+rotate_token() {
+  local repo="$1"
+
+  echo "Repo: $repo"
+  local existing
+  existing=$(lookup_token "$repo")
+  if [ -n "$existing" ]; then
+    echo "stored token found — it will be replaced"
+  else
+    echo "no stored token yet"
+  fi
+  echo "https://github.com/settings/personal-access-tokens"
+
+  local token
+  if ! IFS= read -rsp "  Paste your new token (input is hidden): " token; then
+    token=""
+  fi
+  echo ""
+
+  if [ -z "$token" ]; then
+    echo "aborted — token store unchanged" >&2
+    exit 1
+  fi
+
+  # Charset hardening: the pasted value is interpolated into a curl -K
+  # config line downstream (stored_token_rejected's `header = "Authorization:
+  # Bearer <token>"`, unescaped by design). A double-quote or backslash would
+  # break out of that config line's quoting; whitespace or a control
+  # character isn't part of any real GitHub PAT charset either. Refuse
+  # rather than save something that could corrupt the -K config or a token
+  # store line. Store is untouched — this runs before save_token.
+  if [[ "$token" == *'"'* ]] || [[ "$token" == *'\'* ]] \
+     || [[ "$token" =~ [[:space:]] ]] || [[ "$token" =~ [[:cntrl:]] ]]; then
+    echo "vibe pat: token contains characters no GitHub PAT uses — not saved" >&2
+    exit 1
+  fi
+
+  save_token "$repo" "$token"
+  echo "✓ Token saved for $repo. Takes effect on the next vibe launch (no rebuild needed)."
+  exit 0
+}
+
+# stored_token_rejected <repo> <token> — true (0) iff GitHub's API returns
+# EXACTLY 401 for a request to /repos/<repo> authenticated with <token>.
+# Fail-open by design: every other outcome — 200, 403, 404, 5xx, 000, a
+# non-zero curl exit, or empty output — returns 1. A network flake or scope
+# oddity must never block a launch or trigger a false reprompt, so curl's
+# own exit status is deliberately ignored; only the captured `-w` string
+# decides.
+#
+# The Authorization header is supplied ONLY via `-K -` (curl reads its
+# config from stdin), fed a single `header = "..."` line via a here-string —
+# so the token never appears in curl's argv (ps-visible) and never touches
+# disk. Plain `curl` (not an absolute path) so a PATH-based shim (smoke
+# tests) is picked up.
+stored_token_rejected() {
+  local repo="$1" token="$2"
+  local code
+  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -K - \
+    "https://api.github.com/repos/${repo}" \
+    <<< "header = \"Authorization: Bearer ${token}\"" 2>/dev/null) || true
+  [ "$code" = "401" ]
+}
+
+# maybe_reprompt_stored_token <repo> <token> — launch-path wrapper around
+# stored_token_rejected. Sourceable and unit-testable in isolation (its own
+# functions can be stubbed after sourcing). Returns 0 immediately (no probe)
+# when VIBE_PAT_CHECK=0, when <token> is empty (an empty lookup result is
+# the no-stored-token case — setup_token runs anyway at the call site; probing
+# an empty bearer would be a bug, not a check), or when <repo> isn't a valid
+# owner/repo slug (detect_github_repo's regex is looser than
+# is_valid_repo_slug — see vibe ~168 vs ~1745 — so a malformed slug must
+# fail open here rather than reach the curl probe unvalidated). Otherwise
+# probes, and on rejection prints the pinned warning and re-runs the existing
+# setup_token prompt/save/GITHUB_TOKEN flow (its own empty-input branch
+# already degrades to launching without GitHub auth).
+#
+# ALWAYS returns 0, whichever branch runs — never propagates
+# stored_token_rejected's status. The call site is a bare one-liner under
+# `set -e` in the launch path; any non-zero return here would turn every
+# healthy launch into a hard failure.
+maybe_reprompt_stored_token() {
+  local repo="$1" token="$2"
+
+  if [ "${VIBE_PAT_CHECK:-}" = "0" ] || [ -z "$token" ] || ! is_valid_repo_slug "$repo"; then
+    return 0
+  fi
+
+  if stored_token_rejected "$repo" "$token"; then
+    echo "  ⚠ Stored PAT for $repo was rejected by GitHub (expired or revoked) — let's replace it." >&2
+    # `|| true`: setup_token contains unguarded `read` calls (out of scope
+    # to modify here). Under non-interactive/closed stdin its `read` returns
+    # non-zero on EOF, which `set -euo pipefail` would otherwise treat as a
+    # hard launcher abort. `||` suppresses errexit for this whole command,
+    # so setup_token's own EOF path runs to completion and degrades exactly
+    # like its existing "No token entered — launching without GitHub auth"
+    # branch, instead of killing the launch.
+    setup_token "$repo" || true
+  fi
+
+  return 0
+}
+
+# _pat_usage — `vibe pat --help` / `-h`. stdout, exit 0.
+_pat_usage() {
+  cat << 'USAGE'
+Usage: vibe pat [owner/repo]
+
+Re-prompt for (hidden input) and overwrite the stored GitHub PAT for a repo
+— rotation. With no argument, the repo is detected from the current
+directory's 'origin' remote, same as a normal vibe launch. Never prints the
+token value. Takes effect on the next vibe launch — no rebuild needed.
+
+Run on the HOST shell, from the project directory — not inside the
+container.
+USAGE
+  exit 0
+}
+
+# pat_handle_subcommand <args...> — top-level dispatcher for `vibe pat`.
+# Never launches a container; each branch calls a function that always
+# exits. --help/-h is checked BEFORE slug validation, so `vibe pat --help`
+# always succeeds regardless of how many/what other args follow.
+pat_handle_subcommand() {
+  shift  # consume "pat"
+
+  case "${1:-}" in
+    --help|-h)
+      _pat_usage
+      ;;
+  esac
+
+  case "$#" in
+    0)
+      local repo
+      if ! repo=$(detect_github_repo); then
+        echo "vibe pat: couldn't detect a GitHub repo here — pass one explicitly: vibe pat <owner/repo>" >&2
+        exit 1
+      fi
+      # detect_github_repo's regex is looser than is_valid_repo_slug (see
+      # vibe ~168 vs ~1745) — re-validate before it reaches rotate_token /
+      # save_token, so a malformed detected slug is refused rather than
+      # silently trusted.
+      if ! is_valid_repo_slug "$repo"; then
+        echo "vibe pat: detected remote slug '$repo' is not a valid owner/repo" >&2
+        exit 1
+      fi
+      rotate_token "$repo"
+      ;;
+    1)
+      if ! is_valid_repo_slug "$1"; then
+        echo "vibe pat: '$1' isn't a valid owner/repo slug" >&2
+        exit 1
+      fi
+      rotate_token "$1"
+      ;;
+    *)
+      echo "Usage: vibe pat [owner/repo]" >&2
+      exit 1
+      ;;
+  esac
 }
 
 # ── Docker config helpers ─────────────────────────────────────────────────────
@@ -2647,6 +2829,16 @@ if [ "${1:-}" = "audit" ]; then
   exit $?
 fi
 
+# ── Pat subcommand dispatch (task_026) ────────────────────────────────────────
+# Must be BEFORE the --* flag-parser loop — mirrors `learn`/`repos`/`audit`
+# above. Host-side only: rotates a stored PAT via rotate_token; never enters
+# workspace resolution, preflight, image build, GitHub setup, or container
+# launch. Dispatches and exits; this is a safety net.
+if [ "${1:-}" = "pat" ]; then
+  pat_handle_subcommand "$@"
+  exit $?
+fi
+
 # ── Flags ─────────────────────────────────────────────────────────────────────
 # parse_vibe_args (defined above the VIBE_SOURCE_ONLY guard so smoke-test.py
 # can source-test it) accepts flags and the project positional in any order.
@@ -2775,6 +2967,12 @@ elif GITHUB_REPO=$(detect_github_repo); then
   GITHUB_TOKEN=$(lookup_token "$GITHUB_REPO")
   if [ -z "$GITHUB_TOKEN" ]; then
     setup_token "$GITHUB_REPO"
+  else
+    # Stored-token branch (task_026): a definitively-rejected (401) token
+    # gets rotated right here, at the moment it bites — no rebuild needed,
+    # since GITHUB_TOKEN flows via remoteEnv and is re-resolved every launch.
+    # Never called after a fresh interactive paste above — no prompt loop.
+    maybe_reprompt_stored_token "$GITHUB_REPO" "$GITHUB_TOKEN"
   fi
 else
   create_github_repo

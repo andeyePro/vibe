@@ -10993,6 +10993,697 @@ def test_task024_ac10_todo_hardening_item_ticked() -> None:
               open_marker not in t, "still present as an open TODO item" if open_marker in t else "")
 
 
+# ── task_026: `vibe pat [repo]` PAT rotation + launch-time 401 reprompt ─────────
+
+def _setup_curl_shim(tmp: Path, response_code: str = "200", response_stdin: str = "", exit_code: int = 0) -> tuple[str, Path, Path]:
+    """Create a PATH-shimmable curl stub that logs argv and stdin. Returns (new_PATH, argv_log, stdin_log)."""
+    stub_dir = tmp / "stubbin"
+    stub_dir.mkdir()
+    curl_stub = stub_dir / "curl"
+    argv_log = tmp / "curl-argv.log"
+    stdin_log = tmp / "curl-stdin.log"
+
+    # Shim that logs all argv and stdin, then outputs response_code.
+    # NOTE: no `shift` here — when a script runs via its shebang, "$@" already
+    # holds exactly the arguments the caller passed to it (curl's own argv0
+    # is NOT among them), so a leading `shift` silently drops the shim's
+    # first real argument (curl's `-s` in this project's invocation). A
+    # prior version of this shim shifted regardless, which happened not to
+    # break AC6's assertions (they don't check for `-s`) but was still wrong
+    # and would have masked a regression in exactly that position.
+    curl_stub.write_text(f"""#!/bin/bash
+echo "$@" >> {shlex.quote(str(argv_log))}
+
+# Log stdin
+cat >> {shlex.quote(str(stdin_log))}
+
+# Output the response code to stdout (for curl's -w)
+echo -n "{response_code}"
+
+# Exit with the specified code
+exit {exit_code}
+""")
+    curl_stub.chmod(0o755)
+    new_path = f"{stub_dir}:{os.environ.get('PATH', '')}"
+    return new_path, argv_log, stdin_log
+
+
+def test_task026_ac1_arg_parsing_too_many() -> None:
+    print("\n[task_026 AC1: vibe pat a b c — too many args]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        env = {**os.environ, "HOME": str(tmp), "VIBE_CONFIG": f"{tmp}/no-config", "VIBE_SOURCE_ONLY": "1"}
+        script = f"set -e; source {shlex.quote(str(VIBE))}; pat_handle_subcommand pat a b c"
+        r = run(["bash", "-c", script], env=env)
+        check("exit 1", r.returncode == 1, r.stderr)
+        check("error on stderr", "Usage:" in r.stderr, r.stderr)
+        check("no stdout", r.stdout == "", r.stdout)
+
+
+def test_task026_ac1_arg_parsing_invalid_slug() -> None:
+    print("\n[task_026 AC1: vibe pat not-a-slug — invalid slug]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        env = {**os.environ, "HOME": str(tmp), "VIBE_CONFIG": f"{tmp}/no-config", "VIBE_SOURCE_ONLY": "1"}
+        script = f"set -e; source {shlex.quote(str(VIBE))}; pat_handle_subcommand pat not-a-slug"
+        r = run(["bash", "-c", script], env=env)
+        check("exit 1", r.returncode == 1, r.stderr)
+        check("error on stderr", "isn't a valid owner/repo slug" in r.stderr, r.stderr)
+
+
+def test_task026_ac1_arg_parsing_help() -> None:
+    print("\n[task_026 AC1: vibe pat --help]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        env = {**os.environ, "HOME": str(tmp), "VIBE_CONFIG": f"{tmp}/no-config", "VIBE_SOURCE_ONLY": "1"}
+        script = f"source {shlex.quote(str(VIBE))}; pat_handle_subcommand pat --help"
+        r = run(["bash", "-c", script], env=env)
+        check("exit 0", r.returncode == 0, r.stderr)
+        check("usage on stdout", "Usage:" in r.stdout, r.stdout)
+        check("mentions HOST shell", "HOST shell" in r.stdout, r.stdout)
+
+
+def test_task026_ac2_token_overwrite_existing() -> None:
+    print("\n[task_026 AC2: overwrite existing token]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        env = {**os.environ, "HOME": str(tmp), "VIBE_CONFIG": f"{tmp}/no-config", "VIBE_SOURCE_ONLY": "1"}
+        # Pre-populate token store with an existing token and other keys
+        tokens_file = tmp / ".vibe" / "tokens"
+        tokens_file.parent.mkdir(parents=True)
+        tokens_file.write_text("owner/repo=ghp_old_token\nZOTERO_API_KEY=zotero123=\nOPENPROJECT_MCP_BEARER=proj123=\n")
+        tokens_file.chmod(0o600)
+
+        script = f"""
+set +e
+source {shlex.quote(str(VIBE))}
+echo ghp_task026_fixture_token | rotate_token owner/repo
+set -e
+"""
+        r = run(["bash", "-c", script], env=env)
+        check("exit 0", r.returncode == 0, r.stderr)
+        check("first line is Repo:", "Repo: owner/repo" in r.stdout, r.stdout)
+        check("second line mentions existing token", "stored token found" in r.stdout, r.stdout)
+        check("✓ Token saved in stdout", "✓ Token saved" in r.stdout, r.stdout)
+
+        # Verify token store was updated correctly
+        new_content = tokens_file.read_text()
+        check("new token saved", "owner/repo=ghp_task026_fixture_token" in new_content, new_content)
+        check("other keys preserved", "ZOTERO_API_KEY=zotero123=" in new_content, new_content)
+        check("other keys preserved (openproject)", "OPENPROJECT_MCP_BEARER=proj123=" in new_content, new_content)
+        check("file still chmod 600", oct(tokens_file.stat().st_mode)[-3:] == "600",
+              oct(tokens_file.stat().st_mode))
+        check("fixture token absent from process stdout+stderr", "ghp_task026_fixture_token" not in (r.stdout + r.stderr), r.stdout + r.stderr)
+
+
+def test_task026_ac3_empty_input_eof() -> None:
+    print("\n[task_026 AC3: empty input — EOF (closed stdin)]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        env = {**os.environ, "HOME": str(tmp), "VIBE_CONFIG": f"{tmp}/no-config", "VIBE_SOURCE_ONLY": "1"}
+        tokens_file = tmp / ".vibe" / "tokens"
+        tokens_file.parent.mkdir(parents=True)
+        tokens_file.write_text("owner/repo=ghp_existing\n")
+        orig_content = tokens_file.read_text()
+
+        script = f"""
+source {shlex.quote(str(VIBE))}
+rotate_token owner/repo < /dev/null
+"""
+        r = run(["bash", "-c", script], env=env)
+        check("exit 1", r.returncode == 1, f"returncode={r.returncode}")
+        check("abort message on stderr", "aborted — token store unchanged" in r.stderr, r.stderr)
+        check("token store unchanged", tokens_file.read_text() == orig_content,
+              f"before: {orig_content}, after: {tokens_file.read_text()}")
+
+
+def test_task026_ac3_empty_input_newline() -> None:
+    print("\n[task_026 AC3: empty input — lone newline]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        env = {**os.environ, "HOME": str(tmp), "VIBE_CONFIG": f"{tmp}/no-config", "VIBE_SOURCE_ONLY": "1"}
+        tokens_file = tmp / ".vibe" / "tokens"
+        tokens_file.parent.mkdir(parents=True)
+        tokens_file.write_text("owner/repo=ghp_existing\n")
+        orig_content = tokens_file.read_text()
+
+        script = f"""
+source {shlex.quote(str(VIBE))}
+rotate_token owner/repo <<< ""
+"""
+        r = run(["bash", "-c", script], env=env)
+        check("exit 1", r.returncode == 1, f"returncode={r.returncode}")
+        check("abort message on stderr", "aborted — token store unchanged" in r.stderr, r.stderr)
+        check("token store unchanged", tokens_file.read_text() == orig_content,
+              f"before: {orig_content}, after: {tokens_file.read_text()}")
+
+
+def test_task026_ac4_auto_detect_repo_no_git() -> None:
+    print("\n[task_026 AC4: auto-detect repo with no git checkout]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        env = {**os.environ, "HOME": str(tmp), "VIBE_CONFIG": f"{tmp}/no-config", "VIBE_SOURCE_ONLY": "1"}
+
+        script = f"""
+cd {shlex.quote(str(tmp))}
+source {shlex.quote(str(VIBE))}
+pat_handle_subcommand pat < /dev/null
+"""
+        r = run(["bash", "-c", script], env=env)
+        check("exit 1", r.returncode == 1, f"returncode={r.returncode}")
+        # Stream-precise: the spec pins this as a stderr message, not "output
+        # somewhere" — assert on r.stderr alone, not stdout+stderr combined.
+        check("error message about detection on stderr", "couldn't detect" in r.stderr, r.stderr)
+        check("nothing on stdout", r.stdout == "", r.stdout)
+
+
+def test_task026_ac4_auto_detect_repo_with_git() -> None:
+    """AC4's git-checkout half: 'vibe pat' with no arg, in a git checkout
+    with an origin remote, prints 'Repo: <slug>' (via rotate_token, reached
+    through detect_github_repo) and — since the test feeds closed stdin —
+    terminates via the AC3 abort path rather than blocking at the hidden
+    prompt. A prior version of this test called detect_github_repo directly
+    and only checked the raw slug appeared in stdout, which exercises git
+    remote parsing alone and never proves the pat subcommand's own
+    auto-detect wiring (pat_handle_subcommand -> detect_github_repo ->
+    rotate_token) actually calls it; that's what this rewrite drives instead."""
+    print("\n[task_026 AC4: auto-detect repo from git checkout via vibe pat]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        checkout = tmp / "checkout"
+        checkout.mkdir()
+        env = {**os.environ, "HOME": str(tmp), "VIBE_CONFIG": f"{tmp}/no-config", "VIBE_SOURCE_ONLY": "1"}
+
+        # Set up git repo with origin remote pointing to GitHub
+        run(["git", "init"], cwd=checkout, env=env)
+        run(["git", "remote", "add", "origin", "https://github.com/owner/repo.git"], cwd=checkout, env=env)
+
+        script = f"""
+cd {shlex.quote(str(checkout))}
+source {shlex.quote(str(VIBE))}
+pat_handle_subcommand pat < /dev/null
+"""
+        r = run(["bash", "-c", script], env=env)
+        check("prints Repo: owner/repo (detected slug) on stdout", "Repo: owner/repo" in r.stdout, r.stdout)
+        check("terminates via AC3 abort path (exit 1)", r.returncode == 1, f"returncode={r.returncode}")
+        check("abort message on stderr", "aborted — token store unchanged" in r.stderr, r.stderr)
+
+
+def test_task026_ac5_stored_token_rejected_401() -> None:
+    print("\n[task_026 AC5: stored_token_rejected returns 0 (true) for 401]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        new_path, _, _ = _setup_curl_shim(tmp, response_code="401")
+        env = {**os.environ, "HOME": str(tmp), "PATH": new_path, "VIBE_SOURCE_ONLY": "1"}
+
+        # NOTE: `set +e` must come AFTER `source vibe`, not before — vibe
+        # itself runs `set -euo pipefail` unconditionally near its top, which
+        # re-arms errexit in this same shell and clobbers an earlier `set +e`.
+        # Placing it before sourcing was tried and silently broke this test:
+        # a non-zero return from the bare `stored_token_rejected` call below
+        # would abort the script before `echo RC=$?` ever ran, leaving stdout
+        # empty instead of containing the expected marker.
+        script = f"source {shlex.quote(str(VIBE))}; set +e; stored_token_rejected owner/repo ghp_task026_fixture_token; echo RC=$?"
+        r = run(["bash", "-c", script], env=env)
+        check("returns 0 (true)", "RC=0" in r.stdout, r.stdout)
+        check("fixture token absent from output", "ghp_task026_fixture_token" not in (r.stdout + r.stderr), r.stdout + r.stderr)
+
+
+def test_task026_ac5_stored_token_rejected_200() -> None:
+    print("\n[task_026 AC5: stored_token_rejected returns 1 (false) for 200]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        new_path, _, _ = _setup_curl_shim(tmp, response_code="200")
+        env = {**os.environ, "HOME": str(tmp), "PATH": new_path, "VIBE_SOURCE_ONLY": "1"}
+
+        # set +e AFTER source — see note in test_task026_ac5_stored_token_rejected_401.
+        script = f"source {shlex.quote(str(VIBE))}; set +e; stored_token_rejected owner/repo ghp_task026_fixture_token; echo RC=$?"
+        r = run(["bash", "-c", script], env=env)
+        check("returns 1 (false)", "RC=1" in r.stdout, r.stdout)
+        check("fixture token absent from output", "ghp_task026_fixture_token" not in (r.stdout + r.stderr), r.stdout + r.stderr)
+
+
+def test_task026_ac5_stored_token_rejected_404_000_exit() -> None:
+    print("\n[task_026 AC5: stored_token_rejected returns 1 for 404, 000, and curl exit]")
+    for code, desc in [("404", "404"), ("000", "000"), ("", "curl-exit")]:
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            exit_code = 1 if code == "" else 0
+            new_path, _, _ = _setup_curl_shim(tmp, response_code=code, exit_code=exit_code)
+            env = {**os.environ, "HOME": str(tmp), "PATH": new_path, "VIBE_SOURCE_ONLY": "1"}
+
+            # set +e AFTER source — see note in test_task026_ac5_stored_token_rejected_401.
+            script = f"source {shlex.quote(str(VIBE))}; set +e; stored_token_rejected owner/repo ghp_task026_fixture_token; echo RC=$?"
+            r = run(["bash", "-c", script], env=env)
+            check(f"returns 1 for {desc}", "RC=1" in r.stdout, r.stdout)
+            check(f"fixture token absent from output ({desc})", "ghp_task026_fixture_token" not in (r.stdout + r.stderr), r.stdout + r.stderr)
+
+
+def test_task026_ac6_curl_arg_logging() -> None:
+    print("\n[task_026 AC6: curl argv and stdin logging]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        new_path, argv_log, stdin_log = _setup_curl_shim(tmp, response_code="200")
+        env = {**os.environ, "HOME": str(tmp), "PATH": new_path, "VIBE_SOURCE_ONLY": "1"}
+
+        script = f"source {shlex.quote(str(VIBE))}; stored_token_rejected owner/repo ghp_task026_fixture_token >/dev/null"
+        r = run(["bash", "-c", script], env=env)
+
+        argv_content = argv_log.read_text() if argv_log.exists() else ""
+        stdin_content = stdin_log.read_text() if stdin_log.exists() else ""
+
+        check("curl argv contains api.github.com/repos/owner/repo", "api.github.com/repos/owner/repo" in argv_content, argv_content)
+        check("curl argv contains -s", "-s" in argv_content.split(), argv_content)
+        check("curl argv contains -K", "-K" in argv_content, argv_content)
+        check("curl argv does NOT contain fixture token", "ghp_task026_fixture_token" not in argv_content, argv_content)
+        check("curl stdin contains Authorization header", "Authorization: Bearer ghp_task026_fixture_token" in stdin_content, stdin_content)
+        check("fixture token absent from process stdout+stderr", "ghp_task026_fixture_token" not in (r.stdout + r.stderr), r.stdout + r.stderr)
+
+
+def test_task026_ac7_no_token_in_output() -> None:
+    print("\n[task_026 AC7: fixture token never appears in output]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        env = {**os.environ, "HOME": str(tmp), "VIBE_CONFIG": f"{tmp}/no-config", "VIBE_SOURCE_ONLY": "1"}
+        tokens_file = tmp / ".vibe" / "tokens"
+        tokens_file.parent.mkdir(parents=True)
+
+        script = f"""
+source {shlex.quote(str(VIBE))}
+echo ghp_task026_fixture_token | rotate_token owner/repo 2>&1
+"""
+        r = run(["bash", "-c", script], env=env)
+        combined = r.stdout + r.stderr
+        check("fixture token not in output", "ghp_task026_fixture_token" not in combined, combined[:200])
+
+
+def test_task026_ac8_maybe_reprompt_vibe_pat_check_zero() -> None:
+    print("\n[task_026 AC8(a): maybe_reprompt_stored_token with VIBE_PAT_CHECK=0]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        env = {**os.environ, "HOME": str(tmp), "VIBE_CONFIG": f"{tmp}/no-config",
+               "VIBE_SOURCE_ONLY": "1", "VIBE_PAT_CHECK": "0"}
+
+        # Stub stored_token_rejected and setup_token to verify they're not called
+        script = f"""
+set -e
+source {shlex.quote(str(VIBE))}
+
+probe_called=0
+setup_called=0
+
+stored_token_rejected() {{ probe_called=1; return 1; }}
+setup_token() {{ setup_called=1; }}
+
+set +e
+maybe_reprompt_stored_token owner/repo ghp_token
+RC=$?
+set -e
+
+echo "RC=$RC"
+echo "PROBE=$probe_called"
+echo "SETUP=$setup_called"
+"""
+        r = run(["bash", "-c", script], env=env)
+        check("returns 0", "RC=0" in r.stdout, r.stdout)
+        check("probe not called", "PROBE=0" in r.stdout, r.stdout)
+        check("setup not called", "SETUP=0" in r.stdout, r.stdout)
+
+
+def test_task026_ac8_maybe_reprompt_empty_token() -> None:
+    print("\n[task_026 AC8(b): maybe_reprompt_stored_token with empty token]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        env = {**os.environ, "HOME": str(tmp), "VIBE_CONFIG": f"{tmp}/no-config", "VIBE_SOURCE_ONLY": "1"}
+
+        script = f"""
+set -e
+source {shlex.quote(str(VIBE))}
+
+probe_called=0
+setup_called=0
+
+stored_token_rejected() {{ probe_called=1; return 1; }}
+setup_token() {{ setup_called=1; }}
+
+set +e
+maybe_reprompt_stored_token owner/repo ""
+RC=$?
+set -e
+
+echo "RC=$RC"
+echo "PROBE=$probe_called"
+echo "SETUP=$setup_called"
+"""
+        r = run(["bash", "-c", script], env=env)
+        check("returns 0", "RC=0" in r.stdout, r.stdout)
+        check("probe not called", "PROBE=0" in r.stdout, r.stdout)
+        check("setup not called", "SETUP=0" in r.stdout, r.stdout)
+
+
+def test_task026_ac8_maybe_reprompt_rejected() -> None:
+    print("\n[task_026 AC8(c): maybe_reprompt_stored_token with rejection]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        env = {**os.environ, "HOME": str(tmp), "VIBE_CONFIG": f"{tmp}/no-config", "VIBE_SOURCE_ONLY": "1"}
+
+        script = f"""
+set -e
+source {shlex.quote(str(VIBE))}
+
+probe_called=0
+setup_called=0
+setup_repo=""
+
+stored_token_rejected() {{ probe_called=1; return 0; }}
+setup_token() {{ setup_called=1; setup_repo="$1"; }}
+
+set +e
+maybe_reprompt_stored_token owner/repo ghp_token 2>&1
+RC=$?
+set -e
+
+echo "RC=$RC"
+echo "PROBE=$probe_called"
+echo "SETUP=$setup_called"
+echo "REPO=$setup_repo"
+"""
+        r = run(["bash", "-c", script], env=env)
+        check("returns 0", "RC=0" in r.stdout, r.stdout)
+        check("probe called", "PROBE=1" in r.stdout, r.stdout)
+        check("setup called", "SETUP=1" in r.stdout, r.stdout)
+        check("setup called with correct repo", "REPO=owner/repo" in r.stdout, r.stdout)
+        check("warning message printed", "was rejected by GitHub" in r.stdout, r.stdout)
+
+
+def test_task026_ac8_maybe_reprompt_not_rejected() -> None:
+    print("\n[task_026 AC8(d): maybe_reprompt_stored_token with non-rejection]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        env = {**os.environ, "HOME": str(tmp), "VIBE_CONFIG": f"{tmp}/no-config", "VIBE_SOURCE_ONLY": "1"}
+
+        script = f"""
+set -e
+source {shlex.quote(str(VIBE))}
+
+probe_called=0
+setup_called=0
+
+stored_token_rejected() {{ probe_called=1; return 1; }}
+setup_token() {{ setup_called=1; }}
+
+set +e
+maybe_reprompt_stored_token owner/repo ghp_token
+RC=$?
+set -e
+
+echo "RC=$RC"
+echo "PROBE=$probe_called"
+echo "SETUP=$setup_called"
+"""
+        r = run(["bash", "-c", script], env=env)
+        check("returns 0", "RC=0" in r.stdout, r.stdout)
+        check("probe called", "PROBE=1" in r.stdout, r.stdout)
+        check("setup NOT called", "SETUP=0" in r.stdout, r.stdout)
+
+
+def test_task026_ac8_maybe_reprompt_placement() -> None:
+    """AC8's static placement assertion. Must be genuinely placement-aware —
+    a prior version of this test located the call line, then scanned
+    backwards for a nearby 'GITHUB_TOKEN=' assignment but never actually
+    used the result of that scan to fail anything: the `check()` call only
+    asserted the call line's bare text presence anywhere in the file, so an
+    unconditional call site placed right after the `elif` block, or inside
+    the EMPTY-token ('then') branch — exactly the case AC8 calls out as
+    "would probe a freshly-pasted token" — would have passed just as easily.
+    This rewrite finds the specific `if [...GITHUB_TOKEN...]` branch nearest
+    the stored-token lookup, tracks bash if/fi keyword depth to locate that
+    branch's own matching `else` and `fi` (elif/else don't shift depth,
+    since they don't open a new if), and requires the call site to sit
+    strictly between them — i.e. inside the non-empty-token else-branch,
+    not the then-branch, and not after the fi (unconditional)."""
+    print("\n[task_026 AC8: launch-path call placement check]")
+    lines = VIBE.read_text().split("\n")
+    call_marker = 'maybe_reprompt_stored_token "$GITHUB_REPO" "$GITHUB_TOKEN"'
+
+    call_idx = next((i for i, line in enumerate(lines) if call_marker in line), None)
+    check("call site exists in vibe", call_idx is not None, "not found in vibe")
+    if call_idx is None:
+        return
+
+    # Nearest preceding "GITHUB_TOKEN=$(lookup_token" assignment — establishes
+    # we're looking at the stored-token lookup context, not some unrelated
+    # GITHUB_TOKEN assignment elsewhere in the file (e.g. inside setup_token).
+    assign_idx = next(
+        (i for i in range(call_idx - 1, -1, -1) if "GITHUB_TOKEN=$(lookup_token" in lines[i]),
+        None,
+    )
+    check("a preceding 'GITHUB_TOKEN=$(lookup_token' assignment exists before the call site",
+          assign_idx is not None, "not found")
+    if assign_idx is None:
+        return
+
+    # Nearest "if ... GITHUB_TOKEN ..." line between that assignment and the call site.
+    if_idx = None
+    for i in range(assign_idx + 1, call_idx + 1):
+        tokens = lines[i].strip().split()
+        if tokens and tokens[0] == "if" and "GITHUB_TOKEN" in lines[i]:
+            if_idx = i
+            break
+    check("a GITHUB_TOKEN-testing 'if' branch exists between the assignment and the call site",
+          if_idx is not None, "not found")
+    if if_idx is None:
+        return
+
+    # Walk forward from the if, tracking if/fi depth (elif/else are distinct
+    # tokens from "if"/"fi" so they don't perturb the count), to find this
+    # branch's own "else" (at depth 1, i.e. not inside a nested if) and its
+    # matching "fi" (where depth returns to 0).
+    depth = 0
+    else_idx = None
+    fi_idx = None
+    for i in range(if_idx, len(lines)):
+        tokens = lines[i].strip().split()
+        for tok in tokens:
+            if tok == "if":
+                depth += 1
+            elif tok == "fi":
+                depth -= 1
+                if depth == 0:
+                    fi_idx = i
+                    break
+        if fi_idx is not None:
+            break
+        if depth == 1 and "else" in tokens and else_idx is None:
+            else_idx = i
+
+    check("the branch has a matching 'fi'", fi_idx is not None, "no matching fi found")
+    check("the branch has an 'else'", else_idx is not None, "no else found")
+    if fi_idx is None or else_idx is None:
+        return
+
+    check("call site sits inside the non-empty-token else-branch (between its 'else' and 'fi') "
+          "— NOT the empty-token then-branch, and NOT placed unconditionally after the fi",
+          else_idx < call_idx < fi_idx,
+          f"if_idx={if_idx} else_idx={else_idx} call_idx={call_idx} fi_idx={fi_idx}")
+
+
+def test_task026_ac9_help_mentions_pat() -> None:
+    print("\n[task_026 AC9: vibe --help mentions vibe pat]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        env = {**os.environ, "HOME": str(tmp), "VIBE_CONFIG": f"{tmp}/no-config"}
+        r = run(["bash", str(VIBE), "--help"], env=env)
+        check("--help contains vibe pat", "vibe pat" in r.stdout, r.stdout[:500])
+        check("help text contains HOST shell", "HOST shell" in r.stdout, r.stdout)
+
+
+def test_task026_ac9_regression_gate() -> None:
+    """AC9's code-check.py clause. Deliberately does NOT spawn smoke-test.py
+    from within smoke-test.py — a prior attempt at this test did exactly
+    that and produced unbounded self-recursion (a runaway process tree that
+    had to be killed). code-check.py is fast (shellcheck only) and
+    non-recursive, so it's safe to run in-process here. AC9's other clause
+    — "every pre-existing smoke-test.py test function still passes" — is
+    evidenced by the single full top-level `python3 smoke-test.py` run that
+    produces test-output.log for this cycle (see .vs/cycle-1/test-output.log),
+    not by anything this function does."""
+    print("\n[task_026 AC9: regression gate — code-check.py passes]")
+    r = run(["python3", str(REPO / "code-check.py")], cwd=REPO)
+    check("code-check.py exits 0", r.returncode == 0, r.stdout + r.stderr)
+
+
+def test_task026_ac10_readme_documents_pat() -> None:
+    print("\n[task_026 AC10: README.md documents vibe pat and 401]")
+    readme = (REPO / "README.md").read_text()
+    check("README contains 'vibe pat'", "vibe pat" in readme, "")
+    check("README contains '401'", "401" in readme, "")
+
+
+def test_task026_ac10_manual_tests_documents_pat() -> None:
+    print("\n[task_026 AC10: MANUAL-TESTS.md documents vibe pat and VIBE_PAT_CHECK=0]")
+    manual = (REPO / "MANUAL-TESTS.md").read_text()
+    check("MANUAL-TESTS contains 'vibe pat'", "vibe pat" in manual, "")
+    check("MANUAL-TESTS contains 'VIBE_PAT_CHECK=0'", "VIBE_PAT_CHECK=0" in manual, "")
+
+
+# ── task_026 cycle-2: three security fixes ──────────────────────────────────
+# (1) maybe_reprompt_stored_token must survive a REAL setup_token call under
+#     `set -euo pipefail` + closed stdin — setup_token has unguarded `read`s
+#     (out of scope to change) that return non-zero on EOF; the call site
+#     wraps it `setup_token "$repo" || true` so those failures can't abort
+#     the launcher.
+# (2) Slug trust boundary: maybe_reprompt_stored_token must fail open (no
+#     probe) for a repo string that fails is_valid_repo_slug, since
+#     detect_github_repo's regex is looser and can hand it something
+#     is_valid_repo_slug rejects (e.g. a `+` in a path segment); `vibe pat`
+#     with no arg must likewise refuse a detected slug that fails
+#     is_valid_repo_slug, rather than trust it into rotate_token/save_token.
+# (3) rotate_token must refuse to save a pasted token containing `"`, `\`,
+#     whitespace, or a control character — those would break the unescaped
+#     `header = "Authorization: Bearer <token>"` -K config line consumed by
+#     stored_token_rejected.
+
+def test_task026_c2_maybe_reprompt_real_setup_token_survives_closed_stdin() -> None:
+    """Fix (1): stub ONLY stored_token_rejected (forced rejection); let the
+    real setup_token run, under `set -euo pipefail`, with stdin closed. Its
+    unguarded `read -rp` (open-browser prompt) and `read -rsp` (token paste)
+    both fail on EOF, and `open` isn't installed in this container either —
+    none of that may abort the script. Assert rc=0 AND a sentinel printed
+    after the call actually executes (proof the script survived, not just
+    that the final exit code happened to be 0)."""
+    print("\n[task_026 c2 fix-1: real setup_token survives closed stdin under set -euo pipefail]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        env = {**os.environ, "HOME": str(tmp), "VIBE_CONFIG": f"{tmp}/no-config", "VIBE_SOURCE_ONLY": "1"}
+
+        script = f"""
+set -euo pipefail
+source {shlex.quote(str(VIBE))}
+
+stored_token_rejected() {{ return 0; }}
+
+maybe_reprompt_stored_token owner/repo ghp_task026_fixture_token < /dev/null
+echo SENTINEL_SURVIVED_C2A
+"""
+        r = run(["bash", "-c", script], env=env)
+        check("rc=0", r.returncode == 0, f"returncode={r.returncode} stderr={r.stderr}")
+        check("sentinel printed after the call (script survived)", "SENTINEL_SURVIVED_C2A" in r.stdout, r.stdout)
+        check("fixture token absent from output", "ghp_task026_fixture_token" not in (r.stdout + r.stderr), r.stdout + r.stderr)
+
+
+def test_task026_c2_maybe_reprompt_invalid_slug_never_probes() -> None:
+    """Fix (2), wrapper half: an invalid slug (fails is_valid_repo_slug, e.g.
+    a `+` that detect_github_repo's looser regex would tolerate) must make
+    maybe_reprompt_stored_token return 0 WITHOUT ever invoking the curl
+    probe. Real stored_token_rejected (not stubbed) + a logging curl shim —
+    the shim's log files must stay entirely absent/empty, proving the probe
+    was never reached."""
+    print("\n[task_026 c2 fix-2: maybe_reprompt_stored_token never probes an invalid slug]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        new_path, argv_log, stdin_log = _setup_curl_shim(tmp, response_code="401")
+        env = {**os.environ, "HOME": str(tmp), "PATH": new_path, "VIBE_SOURCE_ONLY": "1"}
+
+        script = f"""
+source {shlex.quote(str(VIBE))}
+set +e
+maybe_reprompt_stored_token "owner/re+po" ghp_task026_fixture_token
+RC=$?
+set -e
+echo "RC=$RC"
+"""
+        r = run(["bash", "-c", script], env=env)
+        check("returns 0", "RC=0" in r.stdout, r.stdout)
+        check("curl shim argv log never created (probe never ran)", not argv_log.exists(),
+              argv_log.read_text() if argv_log.exists() else "")
+        check("curl shim stdin log never created (probe never ran)", not stdin_log.exists(),
+              stdin_log.read_text() if stdin_log.exists() else "")
+        check("fixture token absent from output", "ghp_task026_fixture_token" not in (r.stdout + r.stderr), r.stdout + r.stderr)
+
+
+def test_task026_c2_pat_no_arg_refuses_invalid_detected_slug() -> None:
+    """Fix (2), `vibe pat` half: a git checkout whose 'origin' remote yields
+    a slug that detect_github_repo accepts but is_valid_repo_slug rejects
+    (a `+` in the owner segment) must make `vibe pat` (no arg) exit 1 with
+    the pinned stderr refusal — never reaching rotate_token/save_token."""
+    print("\n[task_026 c2 fix-2: vibe pat (no arg) refuses an is_valid_repo_slug-failing detected slug]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        checkout = tmp / "checkout"
+        checkout.mkdir()
+        env = {**os.environ, "HOME": str(tmp), "VIBE_CONFIG": f"{tmp}/no-config", "VIBE_SOURCE_ONLY": "1"}
+
+        run(["git", "init"], cwd=checkout, env=env)
+        run(["git", "remote", "add", "origin", "https://github.com/ow+ner/repo.git"], cwd=checkout, env=env)
+
+        script = f"""
+cd {shlex.quote(str(checkout))}
+source {shlex.quote(str(VIBE))}
+pat_handle_subcommand pat < /dev/null
+"""
+        r = run(["bash", "-c", script], env=env)
+        check("exit 1", r.returncode == 1, f"returncode={r.returncode}")
+        check("stderr refusal names the detected slug", "ow+ner/repo" in r.stderr, r.stderr)
+        check("stderr refusal says not a valid owner/repo", "is not a valid owner/repo" in r.stderr, r.stderr)
+        check("nothing on stdout", r.stdout == "", r.stdout)
+
+
+def test_task026_c2_rotate_token_rejects_bad_charset() -> None:
+    """Fix (3): a pasted token containing a `"`, or containing whitespace,
+    must be refused — pinned stderr message, exit 1, token store
+    byte-identical to before the call. A clean fixture-token paste in the
+    same store must still save normally (proves the charset check isn't
+    over-broad)."""
+    print("\n[task_026 c2 fix-3: rotate_token refuses tokens with disallowed characters]")
+
+    for label, bad_token_hstring in [
+        ("embedded double-quote", '"bad\\"token"'),
+        ("embedded space", '"bad token"'),
+    ]:
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            env = {**os.environ, "HOME": str(tmp), "VIBE_CONFIG": f"{tmp}/no-config", "VIBE_SOURCE_ONLY": "1"}
+            tokens_file = tmp / ".vibe" / "tokens"
+            tokens_file.parent.mkdir(parents=True)
+            tokens_file.write_text("owner/repo=ghp_existing\n")
+            orig_content = tokens_file.read_text()
+
+            # rotate_token always calls `exit` (never `return`), so its exit
+            # code IS the subprocess's returncode — check that directly, the
+            # same way test_task026_ac3_empty_input_eof does, rather than an
+            # `echo RC=$?` that would never run.
+            script = f"""
+source {shlex.quote(str(VIBE))}
+rotate_token owner/repo <<< {bad_token_hstring}
+"""
+            r = run(["bash", "-c", script], env=env)
+            check(f"exit 1 ({label})", r.returncode == 1, f"returncode={r.returncode}")
+            check(f"pinned refusal message on stderr ({label})",
+                  "vibe pat: token contains characters no GitHub PAT uses — not saved" in r.stderr, r.stderr)
+            check(f"token store byte-identical ({label})", tokens_file.read_text() == orig_content,
+                  f"before: {orig_content!r}, after: {tokens_file.read_text()!r}")
+
+    # Clean token in the same shape of store still saves — the charset check
+    # isn't accidentally rejecting valid PAT charset bytes.
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        env = {**os.environ, "HOME": str(tmp), "VIBE_CONFIG": f"{tmp}/no-config", "VIBE_SOURCE_ONLY": "1"}
+        tokens_file = tmp / ".vibe" / "tokens"
+        tokens_file.parent.mkdir(parents=True)
+        tokens_file.write_text("owner/repo=ghp_existing\n")
+
+        script = f"""
+source {shlex.quote(str(VIBE))}
+echo ghp_task026_fixture_token | rotate_token owner/repo
+"""
+        r = run(["bash", "-c", script], env=env)
+        check("clean token: exit 0", r.returncode == 0, f"returncode={r.returncode} stderr={r.stderr}")
+        check("clean token: saved", "owner/repo=ghp_task026_fixture_token" in tokens_file.read_text(),
+              tokens_file.read_text())
+        check("clean token: fixture token absent from process output", "ghp_task026_fixture_token" not in (r.stdout + r.stderr), r.stdout + r.stderr)
+
+
 def main() -> int:
     test_help()
     test_version()
@@ -11434,6 +12125,37 @@ def main() -> int:
     test_task024_ac8_new_hunk_logic_no_forks_in_scan_blob_stdin()
     test_task024_ac10_changelog_entry_present()
     test_task024_ac10_todo_hardening_item_ticked()
+
+    # task_026 (haiku Tester): `vibe pat [repo]` subcommand for PAT rotation +
+    # launch-time 401 auto-reprompt (rotate_token, stored_token_rejected,
+    # maybe_reprompt_stored_token, subcommand parsing, arg validation, help
+    # text, README/MANUAL-TESTS docs)
+    test_task026_ac1_arg_parsing_too_many()
+    test_task026_ac1_arg_parsing_invalid_slug()
+    test_task026_ac1_arg_parsing_help()
+    test_task026_ac2_token_overwrite_existing()
+    test_task026_ac3_empty_input_eof()
+    test_task026_ac3_empty_input_newline()
+    test_task026_ac4_auto_detect_repo_no_git()
+    test_task026_ac4_auto_detect_repo_with_git()
+    test_task026_ac5_stored_token_rejected_401()
+    test_task026_ac5_stored_token_rejected_200()
+    test_task026_ac5_stored_token_rejected_404_000_exit()
+    test_task026_ac6_curl_arg_logging()
+    test_task026_ac7_no_token_in_output()
+    test_task026_ac8_maybe_reprompt_vibe_pat_check_zero()
+    test_task026_ac8_maybe_reprompt_empty_token()
+    test_task026_ac8_maybe_reprompt_rejected()
+    test_task026_ac8_maybe_reprompt_not_rejected()
+    test_task026_ac8_maybe_reprompt_placement()
+    test_task026_ac9_help_mentions_pat()
+    test_task026_ac9_regression_gate()
+    test_task026_ac10_readme_documents_pat()
+    test_task026_ac10_manual_tests_documents_pat()
+    test_task026_c2_maybe_reprompt_real_setup_token_survives_closed_stdin()
+    test_task026_c2_maybe_reprompt_invalid_slug_never_probes()
+    test_task026_c2_pat_no_arg_refuses_invalid_detected_slug()
+    test_task026_c2_rotate_token_rejects_bad_charset()
 
     print()
     if FAILURES:
