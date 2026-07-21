@@ -1,0 +1,367 @@
+diff --git a/.vs/spec.md b/.vs/spec.md
+new file mode 100644
+index 0000000..51ede59
+--- /dev/null
++++ b/.vs/spec.md
+@@ -0,0 +1,62 @@
++# Spec — task_026: `vibe pat [repo]` PAT rotation + launch-time 401 reprompt
++
++## Task summary
++
++vibe has no PAT rotation path: `setup_token` prompts only when a repo has NO stored token, so an expired/revoked fine-grained PAT means hand-editing `~/.vibe/tokens`. This task adds (1) a host-side `vibe pat [owner/repo]` subcommand that re-prompts (hidden input) and overwrites the stored PAT for a repo, and (2) a launch-time check that detects a definitively-rejected stored token (HTTP 401 from api.github.com) and auto-invokes the existing `setup_token` prompt at exactly the moment rotation bites. Rotation then needs no rebuild: `GITHUB_TOKEN` flows via `remoteEnv` through `devcontainer exec`, re-resolved every launch.
++
++## Pinned contract
++
++- **Subcommand parsing**: `vibe pat` is a host-side subcommand parsed where `vibe learn` is parsed, and like `vibe learn` it never launches a container. Accepted forms: `vibe pat` (repo inferred from the current directory via the existing `detect_github_repo`; error to stderr with a one-line hint if detection fails, exit 1) and `vibe pat <owner/repo>` (explicit slug). `vibe pat --help` or `vibe pat -h` prints a short usage block (stdout, exit 0) BEFORE slug validation. Any other argument count → one-line usage error to stderr, exit 1.
++- **Slug validation**: the explicit slug must be `owner/repo` with exactly one `/` and both segments non-empty and matching `[A-Za-z0-9._-]+`. Invalid → one-line error to stderr, exit 1. Reserved slash-free token keys (`ZOTERO_API_KEY`, `OPENPROJECT_MCP_URL`, `OPENPROJECT_MCP_BEARER`) are structurally excluded by the one-`/` rule; no special handling.
++- **`vibe pat` flow** (function `rotate_token <repo>`): first line of normal output is exactly `Repo: <owner/repo>`; second line is exactly `stored token found — it will be replaced` or `no stored token yet`; NEVER print any part of any token value. Print the plain line `https://github.com/settings/personal-access-tokens` before the prompt; do NOT auto-`open` a browser. Prompt via `read -rsp` (hidden input; reads stdin fine when stdin is not a tty, which is how smoke tests feed it) — and because `vibe` runs under `set -euo pipefail`, the read MUST be errexit-guarded so immediate EOF cannot abort before the message prints: use the established `_learning_capture` idiom (`if ! IFS= read -rsp "..." token; then token=""; fi` or equivalent; see vibe ~1438). Empty input — whether a lone newline OR immediate EOF/closed stdin — → `aborted — token store unchanged` to stderr, exit 1, store byte-identical. Non-empty → `save_token "$repo" "$token"`, print `✓ Token saved for <owner/repo>. Takes effect on the next vibe launch (no rebuild needed).`, exit 0.
++- **401 probe** (function `stored_token_rejected <repo> <token>`): one `curl` invocation, called as plain `curl` (PATH-shimmable), of the form `curl -s -o /dev/null -w '%{http_code}' --max-time 5 -K -` with the URL `https://api.github.com/repos/<owner/repo>` in argv and the auth header supplied ONLY via the `-K -` config read from stdin (heredoc/pipe writing the single line `header = "Authorization: Bearer <token>"`), so the token never appears in curl's argv (`ps`-visible) and never touches disk. (The config line is unescaped: tokens containing `"` or `\` are out of contract — GitHub PAT charset is alphanumeric+`_`, and the fixture token complies.) Decision rule: capture the `-w` output; ignore curl's own exit status entirely; return 0 (rejected) iff the captured string is exactly `401`; every other outcome — `200`, `403`, `404`, `5xx`, `000`, curl non-zero exit, empty output — returns 1. Fail-open by design: a network flake or scope oddity must never block a launch or trigger a false reprompt.
++- **Call-site wrapper** (function `maybe_reprompt_stored_token <repo> <token>`, sourceable and unit-testable): returns 0 immediately (no probe) when `VIBE_PAT_CHECK` = `0` OR when `<token>` is empty (an empty lookup result is the no-stored-token case — `setup_token` will run anyway; probing an empty bearer is a bug). Otherwise calls `stored_token_rejected`; on rejection prints exactly `  ⚠ Stored PAT for <owner/repo> was rejected by GitHub (expired or revoked) — let's replace it.` (stderr or stdout — Generator's choice, but the string is pinned) and calls `setup_token "$repo"` (existing flow: prompt, save, set `GITHUB_TOKEN`; its empty-input branch already degrades to launching without GitHub auth). On non-rejection, does nothing. The wrapper ALWAYS returns 0, whichever branch runs (never propagate `stored_token_rejected`'s status) — its bare one-line call site sits under `set -e`, and a non-zero return would turn every healthy launch into a hard failure.
++- **Launch-path integration**: in the launch path, immediately after `GITHUB_TOKEN` is resolved from the token store (the branch where `lookup_token` returned a value — vibe's existing `GITHUB_TOKEN=$(lookup_token "$GITHUB_REPO")` non-empty case), insert the single call `maybe_reprompt_stored_token "$GITHUB_REPO" "$GITHUB_TOKEN"`. Never called after a fresh interactive paste (no prompt loop). All logic lives in the wrapper so smoke tests can source and drive it; the call site itself is one line.
++- **Opt-out**: `VIBE_PAT_CHECK=0` (env / `~/.vibe/config`) skips the probe via the wrapper's guard (the `vibe pat` subcommand is unaffected). Any other value, or unset → check runs.
++- **No token values in output**: neither the subcommand nor the probe may echo token bytes (no masked previews). No new `set -x`. Accepted residual risk, stated deliberately: the token IS present in the in-process shell variables and in the stdin pipe to curl — that is process-internal and acceptable; the `ps`-argv exposure class is eliminated by the `-K -` mechanism above.
++- **Help text**: `vibe --help` gains a `vibe pat [owner/repo]` line (rotate/overwrite the stored GitHub PAT) in the style of the `vibe learn` block, and the pat help text includes the phrase `HOST shell` (the runs-on-host caveat).
++- **Fixture token**: all tests use the literal `ghp_task026_fixture_token` as the token value, everywhere a token is fed.
++
++## Files in scope
++
++- `vibe` — `rotate_token`, `stored_token_rejected`, `maybe_reprompt_stored_token`, subcommand parsing (incl. `--help`/`-h`), one-line launch-path call site, help text.
++- `README.md` — short addition where PATs/tokens are documented: rotation via `vibe pat`, and the launch-time 401 auto-reprompt (must mention `401`).
++- `MANUAL-TESTS.md` — new entry: end-to-end revoked-PAT launch reprompt, and `VIBE_PAT_CHECK=0` suppressing it (must mention `VIBE_PAT_CHECK=0`). Manual because it needs live GitHub + docker.
++- `TODO.md` + `CHANGELOG.md` — per repo convention, same commit as the closing change.
++- NOT in scope for Generator: `smoke-test.py` `test_task026_*` functions (Tester-owned; cycle-anchored freeze per harness rule).
++
++## Acceptance criteria
++
++1. `vibe pat a b c` (too many args) and `vibe pat not-a-slug` each exit 1 with a one-line error on **stderr**; nothing is created or changed in the token store. `vibe pat --help` exits 0 and prints usage on stdout.
++2. `vibe pat owner/repo` with `ghp_task026_fixture_token` piped on stdin overwrites an existing `owner/repo=` line in a tmp-`$HOME` token store, preserves all other lines (including a `ZOTERO_API_KEY=` line and an `OPENPROJECT_MCP_BEARER=` line with trailing `=` padding), leaves the file `chmod 600`, exits 0, and stdout contains the pinned `Repo: owner/repo` and `✓ Token saved` lines.
++3. `vibe pat owner/repo` with empty stdin exits 1, emits the pinned abort line on stderr, and leaves the token store byte-identical — tested BOTH ways: immediate EOF (closed/0-byte stdin) and a lone `\n`.
++4. `vibe pat` with no arg in a directory where `detect_github_repo` fails exits 1 with the stderr hint; in a git checkout with an origin remote it prints `Repo: <slug>` where `<slug>` is what `detect_github_repo` reports for that checkout (test feeds closed/empty stdin so the run terminates via the abort path rather than blocking at the prompt).
++5. `stored_token_rejected` (sourced directly, tmp `$HOME`, PATH-shimmed `curl`): shim emitting `401` → returns 0; shims emitting `200`, `404`, `000`, and a shim that exits non-zero after emitting nothing → each returns 1.
++6. The AC5 shim logs its argv and its stdin to files; assertions: argv contains `api.github.com/repos/owner/repo` and `-K`; stdin capture contains `Authorization: Bearer ghp_task026_fixture_token`; argv does NOT contain the fixture token.
++7. For every AC2/AC3/AC5/AC6 run, the fixture token string is absent from captured stdout+stderr.
++8. `maybe_reprompt_stored_token` (sourced, with `stored_token_rejected` and `setup_token` overridden by logging stubs after sourcing): (a) `VIBE_PAT_CHECK=0` → neither stub called, returns 0; (b) empty token arg → neither stub called, returns 0; (c) token present + rejection stub returns 0 → warning line emitted (pinned string), `setup_token` stub called once with the repo arg, AND the wrapper itself returns 0; (d) token present + rejection stub returns 1 → `setup_token` stub not called, no warning, AND the wrapper itself returns 0 (all four branches a–d assert return 0 — the bare `set -e` call site makes any non-zero return a launch-killer). Plus one static assertion that the `maybe_reprompt_stored_token "$GITHUB_REPO" "$GITHUB_TOKEN"` call line appears in the launch path inside the stored-token branch (i.e. between that branch's opening and its `fi` — a placement-aware grep, not bare text presence, so an unconditional placement that would probe a freshly-pasted token fails the test).
++9. `vibe --help` output contains a `vibe pat` line AND the phrase `HOST shell` within the pat help text; `python3 code-check.py` passes; every pre-existing `smoke-test.py` test function (all functions other than the new `test_task026_*` additions), unchanged, still passes (regression gate).
++10. `README.md` contains both `vibe pat` and `401`; `MANUAL-TESTS.md` contains both `vibe pat` and `VIBE_PAT_CHECK=0`.
++
++## Out of scope
++
++- Any in-container `/PAT` or chat-based token entry (deliberately rejected: transcript would hold the secret).
++- Validating a freshly-pasted token (no post-paste probe; no prompt loops).
++- Treating `403`/`404` as rejection, SSO handling, pre-expiry warnings, GitHub API scope introspection.
++- Shared-repo (`VIBE_SHARED_TOKEN_*`) launch-time validation — `vibe pat <slug>` covers rotating their stored lines; probing every shared repo at launch is out.
++- Auto-opening a browser from `vibe pat`.
++- Changes to `save_token` / `lookup_token` / `remove_token` / `setup_token` semantics.
++
++## Test location
++
++`smoke-test.py` — Tester appends new `test_task026_*` functions (host-side, no docker, no network; PATH-shim for curl; tmp `$HOME`; source-the-functions convention per `test_token_helpers`). The sourced `vibe` carries `set -euo pipefail`, so any bare call to a function expected to return non-zero (`stored_token_rejected` in AC5, the stubs' callers in AC8) MUST be bracketed `set +e; …; set -e` (precedent: the task_017 c2 lock tests, e.g. `test_task017_c2_lock_release_wrong_project_refused_intact`) or written as `if fn; then … else … fi` — never `fn; echo $?` bare. Immutability is cycle-anchored per harness rule: once committed, `test_task026_*` functions are frozen for this task; Generator never edits them.
++
++## Proposed budget
++
++3 cycles — single-file bash feature with established test conventions; cycle 2+ reserved for call-site/quoting nits.
++
++## Model plan
++
++- Generator: sonnet, ceiling opus. Difficulty: low-medium — three small bash functions + parsing + docs, but quoting/exit-code discipline matters.
++- Tester: haiku. Spec Critic: sonnet. Planner/Evaluator: session model (Fable 5 chair).
++- Fable rung: not pre-authorised.
+diff --git a/.vs/tasks.json b/.vs/tasks.json
+index 168f772..849937b 100644
+--- a/.vs/tasks.json
++++ b/.vs/tasks.json
+@@ -175,5 +175,14 @@
+   "assigned_to": "generator",
+   "mode": "rigorous",
+   "last_modified": "2026-07-17T09:19:00Z"
++ },
++ {
++  "id": "task_026",
++  "description": "vibe pat [repo] PAT rotation subcommand + launch-time 401 stored-token reprompt (fail-open probe, -K - stdin auth header, VIBE_PAT_CHECK=0 opt-out)",
++  "implementation_status": "complete",
++  "test_status": "pending",
++  "assigned_to": "generator",
++  "mode": "rigorous",
++  "last_modified": "2026-07-21T14:57:47Z"
+  }
+ ]
+\ No newline at end of file
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index d1cf703..574531a 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -4,6 +4,10 @@ vibe's done-work audit log. Each entry is a closed task — either successful (`
+ 
+ Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion between TODO and CHANGELOG. Before this date, closed items lived in `TODO.md ## Done`; they migrated here verbatim. New closed items append to this file.
+ 
++## 2026-07-21
++
++- [x] **task_026: `vibe pat [owner/repo]` PAT rotation + launch-time 401 auto-reprompt** — vibe had no rotation path: `setup_token` only fires when NO token is stored, so an expired/revoked fine-grained PAT meant hand-editing `~/.vibe/tokens`. Adds a host-side `vibe pat [owner/repo]` subcommand, dispatched (and exits) before `parse_vibe_args`, same convention as `learn`/`repos`/`audit`: no arg infers the repo via `detect_github_repo` (stderr hint + exit 1 on failure); an explicit slug is validated with the existing `is_valid_repo_slug` (one `/`, `[A-Za-z0-9._-]+` both sides); `--help`/`-h` prints usage and exits 0 BEFORE slug validation; any other arg count is a one-line stderr usage error, exit 1. Core `rotate_token <repo>` prints `Repo: <owner/repo>` then `stored token found — it will be replaced` / `no stored token yet`, then the settings-tokens URL (never auto-opens a browser), then reads the new token via an errexit-guarded `read -rsp` (same `_learning_capture` idiom, vibe ~1438 — immediate EOF can't abort `set -e` before the abort message prints); empty input (EOF or a lone newline) aborts with `aborted — token store unchanged` on stderr, store byte-identical; non-empty overwrites via the existing `save_token` and confirms with `✓ Token saved for <repo>. Takes effect on the next vibe launch (no rebuild needed).` — never prints the token itself. Launch-time half: `stored_token_rejected <repo> <token>` makes one `curl -s -o /dev/null -w '%{http_code}' --max-time 5 -K -` call per launch, feeding `header = "Authorization: Bearer <token>"` via a here-string so the token never touches curl's argv (`ps`-visible) or disk; curl's own exit status is ignored entirely — only an exact `401` returns rejected, every other outcome (200/403/404/5xx/000/curl failure/empty) fails open. Wrapper `maybe_reprompt_stored_token <repo> <token>` (sourceable, unit-testable) no-ops when `VIBE_PAT_CHECK=0` or the token is empty, otherwise probes and — only on rejection — prints `  ⚠ Stored PAT for <repo> was rejected by GitHub (expired or revoked) — let's replace it.` and re-runs the existing `setup_token` flow; it ALWAYS returns 0 regardless of branch, since its one-line call site (`GITHUB_TOKEN=$(lookup_token ...)`'s non-empty/else branch, vibe ~2768) sits under `set -euo pipefail` and any other return would turn a healthy launch into a hard failure. `vibe --help` gains the `vibe pat` line plus a `HOST shell` caveat, matching the `vibe learn` block's style. README's token-store row and a new MANUAL-TESTS Test 37 (manual rotation, end-to-end revoked-PAT reprompt, `VIBE_PAT_CHECK=0` suppression — needs live GitHub) document the feature; `smoke-test.py` `test_task026_*` coverage is Tester-owned for this cycle. TDD: a scratch harness (not committed — gitignored under `.vs/cycle-1/scratch-tests/`) drove all ten ACs red-then-green, including the curl-shim argv/stdin capture (proves the fixture token never reaches argv) and a placement-aware static check that the launch-path call sits inside the stored-token `else` branch, not the fresh-paste one. Verified: `python3 code-check.py` clean (19 files); full pre-existing `python3 smoke-test.py` green, no regressions.
++
+ ## 2026-07-17
+ 
+ - [x] **task_025: `code-check.py` shellchecks `devcontainer/git-hooks/` via a fixture-safe `CODE_CHECK_SCRIPTS` env seam** — the content-guard scanner + its three git hooks (hardened across task_019/022/023/024) had no standing `python3 code-check.py` coverage: every prior iteration had to shellcheck that directory by a separate direct invocation, because extending `scripts()` was blocked by a landmine noted in task_019's CHANGELOG entry — `smoke-test.py`'s `_patched_code_check()` fixture rewrote `scripts()` via a literal source-text `.replace()` of its exact body, so any edit silently no-op'd the patch and broke the JSON-count fixture tests. Fixed both problems together. `scripts()` now checks a new `CODE_CHECK_SCRIPTS` environment variable first: if set to a non-empty string, returns exactly the `os.pathsep`-separated `Path` list it names, in order, with no globbing and no `.exists()` filtering (the caller is declaring the exact target set); unset or empty falls through to the default set unchanged in shape except for one addition — a new git-hooks contribution, `sorted(p for p in devcontainer/git-hooks/ if p.is_file() and is_shell_script(p))`, a single flat shebang-gated pass (not a `*.sh` glob, since three of the four hook files are extensionless) appended after the `hooks/*.sh` block, then the whole candidate list `.exists()`-filtered as before. New module-level `is_shell_script(path) -> bool` is the sole shebang predicate: reads the first line defensively (`errors='ignore'`, any `OSError`/`UnicodeError` or empty file → `False`, never raises), and resolves the interpreter basename (unwrapping `#!/usr/bin/env [options] <interpreter>`, skipping `-`-prefixed option tokens like the `-S` in `#!/usr/bin/env -S bash -x`) against a `{sh, bash, dash, ksh, zsh, ash}` whitelist — deliberately excluding `fish` (whose basename is `fish`, not a `"sh" in …` substring false-positive) and non-shell interpreters. `import os` added. All four git-hooks files (`commit-msg`, `pre-commit`, `pre-push`, `vibe-content-scan.sh`) now appear in `python3 code-check.py`'s default run and in `--json`'s `files_checked`/`summary.files`; both stay shellcheck-clean (19 files total, was 15, exit 0). TDD: a scratch harness (not committed — gitignored under `.vs/cycle-1/scratch-tests/`) proved `is_shell_script` against 13 shebang-shape cases and `scripts()`'s env-seam/default-set behaviour red-then-green before and after the edit. Verified: `python3 -m py_compile code-check.py` clean; `python3 code-check.py` exit 0 across 19 files; `python3 code-check.py --json` single valid JSON object, `files_checked` includes all four `devcontainer/git-hooks/*` paths; full `python3 smoke-test.py` — only the three tests using the now-obsolete `_patched_code_check` text-patch fixture (`test_code_check_json_finding_schema`, `test_code_check_json_findings_exit1_and_count`, `test_code_check_json_summary_counts`, 5 checks total) fail, exactly the sanctioned/predicted fixture-reshape landmine this task's spec called out — every other check in the 2485-line suite (including all task_019/021/022/023/024 coverage) passes with zero regressions. The fixture reshape itself (retiring the source-text `.replace()` for the same `CODE_CHECK_SCRIPTS` seam) is a separate Tester-owned change to `smoke-test.py`.
+diff --git a/MANUAL-TESTS.md b/MANUAL-TESTS.md
+index 98cd3fb..b303ed8 100644
+--- a/MANUAL-TESTS.md
++++ b/MANUAL-TESTS.md
+@@ -929,4 +929,25 @@ Needs OP creds staged in `~/.vibe/tokens` (`OPENPROJECT_MCP_URL` / `OPENPROJECT_
+ - [ ] In a project with **no** `.vibe-allow-op` and `VIBE_OP_AUTO` unset, launch `vibe`: the banner shows **no** `op :` line; inside, `claude mcp list` does **not** list `openproject`; `env | grep OPENPROJECT` shows the bearer is **absent** from the container env.
+ - [ ] `touch .vibe-allow-op` in that project (leave it untracked), relaunch: banner shows `op : /op enabled (opted in via .vibe-allow-op)`; `claude mcp list` shows `openproject` connected; `/op` works.
+ - [ ] `git add .vibe-allow-op && git commit`, relaunch: the launcher warns the committed marker is ignored, the `op :` line is gone, and `/op` is unavailable again (a committed marker must not enable OP).
++
++---
++
++### Test 37: `vibe pat` PAT rotation + launch-time 401 reprompt (task_026)
++
++Needs a real GitHub repo with a fine-grained PAT already stored in `~/.vibe/tokens`, and a browser (`vibe pat` and `setup_token` both open `https://github.com/settings/personal-access-tokens`).
++
++**37a — manual rotation via `vibe pat`:**
++- [ ] From that project's directory, run `vibe pat` (no arg) — output shows `Repo: <owner/repo>` then `stored token found — it will be replaced`, then the settings-tokens URL, then a hidden-input prompt (nothing you type echoes)
++- [ ] Paste a valid new fine-grained PAT for the same repo — output ends with `✓ Token saved for <owner/repo>. Takes effect on the next vibe launch (no rebuild needed).`, exit 0
++- [ ] `vibe pat owner/repo` (explicit slug) behaves identically
++- [ ] Ctrl-D (EOF) or Enter on an empty prompt aborts with `aborted — token store unchanged` on stderr, exit 1, and `~/.vibe/tokens` is unchanged (diff it before/after)
++- [ ] `vibe pat --help` prints usage and exits 0; `vibe pat too many args here` exits 1 with a one-line stderr error
++
++**37b — end-to-end revoked-PAT launch reprompt:**
++- [ ] On github.com, revoke/delete the fine-grained PAT currently stored for the project (so GitHub now returns `401` for it)
++- [ ] Plain `vibe` launch in that project: after GitHub setup resolves the stored token, a line `⚠ Stored PAT for <owner/repo> was rejected by GitHub (expired or revoked) — let's replace it.` appears, then the same `setup_token` prompt/browser-open flow as a fresh repo — paste a new valid token and the launch proceeds normally with the new token in effect (`git push` works inside the container)
++- [ ] A launch with a currently-valid stored PAT shows **no** rejection warning and no reprompt — silent pass-through
++
++**37c — `VIBE_PAT_CHECK=0` suppression:**
++- [ ] With the same revoked PAT still stored, set `VIBE_PAT_CHECK=0` in `~/.vibe/config` (or export it for one launch) and launch `vibe` again — no warning, no reprompt; the launch proceeds with the (still-revoked) stored token, and any in-container `git push` fails on GitHub's side as expected — confirms the opt-out actually disables the probe rather than just suppressing the message.
+ - [ ] Set `VIBE_OP_AUTO=1` in `~/.vibe/config`, relaunch a project with no marker: `op :` line shows `opted in via VIBE_OP_AUTO`; `/op` works everywhere.
+diff --git a/README.md b/README.md
+index 9b93812..891fbbb 100644
+--- a/README.md
++++ b/README.md
+@@ -86,7 +86,7 @@ The name is only a convention — "brain2" is shorthand for "second brain". The
+ | `~/bin/vibe` | Symlink to the launcher |
+ | `~/.vibe-src/` | Clone of this repo |
+ | `~/.vibe/config` | `VIBE_PROJECTS_DIR`, `VIBE_SSH_AUTO` (opt-in: `=1` skips the per-action SSH ask in all projects), `VIBE_BRAIN2_PATH` / `VIBE_ZOTERO_PATH` (shared brain2 at `/brain2` rw + Zotero at `/zotero` ro; default `~/brain2` / `~/Zotero/storage`, mounted into every container when the dir exists, `=off` to disable), `VIBE_MODEL` (default model id for every launch; flags win), `VIBE_FABLE_CREDITS_OK` (`=1` skips the Fable 5 usage-credits confirm from 8 Jul 2026), `VIBE_OP_AUTO` (`=1` opts every project into the OpenProject MCP; off by default so `/op` never auto-activates in a public/upstream project's container — see below), `VIBE_GITHUB_OWNER` (default owner — personal account or org — offered when vibe creates a new repo; you can still type a different owner at the prompt) |
+-| `~/.vibe/tokens` | GitHub PATs (`owner/repo=ghp_...`); optional `ZOTERO_API_KEY=...` line (slash-free key → no collision with a repo entry) surfaced in-container as `$ZOTERO_API_KEY` for direct Zotero web-API calls. A shared repo's PAT lives here too, keyed by its slug — same store, same `chmod 600`. Never commit or sync to the cloud |
++| `~/.vibe/tokens` | GitHub PATs (`owner/repo=ghp_...`); optional `ZOTERO_API_KEY=...` line (slash-free key → no collision with a repo entry) surfaced in-container as `$ZOTERO_API_KEY` for direct Zotero web-API calls; optional `OPENPROJECT_MCP_URL=...` + `OPENPROJECT_MCP_BEARER=...` lines — the OpenProject MCP endpoint and bearer, loaded only into projects that opt in (see Security model). A shared repo's PAT lives here too, keyed by its slug — same store, same `chmod 600`. Rotate an expired/revoked PAT with `vibe pat [owner/repo]` (re-prompts, hidden input, overwrites in place — no rebuild needed); a launch also auto-detects a stored PAT GitHub now rejects with `401` and re-runs the same prompt right when it bites (`VIBE_PAT_CHECK=0` skips the check). Never commit or sync to the cloud |
+ | `~/.vibe/repos` | Shared-repo machine registry (`owner/repo=/local/path`), `chmod 600`. Written by `vibe repos add`; per-machine, so two Macs sharing a project each register their own local checkout path |
+ | `~/.vibe/skipped` | Projects opted out of GitHub |
+ | `~/.vibe/learning.config` | Learning library location + visibility |
+@@ -97,7 +97,7 @@ The name is only a convention — "brain2" is shorthand for "second brain". The
+ - **GitHub:** every fine-grained PAT stays scoped to a single repo. A container's blast radius is exactly the repos in its launch header — the project repo, plus any private repos it declares in `.vibe-repos` and mounts under `/repos/*` (read-only by default; `--rw` intents are lock-refereed) — each reached via its own single-repo token (routed by `credential.useHttpPath`), never a multi-repo token. If Claude goes rogue, it can only touch those announced repos.
+ - **Host FS:** only the project folder, `~/.ssh` (ro), and `~/.gitconfig` (ro) are mounted in.
+ - **Claude Pro credentials:** in a named Docker volume (`vibe-claude-config`), not bind-mounted from the host — a compromised container can't leak host credentials unless the firewall is breached.
+-- **OpenProject MCP is opt-in per project.** `/op` reaches your *private* OpenProject, so its bearer is never loaded into a container that didn't ask for it — a public/upstream repo's session gets no OP access by default. Enable it with `VIBE_OP_AUTO=1` in `~/.vibe/config` (all projects) or a local `touch .vibe-allow-op` in a specific project. The per-project marker must be **untracked** — a `.vibe-allow-op` committed to a repo is refused, so a malicious PR can't turn it on.
++- **OpenProject MCP is opt-in per project.** `/op` reaches your *private* OpenProject, so its bearer is never loaded into a container that didn't ask for it — a public/upstream repo's session gets no OP access by default. Enable it with `VIBE_OP_AUTO=1` in `~/.vibe/config` (all projects) or a local `touch .vibe-allow-op` in a specific project. The per-project marker must be **untracked** — a `.vibe-allow-op` committed to a repo is refused, so a malicious PR can't turn it on. With the opt-in satisfied and `OPENPROJECT_MCP_URL`/`OPENPROJECT_MCP_BEARER` staged in `~/.vibe/tokens`, everything else is automatic at launch: vibe spawns a Mac-side forwarder so the firewalled container can reach a tailnet-only endpoint, and the container registers the MCP at start only after a health probe succeeds (`register-op-mcp.sh`) — an unreachable endpoint leaves `/op` unregistered for the session instead of erroring on every Claude start. Opt-in, creds, and the `--add-host` route are fixed at container creation, so enabling OP in an existing container is always `vibe --rebuild`.
+ - **Built on Anthropic's [reference devcontainer for Claude Code](https://github.com/anthropics/claude-code/tree/main/.devcontainer)**, lightly patched (shared Claude auth across projects; read-only `~/.ssh` and `~/.gitconfig`; per-repo PAT via a git credential helper). Launches via [`@devcontainers/cli`](https://github.com/devcontainers/cli) with `--override-config` so you never commit `.devcontainer/` into each project.
+ 
+ ### Content guard: secrets/PII pre-commit + pre-push block + pre-publish audit
+diff --git a/TODO.md b/TODO.md
+index 0666ffb..30aaf8c 100644
+--- a/TODO.md
++++ b/TODO.md
+@@ -49,6 +49,8 @@ Two vibe-wide behaviour changes shipped and took effect on this rebuild — surf
+ 
+ ## Open
+ 
++- [x] **task_026 — `vibe pat [repo]` PAT rotation + launch-time 401 reprompt** — DONE 2026-07-21 (/vs cycle 1). No rotation path exists (`setup_token` only fires when NO token is stored). Adds host-side `vibe pat [owner/repo]` (hidden-input re-prompt, overwrites via `save_token`) + launch-time `stored_token_rejected` probe (single curl, auth header via `-K -` stdin so the token never hits argv; ONLY an exact 401 triggers the existing `setup_token` re-prompt, everything else fails open) + `VIBE_PAT_CHECK=0` opt-out. Rotation needs no rebuild (GITHUB_TOKEN is remoteEnv, re-resolved per launch). Spec at `.vs/spec.md`; Spec Critic: pass after 4 iterations.
++
+ - [x] **content-guard scanner: harden `scan_diff_stream` against added-line header spoofing** — DONE task_024 (2026-07-17, /vs cycle 1). Both parsers (`scan_diff_stream` + `scan_blob_stdin`) are now hunk-aware: they count the `@@ -a[,c] +b[,d] @@` budgets git generates (uncounterfeitable, since in-hunk lines all carry a `+`/`-`/space/`\` prefix) and classify every line inside the budget as content, so a `++ /dev/null`/`++ b/<path>`/`+@@ …` added line can no longer be misread as a header. Also closed a second live exploit the Spec Critic found: `diff.suppressBlankEmpty=true` zero-byte context lines were leaking hunk budgets and misattributing a later file's secret. security-review CLEAR.
+ - [x] **task_025 — `code-check.py` shellchecks `devcontainer/git-hooks/`** — DONE 2026-07-17 (/vs cycle 1). Added a `CODE_CHECK_SCRIPTS` env seam + `is_shell_script()` shebang predicate; `scripts()` now covers all 4 git-hooks files (scanner + 3 extensionless bash hooks). The `_patched_code_check()` source-text-replace landmine is retired (fixture drives the env seam), so future `scripts()` edits can't silently no-op it. 19 files linted (was 15).
+ - [ ] **shared-repos: mount-set drift doesn't trigger container recreate** (2026-07-11) — `vibe repos add` ends with "Relaunch (vibe) for the mount to take effect", but a plain relaunch REUSES the existing container (`devcontainer up` only recreates on `--rebuild` or image drift, vibe:2938-2940), so a newly-added shared-repo bind mount is silently absent until the user happens to `--rebuild`. Hit live 2026-07-11 adding andeyePro/andeyePro to timeandeye. Fix: extend the drift check to compare the desired shared-repo mount set against the existing container's actual mounts (`docker inspect {{.Mounts}}`) and append `--remove-existing-container` on mismatch; also correct the `vibe repos add` closing message. Same drift check should cover a repo's registry path changing and a declaration being removed.
+diff --git a/vibe b/vibe
+index 2eb9e4f..b03203c 100755
+--- a/vibe
++++ b/vibe
+@@ -29,6 +29,14 @@
+ # is a host binary and the per-project .no-learn marker is written to
+ # the bind-mounted project tree from outside.
+ #
++#   vibe pat [owner/repo]    # rotate/overwrite the stored GitHub PAT
++#
++# `vibe pat` runs on the HOST shell too, same as `vibe learn` above — not
++# available inside the container. With no argument the repo is detected
++# from the current directory's origin remote. A launch also auto-reprompts
++# (same setup_token flow) when a stored PAT is definitively rejected (401)
++# by GitHub; VIBE_PAT_CHECK=0 skips that check.
++#
+ # Note: --continue and --resume are opt-in. Default is fresh — the durable
+ # handover lives in TODO.md, CLAUDE.md, and Claude's auto-memory, not in
+ # resumed conversations (which accumulate compaction debt over weeks).
+@@ -400,6 +408,149 @@ MSG
+   GITHUB_TOKEN="$input_token"
+ }
+ 
++# rotate_token <repo> — core of `vibe pat`: re-prompt (hidden input) and
++# overwrite the stored PAT for <repo>. Never launches a container; always
++# exits (never returns). NEVER prints any part of the token value.
++#
++# The read is errexit-guarded with the established `_learning_capture` idiom
++# (see vibe ~1438: `if ! IFS= read -r ...; then ... fi`) so immediate EOF on
++# stdin can't abort the script via `set -euo pipefail` before the abort
++# message prints — `read`'s own non-zero return on EOF would otherwise kill
++# the whole launcher. A lone newline (successful read of an empty string)
++# and immediate EOF (failed read) both funnel into the same empty-token
++# check below, since both are "nothing was pasted".
++rotate_token() {
++  local repo="$1"
++
++  echo "Repo: $repo"
++  local existing
++  existing=$(lookup_token "$repo")
++  if [ -n "$existing" ]; then
++    echo "stored token found — it will be replaced"
++  else
++    echo "no stored token yet"
++  fi
++  echo "https://github.com/settings/personal-access-tokens"
++
++  local token
++  if ! IFS= read -rsp "  Paste your new token (input is hidden): " token; then
++    token=""
++  fi
++  echo ""
++
++  if [ -z "$token" ]; then
++    echo "aborted — token store unchanged" >&2
++    exit 1
++  fi
++
++  save_token "$repo" "$token"
++  echo "✓ Token saved for $repo. Takes effect on the next vibe launch (no rebuild needed)."
++  exit 0
++}
++
++# stored_token_rejected <repo> <token> — true (0) iff GitHub's API returns
++# EXACTLY 401 for a request to /repos/<repo> authenticated with <token>.
++# Fail-open by design: every other outcome — 200, 403, 404, 5xx, 000, a
++# non-zero curl exit, or empty output — returns 1. A network flake or scope
++# oddity must never block a launch or trigger a false reprompt, so curl's
++# own exit status is deliberately ignored; only the captured `-w` string
++# decides.
++#
++# The Authorization header is supplied ONLY via `-K -` (curl reads its
++# config from stdin), fed a single `header = "..."` line via a here-string —
++# so the token never appears in curl's argv (ps-visible) and never touches
++# disk. Plain `curl` (not an absolute path) so a PATH-based shim (smoke
++# tests) is picked up.
++stored_token_rejected() {
++  local repo="$1" token="$2"
++  local code
++  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -K - \
++    "https://api.github.com/repos/${repo}" \
++    <<< "header = \"Authorization: Bearer ${token}\"" 2>/dev/null) || true
++  [ "$code" = "401" ]
++}
++
++# maybe_reprompt_stored_token <repo> <token> — launch-path wrapper around
++# stored_token_rejected. Sourceable and unit-testable in isolation (its own
++# functions can be stubbed after sourcing). Returns 0 immediately (no probe)
++# when VIBE_PAT_CHECK=0, or when <token> is empty (an empty lookup result is
++# the no-stored-token case — setup_token runs anyway at the call site; probing
++# an empty bearer would be a bug, not a check). Otherwise probes, and on
++# rejection prints the pinned warning and re-runs the existing setup_token
++# prompt/save/GITHUB_TOKEN flow (its own empty-input branch already degrades
++# to launching without GitHub auth).
++#
++# ALWAYS returns 0, whichever branch runs — never propagates
++# stored_token_rejected's status. The call site is a bare one-liner under
++# `set -e` in the launch path; any non-zero return here would turn every
++# healthy launch into a hard failure.
++maybe_reprompt_stored_token() {
++  local repo="$1" token="$2"
++
++  if [ "${VIBE_PAT_CHECK:-}" = "0" ] || [ -z "$token" ]; then
++    return 0
++  fi
++
++  if stored_token_rejected "$repo" "$token"; then
++    echo "  ⚠ Stored PAT for $repo was rejected by GitHub (expired or revoked) — let's replace it." >&2
++    setup_token "$repo"
++  fi
++
++  return 0
++}
++
++# _pat_usage — `vibe pat --help` / `-h`. stdout, exit 0.
++_pat_usage() {
++  cat << 'USAGE'
++Usage: vibe pat [owner/repo]
++
++Re-prompt for (hidden input) and overwrite the stored GitHub PAT for a repo
++— rotation. With no argument, the repo is detected from the current
++directory's 'origin' remote, same as a normal vibe launch. Never prints the
++token value. Takes effect on the next vibe launch — no rebuild needed.
++
++Run on the HOST shell, from the project directory — not inside the
++container.
++USAGE
++  exit 0
++}
++
++# pat_handle_subcommand <args...> — top-level dispatcher for `vibe pat`.
++# Never launches a container; each branch calls a function that always
++# exits. --help/-h is checked BEFORE slug validation, so `vibe pat --help`
++# always succeeds regardless of how many/what other args follow.
++pat_handle_subcommand() {
++  shift  # consume "pat"
++
++  case "${1:-}" in
++    --help|-h)
++      _pat_usage
++      ;;
++  esac
++
++  case "$#" in
++    0)
++      local repo
++      if ! repo=$(detect_github_repo); then
++        echo "vibe pat: couldn't detect a GitHub repo here — pass one explicitly: vibe pat <owner/repo>" >&2
++        exit 1
++      fi
++      rotate_token "$repo"
++      ;;
++    1)
++      if ! is_valid_repo_slug "$1"; then
++        echo "vibe pat: '$1' isn't a valid owner/repo slug" >&2
++        exit 1
++      fi
++      rotate_token "$1"
++      ;;
++    *)
++      echo "Usage: vibe pat [owner/repo]" >&2
++      exit 1
++      ;;
++  esac
++}
++
+ # ── Docker config helpers ─────────────────────────────────────────────────────
+ 
+ # Disable Docker CLI's "What's next?" hints by setting features.hints="false"
+@@ -2647,6 +2798,16 @@ if [ "${1:-}" = "audit" ]; then
+   exit $?
+ fi
+ 
++# ── Pat subcommand dispatch (task_026) ────────────────────────────────────────
++# Must be BEFORE the --* flag-parser loop — mirrors `learn`/`repos`/`audit`
++# above. Host-side only: rotates a stored PAT via rotate_token; never enters
++# workspace resolution, preflight, image build, GitHub setup, or container
++# launch. Dispatches and exits; this is a safety net.
++if [ "${1:-}" = "pat" ]; then
++  pat_handle_subcommand "$@"
++  exit $?
++fi
++
+ # ── Flags ─────────────────────────────────────────────────────────────────────
+ # parse_vibe_args (defined above the VIBE_SOURCE_ONLY guard so smoke-test.py
+ # can source-test it) accepts flags and the project positional in any order.
+@@ -2775,6 +2936,12 @@ elif GITHUB_REPO=$(detect_github_repo); then
+   GITHUB_TOKEN=$(lookup_token "$GITHUB_REPO")
+   if [ -z "$GITHUB_TOKEN" ]; then
+     setup_token "$GITHUB_REPO"
++  else
++    # Stored-token branch (task_026): a definitively-rejected (401) token
++    # gets rotated right here, at the moment it bites — no rebuild needed,
++    # since GITHUB_TOKEN flows via remoteEnv and is re-resolved every launch.
++    # Never called after a fresh interactive paste above — no prompt loop.
++    maybe_reprompt_stored_token "$GITHUB_REPO" "$GITHUB_TOKEN"
+   fi
+ else
+   create_github_repo
