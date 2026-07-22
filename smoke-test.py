@@ -11606,13 +11606,17 @@ def test_task026_c2_pat_no_arg_refuses_invalid_detected_slug() -> None:
     """Fix (2), `vibe pat` half: a git checkout whose 'origin' remote yields
     a slug that detect_github_repo accepts but is_valid_repo_slug rejects
     (a `+` in the owner segment) must make `vibe pat` (no arg) exit 1 with
-    the pinned stderr refusal — never reaching rotate_token/save_token."""
+    a stderr refusal — never reaching rotate_token/save_token (verified via
+    curl shim logs). Sanctioned C2 amendment: checks for specific slug and
+    'is not a valid' message removed; tests now verify exit 1, empty stdout,
+    stderr error mentioning 'vibe pat', and curl probe never invoked."""
     print("\n[task_026 c2 fix-2: vibe pat (no arg) refuses an is_valid_repo_slug-failing detected slug]")
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
+        new_path, argv_log, stdin_log = _setup_curl_shim(tmp, response_code="200")
         checkout = tmp / "checkout"
         checkout.mkdir()
-        env = {**os.environ, "HOME": str(tmp), "VIBE_CONFIG": f"{tmp}/no-config", "VIBE_SOURCE_ONLY": "1"}
+        env = {**os.environ, "HOME": str(tmp), "PATH": new_path, "VIBE_CONFIG": f"{tmp}/no-config", "VIBE_SOURCE_ONLY": "1"}
 
         run(["git", "init"], cwd=checkout, env=env)
         run(["git", "remote", "add", "origin", "https://github.com/ow+ner/repo.git"], cwd=checkout, env=env)
@@ -11624,9 +11628,12 @@ pat_handle_subcommand pat < /dev/null
 """
         r = run(["bash", "-c", script], env=env)
         check("exit 1", r.returncode == 1, f"returncode={r.returncode}")
-        check("stderr refusal names the detected slug", "ow+ner/repo" in r.stderr, r.stderr)
-        check("stderr refusal says not a valid owner/repo", "is not a valid owner/repo" in r.stderr, r.stderr)
         check("nothing on stdout", r.stdout == "", r.stdout)
+        check("stderr error mentions vibe pat", "vibe pat" in r.stderr, r.stderr)
+        check("curl shim argv log never created (probe never ran)", not argv_log.exists(),
+              argv_log.read_text() if argv_log.exists() else "")
+        check("curl shim stdin log never created (probe never ran)", not stdin_log.exists(),
+              stdin_log.read_text() if stdin_log.exists() else "")
 
 
 def test_task026_c2_rotate_token_rejects_bad_charset() -> None:
@@ -11682,6 +11689,440 @@ echo ghp_task026_fixture_token | rotate_token owner/repo
         check("clean token: saved", "owner/repo=ghp_task026_fixture_token" in tokens_file.read_text(),
               tokens_file.read_text())
         check("clean token: fixture token absent from process output", "ghp_task026_fixture_token" not in (r.stdout + r.stderr), r.stdout + r.stderr)
+
+
+# ── task_027: detect_github_repo dotted-repo fix + brain2 vibe-operation note ──
+
+def test_task027_ac1_dotted_repo_https_with_git() -> None:
+    """AC1: detect_github_repo in tmp git repo handles dotted repo names.
+    URL: https://github.com/andeyePro/andeye.com.git → slug: andeyePro/andeye.com"""
+    print("\n[task_027 AC1a: detect_github_repo https://.../.git]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        env = {**os.environ, "HOME": str(tmp), "VIBE_CONFIG": f"{tmp}/no-config", "VIBE_SOURCE_ONLY": "1"}
+
+        script = f"""
+cd {shlex.quote(str(tmp))}
+git init >/dev/null 2>&1
+git remote add origin "https://github.com/andeyePro/andeye.com.git"
+source {shlex.quote(str(VIBE))}
+detect_github_repo
+"""
+        r = run(["bash", "-c", script], env=env)
+        check("exit 0", r.returncode == 0, r.stderr)
+        check("outputs andeyePro/andeye.com", r.stdout.strip() == "andeyePro/andeye.com", r.stdout)
+
+
+def test_task027_ac1_dotted_repo_https_no_git() -> None:
+    """AC1: detect_github_repo handles URL without .git suffix.
+    URL: https://github.com/andeyePro/andeye.com → slug: andeyePro/andeye.com"""
+    print("\n[task_027 AC1b: detect_github_repo https://... (no .git)]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        env = {**os.environ, "HOME": str(tmp), "VIBE_CONFIG": f"{tmp}/no-config", "VIBE_SOURCE_ONLY": "1"}
+
+        script = f"""
+cd {shlex.quote(str(tmp))}
+git init >/dev/null 2>&1
+git remote add origin "https://github.com/andeyePro/andeye.com"
+source {shlex.quote(str(VIBE))}
+detect_github_repo
+"""
+        r = run(["bash", "-c", script], env=env)
+        check("exit 0", r.returncode == 0, r.stderr)
+        check("outputs andeyePro/andeye.com", r.stdout.strip() == "andeyePro/andeye.com", r.stdout)
+
+
+def test_task027_ac1_ssh_format_with_git() -> None:
+    """AC1: detect_github_repo handles SSH format.
+    URL: git@github.com:owner/repo.git → slug: owner/repo"""
+    print("\n[task_027 AC1c: detect_github_repo git@github.com:owner/repo.git]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        env = {**os.environ, "HOME": str(tmp), "VIBE_CONFIG": f"{tmp}/no-config", "VIBE_SOURCE_ONLY": "1"}
+
+        script = f"""
+cd {shlex.quote(str(tmp))}
+git init >/dev/null 2>&1
+git remote add origin "git@github.com:owner/repo.git"
+source {shlex.quote(str(VIBE))}
+detect_github_repo
+"""
+        r = run(["bash", "-c", script], env=env)
+        check("exit 0", r.returncode == 0, r.stderr)
+        check("outputs owner/repo", r.stdout.strip() == "owner/repo", r.stdout)
+
+
+def test_task027_ac1_ssh_protocol_with_git() -> None:
+    """AC1: detect_github_repo handles SSH protocol format.
+    URL: ssh://git@github.com/owner/repo.git → slug: owner/repo"""
+    print("\n[task_027 AC1d: detect_github_repo ssh://git@github.com/owner/repo.git]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        env = {**os.environ, "HOME": str(tmp), "VIBE_CONFIG": f"{tmp}/no-config", "VIBE_SOURCE_ONLY": "1"}
+
+        script = f"""
+cd {shlex.quote(str(tmp))}
+git init >/dev/null 2>&1
+git remote add origin "ssh://git@github.com/owner/repo.git"
+source {shlex.quote(str(VIBE))}
+detect_github_repo
+"""
+        r = run(["bash", "-c", script], env=env)
+        check("exit 0", r.returncode == 0, r.stderr)
+        check("outputs owner/repo", r.stdout.strip() == "owner/repo", r.stdout)
+
+
+def test_task027_ac1_https_regression_standard_repo() -> None:
+    """AC1: detect_github_repo regression check.
+    URL: https://github.com/owner/repo.git → slug: owner/repo"""
+    print("\n[task_027 AC1e: detect_github_repo https://github.com/owner/repo.git (regression)]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        env = {**os.environ, "HOME": str(tmp), "VIBE_CONFIG": f"{tmp}/no-config", "VIBE_SOURCE_ONLY": "1"}
+
+        script = f"""
+cd {shlex.quote(str(tmp))}
+git init >/dev/null 2>&1
+git remote add origin "https://github.com/owner/repo.git"
+source {shlex.quote(str(VIBE))}
+detect_github_repo
+"""
+        r = run(["bash", "-c", script], env=env)
+        check("exit 0", r.returncode == 0, r.stderr)
+        check("outputs owner/repo", r.stdout.strip() == "owner/repo", r.stdout)
+
+
+def test_task027_ac1_trailing_slash() -> None:
+    """AC1: detect_github_repo handles trailing slash.
+    URL: https://github.com/owner/repo/ (trailing slash) → slug: owner/repo"""
+    print("\n[task_027 AC1f: detect_github_repo trailing slash]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        env = {**os.environ, "HOME": str(tmp), "VIBE_CONFIG": f"{tmp}/no-config", "VIBE_SOURCE_ONLY": "1"}
+
+        script = f"""
+cd {shlex.quote(str(tmp))}
+git init >/dev/null 2>&1
+git remote add origin "https://github.com/owner/repo/"
+source {shlex.quote(str(VIBE))}
+detect_github_repo
+"""
+        r = run(["bash", "-c", script], env=env)
+        check("exit 0", r.returncode == 0, r.stderr)
+        check("outputs owner/repo", r.stdout.strip() == "owner/repo", r.stdout)
+
+
+def test_task027_ac1_double_git_suffix() -> None:
+    """AC1: detect_github_repo strips exactly one .git suffix.
+    URL: https://github.com/owner/foo.git.git → slug: foo.git"""
+    print("\n[task_027 AC1g: detect_github_repo foo.git.git strips one .git]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        env = {**os.environ, "HOME": str(tmp), "VIBE_CONFIG": f"{tmp}/no-config", "VIBE_SOURCE_ONLY": "1"}
+
+        script = f"""
+cd {shlex.quote(str(tmp))}
+git init >/dev/null 2>&1
+git remote add origin "https://github.com/owner/foo.git.git"
+source {shlex.quote(str(VIBE))}
+detect_github_repo
+"""
+        r = run(["bash", "-c", script], env=env)
+        check("exit 0", r.returncode == 0, r.stderr)
+        check("outputs owner/foo.git", r.stdout.strip() == "owner/foo.git", r.stdout)
+
+
+def test_task027_ac2_no_remote() -> None:
+    """AC2: detect_github_repo returns rc 1 for repo with no remote."""
+    print("\n[task_027 AC2a: detect_github_repo no remote returns 1]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        env = {**os.environ, "HOME": str(tmp), "VIBE_CONFIG": f"{tmp}/no-config", "VIBE_SOURCE_ONLY": "1"}
+
+        script = f"""
+cd {shlex.quote(str(tmp))}
+git init >/dev/null 2>&1
+source {shlex.quote(str(VIBE))}
+set +e
+detect_github_repo
+echo "RC=$?"
+"""
+        r = run(["bash", "-c", script], env=env)
+        check("exit 1", "RC=1" in r.stdout, r.stdout)
+        check("no output before RC=1", r.stdout.strip().endswith("RC=1"), r.stdout)
+
+
+def test_task027_ac2_non_github_remote() -> None:
+    """AC2: detect_github_repo returns rc 1 for non-GitHub remote."""
+    print("\n[task_027 AC2b: detect_github_repo non-GitHub remote returns 1]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        env = {**os.environ, "HOME": str(tmp), "VIBE_CONFIG": f"{tmp}/no-config", "VIBE_SOURCE_ONLY": "1"}
+
+        script = f"""
+cd {shlex.quote(str(tmp))}
+git init >/dev/null 2>&1
+git remote add origin "https://gitlab.com/o/r.git"
+source {shlex.quote(str(VIBE))}
+set +e
+detect_github_repo
+echo "RC=$?"
+"""
+        r = run(["bash", "-c", script], env=env)
+        check("exit 1", "RC=1" in r.stdout, r.stdout)
+        check("no output before RC=1", r.stdout.strip().endswith("RC=1"), r.stdout)
+
+
+def test_task027_ac2_invalid_slug() -> None:
+    """AC2: detect_github_repo returns rc 1 when slug fails is_valid_repo_slug."""
+    print("\n[task_027 AC2c: detect_github_repo invalid slug (contains %20) returns 1]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        env = {**os.environ, "HOME": str(tmp), "VIBE_CONFIG": f"{tmp}/no-config", "VIBE_SOURCE_ONLY": "1"}
+
+        script = f"""
+cd {shlex.quote(str(tmp))}
+git init >/dev/null 2>&1
+git remote add origin "https://github.com/owner/repo%20name.git"
+source {shlex.quote(str(VIBE))}
+set +e
+detect_github_repo
+echo "RC=$?"
+"""
+        r = run(["bash", "-c", script], env=env)
+        check("exit 1", "RC=1" in r.stdout, r.stdout)
+        check("no output before RC=1", r.stdout.strip().endswith("RC=1"), r.stdout)
+
+
+def test_task027_ac3_brain2_creates_file_with_content() -> None:
+    """AC3: refresh_brain2_vibe_note creates meta/vibe-operation.md with heading,
+    exact markers, Generated line, and help content including Usage: and vibe pat."""
+    print("\n[task_027 AC3: refresh_brain2_vibe_note creates file with heading and markers]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        brain2_dir = tmp / "brain2"
+        brain2_dir.mkdir()
+        env = {**os.environ, "HOME": str(tmp), "VIBE_BRAIN2_PATH": str(brain2_dir), "VIBE_SOURCE_ONLY": "1"}
+
+        script = f"""
+source {shlex.quote(str(VIBE))}
+refresh_brain2_vibe_note
+echo "RC=$?"
+"""
+        r = run(["bash", "-c", script], env=env)
+        check("exit 0", "RC=0" in r.stdout, r.stdout)
+
+        note_file = brain2_dir / "meta" / "vibe-operation.md"
+        check("file created", note_file.exists(), str(note_file))
+
+        if note_file.exists():
+            content = note_file.read_text()
+            check("contains heading", "# vibe — CLI operation (auto-maintained)" in content, content[:200])
+            check("contains open marker", "<!-- >>> vibe-cli-help (auto, do not edit) >>>" in content, "marker not found")
+            check("contains close marker", "<!-- <<< vibe-cli-help <<< -->" in content, "marker not found")
+            check("contains Generated by line", "Generated by vibe" in content, content[:500])
+            check("contains Usage: from help", "Usage:" in content, content[:500])
+            check("contains vibe pat command", "vibe pat" in content, content[:500])
+
+
+def test_task027_ac4_idempotence_preserves_user_content() -> None:
+    """AC4: refresh_brain2_vibe_note run twice preserves user content above markers,
+    the managed block is present and idempotent, returns 0 both times."""
+    print("\n[task_027 AC4: refresh_brain2_vibe_note idempotence and user content preservation]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        brain2_dir = tmp / "brain2"
+        brain2_dir.mkdir()
+        note_file = brain2_dir / "meta" / "vibe-operation.md"
+        note_file.parent.mkdir(parents=True)
+
+        user_content = "# My operational notes\nFoo bar.\n"
+        note_file.write_text(user_content)
+
+        env = {**os.environ, "HOME": str(tmp), "VIBE_BRAIN2_PATH": str(brain2_dir), "VIBE_SOURCE_ONLY": "1"}
+
+        # First run
+        script1 = f"""
+source {shlex.quote(str(VIBE))}
+refresh_brain2_vibe_note
+echo "RC=$?"
+"""
+        r1 = run(["bash", "-c", script1], env=env)
+        check("first run exit 0", "RC=0" in r1.stdout, r1.stdout)
+
+        content_after_first = note_file.read_text()
+        check("user content preserved after first run", "My operational notes" in content_after_first, content_after_first[:300])
+        # Verify managed block is present (opening and closing markers exist and are properly nested)
+        open_marker = "<!-- >>> vibe-cli-help (auto, do not edit) >>>"
+        close_marker = "<!-- <<< vibe-cli-help <<< -->"
+        check("open marker present", open_marker in content_after_first, "marker not found")
+        check("close marker present", close_marker in content_after_first, "marker not found")
+        open_idx = content_after_first.find(open_marker)
+        close_idx = content_after_first.find(close_marker)
+        check("close marker after open marker", open_idx < close_idx, f"open at {open_idx}, close at {close_idx}")
+
+        # Second run
+        r2 = run(["bash", "-c", script1], env=env)
+        check("second run exit 0", "RC=0" in r2.stdout, r2.stdout)
+
+        content_after_second = note_file.read_text()
+        check("idempotent output", content_after_first == content_after_second, "content differs between runs")
+        check("user content still preserved", "My operational notes" in content_after_second, content_after_second[:300])
+
+
+def test_task027_ac5_fail_soft_vibe_brain2_path_off() -> None:
+    """AC5: VIBE_BRAIN2_PATH=off causes refresh_brain2_vibe_note to return 0, create nothing."""
+    print("\n[task_027 AC5a: refresh_brain2_vibe_note with VIBE_BRAIN2_PATH=off]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        env = {**os.environ, "HOME": str(tmp), "VIBE_BRAIN2_PATH": "off", "VIBE_SOURCE_ONLY": "1"}
+
+        script = f"""
+source {shlex.quote(str(VIBE))}
+refresh_brain2_vibe_note
+echo "RC=$?"
+"""
+        r = run(["bash", "-c", script], env=env)
+        check("exit 0", "RC=0" in r.stdout, r.stdout)
+
+        note_file = Path(tmp) / "brain2" / "meta" / "vibe-operation.md"
+        check("no file created", not note_file.exists(), str(note_file))
+
+
+def test_task027_ac5_fail_soft_nonexistent_dir() -> None:
+    """AC5: VIBE_BRAIN2_PATH pointing to nonexistent dir returns 0, creates nothing."""
+    print("\n[task_027 AC5b: refresh_brain2_vibe_note with nonexistent brain2 dir]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        nonexistent = tmp / "does" / "not" / "exist"
+        env = {**os.environ, "HOME": str(tmp), "VIBE_BRAIN2_PATH": str(nonexistent), "VIBE_SOURCE_ONLY": "1"}
+
+        script = f"""
+source {shlex.quote(str(VIBE))}
+refresh_brain2_vibe_note
+echo "RC=$?"
+"""
+        r = run(["bash", "-c", script], env=env)
+        check("exit 0", "RC=0" in r.stdout, r.stdout)
+        check("no dir created", not nonexistent.exists(), str(nonexistent))
+
+
+def test_task027_ac5_fail_soft_unwritable_meta() -> None:
+    """AC5: brain2 dir with unwritable meta/ returns 0, never aborts under set -euo pipefail."""
+    print("\n[task_027 AC5c: refresh_brain2_vibe_note with unwritable meta/ (chmod 500)]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        brain2_dir = tmp / "brain2"
+        brain2_dir.mkdir()
+        meta_dir = brain2_dir / "meta"
+        meta_dir.mkdir()
+        meta_dir.chmod(0o500)  # read+execute only, no write
+
+        env = {**os.environ, "HOME": str(tmp), "VIBE_BRAIN2_PATH": str(brain2_dir), "VIBE_SOURCE_ONLY": "1"}
+
+        script = f"""
+source {shlex.quote(str(VIBE))}
+refresh_brain2_vibe_note
+echo "RC=$?"
+"""
+        r = run(["bash", "-c", script], env=env)
+        check("exit 0 (fail-soft)", "RC=0" in r.stdout, r.stdout)
+
+        # Restore permissions for cleanup
+        meta_dir.chmod(0o755)
+
+        note_file = meta_dir / "vibe-operation.md"
+        check("no file created in unwritable dir", not note_file.exists(), str(note_file))
+
+
+def test_task027_ac6_anchor_placement() -> None:
+    """AC6: refresh_brain2_vibe_note call site appears between
+    '# ── GitHub setup' and '# ── Build the image' and nowhere else in vibe."""
+    print("\n[task_027 AC6: refresh_brain2_vibe_note call site placement]")
+    vibe_content = VIBE.read_text()
+
+    # Find the markers
+    github_setup_idx = vibe_content.find("# ── GitHub setup")
+    build_image_idx = vibe_content.find("# ── Build the image")
+
+    check("GitHub setup marker exists", github_setup_idx >= 0, "marker not found")
+    check("Build the image marker exists", build_image_idx >= 0, "marker not found")
+
+    if github_setup_idx >= 0 and build_image_idx >= 0:
+        # Count how many times the call appears in the entire file
+        call_count = vibe_content.count("refresh_brain2_vibe_note || true")
+        check("call appears exactly once in vibe", call_count == 1, f"found {call_count} occurrences")
+
+        # Verify it appears between the markers
+        call_idx = vibe_content.find("refresh_brain2_vibe_note || true")
+        check("call is between markers", github_setup_idx < call_idx < build_image_idx,
+              f"GitHub setup at {github_setup_idx}, call at {call_idx}, Build image at {build_image_idx}")
+
+
+def test_task027_ac7_vibe_cli_fragment_exists() -> None:
+    """AC7: devcontainer/claude-md/vibe-cli.md exists and contains required strings."""
+    print("\n[task_027 AC7: vibe-cli.md fragment exists and contains required content]")
+    vibe_cli_md = REPO / "devcontainer" / "claude-md" / "vibe-cli.md"
+    check("vibe-cli.md exists", vibe_cli_md.exists(), str(vibe_cli_md))
+
+    if vibe_cli_md.exists():
+        content = vibe_cli_md.read_text()
+        check("contains 'vibe-operation.md'", "vibe-operation.md" in content, content[:500])
+        check("contains '! vibe --help'", "! vibe --help" in content, content[:500])
+        check("contains 'exact command'", "exact command" in content, content[:500])
+
+
+def test_task027_ac7_vibe_cli_in_glob_not_manifest() -> None:
+    """AC7: vibe-cli.md rides the sorted directory glob in install_claude_extras.sh,
+    not a manifest edit (verify 'vibe-cli' does not appear in install-claude-extras.sh)."""
+    print("\n[task_027 AC7: vibe-cli.md auto-collected via glob, no manifest edit]")
+    install_extras_content = INSTALL_EXTRAS.read_text()
+    check("'vibe-cli' not in install-claude-extras.sh", "vibe-cli" not in install_extras_content,
+          "string 'vibe-cli' found in manifest")
+
+
+def test_task027_ac9_readme_mentions_vibe_operation() -> None:
+    """AC9: README.md contains 'vibe-operation.md'."""
+    print("\n[task_027 AC9a: README.md mentions vibe-operation.md]")
+    readme = REPO / "README.md"
+    check("README.md exists", readme.exists())
+    if readme.exists():
+        content = readme.read_text()
+        check("contains 'vibe-operation.md'", "vibe-operation.md" in content, content[:2000])
+
+
+def test_task027_ac9_manual_tests_mentions_vibe_operation() -> None:
+    """AC9: MANUAL-TESTS.md contains 'vibe-operation.md'."""
+    print("\n[task_027 AC9b: MANUAL-TESTS.md mentions vibe-operation.md]")
+    manual_tests = REPO / "MANUAL-TESTS.md"
+    check("MANUAL-TESTS.md exists", manual_tests.exists())
+    if manual_tests.exists():
+        content = manual_tests.read_text()
+        check("contains 'vibe-operation.md'", "vibe-operation.md" in content, content[:2000])
+
+
+def test_task027_ac10_no_secrets_in_note() -> None:
+    """AC10: No token/secret material in help note — no ghp_ substrings."""
+    print("\n[task_027 AC10: help note contains no secrets]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        brain2_dir = tmp / "brain2"
+        brain2_dir.mkdir()
+        env = {**os.environ, "HOME": str(tmp), "VIBE_BRAIN2_PATH": str(brain2_dir), "VIBE_SOURCE_ONLY": "1"}
+
+        script = f"""
+source {shlex.quote(str(VIBE))}
+refresh_brain2_vibe_note
+"""
+        r = run(["bash", "-c", script], env=env)
+        check("runs silently (no stdout)", r.stdout == "", r.stdout)
+        check("no secrets in stderr", "ghp_" not in r.stderr, r.stderr[:500])
+
+        note_file = brain2_dir / "meta" / "vibe-operation.md"
+        if note_file.exists():
+            content = note_file.read_text()
+            check("note contains no ghp_ tokens", "ghp_" not in content, "secret found in help text")
 
 
 def main() -> int:
@@ -12156,6 +12597,29 @@ def main() -> int:
     test_task026_c2_maybe_reprompt_invalid_slug_never_probes()
     test_task026_c2_pat_no_arg_refuses_invalid_detected_slug()
     test_task026_c2_rotate_token_rejects_bad_charset()
+
+    # task_027: detect_github_repo dotted-repo fix + brain2 vibe-operation note
+    test_task027_ac1_dotted_repo_https_with_git()
+    test_task027_ac1_dotted_repo_https_no_git()
+    test_task027_ac1_ssh_format_with_git()
+    test_task027_ac1_ssh_protocol_with_git()
+    test_task027_ac1_https_regression_standard_repo()
+    test_task027_ac1_trailing_slash()
+    test_task027_ac1_double_git_suffix()
+    test_task027_ac2_no_remote()
+    test_task027_ac2_non_github_remote()
+    test_task027_ac2_invalid_slug()
+    test_task027_ac3_brain2_creates_file_with_content()
+    test_task027_ac4_idempotence_preserves_user_content()
+    test_task027_ac5_fail_soft_vibe_brain2_path_off()
+    test_task027_ac5_fail_soft_nonexistent_dir()
+    test_task027_ac5_fail_soft_unwritable_meta()
+    test_task027_ac6_anchor_placement()
+    test_task027_ac7_vibe_cli_fragment_exists()
+    test_task027_ac7_vibe_cli_in_glob_not_manifest()
+    test_task027_ac9_readme_mentions_vibe_operation()
+    test_task027_ac9_manual_tests_mentions_vibe_operation()
+    test_task027_ac10_no_secrets_in_note()
 
     print()
     if FAILURES:

@@ -184,5 +184,14 @@
   "assigned_to": "generator",
   "mode": "rigorous",
   "last_modified": "2026-07-21T15:54:05Z"
+ },
+ {
+  "id": "task_027",
+  "description": "detect_github_repo dotted-repo-name fix (dots in repo segment, shell .git strip, slug validation) + brain2 meta/vibe-operation.md auto-refreshed vibe --help managed block + vibe-cli.md claude-md fragment",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-07-22T01:24:51Z"
  }
 ]

@@ -79,6 +79,8 @@ It's worth setting up if you: work across several repos and want durable knowled
 
 The name is only a convention — "brain2" is shorthand for "second brain". The in-container mount point is `/brain2`, but the source can be any directory; nothing requires the folder or repo itself to be called "brain2".
 
+Every launch also auto-refreshes `<brain2>/meta/vibe-operation.md` (fail-soft — a no-op if brain2 isn't mounted or the dir isn't writable): a managed block holding the currently-installed `vibe --help` output, so an in-container Claude with no visibility into the host-side launcher has a ground-truth reference instead of guessing. Prose you add outside that block is preserved untouched on every refresh.
+
 ## Host-side state
 
 | Path | Purpose |

@@ -117,10 +117,23 @@ print_version() {
   exit 0
 }
 
-usage() {
-  grep '^#' "$0" | grep -v '#!/' | sed 's/^# \?//'
+# _usage_text — the two emission steps of `vibe --help`, no exit. Greps
+# "$VIBE_REPO_DIR/vibe" rather than "$0": sourcing-safe, since a sourced vibe
+# (smoke-test.py's VIBE_SOURCE_ONLY=1 convention, and refresh_brain2_vibe_note
+# below) runs with $0 == the sourcing shell (e.g. "bash"), not this script —
+# calling the old $0-based usage() in that context would grep the wrong file
+# and silently return nothing. VIBE_REPO_DIR is BASH_SOURCE-derived (~line
+# 83), so it resolves correctly whether vibe is executed or sourced. usage()
+# itself is exactly this plus `exit 0` — help output is byte-identical to
+# before this split, same file, same grep/sed pipeline.
+_usage_text() {
+  grep '^#' "$VIBE_REPO_DIR/vibe" | grep -v '#!/' | sed 's/^# \?//'
   echo ""
   echo "vibe $(_vibe_version)"
+}
+
+usage() {
+  _usage_text
   exit 0
 }
 
@@ -165,11 +178,28 @@ ask_yes_no() {
 
 # ── Git helpers ───────────────────────────────────────────────────────────────
 
+# detect_github_repo — echo owner/repo from `git remote get-url origin`, rc 0
+# on success. Repo (and owner) names MAY contain dots (`andeyePro/andeye.com`
+# is a real repo — task_027; the old regex pinned the repo segment to
+# [^/.]+, which silently rejected any dotted repo name as "no repo found" on
+# every launch). Algorithm: take the origin URL as-is; strip ONE trailing
+# `/`; match `github\.com[:/]([^/]+/[^/]+)$` — greedy up to end-of-string, so
+# a literal repo named `foo.git` (URL `.../foo.git.git`) is captured whole;
+# strip ONE trailing `.git` in shell (never a loop — `foo.git.git` resolves
+# to `foo.git`, matching a real repo named `foo.git`, not `foo`); finally
+# gate through is_valid_repo_slug (defined below, ~1776) so a technically
+# github.com-shaped but malformed slug (embedded `%20`, `$`, etc.) still
+# returns 1 rather than handing garbage to callers. Non-github remotes and
+# missing remotes return 1 unchanged.
 detect_github_repo() {
-  local url
+  local url slug
   url=$(git remote get-url origin 2>/dev/null) || return 1
-  if [[ "$url" =~ github\.com[:/]([^/]+/[^/.]+)(\.git)?$ ]]; then
-    echo "${BASH_REMATCH[1]}"
+  url="${url%/}"
+  if [[ "$url" =~ github\.com[:/]([^/]+/[^/]+)$ ]]; then
+    slug="${BASH_REMATCH[1]}"
+    slug="${slug%.git}"
+    is_valid_repo_slug "$slug" || return 1
+    echo "$slug"
     return 0
   fi
   return 1
@@ -1469,6 +1499,89 @@ _zotero_source() {
   local p="${VIBE_ZOTERO_PATH:-$HOME/Zotero/storage}"
   [ "$p" = "off" ] && return 0
   printf '%s' "$p"
+}
+
+# refresh_brain2_vibe_note — auto-maintain <brain2>/meta/vibe-operation.md
+# with the CURRENTLY INSTALLED `vibe --help` text, refreshed on every launch,
+# so an in-container Claude with no visibility into the host-side CLI (see
+# devcontainer/claude-md/vibe-cli.md) has a ground-truth reference instead of
+# guessing (task_027).
+#
+# ALWAYS returns 0 — this runs in the launch path under `set -euo pipefail`,
+# and brain2 being unmounted/unwritable must degrade silently, never abort
+# the launcher. EVERY filesystem operation below is individually guarded
+# (stderr silenced, `|| return 0` on failure) rather than relying on one
+# top-level trap, because an unguarded write into an unwritable dir under
+# errexit kills the whole sourced shell at that one statement. Belt-and-
+# braces: the call site ALSO wraps this in `|| true` (same call-context
+# errexit-suppression the task_026 setup_token fix pinned) — defence in
+# depth, not a substitute for the per-op guards here.
+#
+# Resolution: p=$(_brain2_source) is empty when brain2 is disabled
+# (VIBE_BRAIN2_PATH=off) — return 0 silently. A non-empty but non-existent
+# $p (unset/never-created brain2 root) also returns 0 — this function NEVER
+# creates the brain2 root itself, mirroring the mount-gating rule elsewhere
+# (_build_override_config only mounts /brain2 when the dir already exists).
+#
+# Managed block: markers `<!-- >>> vibe-cli-help (auto, do not edit) >>>` /
+# `<!-- <<< vibe-cli-help <<< -->` — deliberately distinct from
+# install_claude_md_fragments' `vibe-managed` markers (different file,
+# different lifecycle). Strip-and-reappend uses the SAME awk idiom as
+# install_claude_md_fragments (preserve all content outside the markers,
+# trim trailing blank lines, idempotent), so hand-written brain2 prose above
+# the block survives every refresh untouched.
+refresh_brain2_vibe_note() {
+  local p
+  p=$(_brain2_source)
+  [ -n "$p" ] || return 0
+  [ -d "$p" ] || return 0
+
+  mkdir -p "$p/meta" 2>/dev/null || return 0
+  [ -w "$p/meta" ] || return 0
+
+  local note="$p/meta/vibe-operation.md"
+  local open_delim='<!-- >>> vibe-cli-help (auto, do not edit) >>>'
+  local close_delim='<!-- <<< vibe-cli-help <<< -->'
+
+  if [ ! -f "$note" ]; then
+    printf '%s\n' "# vibe — CLI operation (auto-maintained)" > "$note" 2>/dev/null || return 0
+  fi
+
+  local remaining
+  remaining=$(awk \
+    -v opentag="$open_delim" \
+    -v closetag="$close_delim" '
+    $0 == opentag  { inblock = 1; next }
+    $0 == closetag && inblock { inblock = 0; next }
+    !inblock    { lines[++n] = $0 }
+    END {
+      last = 0
+      for (i = n; i >= 1; i--) {
+        if (lines[i] != "") { last = i; break }
+      }
+      for (i = 1; i <= last; i++) print lines[i]
+    }
+  ' "$note" 2>/dev/null) || return 0
+
+  local help_text
+  help_text=$(_usage_text) || return 0
+
+  local block
+  block="${open_delim}"$'\n'"Generated by vibe $(_vibe_version) at $(date -u +%Y-%m-%dT%H:%M:%SZ)"$'\n'"\`\`\`text"$'\n'"${help_text}"$'\n'"\`\`\`"$'\n'"${close_delim}"
+
+  # mktemp, not a predictable $$-suffixed name: a guessable temp path in a
+  # shared-writable dir is a symlink-race write primitive (security-review,
+  # task_027). Same temp-then-mv convention as save_token.
+  local tmp
+  tmp=$(mktemp "$note.XXXXXX" 2>/dev/null) || return 0
+  if [ -n "$remaining" ]; then
+    printf '%s\n\n%s\n' "$remaining" "$block" > "$tmp" 2>/dev/null || return 0
+  else
+    printf '%s\n' "$block" > "$tmp" 2>/dev/null || return 0
+  fi
+  mv "$tmp" "$note" 2>/dev/null || return 0
+
+  return 0
 }
 
 # ── Learning subcommand internals ─────────────────────────────────────────────
@@ -2980,6 +3093,13 @@ else
     setup_token "$GITHUB_REPO"
   fi
 fi
+
+# Auto-refresh the brain2 vibe-operation note (task_027) — unconditional per
+# launch (not gated on GitHub setup succeeding above); no-ops silently when
+# brain2 is unmounted/disabled. `|| true`: refresh_brain2_vibe_note always
+# returns 0 itself, but this call-site suppression is belt-and-braces against
+# `set -euo pipefail`, same discipline as task_026's setup_token call site.
+refresh_brain2_vibe_note || true
 
 # ── Build the image if missing, stale, or --rebuild ──────────────────────────
 # Auto-rebuild when any file in $DEVCONTAINER_DIR is newer than $IMAGE_MARKER

@@ -477,3 +477,14 @@ Verdict: PASS. Committing as `/vs cycle 1: pass`. Not pushed.
 - Mechanical gate: 1823 checks green (93 task026: 73 frozen AC1–10 + 20 new c2), independently re-run by the chair, exit 0. Regressions: none.
 - c2 tests include the real-setup_token closed-stdin survival case cycle 1's stubs missed.
 - Generator tier that passed: sonnet (2 cycles; cycle-1 fail was capability-class via the security gate, no ladder escalation needed). Tester finished at sonnet after the cycle-1 haiku quality escalation.
+
+## task_027 cycle 1 — Evaluator: FAIL (failure class: spec) → sanctioned amendment, restart as cycle 2
+- Generator delivered to spec (code-check clean; scratch 39/39) but the full suite is 1821/1823: the pinned detect_github_repo slug-validation gate means pat_handle_subcommand's no-arg invalid-slug branch (task_026 c2) now surfaces as "couldn't detect" — two c2 assertions pin the OLD message wording.
+- The c2 tests' security intent (invalid slug refused, probe never runs, exit 1, no stdout) is PRESERVED — only wording moved. Spec revised: regression gate now names a sanctioned, wording-only amendment to those two functions (freeze-anchor exception precedent: task_025 fixture reshape; freezes are cycle-anchored, not permanent file freezes).
+- Code carried forward unchanged; cycle 2 = Tester phase (test amendments are Tester-owned).
+
+## task_027 cycle 2 — Evaluator: PASS
+- Mechanical gate: 1883 checks green (58 task_027; sanctioned c2 wording amendment applied, its probe-never-ran intent now shim-asserted), independently re-run by the chair; re-verified after polish.
+- security-review: CLEAR. Two LOW polish items applied by chair (mktemp for the note's temp file; guard on the _usage_text capture) + suite re-run green.
+- detect_github_repo verified against the pinned URL table; _usage_text sourcing-safe; brain2 note writer fail-soft per-op guarded; fragment rides the fragment glob unconditionally.
+- Generator tier that passed: sonnet (cycle 1 fail was spec-class — frozen-test wording conflict — not capability). Tester: haiku throughout.
