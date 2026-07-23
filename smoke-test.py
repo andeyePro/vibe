@@ -9245,6 +9245,11 @@ def test_task019_ac10_real_hooks_block_commit() -> None:
             shutil.copy2(src, dst)
             dst.chmod(0o755)
 
+        # Pin hook discovery to the dir we populated: an environment-level
+        # core.hooksPath (e.g. GitHub's hosted runners) would otherwise
+        # silently bypass .git/hooks and the hook under test never runs.
+        run(["git", "config", "core.hooksPath", str(hooks_dir)], cwd=repo)
+
         # Try to commit clean content first — should succeed
         test_file = repo / "good.txt"
         test_file.write_text("Hello world\n")
@@ -9460,6 +9465,10 @@ def test_task021_ac2_precommit_warns_on_real_email_identity() -> None:
             dst = hooks_dir / name
             shutil.copy2(src, dst)
             dst.chmod(0o755)
+
+        # Pin hook discovery (see task_019 AC10): environment-level
+        # core.hooksPath must not bypass the hooks under test.
+        run(["git", "config", "core.hooksPath", str(hooks_dir)], cwd=repo)
 
         (repo / "good.txt").write_text("Hello world\n")
         run(["git", "add", "good.txt"], cwd=repo)
