@@ -1,0 +1,687 @@
+---
+// vibe.andeye.com — the Watchful treatment, sibling of andeye.com.
+// Same design system as site/src/pages/index.astro (palette, type scale,
+// section rhythm, reveal choreography + independent watchdog). The centre-
+// piece is a fake terminal showing one vibe session as a transcript — the
+// adversarial loop told as eight quiet lines, not a feature list.
+// Hard rules honoured throughout: hover states change colour ONLY (nothing
+// moves), and every hover/click-swapped string lives in a fixed-height box
+// sized to its longest string. All visible copy comes from content/home.md.
+import AndeyeEye from '../components/AndeyeEye.astro';
+import { frontmatter as copy, Content } from '../content/home.md';
+
+// Transcript pacing: the first line lands as the terminal box appears, then
+// one fully-formed line every 450ms – with a longer beat after each tester
+// line so the fail-then-fix moment registers. Delays are cumulative and baked
+// into CSS transition-delay, so the choreography survives even if only the
+// watchdog script runs.
+let t = 0.6;
+const lineDelays = copy.demo.lines.map((l) => {
+  const d = t;
+  t += l.tone ? 0.75 : 0.45;
+  return d;
+});
+const captionDelay = t;
+---
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{copy.title} – {copy.tagline}</title>
+<meta name="description" content={copy.description} />
+<link rel="canonical" href="https://vibe.andeye.com/" />
+<style>
+  :root {
+    --bg: #0c0f16;
+    --bg-deep: #090b11;
+    --panel: #131826;
+    --panel-2: #161c2c;
+    --line: #232b40;
+    --line-soft: #1b2233;
+    --text: #eef1f6;
+    --muted: #98a0b3;
+    --faint: #6a7382;
+    --accent: #f0a13a;
+    --accent-soft: rgba(240, 161, 58, 0.14);
+    --radius: 14px;
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "SF Pro Display", Segoe UI, sans-serif;
+    line-height: 1.55;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection { background: var(--accent); color: #14100a; }
+
+  a { color: var(--text); }
+  a:hover { color: var(--accent); }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 4px;
+  }
+
+  .wrap {
+    max-width: 1060px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+
+  /* ---------- type scale ---------- */
+
+  .eyebrow {
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: var(--accent);
+    margin: 0;
+  }
+  .eyebrow-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0 0 0.9rem;
+  }
+  /* the engine's svgs are rendered by the AndeyeEye component, outside this
+     page's style scope — size them through :global, with the mark's own
+     aspect so height never guesses */
+  :global(svg.andeye-eye) { aspect-ratio: 365 / 235; }
+  .eyebrow-row :global(svg.andeye-eye) { display: block; flex: none; width: 34px; height: auto; }
+  .hero .eyebrow { margin-bottom: 0.9rem; }
+
+  h1 {
+    font-size: clamp(2.5rem, 6.2vw, 4.4rem);
+    font-weight: 800;
+    letter-spacing: -0.025em;
+    line-height: 1.04;
+    margin: 0 0 1.1rem;
+  }
+
+  h2 {
+    font-size: clamp(1.8rem, 3.6vw, 2.7rem);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    margin: 0 0 1rem;
+  }
+
+  p { margin: 0 0 1rem; }
+  .lede { font-size: clamp(1.05rem, 1.8vw, 1.25rem); color: var(--muted); }
+
+  /* ---------- hero ---------- */
+
+  .hero {
+    position: relative;
+    padding: clamp(56px, 9vh, 96px) 0 40px;
+    text-align: center;
+  }
+
+  .hero::before {
+    /* one cool lamp behind the eye: white like the vibe mark, not the
+       warm orange of the time page — siblings, not twins */
+    content: "";
+    position: absolute;
+    top: -140px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(820px, 120vw);
+    height: 620px;
+    background: radial-gradient(closest-side, rgba(238, 241, 246, 0.07), rgba(238, 241, 246, 0) 72%);
+    pointer-events: none;
+  }
+
+  .eyewrap {
+    position: relative;
+    display: flex;
+    justify-content: center;
+    margin: 0 auto 2.2rem;
+  }
+  .eyewrap :global(svg.andeye-eye) {
+    display: block;
+    width: clamp(170px, 24vw, 230px);
+    height: auto;
+  }
+
+  .hero .sub {
+    max-width: 660px;
+    margin: 0 auto 1.9rem;
+  }
+
+  .ctas {
+    display: flex;
+    gap: 14px;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-bottom: 0.7rem;
+  }
+
+  .btn {
+    display: inline-block;
+    font: inherit;
+    font-size: 1rem;
+    font-weight: 700;
+    letter-spacing: -0.005em;
+    text-decoration: none;
+    padding: 0.85rem 1.6rem;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    transition: background 0.25s ease, border-color 0.25s ease, color 0.25s ease;
+  }
+  .btn-primary { background: var(--accent); color: #171006; }
+  /* hover states change colour ONLY — nothing on this page moves on hover */
+  .btn-primary:hover { background: #ffb44f; color: #171006; }
+  .btn-ghost {
+    background: transparent;
+    color: var(--text);
+    border-color: var(--line);
+  }
+  .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* hover-reactive CTA subtext: answers whichever button you're on. FIXED
+     height, sized to the longest of the three strings (two lines at this
+     width) — nothing may shift when the text swaps. */
+  .cta-sub {
+    height: 3.2em;
+    margin: 0 auto 0.7rem;
+    max-width: 560px;
+    font-size: 0.92rem;
+    color: var(--muted);
+    transition: color 0.25s ease;
+  }
+  .cta-sub.how { color: #b7c0d4; }
+  .cta-sub.andeye { color: #f4c98a; }
+
+  .fineprint {
+    font-size: 0.85rem;
+    color: var(--faint);
+    margin: 0;
+  }
+
+  /* ---------- load choreography ---------- */
+
+  .reveal {
+    opacity: 0;
+    transform: translateY(14px);
+    transition: opacity 0.7s ease, transform 0.7s cubic-bezier(0.2, 0.7, 0.2, 1);
+    transition-delay: var(--d, 0s);
+  }
+  .reveal.in { opacity: 1; transform: none; }
+
+  /* ---------- the terminal: one vibe session as a transcript ---------- */
+
+  .demo {
+    max-width: 760px;
+    margin: clamp(40px, 7vh, 72px) auto 0;
+    text-align: left;
+  }
+
+  .term {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--panel);
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5);
+  }
+  .chrome {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 9px 12px;
+    background: #1a2131;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .traffic { display: flex; align-items: center; gap: 7px; flex: none; }
+  .traffic i { width: 11px; height: 11px; border-radius: 50%; display: block; }
+  .traffic .tl-c { background: #ff5f57; }
+  .traffic .tl-m { background: #febc2e; }
+  .traffic .tl-z { background: #28c840; }
+  .wtitle {
+    margin-left: 7px;
+    font-size: 0.72rem;
+    color: #8b93a8;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .term-body {
+    padding: 18px 20px 20px;
+    background: #0e1220;
+    font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+    font-size: 0.82rem;
+    line-height: 1.75;
+  }
+  .tline {
+    display: grid;
+    grid-template-columns: 8ch 1fr;
+    gap: 14px;
+    align-items: baseline;
+  }
+  .trole { text-align: right; font-weight: 700; }
+  .ttext { color: var(--muted); overflow-wrap: break-word; }
+  .r-you      { color: var(--text); }
+  .r-planner  { color: #7fb2f0; }
+  .r-critic   { color: var(--accent); }
+  .r-builder  { color: #c9a7ea; }
+  .r-tester   { color: #6fc287; }
+  .r-reviewer { color: #e08a8a; }
+  .tline.tone-fail .ttext { color: #d98d86; }
+  .tline.tone-pass .ttext { color: #7fc492; }
+  .tline.t-you .ttext { color: var(--text); }
+  /* transcript lines arrive fully formed: a quick fade only, no slide – the
+     lines always occupy their space, so the terminal box is full height from
+     the start and never grows */
+  .term-body .tline { transform: none; transition: opacity 0.3s ease; transition-delay: var(--d, 0s); }
+
+  .demo-caption {
+    margin: 14px 0 0;
+    font-size: 0.8rem;
+    color: var(--faint);
+    text-align: center;
+  }
+
+  /* ---------- sections ---------- */
+
+  section { padding: clamp(64px, 11vh, 120px) 0; }
+
+  /* the intro statement: the markdown body, big and plain */
+  .what .wrap { max-width: 860px; }
+  .what-prose :global(p) {
+    font-size: clamp(1.25rem, 2.4vw, 1.7rem);
+    line-height: 1.5;
+    letter-spacing: -0.01em;
+    color: var(--muted);
+    max-width: 800px;
+    margin: 0;
+  }
+  .what-prose :global(strong) { color: var(--text); font-weight: 800; }
+
+  /* the roles: plan -> build -> test -> review – hover previews a role's
+     body, click pins it, all inside one shared fixed-height detail panel */
+  #how .lede { max-width: 720px; }
+  .flow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 2.6rem;
+  }
+  .flow-node {
+    font: inherit;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--panel);
+    border: 1px solid var(--line-soft);
+    border-radius: 999px;
+    padding: 14px 22px;
+    cursor: pointer;
+    transition: border-color 0.25s, background 0.25s;
+  }
+  .flow-node svg { width: 24px; height: 24px; flex: none; color: var(--accent); }
+  .flow-node span { font-weight: 700; font-size: 1rem; letter-spacing: 0.02em; }
+  .flow-node:hover { border-color: rgba(240, 161, 58, 0.45); }
+  .flow-node.pinned { border-color: var(--accent); background: var(--panel-2); }
+  .flow-arrow { color: var(--faint); flex: none; }
+  /* FIXED height, sized to the longest role body (two lines at this width)
+     — clicking between roles moves nothing below it */
+  .flow-detail {
+    max-width: 640px;
+    margin: 1.8rem auto 0;
+    height: 3.4em;
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.98rem;
+  }
+
+  /* the sandbox: the page's heart, so it goes darker and bigger */
+  .sandbox {
+    background: var(--bg-deep);
+    border-top: 1px solid var(--line-soft);
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .sandbox .wrap { max-width: 860px; }
+  .sandbox h2 { font-size: clamp(2.1rem, 4.6vw, 3.4rem); }
+
+  .acc { margin-top: 2.6rem; border-top: 1px solid var(--line-soft); }
+  .acc-item { border-bottom: 1px solid var(--line-soft); }
+  .acc-head {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    background: none;
+    border: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    padding: 1.15rem 0;
+    cursor: pointer;
+  }
+  .acc-head:hover h3 { color: var(--accent); }
+  .acc-head h3 {
+    margin: 0;
+    font-size: clamp(1.2rem, 2.4vw, 1.55rem);
+    font-weight: 800;
+    letter-spacing: -0.015em;
+    transition: color 0.25s;
+  }
+  .acc-chev { flex: none; color: var(--faint); transition: transform 0.25s ease; }
+  .acc-item.open .acc-chev { transform: rotate(180deg); }
+  .acc-body { max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
+  .acc-item.open .acc-body { max-height: 10em; }
+  .acc-body p { color: var(--muted); max-width: 620px; margin: 0; padding: 0 0 1.15rem; }
+
+  /* who it's for: short and plain, with the mark keeping watch beside it */
+  .who-wrap { display: flex; align-items: center; gap: 48px; }
+  .who-text { flex: 1; min-width: 0; }
+  .who-text .lede { max-width: 640px; }
+  .who-wrap :global(svg.who-mark) { flex: none; width: clamp(96px, 14vw, 150px); height: auto; opacity: 0.9; }
+  @media (max-width: 640px) { .who-wrap :global(svg.who-mark) { display: none; } }
+
+  /* ---------- footer ---------- */
+
+  footer {
+    border-top: 1px solid var(--line-soft);
+    padding: 40px 0 56px;
+    color: var(--faint);
+    font-size: 0.88rem;
+  }
+  footer .wrap {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 18px;
+    flex-wrap: wrap;
+  }
+  footer nav { display: flex; gap: 22px; }
+  footer a { color: var(--muted); text-decoration: none; }
+  footer a:hover { color: var(--accent); }
+  footer p { margin: 0; }
+
+  /* ---------- responsive ---------- */
+
+  @media (max-width: 640px) {
+    .term-body { padding: 14px 12px 16px; font-size: 0.74rem; }
+    .tline { grid-template-columns: 7.5ch 1fr; gap: 10px; }
+    .who-wrap { gap: 0; }
+    /* narrow screens wrap the longest role body to three lines — the box
+       stays fixed, just fixed at the new longest height */
+    .flow-detail { height: 5em; font-size: 0.94rem; }
+  }
+
+  /* ---------- reduced motion: final states, no choreography ---------- */
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation: none !important;
+      transition: none !important;
+    }
+    .reveal { opacity: 1; transform: none; }
+  }
+</style>
+<noscript><style>.reveal { opacity: 1; transform: none; }</style></noscript>
+</head>
+<body>
+
+<header class="hero" id="top">
+  <div class="wrap">
+    <div class="eyewrap" role="img" aria-label="The vibe andeye mark: a single-stroke ampersand that closes into an eye, with a code prompt as its iris">
+      <AndeyeEye variant="vibe" weight="fill" background="#0c0f16" />
+    </div>
+    <p class="eyebrow reveal" style="--d:0s">{copy.hero.eyebrow}</p>
+    <h1 class="reveal" style="--d:0.08s">{copy.hero.h1[0]}<br>{copy.hero.h1[1]}</h1>
+    <p class="sub lede reveal" style="--d:0.16s">{copy.hero.lede}</p>
+    <div class="ctas reveal" style="--d:0.26s">
+      <a class="btn btn-primary" id="ctaHow" href="#how">{copy.hero.cta_how_label}</a>
+      <a class="btn btn-ghost" id="ctaAndeye" href="https://andeye.com">{copy.hero.cta_andeye_label}</a>
+    </div>
+    <p class="cta-sub reveal" id="ctaSub" style="--d:0.3s" aria-live="polite">{copy.hero.sub_default}</p>
+    <p class="fineprint reveal" style="--d:0.34s">{copy.hero.fineprint}</p>
+
+    <div class="demo reveal" style="--d:0.46s">
+      <div class="term" aria-label="A vibe session transcript">
+        <div class="chrome">
+          <span class="traffic" aria-hidden="true"><i class="tl-c"></i><i class="tl-m"></i><i class="tl-z"></i></span>
+          <span class="wtitle">{copy.demo.title}</span>
+        </div>
+        <div class="term-body">
+          {copy.demo.lines.map((l, i) => (
+            <div class={`tline reveal t-${l.role}${l.tone ? ` tone-${l.tone}` : ''}`} style={`--d:${lineDelays[i].toFixed(2)}s`}>
+              <span class={`trole r-${l.role}`}>{l.role}</span>
+              <span class="ttext">{l.text}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <p class="demo-caption reveal" style={`--d:${captionDelay.toFixed(2)}s`}>{copy.demo.caption}</p>
+    </div>
+  </div>
+</header>
+
+<section class="what" id="what">
+  <div class="wrap">
+    <div class="eyebrow-row">
+      <AndeyeEye variant="vibe" weight="fill" background="#0c0f16" />
+      <p class="eyebrow">{copy.title}</p>
+    </div>
+    <div class="what-prose"><Content /></div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <div class="eyebrow-row">
+      <AndeyeEye variant="vibe" weight="fill" background="#0c0f16" />
+      <p class="eyebrow">{copy.flow.eyebrow}</p>
+    </div>
+    <h2>{copy.flow.h2}</h2>
+    <p class="lede">{copy.flow.lede}</p>
+    <div class="flow" id="flow" role="group" aria-label="plan, build, test, review">
+      <button type="button" class="flow-node" data-flow="0" aria-pressed="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3 L16 3 L19 6 L19 21 L5 21 Z"/><line x1="8.5" y1="9" x2="15.5" y2="9"/><line x1="8.5" y1="13" x2="15.5" y2="13"/><line x1="8.5" y1="17" x2="12.5" y2="17"/></svg>
+        <span>{copy.flow.nodes[0].label}</span>
+      </button>
+      <svg class="flow-arrow" width="26" height="12" viewBox="0 0 26 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="1" y1="6" x2="21" y2="6"/><path d="M16 1 L21 6 L16 11"/></svg>
+      <button type="button" class="flow-node" data-flow="1" aria-pressed="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6 L2 12 L8 18"/><path d="M16 6 L22 12 L16 18"/><line x1="13.5" y1="4" x2="10.5" y2="20"/></svg>
+        <span>{copy.flow.nodes[1].label}</span>
+      </button>
+      <svg class="flow-arrow" width="26" height="12" viewBox="0 0 26 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="1" y1="6" x2="21" y2="6"/><path d="M16 1 L21 6 L16 11"/></svg>
+      <button type="button" class="flow-node" data-flow="2" aria-pressed="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2 L10 9 L4 19 A2.4 2.4 0 0 0 6 22 L18 22 A2.4 2.4 0 0 0 20 19 L14 9 L14 2"/><line x1="8" y1="2" x2="16" y2="2"/><line x1="7" y1="16" x2="17" y2="16"/></svg>
+        <span>{copy.flow.nodes[2].label}</span>
+      </button>
+      <svg class="flow-arrow" width="26" height="12" viewBox="0 0 26 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="1" y1="6" x2="21" y2="6"/><path d="M16 1 L21 6 L16 11"/></svg>
+      <button type="button" class="flow-node" data-flow="3" aria-pressed="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><line x1="15.5" y1="15.5" x2="21" y2="21"/></svg>
+        <span>{copy.flow.nodes[3].label}</span>
+      </button>
+    </div>
+    <div class="flow-detail" id="flowDetail" aria-live="polite">
+      <p>{copy.flow.default_line}</p>
+    </div>
+  </div>
+</section>
+
+<section class="sandbox" id="sandbox">
+  <div class="wrap">
+    <div class="eyebrow-row">
+      <AndeyeEye variant="vibe" weight="fill" background="#090b11" />
+      <p class="eyebrow">{copy.sandbox.eyebrow}</p>
+    </div>
+    <h2>{copy.sandbox.h2}</h2>
+    <p class="lede">{copy.sandbox.lede}</p>
+    <div class="acc" id="acc">
+      {copy.sandbox.claims.map((c, i) => (
+        <div class="acc-item" id={`acc${i}`}>
+          <button type="button" class="acc-head" aria-expanded="false" aria-controls={`acc${i}body`}>
+            <h3>{c.head}</h3>
+            <svg class="acc-chev" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5 L8 11 L13 5"/></svg>
+          </button>
+          <div class="acc-body" id={`acc${i}body`}>
+            <p>{c.body}</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
+</section>
+
+<section id="who">
+  <div class="wrap who-wrap">
+    <div class="who-text">
+      <div class="eyebrow-row">
+        <AndeyeEye variant="vibe" weight="fill" background="#0c0f16" />
+        <p class="eyebrow">{copy.who.eyebrow}</p>
+      </div>
+      <h2>{copy.who.h2}</h2>
+      <p class="lede">{copy.who.lede}</p>
+    </div>
+    <AndeyeEye variant="vibe" weight="fill" background="#0c0f16" class="who-mark" />
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p>© {new Date().getFullYear()} {copy.footer}</p>
+    <nav>
+      <a href="https://andeye.com">andeye.com</a>
+      <a href="https://andeye.com/terms/">Terms</a>
+      <a href="https://andeye.com/privacy/">Privacy</a>
+      <a href="#top">{copy.title}</a>
+    </nav>
+  </div>
+</footer>
+
+<script is:inline define:vars={{ COPY: {
+  subs: { default: copy.hero.sub_default, how: copy.hero.sub_how, andeye: copy.hero.sub_andeye },
+  flow: { default_line: copy.flow.default_line, bodies: copy.flow.nodes.map((n) => n.body) },
+} }}>
+// Astro wraps define:vars scripts in an IIFE, so `COPY` is scoped to this
+// block and is NOT a global on its own. Export it explicitly - the main
+// script below reads it. Removing this line kills the whole page script.
+window.COPY = COPY;
+</script>
+<script is:inline>
+// Failsafe, deliberately separate from the main script below: if that script
+// ever dies (an uncaught error, a missing global), the .reveal choreography
+// never runs and the hero + transcript would stay invisible. This tiny
+// independent watchdog reveals everything on any uncaught error, and again
+// shortly after load as a catch-all. Adding "in" to an already-revealed
+// element is a no-op, so it never fights the normal choreography.
+(function () {
+  function show() {
+    var els = document.querySelectorAll('.reveal:not(.in)');
+    for (var i = 0; i < els.length; i++) els[i].classList.add('in');
+  }
+  window.addEventListener('error', function () { setTimeout(show, 0); });
+  window.addEventListener('load', function () { setTimeout(show, 3200); });
+})();
+</script>
+<script is:inline>
+(function () {
+'use strict';
+
+var COPY = window.COPY;
+var reduced = window.matchMedia
+  && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// --- load: everything reveals on its own stagger; the eye engine draws
+// the mark on independently (mounted by the AndeyeEye component) ---
+function revealAll() {
+  document.querySelectorAll('.reveal').forEach(function (el) { el.classList.add('in'); });
+}
+if (reduced) {
+  revealAll();
+} else {
+  // one frame so initial styles are committed, then the stagger runs
+  requestAnimationFrame(function () { requestAnimationFrame(revealAll); });
+}
+
+// --- hover-reactive CTA subtext (fixed-height box: text swaps, nothing
+// moves; colour is the only other thing that changes) ---
+var ctaSub = document.getElementById('ctaSub');
+function sub(kind) {
+  ctaSub.textContent = COPY.subs[kind];
+  ctaSub.classList.toggle('how', kind === 'how');
+  ctaSub.classList.toggle('andeye', kind === 'andeye');
+}
+[['ctaHow', 'how'], ['ctaAndeye', 'andeye']].forEach(function (pair) {
+  var el = document.getElementById(pair[0]);
+  ['mouseenter', 'focus'].forEach(function (ev) {
+    el.addEventListener(ev, function () { sub(pair[1]); });
+  });
+  ['mouseleave', 'blur'].forEach(function (ev) {
+    el.addEventListener(ev, function () { sub('default'); });
+  });
+});
+
+// --- the roles: hovering (or focusing) a node previews its body in the
+// shared fixed-height detail panel; clicking pins it. Leaving a hover falls
+// back to whatever is pinned, or the whole-flow summary line. Text is the
+// only thing that changes – the panel never moves. ---
+var flowDetail = document.getElementById('flowDetail').querySelector('p');
+var nodes = Array.prototype.slice.call(document.querySelectorAll('.flow-node'));
+var pinned = -1;
+var hovered = -1;
+function paintFlow() {
+  var shown = hovered !== -1 ? hovered : pinned;
+  nodes.forEach(function (n, i) {
+    n.classList.toggle('pinned', i === pinned);
+    n.setAttribute('aria-pressed', i === pinned ? 'true' : 'false');
+  });
+  flowDetail.textContent = shown === -1 ? COPY.flow.default_line : COPY.flow.bodies[shown];
+}
+nodes.forEach(function (n, i) {
+  n.addEventListener('click', function () {
+    pinned = (pinned === i) ? -1 : i;
+    paintFlow();
+  });
+  ['mouseenter', 'focus'].forEach(function (ev) {
+    n.addEventListener(ev, function () { hovered = i; paintFlow(); });
+  });
+  ['mouseleave', 'blur'].forEach(function (ev) {
+    n.addEventListener(ev, function () { if (hovered === i) { hovered = -1; paintFlow(); } });
+  });
+});
+
+// --- sandbox accordions: HOVER previews (open while the pointer rests),
+// click PINS open/closed — the same reveal contract as the flow pills
+// (Martin, 2026-07-09: "still do nothing on rollover"). ---
+document.querySelectorAll('.acc-item').forEach(function (item) {
+  var head = item.querySelector('.acc-head');
+  var pinned = false;
+  function set(open) {
+    item.classList.toggle('open', open);
+    head.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+  head.addEventListener('click', function () {
+    pinned = !pinned;
+    set(pinned);
+  });
+  ['mouseenter', 'focus'].forEach(function (ev) {
+    head.addEventListener(ev, function () { if (!pinned) set(true); });
+  });
+  ['mouseleave', 'blur'].forEach(function (ev) {
+    head.addEventListener(ev, function () { if (!pinned) set(false); });
+  });
+});
+
+})();
+</script>
+</body>
+</html>
