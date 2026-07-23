@@ -12,6 +12,12 @@
 __pycache__/
 *.pyc
 
+# vibe.andeye.com site (site/) — build artifacts only; src stays tracked
+site/node_modules/
+site/dist/
+site/.astro/
+site-recovered/
+
 # /vs per-cycle artifacts (spec.md, progress.md, tasks.json stay tracked)
 .vs/cycle-*/
 
