@@ -13,7 +13,7 @@ If a user pointed you at this file and asked you to take them through vibe onboa
 - Shipped extras: `devcontainer/commands/` (/c, /diet, /feast, /learn, /sp, /vs, /vss, /vsss), `devcontainer/agents/` (shellcheck-fixer, security-review), `devcontainer/hooks/` (check-numbering.sh, copy-last-block.sh — both opt-in via `~/.claude/settings.json`), and `devcontainer/claude-md/` fragments (web-research, ssh-discipline, learnings, learn-hook). All synced into the persistent `~/.claude/` volume by `install-claude-extras.sh` on every container start; user-authored files in the same dirs are left alone.
 - Target users: macOS primary (tested on Darwin), Linux secondary. Uses OrbStack or Docker Desktop.
 - Auth model: Claude Pro/Max subscription (never API key); GitHub fine-grained PAT per repo (blast-radius argument — each container can only touch one repo).
-- Repo home: `github.com/andeyePro/vibe` (transferred from Aqueum 2026-07-08); published at vibe.andeye.com (copy draft in `web/vibe-andeye.md`).
+- Repo home: `github.com/andeyePro/vibe` (transferred from Aqueum 2026-07-08); site source in `site/` (Astro one-pager) deploys to vibe.andeye.com via Cloudflare Pages (domain attach pending, Martin-gated; `web/vibe-andeye.md` is a superseded draft).
 - Public-facing docs: `README.md`, `ONBOARDING.md` (agent-led non-coder onboarding), `CONTRIBUTING.md` (how to contribute), `CONTRIBUTORS.md` (who has — the ledger andeye's revenue-share promise operates on), `SECURITY.md`, `RELEASING.md` + `VERSION` (semver, `vibe --version`). Keep these consistent when features change.
 
 ## Testing

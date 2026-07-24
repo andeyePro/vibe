@@ -173,8 +173,13 @@ def test_licence_state() -> None:
     check("AGPL draft removed", not (REPO / "LICENSE-AGPL3-DRAFT").exists(), "")
     check("CLA draft removed", not (REPO / "CLA-DRAFT.md").exists(), "")
     for name in ("README.md", "CONTRIBUTING.md", "web/vibe-andeye.md"):
+        # web/vibe-andeye.md is a superseded draft slated for deletion at
+        # Martin's word — a missing file is fine, not a crash.
+        path = REPO / name
+        if not path.is_file():
+            continue
         check(f"{name} does not announce an AGPL move",
-              "settled on moving" not in (REPO / name).read_text(), name)
+              "settled on moving" not in path.read_text(), name)
 
 
 def test_env_hint_fresh() -> None:

@@ -19,7 +19,7 @@ A hard-escalate trigger inside any iteration aborts the entire loop, not just th
 At the very start of `/vsss`, before any work:
 
 1. Capture `START_TIME=$(date -u +%s)` (or equivalent in your context).
-2. Read `MEMORY.md` for `feedback_autonomous_session_protocol` and `feedback_default_to_local_time_for_uk_user`. Apply both.
+2. Read `MEMORY.md` for `feedback_autonomous_session_protocol`, `feedback_default_to_local_time_for_uk_user`, and `feedback_vsss_todo_staleness` (surface stale TODO items before Mode A picks). Apply all three.
 3. Set `BUDGET_HOURS=5` unless the user passed an explicit budget. Recognised flags (in order of precedence; first match wins):
    - `/vsss --hours N <args>` — canonical. `N` is a positive integer or decimal (e.g. `2`, `2.5`, `0.5`). Sets the budget cap to `N` hours from `START_TIME`.
    - `/vsss --budget Nh <args>` — backward-compatible alias. Same semantics; `Nh` parsed as a positive integer or decimal followed by literal `h`.
