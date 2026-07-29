@@ -128,7 +128,115 @@ Two corollaries, both of which have caused real multi-hour stalls:
 
 Between iterations, progress belongs in `.vss/sessions/<start-ISO>.md`, not in a
 message to the user — it is durable, it survives an abort, and Martin is not
-watching a live feed anyway.
+watching a live feed anyway. Questions for the user go through § fromto
+channels below — never through stopping.
+
+## fromto channels — asynchronous user Q&A without stopping
+
+Why this exists: in a long `/vsss` run, far more scrolls through the TTY than
+the user will ever read, and the user only wants to read and answer what they
+MUST to unblock work. So questions leave the terminal entirely: they land in
+the user's second brain as a short live list, answers come back the same way,
+and the loop never stops to wait. This section defines the whole protocol.
+
+### The three files
+
+In the project's folder of the mounted second brain (`/brain2/<project>/`,
+matching the existing per-project channel convention):
+
+- `<project>-fromClaude.md` — Claude's live questions. Claude writes, user reads.
+- `<project>-from<User>.md` — the user's answers and instructions. User writes;
+  Claude only ever *removes consumed items* from it (and never touches the last
+  line — it may be mid-edit).
+- `<project>-Q&A-archive.md` — resolved exchanges, grouped by thread. Claude
+  writes, nobody needs to read it unless auditing.
+
+`<User>` is the first name from `git config user.name`; `VIBE_FROMTO_USER`
+overrides. `<project>` is the workspace folder name.
+
+**Activation.** If the `from<User>` file already exists, fromto is ON — no flag,
+nothing to type. If it does not exist and `/brain2` is mounted, ASK at session
+start (front-loaded, before the autonomous phase — never mid-run): one line
+offering to create the three files, naming all three paths. Declined → run
+without; questions then queue for the exit report only. No `/brain2` mount →
+same ask but offering `.vss/` in-repo paths instead. On creation and at every
+session start while active, print one terminal line: questions land in
+`<fromClaude path>`, answers go in `<from-User path>`. The files cross-link
+with `[[wikilinks]]` so the user can hop between them in Obsidian.
+
+### Question format (fromClaude)
+
+One single ordered list, numbered contiguously `1..N`, containing ONLY live
+(unanswered) questions — Obsidian renders one OL per file and requires
+contiguous numbering, and the user must never have to scan resolved noise.
+Each item is one self-contained question ending with a Claude-written thread
+tag: `3. Should the API retry on 429s? (T7)`. The user never types thread
+tags — they exist so exchanges stay threaded through renumbering. Tags are
+monotonic and never reused. Channel hygiene applies: questions and blocking
+asks only — no progress notes, no FYIs (progress lives in the session file).
+
+### Answer format (from<User>) — the lazy contract
+
+The user answers with a plain OL whose numbers match what fromClaude showed
+them: `1. y`, `2. n`, `3. ?`. Meanings:
+
+- Any text — the answer. Terse is expected; `y`/`n` are complete answers.
+- `?` — question not understood. Re-ask as a NEW numbered question in the SAME
+  thread, expanded/clarified. A `?` is an answer: the original leaves the live
+  list.
+- `later` — acknowledged, not now. Keep it live (or park it with a note if it
+  blocks nothing).
+- Omitted — still live; never nag, never re-ask unchanged.
+
+Unnumbered prose or extra numbered items that answer no live question are
+INSTRUCTIONS — see precedence below.
+
+### Consume protocol — start of EVERY iteration
+
+1. Read `from<User>`. Nothing new → carry on immediately; never idle-wait.
+2. **Map answer numbers to questions via generations, not blindly.** Only
+   Claude rewrites fromClaude, so the user can only ever have seen a numbering
+   Claude wrote. Before every rewrite, record the outgoing generation (number →
+   thread tag → question text) in the session file. When consuming, compare the
+   `from<User>` file's mtime against fromClaude's last-rewrite time: answers
+   written before the last rewrite map through the PREVIOUS generation. An
+   answer number that maps to nothing in the applicable generation is never
+   guessed at — re-ask in-thread.
+3. Move each resolved pair to the archive under its thread heading
+   (`### T7 — <short topic>`), appending the full exchange in order — question,
+   any clarifications, final answer — so a dragged-out thread reads as one
+   conversation, not chronological interleave.
+4. Remove consumed items from `from<User>` (leave anything unparseable and the
+   last line untouched). The user should find a clear file ready for a fresh
+   contiguous OL.
+5. Rewrite fromClaude: drop resolved items, renumber the survivors from 1,
+   append any new questions, record the new generation.
+6. Fold answers and instructions into the plan BEFORE the optimiser picks the
+   next area.
+
+### Precedence
+
+Live terminal prompt > `from<User>` instructions > TODO queue. A terminal
+prompt is always supreme — "are we safe to exit" means stop cleanly NOW, never
+"after I finish the from<User> backlog". Instructions in `from<User>` redirect
+the queue (log the redirect in the session file); they are user instructions,
+not suggestions.
+
+### Interaction with the loop
+
+Needing an answer NEVER stops the loop and NEVER blocks an area silently: post
+the question, move to the next area needing no input, pick the answer up at a
+later iteration boundary. If every remaining area is blocked on unanswered
+questions, that is exit-condition territory (no-op iterations) — the exit
+report then says exactly which numbered questions unblock which work.
+
+### At exit
+
+Append the exit report (same content as § Reporting back at exit) to
+fromClaude below the live list, including every still-live question number and
+what each unblocks — so the user reads the outcome and their remaining asks in
+Obsidian without touching the TTY. Credential boundary reminder: brain2 is
+write-files-only from a container — never `git` against it.
 
 ### After each /vss completes
 
@@ -204,6 +312,10 @@ When the loop ends (any reason), report to the user:
 - Reminder line: "not pushed; review the session file then `git push` if approved" (omit the reminder only if `--push-on-pass` was passed AND the run cleared the perfection-gate).
 
 Lead with `---` before the report block.
+
+If fromto channels are active (§ fromto channels), also append this report to
+the fromClaude file below the live question list, listing every still-live
+question number and what each unblocks.
 
 ---
 
