@@ -970,3 +970,24 @@ Needs a real GitHub repo whose NAME contains a dot (e.g. `andeyePro/andeye.com`)
 
 **38c — in-container Claude reads the note instead of guessing:**
 - [ ] Inside a session with brain2 mounted, ask Claude a host-side vibe CLI question (e.g. "how do I rotate my PAT?"). It should read `/brain2/meta/vibe-operation.md` and answer with the exact command and which side to run it on, rather than inventing a mechanism or telling you to go find it yourself.
+
+---
+
+### Test 39: firewall self-heal — transient fetch failure and in-place recovery (task_028)
+
+Covers the 2026-07-29 incident: one transient `curl` failure at container start left the box fail-closed, and because `vibe` reuses a running container without re-running `postStartCommand`, nothing ever retried. Host-side smoke tests cover the retry logic against a stub; these confirm it against real Docker and real iptables.
+
+**39a — clean boot unchanged (regression):**
+- [ ] Plain `vibe` launch: `Fetching GitHub IP ranges...` is followed immediately by `Processing GitHub IPs...` with **no** `WARNING: GitHub meta attempt` lines, and the run ends with both `Firewall verification passed` lines — a healthy fetch must still cost exactly one call and add no boot latency
+- [ ] Inside the container, `curl -s -o /dev/null -w '%{http_code}\n' https://api.anthropic.com/v1/messages` returns `405` (reachable), and `curl --connect-timeout 5 https://example.com` fails — allowlist enforced
+
+**39b — transient failure is retried, not fatal:**
+- [ ] In a running container, simulate a blip by pointing the fetch at a dead endpoint for the first attempts: `docker exec -u root <cid> env GH_META_URL=http://127.0.0.1:9/meta GH_FETCH_ATTEMPTS=2 GH_FETCH_BACKOFF=0 /usr/local/bin/init-firewall.sh` — expect two `WARNING: GitHub meta attempt N/2 …` lines, then `ERROR: Failed to fetch usable GitHub IP ranges after 2 attempts` and `exiting rc=1 before completion - failing CLOSED`. Confirms retries happen **and** that a genuine failure still fails closed.
+- [ ] Immediately after that failure, `docker exec -u root <cid> iptables -S | head -3` shows the policies at `DROP` — the box is locked down, not left open
+
+**39c — in-place self-heal (the fix):**
+- [ ] From the fail-closed state left by 39b, re-run the script unmodified: `docker exec -u root <cid> /usr/local/bin/init-firewall.sh`. It must now **succeed** — the post-flush policy reset lets the GitHub fetch through, the allowlist rebuilds, and both verification probes pass. Before task_028 this run could only ever re-fail with `rc=28`.
+- [ ] Restart Claude in that container and confirm it connects (no `Unable to connect to API (ConnectionRefused)`)
+
+**39d — symptom-to-cause mapping (diagnostic aid):**
+- [ ] With the firewall fully built but `api.anthropic.com` deliberately absent from the ipset (`docker exec -u root <cid> ipset del allowed-domains 160.79.104.10`, substituting the current resolved IP), an in-container `curl https://api.anthropic.com` fails **fast** with connection refused — the terminal `REJECT` rule. Contrast with 39b's trap-applied `DROP`, where the same curl **hangs** to timeout. Confirms the two failure modes are distinguishable from the symptom alone.

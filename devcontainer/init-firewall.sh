@@ -20,6 +20,57 @@ fail_closed() {
     iptables -P OUTPUT DROP  || true
   fi
 }
+
+# --- helpers ------------------------------------------------------------
+# Defined BEFORE the first side-effecting command (and before the trap is
+# installed) so smoke-test.py can source this script with
+# VIBE_FIREWALL_SOURCE_ONLY=1 and exercise them host-side, with no iptables,
+# no Docker and no network. Mirrors `vibe`'s own VIBE_SOURCE_ONLY convention.
+
+GH_META_URL="${GH_META_URL:-https://api.github.com/meta}"
+GH_FETCH_ATTEMPTS="${GH_FETCH_ATTEMPTS:-3}"
+GH_FETCH_BACKOFF="${GH_FETCH_BACKOFF:-2}"
+
+# Fetch GitHub's published IP ranges, retrying a transient failure.
+#
+# Why retry: this fetch runs from postStartCommand while the container's
+# network is still settling, and a single failure here used to be terminal.
+# The trap above then locks the box down, `vibe` reuses the running container
+# on relaunch WITHOUT re-running postStartCommand, and nothing ever retries -
+# so one blip stranded a container with no reachable API until the user
+# rebuilt it. Observed live 2026-07-29 (curl rc=28 at this exact line).
+#
+# Validation lives inside the retry loop deliberately: an empty body, a
+# non-JSON error page and a rate-limit JSON body without the fields we need
+# are all transient conditions that a later attempt can clear.
+# Prints the response body on stdout; returns 1 if every attempt failed.
+fetch_gh_ranges() {
+    local attempt=1 body=""
+    while [ "$attempt" -le "$GH_FETCH_ATTEMPTS" ]; do
+        body=$(curl -s --connect-timeout 5 --max-time 20 "$GH_META_URL") || body=""
+        if [ -n "$body" ] && echo "$body" | jq -e '.web and .api and .git' >/dev/null 2>&1; then
+            printf '%s' "$body"
+            return 0
+        fi
+        if [ -n "$body" ]; then
+            echo "WARNING: GitHub meta attempt $attempt/$GH_FETCH_ATTEMPTS returned an unusable response - retrying" >&2
+        else
+            echo "WARNING: GitHub meta attempt $attempt/$GH_FETCH_ATTEMPTS could not fetch $GH_META_URL - retrying" >&2
+        fi
+        if [ "$attempt" -lt "$GH_FETCH_ATTEMPTS" ]; then
+            sleep "$(( GH_FETCH_BACKOFF * attempt ))"
+        fi
+        attempt=$(( attempt + 1 ))
+    done
+    return 1
+}
+
+# Test hook: stop here when sourced for unit testing, before anything mutates
+# the host's network state.
+if [ -n "${VIBE_FIREWALL_SOURCE_ONLY:-}" ]; then
+    return 0 2>/dev/null || exit 0
+fi
+
 trap fail_closed EXIT
 
 # 1. Extract Docker DNS info BEFORE any flushing
@@ -33,6 +84,21 @@ iptables -t nat -X
 iptables -t mangle -F
 iptables -t mangle -X
 ipset destroy allowed-domains 2>/dev/null || true
+
+# `iptables -F` flushes RULES but NOT the default policies, so a DROP left
+# behind by a previous failed run (or by the fail_closed trap) survives into
+# this one - and then blocks the GitHub meta fetch below, stranding this run
+# in exactly the same failure. That made an already-closed container unable to
+# self-heal in place: re-running this script could only ever re-fail. Reset the
+# policies for the build phase.
+#
+# This widens nothing on net. A first, clean boot already starts from the
+# kernel default of ACCEPT, so the open window here is the same one the normal
+# path has always had; the body re-establishes DROP below before any allow rule
+# is load-bearing, and the trap re-establishes DROP on any failure in between.
+iptables -P INPUT ACCEPT
+iptables -P FORWARD ACCEPT
+iptables -P OUTPUT ACCEPT
 
 # 2. Selectively restore ONLY internal Docker DNS resolution
 if [ -n "$DOCKER_DNS_RULES" ]; then
@@ -60,16 +126,12 @@ iptables -A OUTPUT -o lo -j ACCEPT
 # Create ipset with CIDR support
 ipset create allowed-domains hash:net
 
-# Fetch GitHub meta information and aggregate + add their IP ranges
+# Fetch GitHub meta information and aggregate + add their IP ranges.
+# fetch_gh_ranges retries and validates; a hard failure here is genuine (not a
+# blip) and must stay fatal, so the trap locks the container down.
 echo "Fetching GitHub IP ranges..."
-gh_ranges=$(curl -s https://api.github.com/meta)
-if [ -z "$gh_ranges" ]; then
-    echo "ERROR: Failed to fetch GitHub IP ranges"
-    exit 1
-fi
-
-if ! echo "$gh_ranges" | jq -e '.web and .api and .git' >/dev/null; then
-    echo "ERROR: GitHub API response missing required fields"
+if ! gh_ranges=$(fetch_gh_ranges); then
+    echo "ERROR: Failed to fetch usable GitHub IP ranges after $GH_FETCH_ATTEMPTS attempts"
     exit 1
 fi
 

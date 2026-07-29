@@ -59,6 +59,7 @@ CREDENTIAL_HELPER = REPO / "devcontainer" / "credential-helper.sh"
 SETUP_GIT_SH = REPO / "devcontainer" / "setup-git.sh"
 VIBE_CONTENT_SCANNER = REPO / "devcontainer" / "git-hooks" / "vibe-content-scan.sh"
 CONTENT_GUARD_MD = REPO / "devcontainer" / "claude-md" / "content-guard.md"
+INIT_FIREWALL = REPO / "devcontainer" / "init-firewall.sh"
 
 FAILURES: list[tuple[str, str]] = []
 
@@ -12139,6 +12140,184 @@ refresh_brain2_vibe_note
             check("note contains no ghp_ tokens", "ghp_" not in content, "secret found in help text")
 
 
+# ── task_028: init-firewall self-heal (GitHub meta retry + policy reset) ──────
+#
+# Triggered live 2026-07-29: a container sat unreachable ("Unable to connect to
+# API (ConnectionRefused)") across repeated reboots. Two compounding defects:
+#   1. `curl https://api.github.com/meta` had no retry, so one transient blip
+#      hit the fail_closed trap and locked the container down for good --
+#      `vibe` reuses a running container without re-running postStartCommand.
+#   2. `iptables -F` flushes rules but NOT default policies, so the DROP left
+#      by that failure blocked the very fetch the next run needed. Re-running
+#      init-firewall.sh in place could only ever re-fail.
+# These tests are host-side: no Docker, no iptables, no network.
+
+
+def _fw_stub_curl(tmp: Path, *, script_body: str) -> str:
+    """A bin dir whose `curl` is a scripted stub, prepended to PATH.
+
+    The stub appends one line to $STUB_LOG per invocation so tests can assert
+    on the exact attempt count (a retry loop that never stops early is as much
+    a bug as one that never retries).
+    """
+    stub = tmp / "fwbin"
+    stub.mkdir(exist_ok=True)
+    p = stub / "curl"
+    p.write_text("#!/bin/bash\n"
+                 'echo "call" >> "$STUB_LOG"\n'
+                 f"n=$(wc -l < \"$STUB_LOG\" | tr -d ' ')\n"
+                 f"{script_body}\n")
+    p.chmod(0o755)
+    return f"{stub}:{os.environ.get('PATH', '')}"
+
+
+def _fw_run(tmp: Path, stub_body: str, snippet: str):
+    """Source init-firewall.sh with the helpers exposed but no side effects,
+    against a stubbed curl, then run `snippet`."""
+    log = tmp / "curl.log"
+    log.write_text("")
+    env = {
+        **os.environ,
+        "PATH": _fw_stub_curl(tmp, script_body=stub_body),
+        "STUB_LOG": str(log),
+        "VIBE_FIREWALL_SOURCE_ONLY": "1",
+        "GH_FETCH_BACKOFF": "0",
+    }
+    script = f"source {shlex.quote(str(INIT_FIREWALL))}\n{snippet}\n"
+    r = run(["bash", "-c", script], env=env)
+    calls = len([ln for ln in log.read_text().splitlines() if ln.strip()])
+    return r, calls
+
+
+_FW_GOOD_JSON = '{"web":["1.2.3.0/24"],"api":["4.5.6.0/24"],"git":["7.8.9.0/24"]}'
+
+
+def test_task028_ac1_source_only_no_side_effects() -> None:
+    """VIBE_FIREWALL_SOURCE_ONLY exposes the helpers and touches nothing."""
+    print("\n[task_028 AC1: source-only test hook]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        r, calls = _fw_run(tmp, "exit 1", 'type -t fetch_gh_ranges')
+        check("sources cleanly", r.returncode == 0, r.stderr[:400])
+        check("fetch_gh_ranges defined", "function" in r.stdout, r.stdout)
+        check("no curl call on source", calls == 0, f"calls={calls}")
+        check("no iptables output", "iptables" not in r.stderr, r.stderr[:400])
+
+
+def test_task028_ac2_retries_then_succeeds() -> None:
+    """A transient failure is retried, not fatal -- the live 2026-07-29 case."""
+    print("\n[task_028 AC2: retry recovers a transient failure]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        body = f'if [ "$n" -lt 3 ]; then exit 28; fi\necho \'{_FW_GOOD_JSON}\''
+        r, calls = _fw_run(tmp, body, 'fetch_gh_ranges; echo "RC=$?"')
+        check("succeeds after retrying", "RC=0" in r.stdout, r.stdout[:400])
+        check("made 3 attempts", calls == 3, f"calls={calls}")
+        check("emits the payload", '"web"' in r.stdout, r.stdout[:400])
+        check("warns on each failed attempt",
+              r.stderr.count("WARNING") == 2, r.stderr[:400])
+
+
+def test_task028_ac3_all_attempts_fail_returns_nonzero() -> None:
+    """Exhausted retries must still fail, so the trap locks the box down."""
+    print("\n[task_028 AC3: exhausted retries stay fatal]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        # Mirrors the real call site's `if ! gh_ranges=$(fetch_gh_ranges)`;
+        # a bare call would be killed by the script's own `set -e` first.
+        r, calls = _fw_run(
+            tmp, "exit 28",
+            'if ! fetch_gh_ranges >/dev/null; then echo "RC=1"; else echo "RC=0"; fi')
+        check("returns non-zero", "RC=1" in r.stdout, r.stdout[:400])
+        check("stopped at the attempt cap", calls == 3, f"calls={calls}")
+
+
+def test_task028_ac4_no_needless_retry_on_first_success() -> None:
+    """A healthy fetch costs exactly one call -- no added boot latency."""
+    print("\n[task_028 AC4: clean path unchanged]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        r, calls = _fw_run(tmp, f"echo '{_FW_GOOD_JSON}'",
+                           'fetch_gh_ranges >/dev/null; echo "RC=$?"')
+        check("succeeds", "RC=0" in r.stdout, r.stdout[:400])
+        check("exactly one attempt", calls == 1, f"calls={calls}")
+        check("no warnings", "WARNING" not in r.stderr, r.stderr[:400])
+
+
+def test_task028_ac5_unusable_body_is_retried() -> None:
+    """A rate-limit body parses as JSON but lacks .web/.api/.git -- retry it."""
+    print("\n[task_028 AC5: unusable response retried, not accepted]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        rate_limited = '{"message":"API rate limit exceeded"}'
+        body = (f'if [ "$n" -lt 2 ]; then echo \'{rate_limited}\'; exit 0; fi\n'
+                f"echo '{_FW_GOOD_JSON}'")
+        r, calls = _fw_run(tmp, body, 'fetch_gh_ranges; echo "RC=$?"')
+        check("does not accept the rate-limit body",
+              "rate limit" not in r.stdout, r.stdout[:400])
+        check("retries to a good response", "RC=0" in r.stdout, r.stdout[:400])
+        check("made 2 attempts", calls == 2, f"calls={calls}")
+
+
+def test_task028_ac6_empty_body_is_retried() -> None:
+    """curl exiting 0 with an empty body must not be treated as success."""
+    print("\n[task_028 AC6: empty body retried]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        body = f'if [ "$n" -lt 2 ]; then exit 0; fi\necho \'{_FW_GOOD_JSON}\''
+        r, calls = _fw_run(tmp, body, 'fetch_gh_ranges >/dev/null; echo "RC=$?"')
+        check("retries past the empty body", "RC=0" in r.stdout, r.stdout[:400])
+        check("made 2 attempts", calls == 2, f"calls={calls}")
+
+
+def test_task028_ac7_fetch_has_timeouts() -> None:
+    """An unbounded curl would hang postStart instead of failing to the retry."""
+    print("\n[task_028 AC7: fetch is time-bounded]")
+    src = INIT_FIREWALL.read_text()
+    fn = src.split("fetch_gh_ranges()", 1)[1].split("\n}", 1)[0]
+    check("--connect-timeout set", "--connect-timeout" in fn, fn[:300])
+    check("--max-time set", "--max-time" in fn, fn[:300])
+
+
+def test_task028_ac8_policy_reset_after_flush() -> None:
+    """The policy reset must sit after the flush and before the GitHub fetch."""
+    print("\n[task_028 AC8: policy reset placement]")
+    src = INIT_FIREWALL.read_text()
+    for chain in ("INPUT", "FORWARD", "OUTPUT"):
+        check(f"resets {chain} to ACCEPT",
+              f"iptables -P {chain} ACCEPT" in src, "missing reset")
+    i_flush = src.index("iptables -F")
+    i_reset = src.index("iptables -P OUTPUT ACCEPT")
+    i_fetch = src.index("Fetching GitHub IP ranges")
+    check("reset comes after the flush", i_flush < i_reset)
+    check("reset comes before the fetch", i_reset < i_fetch)
+
+
+def test_task028_ac9_still_locks_down_at_the_end() -> None:
+    """Regression guard: the reset must not have displaced the final DROP."""
+    print("\n[task_028 AC9: fail-closed posture intact]")
+    src = INIT_FIREWALL.read_text()
+    i_reset = src.index("iptables -P OUTPUT ACCEPT")
+    for chain in ("INPUT", "FORWARD", "OUTPUT"):
+        check(f"re-establishes {chain} DROP",
+              f"iptables -P {chain} DROP" in src[i_reset:], "missing DROP")
+    check("final REJECT rule intact",
+          "-j REJECT --reject-with icmp-admin-prohibited" in src)
+    check("fail_closed trap still installed", "trap fail_closed EXIT" in src)
+    check("trap installed after the source-only hook",
+          src.index("VIBE_FIREWALL_SOURCE_ONLY") < src.index("trap fail_closed EXIT"))
+    check("hard fetch failure still exits 1",
+          "Failed to fetch usable GitHub IP ranges" in src)
+
+
+def test_task028_ac10_changelog_entry_present() -> None:
+    print("\n[task_028 AC10: CHANGELOG]")
+    content = CHANGELOG_MD.read_text()
+    check("CHANGELOG mentions the firewall self-heal fix",
+          "init-firewall" in content and "self-heal" in content.lower(),
+          "no task_028 entry")
+
+
 def main() -> int:
     test_help()
     test_version()
@@ -12634,6 +12813,20 @@ def main() -> int:
     test_task027_ac9_readme_mentions_vibe_operation()
     test_task027_ac9_manual_tests_mentions_vibe_operation()
     test_task027_ac10_no_secrets_in_note()
+
+    # task_028: init-firewall self-heal — retry the GitHub meta fetch, and
+    # reset default policies after the flush so a closed container can rebuild
+    # its own allowlist in place instead of re-failing forever.
+    test_task028_ac1_source_only_no_side_effects()
+    test_task028_ac2_retries_then_succeeds()
+    test_task028_ac3_all_attempts_fail_returns_nonzero()
+    test_task028_ac4_no_needless_retry_on_first_success()
+    test_task028_ac5_unusable_body_is_retried()
+    test_task028_ac6_empty_body_is_retried()
+    test_task028_ac7_fetch_has_timeouts()
+    test_task028_ac8_policy_reset_after_flush()
+    test_task028_ac9_still_locks_down_at_the_end()
+    test_task028_ac10_changelog_entry_present()
 
     print()
     if FAILURES:
