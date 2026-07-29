@@ -105,6 +105,31 @@ iter 2:  /vss <optimised args>                (Mode B with optimised args)
 iter N:  loop continues until exit condition
 ```
 
+### What "the loop" actually is — read this before iter 1
+
+There is no harness-run loop. The loop is nothing but YOU continuing to emit
+tool calls. It ends the instant you emit a message with **no tool call in it**,
+and it ends for no other reason.
+
+Two corollaries, both of which have caused real multi-hour stalls:
+
+- **Stopping is the failure, not speaking.** A message may carry prose AND tool
+  calls together and the run continues — that is ordinary narration. So do not
+  reason "I wrote a summary, therefore the turn ended"; you ended the turn, and
+  the summary is what ending it looked like. Going silent fixes nothing on its
+  own: a silent run that stops is equally dead. The rule is **never stop while
+  an exit condition below is unmet**.
+- **A question is not an exit condition.** Needing Martin's input on the current
+  area NEVER ends the loop. Write the ask to the project's fromClaude channel
+  and move to the next area that needs no input; pick the answer up at a later
+  iteration boundary. Waiting is not a state you can occupy — there is no wall
+  clock inside a turn, so "wait 10 minutes and re-check" is not implementable.
+  Poll the inbound channel at iteration boundaries instead.
+
+Between iterations, progress belongs in `.vss/sessions/<start-ISO>.md`, not in a
+message to the user — it is durable, it survives an abort, and Martin is not
+watching a live feed anyway.
+
 ### After each /vss completes
 
 Dispatch `Agent(subagent_type: "general-purpose", model: "opus")` as **optimiser**:
@@ -159,6 +184,14 @@ If a wrapped `/vss` iteration tries any of these, the iteration aborts (per `/vs
 If the loop produces three vacuous iterations, that's the design saying "nothing useful left to do" — let it stop. Don't keep feeding it noise tasks.
 
 ## Reporting back at exit
+
+**At a real exit, and only there.** Before you write a single word of this
+block, name which numbered exit condition from § Exit conditions has fired. If
+you cannot name one, the loop has not ended and this section does not apply —
+go back and run the next iteration. "A version shipped", "a natural milestone",
+"I need Martin's input on this bit" and "the context is getting long" are NOT
+exit conditions, and the pull to report at each of them is exactly how a run
+dies hours early.
 
 When the loop ends (any reason), report to the user:
 
