@@ -151,10 +151,16 @@ done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git)[]' | aggregate -q)
 # bug every boot. statsig.com (Claude Code telemetry) is kept. api.zotero.org is
 # allowlisted so vibe's direct Zotero web-API access keeps working now that the
 # firewall actually enforces (it only worked before because the box was open).
+# seed.radicle.garden is the public Radicle seed node: it serves repos over
+# HTTPS git (443) and the Radicle node protocol (8776). The ipset match below is
+# destination-IP only, so allowlisting the host covers both ports. Needed to
+# `claude plugin marketplace add` a Radicle-hosted marketplace and to push/fetch
+# `rad://` remotes from inside a container.
 for domain in \
     "registry.npmjs.org" \
     "api.anthropic.com" \
     "api.zotero.org" \
+    "seed.radicle.garden" \
     "download.swift.org" \
     "sentry.io" \
     "statsig.com" \
