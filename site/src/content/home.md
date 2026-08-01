@@ -9,9 +9,12 @@ hero:
     - verified
   lede: Adversarial agentic models plan, build, test and review each other's work in a secure sandbox – so you ship code you can trust.
   cta_how_label: See how it works
+  cta_register_label: Register interest
+  cta_register_href: "https://contact.andeye.com/?source=vibe.andeye.com&subject=vibe%20waitlist&message=Please%20email%20me%20when%20vibe%20andeye%20goes%20live."
   cta_andeye_label: More from andeye
   sub_default: This very page was planned, built, tested and reviewed by a vibe session.
   sub_how: One rule underneath it all – the model that writes the code never marks its own homework.
+  sub_register: One click and Send – we'll email you when vibe is a one-click install, nothing to build.
   sub_andeye: From the maker of Time&I – automatic time tracking for your Mac.
   fineprint: In development – built on the same open-core values as everything andeye makes.
 demo:

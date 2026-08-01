@@ -199,6 +199,7 @@ const captionDelay = t;
     transition: color 0.25s ease;
   }
   .cta-sub.how { color: #b7c0d4; }
+  .cta-sub.register { color: #9fc9a8; }
   .cta-sub.andeye { color: #f4c98a; }
 
   .fineprint {
@@ -447,6 +448,7 @@ const captionDelay = t;
     <p class="sub lede reveal" style="--d:0.16s">{copy.hero.lede}</p>
     <div class="ctas reveal" style="--d:0.26s">
       <a class="btn btn-primary" id="ctaHow" href="#how">{copy.hero.cta_how_label}</a>
+      <a class="btn btn-ghost" id="ctaRegister" href={copy.hero.cta_register_href}>{copy.hero.cta_register_label}</a>
       <a class="btn btn-ghost" id="ctaAndeye" href="https://andeye.com">{copy.hero.cta_andeye_label}</a>
     </div>
     <p class="cta-sub reveal" id="ctaSub" style="--d:0.3s" aria-live="polite">{copy.hero.sub_default}</p>
@@ -568,7 +570,7 @@ const captionDelay = t;
 </footer>
 
 <script is:inline define:vars={{ COPY: {
-  subs: { default: copy.hero.sub_default, how: copy.hero.sub_how, andeye: copy.hero.sub_andeye },
+  subs: { default: copy.hero.sub_default, how: copy.hero.sub_how, register: copy.hero.sub_register, andeye: copy.hero.sub_andeye },
   flow: { default_line: copy.flow.default_line, bodies: copy.flow.nodes.map((n) => n.body) },
 } }}>
 // Astro wraps define:vars scripts in an IIFE, so `COPY` is scoped to this
@@ -618,9 +620,10 @@ var ctaSub = document.getElementById('ctaSub');
 function sub(kind) {
   ctaSub.textContent = COPY.subs[kind];
   ctaSub.classList.toggle('how', kind === 'how');
+  ctaSub.classList.toggle('register', kind === 'register');
   ctaSub.classList.toggle('andeye', kind === 'andeye');
 }
-[['ctaHow', 'how'], ['ctaAndeye', 'andeye']].forEach(function (pair) {
+[['ctaHow', 'how'], ['ctaRegister', 'register'], ['ctaAndeye', 'andeye']].forEach(function (pair) {
   var el = document.getElementById(pair[0]);
   ['mouseenter', 'focus'].forEach(function (ev) {
     el.addEventListener(ev, function () { sub(pair[1]); });

@@ -6,6 +6,8 @@ Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion 
 
 ## 2026-08-01
 
+- [x] **Register-interest CTA on vibe.andeye.com** — new hero button linking to contact.andeye.com per the brain2 link convention (`/brain2/andeye/contact-form-links.md`): `source=vibe.andeye.com`, prefilled subject "vibe waitlist" + one-click message, `cb` omitted so the form's default product-interest list shows. Hover subtext ("we'll email you when vibe is a one-click install") within the fixed-height cta-sub contract; no raw email address on the page, per the andeye sites rule. Astro build green.
+
 - [x] **vibe.andeye.com is LIVE** — Martin reviewed the shipped copy on the Cloudflare Pages preview (vibe-ddx.pages.dev), judged it good enough for now, and attached the CNAME for vibe.andeye.com. CF Pages git integration builds from `andeyePro/vibe` main: framework Astro, root dir `site`, build `npm run build`, output `dist`. This replaced the error page andeye.com had briefly been linking to (the andeye_com vibe pushed andeye.com live with a prominent vibe.andeye.com link before this domain existed). Residuals tracked in TODO (register-interest CTA, `web/vibe-andeye.md` draft disposal, disclosure/naming decisions, repetitive-copy rework).
 
 ## 2026-07-29
