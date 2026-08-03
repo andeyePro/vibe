@@ -44,6 +44,13 @@ check('firewall copy names the extras rather than claiming a closed trio',
 check('content-guard copy says WARN also stops the commit',
   html.includes('both stop the commit'));
 
+// sticky-terminal height must stay viewport-bounded (short desktop windows
+// would otherwise pin the terminal's bottom out of reach) and the hero must
+// point at the demo section
+check('terminal height is viewport-bounded, not a bare fixed px',
+  /\.term-body[^{]*\{[^}]*height:\s*clamp\(/.test(html));
+check('hero links to #demo', html.includes('href="#demo"'));
+
 // the old sections are gone but their live anchors still land somewhere
 check('legacy #how / #sandbox anchors preserved',
   html.includes('<span id="how"') && html.includes('<span id="sandbox"'));

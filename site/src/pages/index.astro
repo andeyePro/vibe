@@ -200,6 +200,11 @@ const stepLines = Object.fromEntries(
     margin: 0;
   }
 
+  /* quiet pointer to the interactive demo below the fold */
+  .see-demo { margin: 1.4rem 0 0; font-size: 0.9rem; }
+  .see-demo a { color: var(--muted); text-decoration: none; }
+  .see-demo a:hover { color: var(--accent); }
+
   /* ---------- load choreography ---------- */
 
   .reveal {
@@ -326,7 +331,12 @@ const stepLines = Object.fromEntries(
   }
 
   .term-body {
-    height: 460px;
+    /* bounded by the viewport so the sticky column can never overflow it —
+       on a short desktop window the terminal shrinks instead of pinning its
+       bottom (where new lines land) out of reach. 200px ≈ chrome + caption +
+       the sticky top gap. vh fallback first, dvh where supported. */
+    height: clamp(180px, calc(100vh - 200px), 460px);
+    height: clamp(180px, calc(100dvh - 200px), 460px);
     overflow-y: auto;
     padding: 16px 18px;
     background: #0e1220;
@@ -343,7 +353,6 @@ const stepLines = Object.fromEntries(
   }
   .trole { text-align: right; font-weight: 700; }
   .ttext { color: var(--muted); overflow-wrap: break-word; }
-  .r-you      { color: var(--text); }
   .r-vibe     { color: var(--accent); }
   .r-claude   { color: #8fb6e8; }
   .r-planner  { color: #7fb2f0; }
@@ -428,7 +437,7 @@ const stepLines = Object.fromEntries(
     /* terminal first and sticky on top, deck scrolls beneath it — a click
        anywhere on the deck always has the terminal in view */
     .termcol { order: -1; position: sticky; top: 0; z-index: 3; padding: 8px 0; background: var(--bg); }
-    .term-body { height: 260px; font-size: 0.72rem; }
+    .term-body { height: min(260px, calc(100dvh - 160px)); font-size: 0.72rem; }
     .tline, .tlive { grid-template-columns: 6.5ch 1fr; gap: 10px; }
     /* the caption is not part of the demo — don't let it eat sticky space
        on a phone screen */
@@ -465,6 +474,7 @@ const stepLines = Object.fromEntries(
     </div>
     <p class="cta-sub reveal" id="ctaSub" style="--d:0.3s" aria-live="polite">{copy.hero.sub_default}</p>
     <p class="fineprint reveal" style="--d:0.34s">{copy.hero.fineprint}</p>
+    <p class="see-demo reveal" style="--d:0.4s"><a href="#demo">{copy.hero.see_demo_label}</a></p>
   </div>
 </header>
 

@@ -18,6 +18,7 @@ hero:
   sub_register: Not a developer? We'll email you when vibe arrives as a ready-to-run app.
   sub_andeye: From the maker of Time&I – automatic time tracking for your Mac.
   fineprint: In development – built on the same open-core values as everything andeye makes.
+  see_demo_label: "▾ watch a session run – click the commands yourself"
 journey:
   eyebrow: The demo
   h2: Drive a session yourself
@@ -41,7 +42,7 @@ journey:
             - verifies the firewall – outbound on a short allowlist
             - signs Claude Code in with your Claude subscription – no API key
           lines:
-            - { role: you, cmd: true, sh: true, text: "cd yourproject && vibe" }
+            - { cmd: true, sh: true, text: "cd yourproject && vibe" }
             - { role: vibe, text: "✓ GitHub repo detected: you/yourproject", step: 1 }
             - { role: vibe, text: "✓ fine-grained PAT found – scoped to this repo; only declared repos are reachable", step: 2 }
             - { role: vibe, text: "✓ container ready (built once, reused in 3s after that)", step: 3 }
@@ -67,7 +68,7 @@ journey:
             - fail means fix and re-test – claims don't count, passes do
             - a reviewer hunts for reasons to say no
           lines:
-            - { role: you, cmd: true, text: "/vs \"add CSV export to the monthly report\"" }
+            - { cmd: true, text: "/vs \"add CSV export to the monthly report\"" }
             - { role: planner, text: "spec drafted – six acceptance criteria, two questions for you first", step: 1 }
             - { role: critic, text: "criterion 4 can't be tested as written – tightened before any code", step: 2 }
             - { role: builder, text: "three files changed – export sits behind the existing report menu", step: 3 }
@@ -85,7 +86,7 @@ journey:
             - runs the whole adversarial loop unattended
             - commits with a full audit trail for your review
           lines:
-            - { role: you, cmd: true, text: "/vss" }
+            - { cmd: true, text: "/vss" }
             - { role: planner, text: "TODO.md read – 7 open items", step: 1 }
             - { role: planner, text: "picked: \"CSV export – empty-state copy\" (small, unblocked, user-visible)", step: 2 }
             - { role: builder, text: "two files changed", step: 3 }
@@ -102,7 +103,7 @@ journey:
             - rolls into a fresh credit window when one runs out
             - stops itself at the perfection gate
           lines:
-            - { role: you, cmd: true, text: "/vsss --sessions 2" }
+            - { cmd: true, text: "/vsss --sessions 2" }
             - { role: vibe, text: "23:12 iter 1 – report export shipped ✓ committed", step: 1 }
             - { role: vibe, text: "23:58 iter 2 – flaky date test pinned ✓ committed" }
             - { role: vibe, text: "00:41 a question for you parked to your notes – moving on, not waiting", step: 2 }
@@ -120,7 +121,7 @@ journey:
             - every outbound connection is checked against a short allowlist
             - GitHub, npm, Anthropic and a few named extras are allowed – the rest is refused
           lines:
-            - { role: you, cmd: true, sh: true, text: "curl https://sketchy.example" }
+            - { cmd: true, sh: true, text: "curl https://sketchy.example" }
             - { role: guard, tone: fail, text: "curl: (7) Failed to connect to sketchy.example port 443 – refused at the network layer", step: 1 }
             - { role: vibe, text: "the firewall fails closed: if the allowlist can't be built, nothing gets out", step: 2 }
         - id: leak
@@ -132,7 +133,7 @@ journey:
             - secrets and personal data both stop the commit – secrets as BLOCK, personal data as WARN
             - pushes re-scan the outgoing range for secrets before anything leaves
           lines:
-            - { role: you, cmd: true, sh: true, text: "git commit -m \"wip\"   # config.js still holds a pasted API key" }
+            - { cmd: true, sh: true, text: "git commit -m \"wip\"   # config.js still holds a pasted API key" }
             - { role: guard, tone: fail, text: "BLOCK config.js:12 anthropic-key – commit stopped before it existed", step: 1 }
             - { role: guard, text: "WARN fires the same way on private IPs, home paths and email addresses", step: 2 }
             - { role: vibe, text: "git push re-scans the outgoing range – belt and braces", step: 3 }
@@ -147,7 +148,7 @@ journey:
             - lands on GitHub – Radicle support is on the way
             - docs and CHANGELOG travel in the same commit
           lines:
-            - { role: you, cmd: true, sh: true, text: "git push" }
+            - { cmd: true, sh: true, text: "git push" }
             - { role: vibe, text: "content-guard: outgoing range clean" }
             - { role: out, text: "To github.com/you/yourproject   main → main", step: 1 }
             - { role: vibe, text: "(Radicle peers: on the way)", step: 2 }
@@ -161,7 +162,7 @@ journey:
           checklist:
             - month-to-date model spend, across every vibe on this Mac
           lines:
-            - { role: you, cmd: true, text: "/budget" }
+            - { cmd: true, text: "/budget" }
             - { role: vibe, text: "this month: sonnet 62% · opus 31% · haiku 7% of your subscription – credit spend itemised separately", step: 1 }
         - id: learn
           cmd: /learn
@@ -170,7 +171,7 @@ journey:
           checklist:
             - captures a cross-project lesson to your learning library (with your say-so)
           lines:
-            - { role: you, cmd: true, text: "/learn \"lead with the literal command\"" }
+            - { cmd: true, text: "/learn \"lead with the literal command\"" }
             - { role: vibe, text: "saved to your learning library – every future session in every project sees it", step: 1 }
         - id: copy
           cmd: /c
@@ -179,7 +180,7 @@ journey:
           checklist:
             - copies Claude's last code block straight to your Mac clipboard
           lines:
-            - { role: you, cmd: true, text: "/c" }
+            - { cmd: true, text: "/c" }
             - { role: vibe, text: "last code block copied – paste it anywhere on your Mac", step: 1 }
         - id: diet
           cmd: /diet
@@ -188,7 +189,7 @@ journey:
           checklist:
             - lean mode – fewer subagents, terser output; /feast turns it back
           lines:
-            - { role: you, cmd: true, text: "/diet" }
+            - { cmd: true, text: "/diet" }
             - { role: vibe, text: "lean mode on – say /feast when you want the full spread back", step: 1 }
 who:
   eyebrow: Who it's for
