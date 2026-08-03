@@ -28,7 +28,7 @@ fail_closed() {
 # no Docker and no network. Mirrors `vibe`'s own VIBE_SOURCE_ONLY convention.
 
 GH_META_URL="${GH_META_URL:-https://api.github.com/meta}"
-GH_FETCH_ATTEMPTS="${GH_FETCH_ATTEMPTS:-3}"
+GH_FETCH_ATTEMPTS="${GH_FETCH_ATTEMPTS:-6}"
 GH_FETCH_BACKOFF="${GH_FETCH_BACKOFF:-2}"
 
 # Fetch GitHub's published IP ranges, retrying a transient failure.
@@ -43,9 +43,18 @@ GH_FETCH_BACKOFF="${GH_FETCH_BACKOFF:-2}"
 # Validation lives inside the retry loop deliberately: an empty body, a
 # non-JSON error page and a rate-limit JSON body without the fields we need
 # are all transient conditions that a later attempt can clear.
+#
+# Patience: 6 attempts x linear backoff (2,4,6,8,10s sleeps = ~30s + fetch
+# time). The original 3x2s (~6s) was not enough for a cold Docker Desktop
+# container whose network settles late - observed live 2026-08-03: postStart
+# failed 3/3 with an unusable (non-empty!) body, while the identical fetch
+# succeeded manually minutes later. The unusable body is now logged (first
+# 160 printable chars) so the next occurrence identifies itself - rate-limit
+# JSON, proxy error page and half-ready-network garbage all look identical
+# without it.
 # Prints the response body on stdout; returns 1 if every attempt failed.
 fetch_gh_ranges() {
-    local attempt=1 body=""
+    local attempt=1 body="" snippet=""
     while [ "$attempt" -le "$GH_FETCH_ATTEMPTS" ]; do
         body=$(curl -s --connect-timeout 5 --max-time 20 "$GH_META_URL") || body=""
         if [ -n "$body" ] && echo "$body" | jq -e '.web and .api and .git' >/dev/null 2>&1; then
@@ -53,7 +62,8 @@ fetch_gh_ranges() {
             return 0
         fi
         if [ -n "$body" ]; then
-            echo "WARNING: GitHub meta attempt $attempt/$GH_FETCH_ATTEMPTS returned an unusable response - retrying" >&2
+            snippet=$(printf '%s' "$body" | tr -d '\n\r' | tr -c '[:print:]' '.' | head -c 160)
+            echo "WARNING: GitHub meta attempt $attempt/$GH_FETCH_ATTEMPTS returned an unusable response - retrying (body starts: ${snippet})" >&2
         else
             echo "WARNING: GitHub meta attempt $attempt/$GH_FETCH_ATTEMPTS could not fetch $GH_META_URL - retrying" >&2
         fi

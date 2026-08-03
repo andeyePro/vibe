@@ -12182,6 +12182,10 @@ def _fw_run(tmp: Path, stub_body: str, snippet: str):
         "STUB_LOG": str(log),
         "VIBE_FIREWALL_SOURCE_ONLY": "1",
         "GH_FETCH_BACKOFF": "0",
+        # Pin the attempt cap so these tests exercise the retry MECHANISM,
+        # not the shipped default (which task_029 raised and asserts
+        # separately in AC11).
+        "GH_FETCH_ATTEMPTS": "3",
     }
     script = f"source {shlex.quote(str(INIT_FIREWALL))}\n{snippet}\n"
     r = run(["bash", "-c", script], env=env)
@@ -12257,6 +12261,9 @@ def test_task028_ac5_unusable_body_is_retried() -> None:
               "rate limit" not in r.stdout, r.stdout[:400])
         check("retries to a good response", "RC=0" in r.stdout, r.stdout[:400])
         check("made 2 attempts", calls == 2, f"calls={calls}")
+        check("warning logs a snippet of the unusable body",
+              "body starts:" in r.stderr and "rate limit exceeded" in r.stderr,
+              r.stderr[:400])
 
 
 def test_task028_ac6_empty_body_is_retried() -> None:
@@ -12268,6 +12275,17 @@ def test_task028_ac6_empty_body_is_retried() -> None:
         r, calls = _fw_run(tmp, body, 'fetch_gh_ranges >/dev/null; echo "RC=$?"')
         check("retries past the empty body", "RC=0" in r.stdout, r.stdout[:400])
         check("made 2 attempts", calls == 2, f"calls={calls}")
+
+
+def test_task029_default_patience() -> None:
+    """The shipped attempt cap must cover a cold Docker Desktop container
+    (observed 2026-08-03: 3x2s was not enough; 6 x linear-2s = ~30s is)."""
+    print("\n[task_029: default fetch patience]")
+    src = INIT_FIREWALL.read_text()
+    check("default GH_FETCH_ATTEMPTS is 6",
+          'GH_FETCH_ATTEMPTS="${GH_FETCH_ATTEMPTS:-6}"' in src, "")
+    check("unusable-body warning carries the body snippet",
+          "body starts:" in src, "")
 
 
 def test_task028_ac7_fetch_has_timeouts() -> None:
@@ -12827,6 +12845,7 @@ def main() -> int:
     test_task028_ac8_policy_reset_after_flush()
     test_task028_ac9_still_locks_down_at_the_end()
     test_task028_ac10_changelog_entry_present()
+    test_task029_default_patience()
 
     print()
     if FAILURES:
