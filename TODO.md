@@ -10,6 +10,19 @@ Markers: `[ ]` open · `[!]` failed/abandoned (note what was tried) · a `Martin
 
 ### ⇒ START HERE after the 2026-07-16 rebuild (content-guard + OP-opt-in shipped)
 
+- [ ] **Martin-gated: push the CI site job — the container PAT lacks `workflow` scope** (2026-08-03) — `site-check.mjs` (13+ assertions, `npm run check`) only runs manually until CI gates it; the push of the ready-made job was rejected (`refusing to allow a Personal Access Token to … update workflow … without workflow scope`). Either add the Workflows permission to the vibe repo's fine-grained PAT (github.com/settings/personal-access-tokens, then `vibe pat`), or paste this job into `.github/workflows/ci.yml` from your Mac and push:
+  ```yaml
+  site:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm, cache-dependency-path: site/package-lock.json }
+      - name: Site build + post-build assertions
+        working-directory: site
+        run: npm ci && npm run check
+  ```
+
 Two vibe-wide behaviour changes shipped and took effect on this rebuild — surface these to Martin first:
 
 - [ ] **Re-enable `/op` in Martin's PRIVATE projects.** OP is now opt-in and OFF by default (task_020). In each private project that uses `/op` (timeandeye, moneyandeye, mailandeye, …): `touch .vibe-allow-op` and leave it UNTRACKED. Do NOT set `VIBE_OP_AUTO=1` (re-exposes OP to public/upstream repos). Until done, `/op` won't connect there.
