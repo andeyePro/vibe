@@ -20,6 +20,7 @@ If a user pointed you at this file and asked you to take them through vibe onboa
 
 - `python3 code-check.py` — shellcheck over `vibe` + all `.sh` files. Fast. Run on every change. Add `--json` for machine-readable output (single JSON object on stdout: `tool`, `shellcheck_version`, `files_checked`, `findings`, `summary`).
 - `python3 smoke-test.py` — host-side black-box tests (no docker, no network). Fast. Covers `--help`, write-env-hint block management, token helpers.
+- `cd site && npm run check` — builds the vibe.andeye.com page and runs `site-check.mjs` post-build assertions (CTA hrefs, journey deck integrity, copy-accuracy guards, no raw emails). Run on any `site/` change.
 - `MANUAL-TESTS.md` — end-to-end checklist for container lifecycle behaviour (auto-rebuild, partial-fail retry, SSH, bind mounts). Run before shipping changes that touch the Dockerfile, devcontainer.json, postStartCommand, or the vibe launcher.
 
 ## On session start: surface Martin's review pile

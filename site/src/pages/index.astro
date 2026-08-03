@@ -1,27 +1,24 @@
 ---
 // vibe.andeye.com — the Watchful treatment, sibling of andeye.com.
-// Same design system as site/src/pages/index.astro (palette, type scale,
-// section rhythm, reveal choreography + independent watchdog). The centre-
-// piece is a fake terminal showing one vibe session as a transcript — the
-// adversarial loop told as eight quiet lines, not a feature list.
+// The centrepiece is an interactive journey: a command deck (every button
+// carrying a visible checklist of the real steps, in launcher order) driving
+// a Ghostty-style terminal that plays out exactly what vibe does. The visitor
+// drives — no autoplay. Checklist items tick as their line lands in the
+// terminal; clicking a command again replays it.
 // Hard rules honoured throughout: hover states change colour ONLY (nothing
-// moves), and every hover/click-swapped string lives in a fixed-height box
-// sized to its longest string. All visible copy comes from content/home.md.
+// moves), and every swapped string lives in a fixed-height box sized to its
+// longest string. All visible copy comes from content/home.md.
 import AndeyeEye from '../components/AndeyeEye.astro';
 import { frontmatter as copy, Content } from '../content/home.md';
 
-// Transcript pacing: the first line lands as the terminal box appears, then
-// one fully-formed line every 450ms – with a longer beat after each tester
-// line so the fail-then-fix moment registers. Delays are cumulative and baked
-// into CSS transition-delay, so the choreography survives even if only the
-// watchdog script runs.
-let t = 0.6;
-const lineDelays = copy.demo.lines.map((l) => {
-  const d = t;
-  t += l.tone ? 0.75 : 0.45;
-  return d;
-});
-const captionDelay = t;
+// Terminal playback data: id -> lines, handed to the client script. The deck
+// (labels, descriptions, checklists) renders server-side below and unlocked,
+// so with JS off the journey still reads complete as static text; the script
+// applies the locked states and drives playback, and a <noscript> line in the
+// terminal owns the no-JS story.
+const stepLines = Object.fromEntries(
+  copy.journey.groups.flatMap((g) => g.steps).map((s) => [s.id, s.lines])
+);
 ---
 <!doctype html>
 <html lang="en">
@@ -92,9 +89,6 @@ const captionDelay = t;
     gap: 10px;
     margin: 0 0 0.9rem;
   }
-  /* the engine's svgs are rendered by the AndeyeEye component, outside this
-     page's style scope — size them through :global, with the mark's own
-     aspect so height never guesses */
   :global(svg.andeye-eye) { aspect-ratio: 365 / 235; }
   .eyebrow-row :global(svg.andeye-eye) { display: block; flex: none; width: 34px; height: auto; }
   .hero .eyebrow { margin-bottom: 0.9rem; }
@@ -127,8 +121,6 @@ const captionDelay = t;
   }
 
   .hero::before {
-    /* one cool lamp behind the eye: white like the vibe mark, not the
-       warm orange of the time page — siblings, not twins */
     content: "";
     position: absolute;
     top: -140px;
@@ -188,7 +180,7 @@ const captionDelay = t;
   .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
 
   /* hover-reactive CTA subtext: answers whichever button you're on. FIXED
-     height, sized to the longest of the three strings (two lines at this
+     height, sized to the longest of the four strings (two lines at this
      width) — nothing may shift when the text swaps. */
   .cta-sub {
     height: 3.2em;
@@ -198,7 +190,7 @@ const captionDelay = t;
     color: var(--muted);
     transition: color 0.25s ease;
   }
-  .cta-sub.how { color: #b7c0d4; }
+  .cta-sub.install { color: #b7c0d4; }
   .cta-sub.register { color: #9fc9a8; }
   .cta-sub.andeye { color: #f4c98a; }
 
@@ -218,14 +210,92 @@ const captionDelay = t;
   }
   .reveal.in { opacity: 1; transform: none; }
 
-  /* ---------- the terminal: one vibe session as a transcript ---------- */
+  /* ---------- the journey: command deck + Ghostty window ---------- */
 
-  .demo {
-    max-width: 760px;
-    margin: clamp(40px, 7vh, 72px) auto 0;
-    text-align: left;
+  .journey .lede { max-width: 760px; }
+
+  /* status note under the lede: fixed height, text swaps, colour-only */
+  .drive-note {
+    height: 1.5em;
+    margin: 0 0 1.6rem;
+    font-size: 0.9rem;
+    color: var(--faint);
+    transition: color 0.25s ease;
+  }
+  .drive-note.hot { color: var(--accent); }
+
+  .jgrid {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    gap: 26px;
+    align-items: start;
   }
 
+  /* the deck: every command carries its checklist, always visible — if the
+     terminal scrolls past too fast, the steps are still right here */
+  .dgroup { margin: 0 0 1.6rem; }
+  .dlabel {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin: 0 0 0.6rem;
+  }
+  .dstep { margin: 0 0 1.1rem; }
+  .chip {
+    display: block;
+    width: 100%;
+    text-align: left;
+    font: inherit;
+    color: var(--text);
+    background: var(--panel);
+    border: 1px solid var(--line-soft);
+    border-radius: 10px;
+    padding: 10px 14px;
+    cursor: pointer;
+    transition: border-color 0.25s, background 0.25s, color 0.25s;
+  }
+  .chip:hover { border-color: rgba(240, 161, 58, 0.45); }
+  .chip.running { border-color: var(--accent); background: var(--panel-2); }
+  .chip-label { display: block; font-weight: 700; font-size: 0.95rem; }
+  .chip-cmd {
+    display: block;
+    font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+    font-size: 0.74rem;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .chip-desc {
+    margin: 0.35rem 0 0.3rem;
+    font-size: 0.8rem;
+    color: var(--faint);
+  }
+  .dstep.locked .chip { opacity: 0.45; cursor: default; }
+  .dstep.locked .chip:hover { border-color: var(--line-soft); }
+
+  .steps {
+    list-style: none;
+    margin: 0;
+    padding: 0 0 0 2px;
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .steps li {
+    display: grid;
+    grid-template-columns: 1.2em 1fr;
+    gap: 6px;
+    padding: 1.5px 0;
+    transition: color 0.25s ease;
+  }
+  .steps li .tick { color: var(--faint); transition: color 0.25s ease; }
+  .steps li.done { color: #c7d4c9; }
+  .steps li.done .tick { color: #6fc287; }
+
+  /* the Ghostty window: sticky, so it stays beside the deck as you scroll */
+  .termcol { position: sticky; top: 24px; }
   .term {
     border: 1px solid var(--line);
     border-radius: var(--radius);
@@ -256,12 +326,15 @@ const captionDelay = t;
   }
 
   .term-body {
-    padding: 18px 20px 20px;
+    height: 460px;
+    overflow-y: auto;
+    padding: 16px 18px;
     background: #0e1220;
     font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
-    font-size: 0.82rem;
-    line-height: 1.75;
+    font-size: 0.8rem;
+    line-height: 1.7;
   }
+  .term-hint { color: var(--faint); }
   .tline {
     display: grid;
     grid-template-columns: 8ch 1fr;
@@ -271,24 +344,37 @@ const captionDelay = t;
   .trole { text-align: right; font-weight: 700; }
   .ttext { color: var(--muted); overflow-wrap: break-word; }
   .r-you      { color: var(--text); }
+  .r-vibe     { color: var(--accent); }
+  .r-claude   { color: #8fb6e8; }
   .r-planner  { color: #7fb2f0; }
   .r-critic   { color: var(--accent); }
   .r-builder  { color: #c9a7ea; }
   .r-tester   { color: #6fc287; }
   .r-reviewer { color: #e08a8a; }
+  .r-guard    { color: #e08a8a; }
+  .r-out      { color: var(--muted); }
   .tline.tone-fail .ttext { color: #d98d86; }
   .tline.tone-pass .ttext { color: #7fc492; }
-  .tline.t-you .ttext { color: var(--text); }
-  /* transcript lines arrive fully formed: a quick fade only, no slide – the
-     lines always occupy their space, so the terminal box is full height from
-     the start and never grows */
-  .term-body .tline { transform: none; transition: opacity 0.3s ease; transition-delay: var(--d, 0s); }
+  .tline.t-cmd .ttext { color: var(--text); }
+  .tline.t-cmd .trole { color: var(--faint); font-weight: 400; }
+
+  /* the live prompt line: a block caret, blinking like the real thing */
+  .tlive { display: grid; grid-template-columns: 8ch 1fr; gap: 14px; }
+  .tlive .trole { color: var(--faint); font-weight: 400; }
+  .tcaret {
+    display: inline-block;
+    width: 0.6em;
+    height: 1.05em;
+    vertical-align: text-bottom;
+    background: var(--muted);
+    animation: caret 1.1s steps(1) infinite;
+  }
+  @keyframes caret { 50% { background: transparent; } }
 
   .demo-caption {
     margin: 14px 0 0;
     font-size: 0.8rem;
     color: var(--faint);
-    text-align: center;
   }
 
   /* ---------- sections ---------- */
@@ -296,6 +382,7 @@ const captionDelay = t;
   section { padding: clamp(64px, 11vh, 120px) 0; }
 
   /* the intro statement: the markdown body, big and plain */
+  .what { background: var(--bg-deep); border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); }
   .what .wrap { max-width: 860px; }
   .what-prose :global(p) {
     font-size: clamp(1.25rem, 2.4vw, 1.7rem);
@@ -306,85 +393,6 @@ const captionDelay = t;
     margin: 0;
   }
   .what-prose :global(strong) { color: var(--text); font-weight: 800; }
-
-  /* the roles: plan -> build -> test -> review – hover previews a role's
-     body, click pins it, all inside one shared fixed-height detail panel */
-  #how .lede { max-width: 720px; }
-  .flow {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-wrap: wrap;
-    gap: 10px;
-    margin-top: 2.6rem;
-  }
-  .flow-node {
-    font: inherit;
-    color: var(--text);
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    background: var(--panel);
-    border: 1px solid var(--line-soft);
-    border-radius: 999px;
-    padding: 14px 22px;
-    cursor: pointer;
-    transition: border-color 0.25s, background 0.25s;
-  }
-  .flow-node svg { width: 24px; height: 24px; flex: none; color: var(--accent); }
-  .flow-node span { font-weight: 700; font-size: 1rem; letter-spacing: 0.02em; }
-  .flow-node:hover { border-color: rgba(240, 161, 58, 0.45); }
-  .flow-node.pinned { border-color: var(--accent); background: var(--panel-2); }
-  .flow-arrow { color: var(--faint); flex: none; }
-  /* FIXED height, sized to the longest role body (two lines at this width)
-     — clicking between roles moves nothing below it */
-  .flow-detail {
-    max-width: 640px;
-    margin: 1.8rem auto 0;
-    height: 3.4em;
-    text-align: center;
-    color: var(--muted);
-    font-size: 0.98rem;
-  }
-
-  /* the sandbox: the page's heart, so it goes darker and bigger */
-  .sandbox {
-    background: var(--bg-deep);
-    border-top: 1px solid var(--line-soft);
-    border-bottom: 1px solid var(--line-soft);
-  }
-  .sandbox .wrap { max-width: 860px; }
-  .sandbox h2 { font-size: clamp(2.1rem, 4.6vw, 3.4rem); }
-
-  .acc { margin-top: 2.6rem; border-top: 1px solid var(--line-soft); }
-  .acc-item { border-bottom: 1px solid var(--line-soft); }
-  .acc-head {
-    width: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 14px;
-    background: none;
-    border: none;
-    color: inherit;
-    font: inherit;
-    text-align: left;
-    padding: 1.15rem 0;
-    cursor: pointer;
-  }
-  .acc-head:hover h3 { color: var(--accent); }
-  .acc-head h3 {
-    margin: 0;
-    font-size: clamp(1.2rem, 2.4vw, 1.55rem);
-    font-weight: 800;
-    letter-spacing: -0.015em;
-    transition: color 0.25s;
-  }
-  .acc-chev { flex: none; color: var(--faint); transition: transform 0.25s ease; }
-  .acc-item.open .acc-chev { transform: rotate(180deg); }
-  .acc-body { max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
-  .acc-item.open .acc-body { max-height: 10em; }
-  .acc-body p { color: var(--muted); max-width: 620px; margin: 0; padding: 0 0 1.15rem; }
 
   /* who it's for: short and plain, with the mark keeping watch beside it */
   .who-wrap { display: flex; align-items: center; gap: 48px; }
@@ -415,13 +423,17 @@ const captionDelay = t;
 
   /* ---------- responsive ---------- */
 
-  @media (max-width: 640px) {
-    .term-body { padding: 14px 12px 16px; font-size: 0.74rem; }
-    .tline { grid-template-columns: 7.5ch 1fr; gap: 10px; }
+  @media (max-width: 860px) {
+    .jgrid { grid-template-columns: 1fr; }
+    /* terminal first and sticky on top, deck scrolls beneath it — a click
+       anywhere on the deck always has the terminal in view */
+    .termcol { order: -1; position: sticky; top: 0; z-index: 3; padding: 8px 0; background: var(--bg); }
+    .term-body { height: 260px; font-size: 0.72rem; }
+    .tline, .tlive { grid-template-columns: 6.5ch 1fr; gap: 10px; }
+    /* the caption is not part of the demo — don't let it eat sticky space
+       on a phone screen */
+    .demo-caption { display: none; }
     .who-wrap { gap: 0; }
-    /* narrow screens wrap the longest role body to three lines — the box
-       stays fixed, just fixed at the new longest height */
-    .flow-detail { height: 5em; font-size: 0.94rem; }
   }
 
   /* ---------- reduced motion: final states, no choreography ---------- */
@@ -447,99 +459,81 @@ const captionDelay = t;
     <h1 class="reveal" style="--d:0.08s">{copy.hero.h1[0]}<br>{copy.hero.h1[1]}</h1>
     <p class="sub lede reveal" style="--d:0.16s">{copy.hero.lede}</p>
     <div class="ctas reveal" style="--d:0.26s">
-      <a class="btn btn-primary" id="ctaHow" href="#how">{copy.hero.cta_how_label}</a>
+      <a class="btn btn-primary" id="ctaInstall" href={copy.hero.cta_install_href}>{copy.hero.cta_install_label}</a>
       <a class="btn btn-ghost" id="ctaRegister" href={copy.hero.cta_register_href}>{copy.hero.cta_register_label}</a>
       <a class="btn btn-ghost" id="ctaAndeye" href="https://andeye.com">{copy.hero.cta_andeye_label}</a>
     </div>
     <p class="cta-sub reveal" id="ctaSub" style="--d:0.3s" aria-live="polite">{copy.hero.sub_default}</p>
     <p class="fineprint reveal" style="--d:0.34s">{copy.hero.fineprint}</p>
-
-    <div class="demo reveal" style="--d:0.46s">
-      <div class="term" aria-label="A vibe session transcript">
-        <div class="chrome">
-          <span class="traffic" aria-hidden="true"><i class="tl-c"></i><i class="tl-m"></i><i class="tl-z"></i></span>
-          <span class="wtitle">{copy.demo.title}</span>
-        </div>
-        <div class="term-body">
-          {copy.demo.lines.map((l, i) => (
-            <div class={`tline reveal t-${l.role}${l.tone ? ` tone-${l.tone}` : ''}`} style={`--d:${lineDelays[i].toFixed(2)}s`}>
-              <span class={`trole r-${l.role}`}>{l.role}</span>
-              <span class="ttext">{l.text}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-      <p class="demo-caption reveal" style={`--d:${captionDelay.toFixed(2)}s`}>{copy.demo.caption}</p>
-    </div>
   </div>
 </header>
+
+<section class="journey" id="demo">
+  <div class="wrap">
+    <!-- legacy anchors: the flow and sandbox sections this journey replaced
+         were linkable as #how / #sandbox on the live site — land those here -->
+    <span id="how" aria-hidden="true"></span>
+    <span id="sandbox" aria-hidden="true"></span>
+    <div class="eyebrow-row">
+      <AndeyeEye variant="vibe" weight="fill" background="#0c0f16" />
+      <p class="eyebrow">{copy.journey.eyebrow}</p>
+    </div>
+    <h2>{copy.journey.h2}</h2>
+    <p class="lede">{copy.journey.lede}</p>
+    <p class="drive-note" id="driveNote" aria-live="polite">{copy.journey.hint}</p>
+    <div class="jgrid">
+      <div class="deck" id="deck">
+        {copy.journey.groups.map((g) => (
+          <div class="dgroup">
+            <p class="dlabel">{g.label}</p>
+            {g.steps.map((s) => (
+              <div class="dstep" id={`step-${s.id}`}>
+                <button type="button" class="chip" data-step={s.id}>
+                  <span class="chip-label">{s.label}</span>
+                  <span class="chip-cmd">{s.cmd}</span>
+                </button>
+                <p class="chip-desc">{s.desc}</p>
+                <ol class="steps">
+                  {s.checklist.map((c) => (
+                    <li><span class="tick" aria-hidden="true">○</span><span>{c}</span></li>
+                  ))}
+                </ol>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+      <div class="termcol">
+        <div class="term" aria-label="A vibe session, played out as you click">
+          <div class="chrome">
+            <span class="traffic" aria-hidden="true"><i class="tl-c"></i><i class="tl-m"></i><i class="tl-z"></i></span>
+            <span class="wtitle">{copy.journey.term_title}</span>
+          </div>
+          <div class="term-body" id="termBody" tabindex="0">
+            <noscript>
+              <style>{`.tlive { display: none; } #termHint { display: none; }`}</style>
+              <div class="term-hint">JavaScript is off here – the checklists under each command on the left tell the same story as the live playback would.</div>
+            </noscript>
+            <div class="term-hint" id="termHint">{copy.journey.hint}</div>
+            <div class="tlive" id="termLive">
+              <span class="trole" id="livePrompt">$</span>
+              <span><span id="liveText"></span><span class="tcaret" aria-hidden="true"></span></span>
+            </div>
+          </div>
+        </div>
+        <p class="demo-caption">{copy.journey.caption}</p>
+      </div>
+    </div>
+  </div>
+</section>
 
 <section class="what" id="what">
   <div class="wrap">
     <div class="eyebrow-row">
-      <AndeyeEye variant="vibe" weight="fill" background="#0c0f16" />
+      <AndeyeEye variant="vibe" weight="fill" background="#090b11" />
       <p class="eyebrow">{copy.title}</p>
     </div>
     <div class="what-prose"><Content /></div>
-  </div>
-</section>
-
-<section id="how">
-  <div class="wrap">
-    <div class="eyebrow-row">
-      <AndeyeEye variant="vibe" weight="fill" background="#0c0f16" />
-      <p class="eyebrow">{copy.flow.eyebrow}</p>
-    </div>
-    <h2>{copy.flow.h2}</h2>
-    <p class="lede">{copy.flow.lede}</p>
-    <div class="flow" id="flow" role="group" aria-label="plan, build, test, review">
-      <button type="button" class="flow-node" data-flow="0" aria-pressed="false">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3 L16 3 L19 6 L19 21 L5 21 Z"/><line x1="8.5" y1="9" x2="15.5" y2="9"/><line x1="8.5" y1="13" x2="15.5" y2="13"/><line x1="8.5" y1="17" x2="12.5" y2="17"/></svg>
-        <span>{copy.flow.nodes[0].label}</span>
-      </button>
-      <svg class="flow-arrow" width="26" height="12" viewBox="0 0 26 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="1" y1="6" x2="21" y2="6"/><path d="M16 1 L21 6 L16 11"/></svg>
-      <button type="button" class="flow-node" data-flow="1" aria-pressed="false">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6 L2 12 L8 18"/><path d="M16 6 L22 12 L16 18"/><line x1="13.5" y1="4" x2="10.5" y2="20"/></svg>
-        <span>{copy.flow.nodes[1].label}</span>
-      </button>
-      <svg class="flow-arrow" width="26" height="12" viewBox="0 0 26 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="1" y1="6" x2="21" y2="6"/><path d="M16 1 L21 6 L16 11"/></svg>
-      <button type="button" class="flow-node" data-flow="2" aria-pressed="false">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2 L10 9 L4 19 A2.4 2.4 0 0 0 6 22 L18 22 A2.4 2.4 0 0 0 20 19 L14 9 L14 2"/><line x1="8" y1="2" x2="16" y2="2"/><line x1="7" y1="16" x2="17" y2="16"/></svg>
-        <span>{copy.flow.nodes[2].label}</span>
-      </button>
-      <svg class="flow-arrow" width="26" height="12" viewBox="0 0 26 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="1" y1="6" x2="21" y2="6"/><path d="M16 1 L21 6 L16 11"/></svg>
-      <button type="button" class="flow-node" data-flow="3" aria-pressed="false">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><line x1="15.5" y1="15.5" x2="21" y2="21"/></svg>
-        <span>{copy.flow.nodes[3].label}</span>
-      </button>
-    </div>
-    <div class="flow-detail" id="flowDetail" aria-live="polite">
-      <p>{copy.flow.default_line}</p>
-    </div>
-  </div>
-</section>
-
-<section class="sandbox" id="sandbox">
-  <div class="wrap">
-    <div class="eyebrow-row">
-      <AndeyeEye variant="vibe" weight="fill" background="#090b11" />
-      <p class="eyebrow">{copy.sandbox.eyebrow}</p>
-    </div>
-    <h2>{copy.sandbox.h2}</h2>
-    <p class="lede">{copy.sandbox.lede}</p>
-    <div class="acc" id="acc">
-      {copy.sandbox.claims.map((c, i) => (
-        <div class="acc-item" id={`acc${i}`}>
-          <button type="button" class="acc-head" aria-expanded="false" aria-controls={`acc${i}body`}>
-            <h3>{c.head}</h3>
-            <svg class="acc-chev" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5 L8 11 L13 5"/></svg>
-          </button>
-          <div class="acc-body" id={`acc${i}body`}>
-            <p>{c.body}</p>
-          </div>
-        </div>
-      ))}
-    </div>
   </div>
 </section>
 
@@ -570,8 +564,18 @@ const captionDelay = t;
 </footer>
 
 <script is:inline define:vars={{ COPY: {
-  subs: { default: copy.hero.sub_default, how: copy.hero.sub_how, register: copy.hero.sub_register, andeye: copy.hero.sub_andeye },
-  flow: { default_line: copy.flow.default_line, bodies: copy.flow.nodes.map((n) => n.body) },
+  subs: {
+    default: copy.hero.sub_default,
+    install: copy.hero.sub_install,
+    register: copy.hero.sub_register,
+    andeye: copy.hero.sub_andeye,
+  },
+  notes: {
+    hint: copy.journey.hint,
+    locked: copy.journey.locked_note,
+    running: copy.journey.running_note,
+  },
+  lines: stepLines,
 } }}>
 // Astro wraps define:vars scripts in an IIFE, so `COPY` is scoped to this
 // block and is NOT a global on its own. Export it explicitly - the main
@@ -581,10 +585,10 @@ window.COPY = COPY;
 <script is:inline>
 // Failsafe, deliberately separate from the main script below: if that script
 // ever dies (an uncaught error, a missing global), the .reveal choreography
-// never runs and the hero + transcript would stay invisible. This tiny
-// independent watchdog reveals everything on any uncaught error, and again
-// shortly after load as a catch-all. Adding "in" to an already-revealed
-// element is a no-op, so it never fights the normal choreography.
+// never runs and the hero would stay invisible. This tiny independent
+// watchdog reveals everything on any uncaught error, and again shortly after
+// load as a catch-all. Adding "in" to an already-revealed element is a no-op,
+// so it never fights the normal choreography.
 (function () {
   function show() {
     var els = document.querySelectorAll('.reveal:not(.in)');
@@ -602,15 +606,13 @@ var COPY = window.COPY;
 var reduced = window.matchMedia
   && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-// --- load: everything reveals on its own stagger; the eye engine draws
-// the mark on independently (mounted by the AndeyeEye component) ---
+// --- load: everything reveals on its own stagger ---
 function revealAll() {
   document.querySelectorAll('.reveal').forEach(function (el) { el.classList.add('in'); });
 }
 if (reduced) {
   revealAll();
 } else {
-  // one frame so initial styles are committed, then the stagger runs
   requestAnimationFrame(function () { requestAnimationFrame(revealAll); });
 }
 
@@ -619,11 +621,11 @@ if (reduced) {
 var ctaSub = document.getElementById('ctaSub');
 function sub(kind) {
   ctaSub.textContent = COPY.subs[kind];
-  ctaSub.classList.toggle('how', kind === 'how');
+  ctaSub.classList.toggle('install', kind === 'install');
   ctaSub.classList.toggle('register', kind === 'register');
   ctaSub.classList.toggle('andeye', kind === 'andeye');
 }
-[['ctaHow', 'how'], ['ctaRegister', 'register'], ['ctaAndeye', 'andeye']].forEach(function (pair) {
+[['ctaInstall', 'install'], ['ctaRegister', 'register'], ['ctaAndeye', 'andeye']].forEach(function (pair) {
   var el = document.getElementById(pair[0]);
   ['mouseenter', 'focus'].forEach(function (ev) {
     el.addEventListener(ev, function () { sub(pair[1]); });
@@ -633,54 +635,147 @@ function sub(kind) {
   });
 });
 
-// --- the roles: hovering (or focusing) a node previews its body in the
-// shared fixed-height detail panel; clicking pins it. Leaving a hover falls
-// back to whatever is pinned, or the whole-flow summary line. Text is the
-// only thing that changes – the panel never moves. ---
-var flowDetail = document.getElementById('flowDetail').querySelector('p');
-var nodes = Array.prototype.slice.call(document.querySelectorAll('.flow-node'));
-var pinned = -1;
-var hovered = -1;
-function paintFlow() {
-  var shown = hovered !== -1 ? hovered : pinned;
-  nodes.forEach(function (n, i) {
-    n.classList.toggle('pinned', i === pinned);
-    n.setAttribute('aria-pressed', i === pinned ? 'true' : 'false');
-  });
-  flowDetail.textContent = shown === -1 ? COPY.flow.default_line : COPY.flow.bodies[shown];
+// --- the journey: chips play their transcript into the terminal; each
+// checklist item ticks when its line lands. Clicking again replays (the
+// terminal appends a fresh run, like a real terminal would). Everything but
+// Launch stays locked until Launch has run once. ---
+
+var body = document.getElementById('termBody');
+var live = document.getElementById('termLive');
+var livePrompt = document.getElementById('livePrompt');
+var liveText = document.getElementById('liveText');
+var termHint = document.getElementById('termHint');
+var driveNote = document.getElementById('driveNote');
+
+var launched = false;
+var playing = false;
+var timers = [];
+var noteTimer = null;
+
+// The deck renders unlocked server-side (so a dead script leaves plain,
+// readable chips, not dimmed ones) — the lock states are script-applied.
+function setLocked(el, on) {
+  el.classList.toggle('locked', on);
+  var chip = el.querySelector('.chip');
+  if (chip) chip.setAttribute('aria-disabled', on ? 'true' : 'false');
 }
-nodes.forEach(function (n, i) {
-  n.addEventListener('click', function () {
-    pinned = (pinned === i) ? -1 : i;
-    paintFlow();
-  });
-  ['mouseenter', 'focus'].forEach(function (ev) {
-    n.addEventListener(ev, function () { hovered = i; paintFlow(); });
-  });
-  ['mouseleave', 'blur'].forEach(function (ev) {
-    n.addEventListener(ev, function () { if (hovered === i) { hovered = -1; paintFlow(); } });
-  });
+document.querySelectorAll('.dstep').forEach(function (d) {
+  setLocked(d, d.id !== 'step-launch');
 });
 
-// --- sandbox accordions: HOVER previews (open while the pointer rests),
-// click PINS open/closed — the same reveal contract as the flow pills
-// (Martin, 2026-07-09: "still do nothing on rollover"). ---
-document.querySelectorAll('.acc-item').forEach(function (item) {
-  var head = item.querySelector('.acc-head');
-  var pinned = false;
-  function set(open) {
-    item.classList.toggle('open', open);
-    head.setAttribute('aria-expanded', open ? 'true' : 'false');
+function note(text, hot) {
+  clearTimeout(noteTimer);
+  driveNote.textContent = text;
+  driveNote.classList.toggle('hot', !!hot);
+}
+
+function promptFor(l) { return l.sh ? '$' : '>'; }
+
+function appendLine(l) {
+  var div = document.createElement('div');
+  div.className = 'tline' + (l.cmd ? ' t-cmd' : '') + (l.tone ? ' tone-' + l.tone : '');
+  var role = document.createElement('span');
+  var text = document.createElement('span');
+  role.className = 'trole' + (l.cmd ? '' : ' r-' + l.role);
+  role.textContent = l.cmd ? promptFor(l) : l.role;
+  text.className = 'ttext';
+  text.textContent = l.text;
+  div.appendChild(role);
+  div.appendChild(text);
+  body.insertBefore(div, live);
+  body.scrollTop = body.scrollHeight;
+}
+
+function tick(box, n) {
+  if (!n) return;
+  var li = box.querySelectorAll('.steps li')[n - 1];
+  if (!li) return;
+  li.classList.add('done');
+  var t = li.querySelector('.tick');
+  if (t) t.textContent = '✓';
+}
+
+function resetTicks(box) {
+  box.querySelectorAll('.steps li').forEach(function (li) {
+    li.classList.remove('done');
+    var t = li.querySelector('.tick');
+    if (t) t.textContent = '○';
+  });
+}
+
+function finishStep(id, chip) {
+  playing = false;
+  chip.classList.remove('running');
+  liveText.textContent = '';
+  note(COPY.notes.hint, false);
+  if (id === 'launch' && !launched) {
+    launched = true;
+    document.querySelectorAll('.dstep.locked').forEach(function (d) {
+      setLocked(d, false);
+    });
   }
-  head.addEventListener('click', function () {
-    pinned = !pinned;
-    set(pinned);
-  });
-  ['mouseenter', 'focus'].forEach(function (ev) {
-    head.addEventListener(ev, function () { if (!pinned) set(true); });
-  });
-  ['mouseleave', 'blur'].forEach(function (ev) {
-    head.addEventListener(ev, function () { if (!pinned) set(false); });
+  livePrompt.textContent = launched ? '>' : '$';
+}
+
+// appendLine/tick are wrapped so one bad line can never strand `playing` —
+// finishStep runs on its own timer regardless (the deck must never brick).
+function emit(l, box) {
+  try { appendLine(l); tick(box, l.step); } catch (e) { /* keep playing */ }
+}
+
+function play(id, chip) {
+  var box = document.getElementById('step-' + id);
+  if (box.classList.contains('locked')) {
+    // locked feedback outranks the in-flight guard, and the note restores
+    // itself — text swap only, in its fixed-height box
+    note(COPY.notes.locked, true);
+    noteTimer = setTimeout(function () { note(COPY.notes.hint, false); }, 3000);
+    return;
+  }
+  if (playing) return;
+  var lines = COPY.lines[id];
+  if (!lines || !lines.length) return;
+  playing = true;
+  chip.classList.add('running');
+  note(COPY.notes.running, true);
+  if (termHint) { termHint.remove(); termHint = null; }
+  resetTicks(box);
+  timers.forEach(clearTimeout);
+  timers = [];
+
+  if (reduced) {
+    lines.forEach(function (l) { emit(l, box); });
+    finishStep(id, chip);
+    return;
+  }
+
+  // the command types itself at the live prompt, then commits to history
+  var cmd = lines[0];
+  livePrompt.textContent = promptFor(cmd);
+  var i = 0;
+  (function type() {
+    if (i <= cmd.text.length) {
+      liveText.textContent = cmd.text.slice(0, i);
+      i += 2;
+      timers.push(setTimeout(type, 22));
+      return;
+    }
+    liveText.textContent = '';
+    emit(cmd, box);
+    var at = 0;
+    lines.slice(1).forEach(function (l) {
+      at += l.tone ? 800 : 430;
+      timers.push(setTimeout(function () { emit(l, box); }, at));
+    });
+    // completion is its own timer, never piggy-backed on a line that might
+    // throw — and correct even for a single-line step
+    timers.push(setTimeout(function () { finishStep(id, chip); }, at + 60));
+  })();
+}
+
+document.querySelectorAll('.chip').forEach(function (chip) {
+  chip.addEventListener('click', function () {
+    play(chip.getAttribute('data-step'), chip);
   });
 });
 
