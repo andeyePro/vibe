@@ -12277,6 +12277,40 @@ def test_task028_ac6_empty_body_is_retried() -> None:
         check("made 2 attempts", calls == 2, f"calls={calls}")
 
 
+def test_task030_mount_drift() -> None:
+    """shared_repos_mount_drift: recreate iff the desired /repos mount set
+    (dest+source+mode) differs from the container's actual mounts."""
+    print("\n[task_030: shared-repo mount drift comparator]")
+
+    def drift(scan: str, actual: str) -> str:
+        r = _source_vibe_call(
+            {}, f'printf "%s" "$(shared_repos_mount_drift {shlex.quote(scan)} {shlex.quote(actual)})"')
+        check("comparator exits 0", r.returncode == 0, r.stderr[:300])
+        return r.stdout.strip()
+
+    scan = ("M timeandeye ro andeyePro/timeandeye /Users/m/Projects/timeandeye\n"
+            "M andeyePro rw andeyePro/andeyePro /Users/m/andeye Dropbox/Projects/andeyePro")
+    matching = ("/workspace\t/Users/m/proj\trw\n"
+                "/repos/timeandeye\t/Users/m/Projects/timeandeye\tro\n"
+                "/repos/.signals/timeandeye\t/Users/m/Projects/timeandeye/.vibe-signals\trw\n"
+                "/repos/andeyePro\t/Users/m/andeye Dropbox/Projects/andeyePro\trw\n"
+                "/brain2\t/Users/m/brain2\trw\n")
+    check("matching set (spaces in path, extra non-/repos mounts) -> no drift",
+          drift(scan, matching) == "", "")
+    check("no container sentinel -> no drift", drift(scan, "NONE") == "", "")
+    check("declared repo missing from container -> drift",
+          drift(scan, "/repos/andeyePro\t/Users/m/andeye Dropbox/Projects/andeyePro\trw\n") == "1", "")
+    check("container carries a no-longer-declared repo -> drift",
+          drift("", "/repos/old\t/x\tro\n") == "1", "")
+    check("registry path moved -> drift",
+          drift(scan, matching.replace("/Users/m/Projects/timeandeye\tro",
+                                       "/Users/m/elsewhere/timeandeye\tro")) == "1", "")
+    check("effective mode flipped (lock handoff) -> drift",
+          drift(scan, matching.replace("andeyePro\trw", "andeyePro\tro")) == "1", "")
+    check("signals sidecar alone never counts",
+          drift("", "/repos/.signals/foo\t/x/.vibe-signals\trw\n") == "", "")
+
+
 def test_task029_default_patience() -> None:
     """The shipped attempt cap must cover a cold Docker Desktop container
     (observed 2026-08-03: 3x2s was not enough; 6 x linear-2s = ~30s is)."""
@@ -12846,6 +12880,7 @@ def main() -> int:
     test_task028_ac9_still_locks_down_at_the_end()
     test_task028_ac10_changelog_entry_present()
     test_task029_default_patience()
+    test_task030_mount_drift()
 
     print()
     if FAILURES:

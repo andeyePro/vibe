@@ -991,3 +991,13 @@ Covers the 2026-07-29 incident: one transient `curl` failure at container start 
 
 **39d — symptom-to-cause mapping (diagnostic aid):**
 - [ ] With the firewall fully built but `api.anthropic.com` deliberately absent from the ipset (`docker exec -u root <cid> ipset del allowed-domains 160.79.104.10`, substituting the current resolved IP), an in-container `curl https://api.anthropic.com` fails **fast** with connection refused — the terminal `REJECT` rule. Contrast with 39b's trap-applied `DROP`, where the same curl **hangs** to timeout. Confirms the two failure modes are distinguishable from the symptom alone.
+
+### Test 40: shared-repo mount drift auto-recreates the container (task_030)
+
+Needs real Docker and a registered shared repo.
+
+1. In a project with a running container and no shared repos, `vibe repos add <owner/repo> <path>` (registers + declares + acks).
+2. Relaunch plain `vibe` (no --rebuild). Expect the new status line `shared-repo mounts changed since this container was created - recreating it.` and, inside, `/repos/<name>` present with the declared mode.
+3. Relaunch again unchanged. Expect NO recreate line (sets match — idempotent).
+4. Edit `.vibe-repos` to remove the declaration; relaunch. Expect a recreate (container carries a mount no longer desired) and `/repos/<name>` gone.
+5. rw handoff: with the same repo declared `--rw` in two projects, exit the lock holder, relaunch the other. Expect a recreate (effective mode ro→rw) and the header showing `(rw)`.

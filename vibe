@@ -2295,7 +2295,7 @@ _repos_add() {
   fi
 
   echo "  ✓ $slug registered at $path and declared in .vibe-repos"
-  echo "    Relaunch (vibe) for the mount to take effect."
+  echo "    Relaunch (vibe) — the launcher recreates the container automatically when the mount set changes."
   exit 0
 }
 
@@ -2371,7 +2371,7 @@ _repos_remove() {
     fi
   fi
 
-  echo "    Relaunch (vibe) for the change to take effect."
+  echo "    Relaunch (vibe) — the launcher recreates the container automatically when the mount set changes."
   exit 0
 }
 
@@ -2848,6 +2848,64 @@ remove_existing_flag() {
   if [ "$1" = "true" ] || [ -n "$2" ]; then
     echo "--remove-existing-container"
   fi
+}
+
+# ── Shared-repo mount drift (task_030) ────────────────────────────────────────
+# Mounts are fixed at container creation, but the desired mount set changes
+# whenever a shared repo is declared/removed, its registry path moves, or its
+# effective rw/ro mode flips (single-writer lock handoff). A plain relaunch
+# REUSES the container, so before this check a `vibe repos add` + relaunch
+# silently produced a container with no /repos mount (hit live 2026-07-11
+# timeandeye, again 2026-08-04 mailandeye). Same shape as image drift above:
+# a pure comparator (unit-testable) + a thin docker wrapper.
+
+# container_shared_mounts <workspace>
+# Echoes the existing container's mounts as "dest<TAB>src<TAB>rw|ro" lines,
+# or the sentinel "NONE" when no container exists (or docker is unavailable) —
+# a missing container is a fresh create, never a drift recreate. Fail-safe
+# like the image-drift docker calls.
+container_shared_mounts() {
+  local cids cid
+  cids=$(docker ps -aq --filter "label=devcontainer.local_folder=$1" 2>/dev/null) || cids=""
+  cid="${cids%%$'\n'*}"
+  if [ -z "$cid" ]; then
+    echo "NONE"
+    return 0
+  fi
+  docker inspect --format \
+    '{{range .Mounts}}{{.Destination}}{{"\t"}}{{.Source}}{{"\t"}}{{if .RW}}rw{{else}}ro{{end}}{{"\n"}}{{end}}' \
+    "$cid" 2>/dev/null || echo "NONE"
+}
+
+# shared_repos_mount_drift <scan_output> <actual_mounts>
+# Pure comparator (no docker). <scan_output> is shared_repos_scan's stdout;
+# <actual_mounts> is container_shared_mounts' output. Emits "1" iff the
+# desired /repos/<name> mount set (dest+source+mode) differs from what the
+# container actually carries. Only /repos/* mounts are compared — workspace,
+# volume and brain2 mounts are governed by the override config, and the
+# .vibe-signals sidecars follow their repo, so comparing them would only
+# double-count. "NONE" (no container) is never drift.
+shared_repos_mount_drift() {
+  local scan="$1" actual="$2"
+  [ "$actual" = "NONE" ] && return 0
+  local desired_lines="" actual_lines=""
+  local tag name bindmode slug path dest src mode
+  while read -r tag name bindmode slug path; do
+    [ "$tag" = "M" ] || continue
+    desired_lines="${desired_lines}/repos/${name}"$'\t'"${path}"$'\t'"${bindmode}"$'\n'
+  done <<< "$scan"
+  while IFS=$'\t' read -r dest src mode; do
+    case "$dest" in
+      /repos/.signals/*) continue ;;
+      /repos/*) actual_lines="${actual_lines}${dest}"$'\t'"${src}"$'\t'"${mode}"$'\n' ;;
+      *) continue ;;
+    esac
+  done <<< "$actual"
+  if [ "$(printf '%s' "$desired_lines" | LC_ALL=C sort)" != \
+       "$(printf '%s' "$actual_lines" | LC_ALL=C sort)" ]; then
+    echo 1
+  fi
+  return 0
 }
 
 # ── Argv parser ───────────────────────────────────────────────────────────────
@@ -3490,11 +3548,21 @@ UP_ARGS=("${UP_BASE_ARGS[@]}")
 # Detect image drift (container built from a superseded image) and fold in the
 # --rebuild flag so the flag is appended exactly once via remove_existing_flag.
 drift_marker="$(image_drift_needs_recreate "$WORKSPACE" "$IMAGE_TAG")"
-extra_flag="$(remove_existing_flag "$REBUILD" "$drift_marker")"
+# Shared-repo mount drift (task_030): only worth computing when nothing else
+# already forces a recreate.
+mount_drift=""
+if [ "$REBUILD" != true ] && [ -z "$drift_marker" ]; then
+  mount_drift="$(shared_repos_mount_drift "$SHARED_REPOS_SCAN" "$(container_shared_mounts "$WORKSPACE")")"
+fi
+extra_flag="$(remove_existing_flag "$REBUILD" "${drift_marker}${mount_drift}")"
 [ -n "$extra_flag" ] && UP_ARGS+=("$extra_flag")
 # Print a distinct status line when drift (not --rebuild) triggered the recreate.
 if [ -n "$drift_marker" ] && [ "$REBUILD" != true ]; then
   echo "  image moved on since this project's container was built - recreating it."
+  echo ""
+fi
+if [ -n "$mount_drift" ]; then
+  echo "  shared-repo mounts changed since this container was created - recreating it."
   echo ""
 fi
 
