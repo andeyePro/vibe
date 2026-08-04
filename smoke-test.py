@@ -12311,6 +12311,34 @@ def test_task030_mount_drift() -> None:
           drift("", "/repos/.signals/foo\t/x/.vibe-signals\trw\n") == "", "")
 
 
+def test_task031_terminal_restore_and_exit_note() -> None:
+    """restore_terminal must cover every mouse-tracking encoding claude can
+    leave enabled, and claude_exit_note must be quiet on clean/interrupt
+    exits but log abnormal ones."""
+    print("\n[task_031: terminal hygiene + crash forensics]")
+    src = VIBE.read_text()
+    for mode in ("1000l", "1002l", "1003l", "1006l", "1015l", "1004l", "2004l", "1049l", "25h"):
+        check(f"restore sequence disables ?{mode}", f"?{mode}" in src, "")
+    check("supervised launch calls restore_terminal",
+          "restore_terminal || true" in src.split("launch_claude_supervised()")[1].split("\n}")[0], "")
+    check("supervised launch calls claude_exit_note",
+          "claude_exit_note" in src.split("launch_claude_supervised()")[1].split("\n}")[0], "")
+    check("exit hook registered", "vibe_exit_hook_add 'restore_terminal || true'" in src, "")
+    # functional: sourced, no tty — must no-op cleanly and return 0
+    r = _source_vibe_call({}, 'restore_terminal < /dev/null; echo "RC=$?"')
+    check("restore_terminal no-tty exits 0", "RC=0" in r.stdout, r.stdout[:200] + r.stderr[:200])
+    r = _source_vibe_call({}, 'claude_exit_note 0 /tmp/nonexistent-vibe-ws; echo "RC=$?"')
+    check("exit-note silent on rc=0", "RC=0" in r.stdout and "⚠" not in r.stdout, r.stdout[:300])
+    r = _source_vibe_call({}, 'claude_exit_note 130 /tmp/nonexistent-vibe-ws; echo "RC=$?"')
+    check("exit-note silent on rc=130 (Ctrl-C)", "RC=0" in r.stdout and "⚠" not in r.stdout, r.stdout[:300])
+    with tempfile.TemporaryDirectory() as td:
+        r = _source_vibe_call({}, f'claude_exit_note 137 {shlex.quote(td)}; echo "RC=$?"')
+        check("exit-note logs rc=137", "RC=0" in r.stdout and "rc=137" in r.stdout, r.stdout[:300])
+        check("signal hint printed", "signal 9" in r.stdout, r.stdout[:300])
+        log = Path(td) / ".vibe" / "last-exit.log"
+        check("last-exit.log written", log.exists() and "rc=137" in log.read_text(), "")
+
+
 def test_task029_default_patience() -> None:
     """The shipped attempt cap must cover a cold Docker Desktop container
     (observed 2026-08-03: 3x2s was not enough; 6 x linear-2s = ~30s is)."""
@@ -12881,6 +12909,7 @@ def main() -> int:
     test_task028_ac10_changelog_entry_present()
     test_task029_default_patience()
     test_task030_mount_drift()
+    test_task031_terminal_restore_and_exit_note()
 
     print()
     if FAILURES:

@@ -2850,6 +2850,59 @@ remove_existing_flag() {
   fi
 }
 
+# ── Terminal hygiene + crash forensics (task_031) ─────────────────────────────
+# claude enables xterm mouse tracking (and bracketed paste, focus reporting,
+# the alternate screen). When it dies abnormally it never sends the disable
+# sequences, so the HOST terminal keeps streaming mouse-event escapes into the
+# shell prompt ("35;35;15M..." garbage on any mouse movement) — recurring live
+# issue, seen again 2026-08-04. vibe is the host-side wrapper that survives
+# claude's death, so it unconditionally restores the terminal after every
+# claude run and on its own exit path. Second half of the fix: the launcher
+# records WHY claude died (exit code + the container's OOMKilled state) so the
+# recurring mystery becomes a log line instead of a lost evening.
+
+# restore_terminal — disable mouse tracking (all encodings), focus reporting,
+# bracketed paste; leave the alternate screen; re-show the cursor; stty sane.
+# Every write is guarded: never fails, no-ops without a tty.
+restore_terminal() {
+  local seq='\033[?1000l\033[?1002l\033[?1003l\033[?1005l\033[?1006l\033[?1015l\033[?1004l\033[?2004l\033[?1049l\033[?25h'
+  if { : > /dev/tty; } 2>/dev/null; then
+    printf '%b' "$seq" > /dev/tty 2>/dev/null || true
+    stty sane < /dev/tty 2>/dev/null || true
+  elif [ -t 1 ]; then
+    printf '%b' "$seq" 2>/dev/null || true
+    stty sane 2>/dev/null || true
+  fi
+  return 0
+}
+
+# claude_exit_note <rc> <workspace> — on an abnormal claude exit (rc not 0 and
+# not 130/user-interrupt), append a forensic line to .vibe/last-exit.log and
+# print one loud hint. Reads the container's state so an OOM kill identifies
+# itself (rc=137 alone is ambiguous: OOM-killer, stall watchdog, or docker
+# stop). All docker/file operations fail-safe; always returns 0.
+claude_exit_note() {
+  local rc="$1" ws="$2" cstate="" cids cid line
+  [ "$rc" -eq 0 ] && return 0
+  [ "$rc" -eq 130 ] && return 0
+  cids=$(docker ps -aq --filter "label=devcontainer.local_folder=$ws" 2>/dev/null) || cids=""
+  cid="${cids%%$'\n'*}"
+  if [ -n "$cid" ]; then
+    cstate=$(docker inspect --format 'container={{.State.Status}} oomkilled={{.State.OOMKilled}} container_exit={{.State.ExitCode}}' "$cid" 2>/dev/null) || cstate="container=inspect-failed"
+  else
+    cstate="container=gone"
+  fi
+  line="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown-time) claude rc=$rc $cstate"
+  mkdir -p "$ws/.vibe" 2>/dev/null || true
+  echo "$line" >> "$ws/.vibe/last-exit.log" 2>/dev/null || true
+  echo ""
+  echo "  ⚠ claude exited rc=$rc ($cstate) — appended to .vibe/last-exit.log"
+  if [ "$rc" -ge 128 ]; then
+    echo "    rc>=128 means killed by signal $(( rc - 128 )) (137=SIGKILL: OOM or watchdog; 139=segfault)."
+  fi
+  return 0
+}
+
 # ── Shared-repo mount drift (task_030) ────────────────────────────────────────
 # Mounts are fixed at container creation, but the desired mount set changes
 # whenever a shared repo is declared/removed, its registry path moves, or its
@@ -3706,6 +3759,11 @@ launch_claude_supervised() {
   CLAUDE_EXIT="$rc"
   kill "$wd_pid" 2>/dev/null || true
   wait "$wd_pid" 2>/dev/null || true
+  # task_031: claude may have died without cleaning up the host terminal —
+  # restore it after EVERY run (a no-op after a clean exit), then record why
+  # an abnormal exit happened while the evidence still exists.
+  restore_terminal || true
+  claude_exit_note "$rc" "$WORKSPACE" || true
   return 0
 }
 
@@ -3714,6 +3772,10 @@ launch_claude_supervised() {
 # the HOTFIX note inside launch_claude_supervised). Guarded: nothing to dup
 # is fatal only if stdin is already closed, which a launcher run never has.
 exec 9<&0
+
+# task_031 belt-and-braces: also restore the terminal on vibe's own exit path
+# (Ctrl-C during the auto-resume countdown, errexit, etc.).
+vibe_exit_hook_add 'restore_terminal || true'
 
 launch_claude_supervised "$CLAUDE_RESUME_ARGS" "" "$VIBE_SESSION_REF"
 
