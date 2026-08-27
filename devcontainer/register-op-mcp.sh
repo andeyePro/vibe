@@ -54,6 +54,8 @@ healthz_url="${scheme}://${host}:${PORT}/healthz"
 if ! curl -fsS --max-time 6 -H "Host: ${host}" "$healthz_url" >/dev/null 2>&1; then
   echo "register-op-mcp: OP MCP not reachable at ${host}:${PORT} (forwarder down?)"
   echo "                 — leaving /op unregistered this session."
+  echo "                 Fix: check ~/.vibe/op-mcp-forwarder.log on the Mac, then relaunch"
+  echo "                 vibe — registration only runs at container start, never mid-session."
   # Drop any stale registration so a dead server isn't probed on every start.
   claude mcp remove openproject --scope user >/dev/null 2>&1 || true
   exit 0

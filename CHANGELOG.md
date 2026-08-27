@@ -4,6 +4,10 @@ vibe's done-work audit log. Each entry is a closed task — either successful (`
 
 Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion between TODO and CHANGELOG. Before this date, closed items lived in `TODO.md ## Done`; they migrated here verbatim. New closed items append to this file.
 
+## 2026-08-27
+
+- [x] **register-op-mcp: unreachable-endpoint message now carries the fix** — when the /healthz probe through the Mac-side forwarder fails, the postStart log said only "leaving /op unregistered this session"; it now also points at the recovery path (`~/.vibe/op-mcp-forwarder.log` on the Mac, then relaunch — registration runs only at container start, never mid-session). Message-only; pairs with the `/op` skill's new Preflight section (canonical in brain2's `.claude/skills/op/SKILL.md`, synced 2026-08-24) which stockpiles actions and emits the per-surface fix when the MCP is absent. shellcheck clean (19 files); smoke suite green.
+
 ## 2026-08-04
 
 - [x] **task_031: terminal hygiene + crash forensics after claude dies** — recurring live annoyance (again 2026-08-04, moneyandeye): claude enables xterm mouse tracking / bracketed paste / focus reporting / the alternate screen, and an abnormal death leaves them on, so the host Ghostty streams mouse-event escapes into the shell prompt until a manual `reset`. vibe is the wrapper that survives the death, so `launch_claude_supervised` now runs `restore_terminal` (disables every mouse encoding + focus + paste, leaves alt-screen, re-shows cursor, `stty sane`; writes to `/dev/tty`, no-ops without one) after EVERY claude run, plus an exit-hook registration for vibe's own exit paths. Companion `claude_exit_note`: on abnormal exit (rc≠0, rc≠130) appends timestamp + rc + the container's `Status`/`OOMKilled`/`ExitCode` to `.vibe/last-exit.log` and prints one hint line (incl. the rc≥128 signal decode) — so the recurring "what killed claude mid-/vsss" mystery self-documents while the evidence exists. smoke: `test_task031_*` (17 checks: sequence coverage, call-site wiring, no-tty no-op, silent-on-clean/interrupt, rc=137 logging).
