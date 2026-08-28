@@ -55,6 +55,56 @@ check('hero links to #demo', html.includes('href="#demo"'));
 check('legacy #how / #sandbox anchors preserved',
   html.includes('<span id="how"') && html.includes('<span id="sandbox"'));
 
+// ---------------------------------------------------------------------------
+// demo fidelity: the interactive transcript quotes the real product. Pin the
+// demo's key strings to the launcher / firewall / content-guard / command
+// sources so the demo can't silently drift from what vibe actually prints.
+// Dashes are normalised (site copy uses " – ", sources vary) before matching.
+const src = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+const launcher = src('../vibe');
+const firewall = src('../devcontainer/init-firewall.sh');
+const scanner = src('../devcontainer/git-hooks/vibe-content-scan.sh');
+const vssCmd = src('../devcontainer/commands/vss.md');
+const vsssCmd = src('../devcontainer/commands/vsss.md');
+const budgetCmd = src('../devcontainer/commands/budget.md');
+const cCmd = src('../devcontainer/commands/c.md');
+const norm = (s) => s.replace(/[–—]/g, '-').replace(/…/g, '...');
+const H = norm(html);
+const inBoth = (s, source) => H.includes(norm(s)) && norm(source).includes(norm(s));
+
+check('launch banner fields are the launcher\'s own (project/github/hooks/extras)',
+  ['\u{1F680} vibe session starting', 'project : ', 'github  : ',
+   'hooks   : tool-call guards + idle bell',
+   'extras  : /diet · /feast · /vs · shellcheck-fixer · security-review']
+    .every((s) => inBoth(s, launcher)));
+check('PAT wording quotes the launcher (Token saved / not asked again)',
+  inBoth("Token saved - you won't be asked again for this repo", launcher));
+check('container build line quotes the launcher',
+  inBoth('Building vibe container image', launcher));
+check('firewall verification line is verbatim from init-firewall.sh',
+  inBoth('Firewall verification passed - unable to reach https://example.com as expected', firewall));
+check('firewall allowlist domains the demo names exist in init-firewall.sh',
+  ['api.github.com', 'registry.npmjs.org', 'api.anthropic.com'].every((d) => firewall.includes(d)));
+check('fail-closed claim is real (init-firewall.sh fails CLOSED)',
+  /fails closed/.test(H) && firewall.includes('failing CLOSED'));
+check('Radicle claim pinned to the allowlist (seed.radicle.garden)',
+  H.includes('Radicle') && firewall.includes('seed.radicle.garden'));
+check('content-guard rule id in the demo is a real BLOCK rule',
+  H.includes('secret-assignment') && scanner.includes('"BLOCK" "secret-assignment"'));
+check('no invented content-guard rule ids', !H.includes('anthropic-key'));
+check('/vss redirect window matches the spec (270s + auto-proceed)',
+  inBoth('270s', vssCmd) && inBoth('auto-proceed', vssCmd));
+check('/vss audit-trail path matches the spec (.vss/sessions/)',
+  inBoth('.vss/sessions/', vssCmd));
+check('/vsss relaunch string matches the launcher (claude --continue)',
+  H.includes('claude --continue') && launcher.includes('Relaunching claude --continue'));
+check('no-autonomous-push claim matches the /vsss exit report',
+  H.includes('not pushed') && vsssCmd.includes('not pushed'));
+check('/budget honesty line quotes budget.md (estimates, not invoices)',
+  inBoth('estimates, not invoices', budgetCmd));
+check('/c scratch path matches c.md (copy-latest.txt)',
+  inBoth('copy-latest.txt', cCmd));
+
 // andeye sites rule: no raw email addresses ever
 check('no mailto: and no raw email addresses',
   !html.includes('mailto:') && !/[\w.+-]+@[\w-]+\.[a-z]{2,}/i.test(html.replace(/[\w.+-]+%40/g, '')));

@@ -36,23 +36,23 @@ journey:
           label: Launch
           desc: one command, from any project folder
           checklist:
-            - finds your project and its GitHub remote
-            - checks the repo's own fine-grained PAT – it reaches this repo, and only repos this session declares
-            - builds the sandboxed container (once – reused in seconds after that)
-            - verifies the firewall – outbound on a short allowlist
+            - finds your project and its GitHub remote, then asks once for a fine-grained PAT – scoped to that one repo
+            - builds the sandboxed container image (first launch only – reused in seconds after that)
+            - announces the session – project, repo, hooks, extras – the blast radius on one screen
+            - brings up the firewall and proves it – outbound on a short allowlist, verified before work starts
             - signs Claude Code in with your Claude subscription – no API key
           lines:
             - { cmd: true, sh: true, text: "cd yourproject && vibe" }
-            - { role: vibe, text: "✓ GitHub repo detected: you/yourproject", step: 1 }
-            - { role: vibe, text: "✓ fine-grained PAT found – scoped to this repo; only declared repos are reachable", step: 2 }
-            - { role: vibe, text: "✓ container ready (built once, reused in 3s after that)", step: 3 }
-            - { role: vibe, text: "✓ firewall verified – outbound allowlist: GitHub · npm · Anthropic (+ ssh)", step: 4 }
+            - { role: vibe, text: "No GitHub token found for you/yourproject – opening GitHub: Repository access → Only select repositories → yourproject" }
+            - { role: vibe, text: "✓ Token saved – you won't be asked again for this repo.", step: 1 }
+            - { role: vibe, text: "Building vibe container image (claude-code=latest)...", step: 2 }
             - { role: vibe, text: "🚀 vibe session starting" }
             - { role: vibe, text: "   project : yourproject" }
-            - { role: vibe, text: "   github  : you/yourproject" }
+            - { role: vibe, text: "   github  : you/yourproject", step: 3 }
             - { role: vibe, text: "   hooks   : tool-call guards + idle bell" }
             - { role: vibe, text: "   extras  : /diet · /feast · /vs · shellcheck-fixer · security-review" }
-            - { role: claude, text: "✓ signed in with your Claude subscription – no API key anywhere", step: 5 }
+            - { role: guard, text: "Firewall verification passed - unable to reach https://example.com as expected", step: 4 }
+            - { role: claude, text: "signed in with your Claude subscription – no API key anywhere", step: 5 }
             - { role: claude, text: "ready – what shall we build?" }
     - label: Build
       steps:
@@ -61,45 +61,47 @@ journey:
           label: Build, adversarially
           desc: nobody marks their own homework
           checklist:
-            - a planner turns your ask into a spec with real acceptance criteria
-            - a spec critic attacks the spec before any code
-            - a builder writes the code
-            - an independent tester runs every check
-            - fail means fix and re-test – claims don't count, passes do
-            - a reviewer hunts for reasons to say no
+            - a planner drafts the spec – acceptance criteria plus a model plan (which tier does what)
+            - a spec critic attacks the spec before any code – then you approve it
+            - a builder writes the code to the locked spec
+            - an independent tester writes and runs the tests – it never sees the builder's diff
+            - fail means fix and re-test – the tests are immutable, claims don't count
+            - a final evaluator reads the raw test log itself – default-fail on ambiguity
           lines:
             - { cmd: true, text: "/vs \"add CSV export to the monthly report\"" }
-            - { role: planner, text: "spec drafted – six acceptance criteria, two questions for you first", step: 1 }
-            - { role: critic, text: "criterion 4 can't be tested as written – tightened before any code", step: 2 }
+            - { role: planner, text: "spec drafted – 7 acceptance criteria · model plan: builder sonnet, tester haiku, Fable rung not pre-authorised", step: 1 }
+            - { role: critic, text: "revise: criterion 4 isn't mechanically testable as written" }
+            - { role: planner, text: "tightened – spec critic: pass after 2 iterations; spec shown for your approval", step: 2 }
             - { role: builder, text: "three files changed – export sits behind the existing report menu", step: 3 }
-            - { role: tester, tone: fail, text: "14 checks run – 13 passed, 1 failed on the empty-report case", step: 4 }
+            - { role: tester, text: "14 tests written from the spec alone – the builder's diff stays unseen", step: 4 }
+            - { role: tester, tone: fail, text: "14 checks run – 13 passed, 1 failed on the empty-report case" }
             - { role: builder, text: "fixed – an empty report now exports its headers only", step: 5 }
-            - { role: tester, tone: pass, text: "14 checks run – 14 passed, 0 failed" }
-            - { role: reviewer, text: "no objections left – the diff is ready for your review", step: 6 }
+            - { role: tester, tone: pass, text: "14 checks run – 14 passed · pre-existing suite still green" }
+            - { role: reviewer, text: "raw test log read, diff checked against out-of-scope – pass; ready for your review", step: 6 }
         - id: vss
           cmd: /vss
           label: One task, solo
           desc: no arguments – it finds its own work
           checklist:
-            - reads your TODO.md backlog
-            - picks the highest-leverage open item itself
-            - runs the whole adversarial loop unattended
-            - commits with a full audit trail for your review
+            - reads your TODO.md backlog and picks the first bounded open item
+            - announces the pick and rings the bell – you get a window to redirect it
+            - runs the work unattended, acting as you would – a hard-escalate list stops what needs your hands
+            - commits locally with a full audit trail – never pushes; you review, you push
           lines:
             - { cmd: true, text: "/vss" }
-            - { role: planner, text: "TODO.md read – 7 open items", step: 1 }
-            - { role: planner, text: "picked: \"CSV export – empty-state copy\" (small, unblocked, user-visible)", step: 2 }
+            - { role: planner, text: "TODO.md read – 7 open items; first bounded one: \"CSV export – empty-state copy\"", step: 1 }
+            - { role: planner, text: "type go to proceed now, anything else redirects – silence for 270s = auto-proceed", step: 2 }
             - { role: builder, text: "two files changed", step: 3 }
             - { role: tester, tone: pass, text: "9 checks run – 9 passed" }
-            - { role: vibe, text: "committed – audit trail in .vss/sessions/ for your review", step: 4 }
+            - { role: vibe, text: "committed – audit trail in .vss/sessions/ · not pushed until you've reviewed", step: 4 }
         - id: vsss
           cmd: /vsss --sessions 2
           label: Overnight loop
           desc: burn the rest of your session productively
           checklist:
             - loops the solo run, item after item
-            - questions go to your notes – it never stops to wait
-            - commits keep landing while you sleep
+            - questions park to your notes – it never stops to wait
+            - commits keep landing while you sleep – locally, nothing pushed
             - rolls into a fresh credit window when one runs out
             - stops itself at the perfection gate
           lines:
@@ -108,9 +110,9 @@ journey:
             - { role: vibe, text: "23:58 iter 2 – flaky date test pinned ✓ committed" }
             - { role: vibe, text: "00:41 a question for you parked to your notes – moving on, not waiting", step: 2 }
             - { role: vibe, text: "02:15 iter 5 – docs caught up with the code ✓ committed", step: 3 }
-            - { role: vibe, text: "03:05 credit window exhausted – relaunching into window 2 of 2", step: 4 }
-            - { role: vibe, text: "06:40 nothing left worth doing – perfection gate, loop closed", step: 5 }
-            - { role: claude, text: "while you slept: 9 commits, 1 question waiting, audit trail ready" }
+            - { role: vibe, text: "03:05 window exhausted – auto-resume: relaunching claude --continue (window 2 of 2)", step: 4 }
+            - { role: vibe, text: "06:40 optimiser: stop the loop – perfection gate, nothing left adds value", step: 5 }
+            - { role: claude, text: "while you slept: 9 commits, 1 question waiting – not pushed; review the session audit, then git push" }
     - label: Red team
       steps:
         - id: curl
@@ -119,11 +121,13 @@ journey:
           desc: traffic off the allowlist
           checklist:
             - every outbound connection is checked against a short allowlist
-            - GitHub, npm, Anthropic and a few named extras are allowed – the rest is refused
+            - GitHub, npm, Anthropic and a few named extras are allowed – the rest is rejected at the network layer
+            - and it fails closed – if the allowlist can't be built, nothing gets out
           lines:
             - { cmd: true, sh: true, text: "curl https://sketchy.example" }
-            - { role: guard, tone: fail, text: "curl: (7) Failed to connect to sketchy.example port 443 – refused at the network layer", step: 1 }
-            - { role: vibe, text: "the firewall fails closed: if the allowlist can't be built, nothing gets out", step: 2 }
+            - { role: guard, tone: fail, text: "curl: (7) Failed to connect to sketchy.example port 443: No route to host", step: 1 }
+            - { role: vibe, text: "outbound is REJECTed unless the destination is allowlisted – GitHub · npm · Anthropic · a few named extras", step: 2 }
+            - { role: vibe, text: "and the firewall fails closed – if the allowlist can't be built, nothing gets out", step: 3 }
         - id: leak
           cmd: git commit (with a pasted API key)
           label: Try to leak a secret
@@ -134,9 +138,10 @@ journey:
             - pushes re-scan the outgoing range for secrets before anything leaves
           lines:
             - { cmd: true, sh: true, text: "git commit -m \"wip\"   # config.js still holds a pasted API key" }
-            - { role: guard, tone: fail, text: "BLOCK config.js:12 anthropic-key – commit stopped before it existed", step: 1 }
+            - { role: guard, tone: fail, text: "BLOCK  config.js:12  secret-assignment  api_key = sk-live-…", step: 1 }
+            - { role: vibe, text: "commit stopped – the secret never entered history" }
             - { role: guard, text: "WARN fires the same way on private IPs, home paths and email addresses", step: 2 }
-            - { role: vibe, text: "git push re-scans the outgoing range – belt and braces", step: 3 }
+            - { role: vibe, text: "git push re-scans the outgoing range for secrets – belt and braces", step: 3 }
     - label: Ship
       steps:
         - id: push
@@ -144,15 +149,16 @@ journey:
           label: Ship it
           desc: out through the one-repo PAT
           checklist:
-            - pushes with the repo's own fine-grained PAT
-            - lands on GitHub – Radicle support is on the way
+            - the pre-push guard re-scans the outgoing range for secrets on the way out
+            - pushes with the repo's own fine-grained PAT – one repo per token is the whole blast radius
             - docs and CHANGELOG travel in the same commit
           lines:
             - { cmd: true, sh: true, text: "git push" }
-            - { role: vibe, text: "content-guard: outgoing range clean" }
-            - { role: out, text: "To github.com/you/yourproject   main → main", step: 1 }
-            - { role: vibe, text: "(Radicle peers: on the way)", step: 2 }
+            - { role: guard, text: "outgoing range re-scanned for secrets – the guard only speaks when it finds something", step: 1 }
+            - { role: out, text: "To https://github.com/you/yourproject.git" }
+            - { role: out, text: "   a1b2c3d..f4e5d6a  main -> main", step: 2 }
             - { role: claude, text: "the CHANGELOG entry rode in the same commit – reviewers can follow the story", step: 3 }
+            - { role: vibe, text: "peers beyond GitHub? Radicle's seed node is already on the firewall allowlist" }
     - label: Also in the box
       steps:
         - id: budget
@@ -160,37 +166,41 @@ journey:
           label: /budget
           desc: what this month cost
           checklist:
-            - month-to-date model spend, across every vibe on this Mac
+            - month-to-date tokens per model, across every vibe session on this Mac – plus estimated credit spend
           lines:
             - { cmd: true, text: "/budget" }
-            - { role: vibe, text: "this month: sonnet 62% · opus 31% · haiku 7% of your subscription – credit spend itemised separately", step: 1 }
+            - { role: vibe, text: "month to date – sonnet 41M · opus 12M · haiku 3M tokens (subscription quota)", step: 1 }
+            - { role: vibe, text: "fable 0 tokens ≈ $0.00 credits – estimates, not invoices; the console is authoritative" }
         - id: learn
           cmd: /learn
           label: /learn
           desc: lessons that travel
           checklist:
-            - captures a cross-project lesson to your learning library (with your say-so)
+            - captures a cross-project lesson to your learning library – the write needs your yes, every time
           lines:
             - { cmd: true, text: "/learn \"lead with the literal command\"" }
-            - { role: vibe, text: "saved to your learning library – every future session in every project sees it", step: 1 }
+            - { role: guard, text: "vibe: modifying the learning library – confirm to proceed" }
+            - { role: vibe, text: "saved – every future session in every project sees it", step: 1 }
         - id: copy
           cmd: /c
           label: /c
           desc: container → Mac clipboard
           checklist:
-            - copies Claude's last code block straight to your Mac clipboard
+            - copies Claude's last code block to your Mac clipboard – via a watched scratch file
           lines:
             - { cmd: true, text: "/c" }
-            - { role: vibe, text: "last code block copied – paste it anywhere on your Mac", step: 1 }
+            - { role: claude, text: "wrote 214 bytes to .vibe/copy-latest.txt" }
+            - { role: vibe, text: "the Mac-side watcher pbcopys it within a second – paste it anywhere", step: 1 }
         - id: diet
           cmd: /diet
           label: /diet · /feast
           desc: token thrift on demand
           checklist:
-            - lean mode – fewer subagents, terser output; /feast turns it back
+            - lean mode – no subagents, terse replies, cheaper-model suggestions; /feast turns it back
           lines:
             - { cmd: true, text: "/diet" }
-            - { role: vibe, text: "lean mode on – say /feast when you want the full spread back", step: 1 }
+            - { role: claude, text: "lean mode on – no subagents, terse replies; the rest looks mechanical, suggest /model sonnet" }
+            - { role: claude, text: "say /feast when you want the full spread back", step: 1 }
 who:
   eyebrow: Who it's for
   h2: For developers first

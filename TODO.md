@@ -10,6 +10,8 @@ Markers: `[ ]` open · `[!]` failed/abandoned (note what was tried) · a `Martin
 
 ### ⇒ START HERE after the 2026-07-16 rebuild (content-guard + OP-opt-in shipped)
 
+- [ ] **Martin-gated: review + push the 2026-08-28 agent-team batch (5 local commits)** — site demo fidelity rework (pushing `main` DEPLOYS vibe.andeye.com via CF Pages — eyeball the demo first: `cd site && npm run dev`), task_014 per-project history bind (first launch after this recreates each project's container once and shadows pre-upgrade history — see Test 42), firewall must-have tier, `/zotero` write deny, `/learn --review`. All suites green + Fable security-review clean (its MEDIUM + 2 LOW findings fixed pre-commit) at commit time.
+
 - [ ] **Martin-gated: push the CI site job — the container PAT lacks `workflow` scope** (2026-08-03) — `site-check.mjs` (13+ assertions, `npm run check`) only runs manually until CI gates it; the push of the ready-made job was rejected (`refusing to allow a Personal Access Token to … update workflow … without workflow scope`). Either add the Workflows permission to the vibe repo's fine-grained PAT (github.com/settings/personal-access-tokens, then `vibe pat`), or paste this job into `.github/workflows/ci.yml` from your Mac and push:
   ```yaml
   site:
