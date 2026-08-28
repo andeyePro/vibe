@@ -4234,6 +4234,146 @@ def test_task009_guard_bash_gitpush_and_block_beats_ask() -> None:
           f"exit={r.returncode}")
 
 
+def _assert_deny_json(r: "subprocess.CompletedProcess[str]", label: str) -> None:
+    """Assert the subprocess output is a valid deny-JSON envelope."""
+    check(f"[zotero] {label}: exit 0", r.returncode == 0,
+          f"exit={r.returncode} stderr={r.stderr[:200]}")
+    try:
+        data = json.loads(r.stdout)
+    except json.JSONDecodeError as exc:
+        check(f"[zotero] {label}: stdout is valid JSON", False, str(exc))
+        return
+    check(f"[zotero] {label}: stdout is valid JSON", True)
+    hso = data.get("hookSpecificOutput", {})
+    check(f"[zotero] {label}: hookEventName == PreToolUse",
+          hso.get("hookEventName") == "PreToolUse", str(hso))
+    check(f"[zotero] {label}: permissionDecision == deny",
+          hso.get("permissionDecision") == "deny", str(hso))
+    check(f"[zotero] {label}: reason non-empty",
+          bool(hso.get("permissionDecisionReason", "")), str(hso))
+
+
+def _guard_fs_variant(tmpdir: str, mount_path: str) -> str:
+    """Copy guard-fs.sh with the /zotero mount path rewritten to mount_path.
+
+    The deny branch is gated on `[ -d /zotero ]`, which is false on a host
+    with no Zotero mount (i.e. every machine smoke-test.py runs on). Rewriting
+    the literal lets both the mount-present and mount-absent cases be exercised
+    deterministically, on any host.
+    """
+    src = GUARD_FS.read_text().replace("/zotero", mount_path)
+    dst = os.path.join(tmpdir, "guard-fs-variant.sh")
+    Path(dst).write_text(src)
+    return dst
+
+
+def _run_guard_fs_variant(script: str, path: str) -> "subprocess.CompletedProcess[str]":
+    return subprocess.run(
+        ["bash", script],
+        input=json.dumps({"tool_input": {"file_path": path}}),
+        capture_output=True, text=True,
+    )
+
+
+def test_zotero_guard_deny_fixtures() -> None:
+    """Writes at or beneath a mounted Zotero store are denied."""
+    print("\n[zotero: guard-fs.sh deny fixtures]")
+    if _HOOK_SKIP:
+        print("  (skipped — jq/bash absent)", file=sys.stderr)
+        return
+    with tempfile.TemporaryDirectory() as td:
+        mount = os.path.join(td, "zoteromount")
+        os.makedirs(mount)
+        script = _guard_fs_variant(td, mount)
+        for rel, label in [
+            ("", "mount root exact"),
+            ("/ABCD1234/paper.pdf", "attachment PDF"),
+            ("/a/b/c/deep.md", "deep path"),
+            ("/sub/../ABCD1234/paper.pdf", "normalises back inside the mount"),
+        ]:
+            r = _run_guard_fs_variant(script, mount + rel)
+            _assert_deny_json(r, label)
+            if r.stdout:
+                reason = json.loads(r.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+                check(f"[zotero] {label}: reason names the path",
+                      mount in reason, reason)
+                check(f"[zotero] {label}: reason says read-only",
+                      "read-only" in reason, reason)
+
+
+def test_zotero_guard_silent_without_mount() -> None:
+    """With no Zotero mount present the hook stays silent and exits 0."""
+    print("\n[zotero: guard-fs.sh inert without the mount]")
+    if _HOOK_SKIP:
+        print("  (skipped — jq/bash absent)", file=sys.stderr)
+        return
+    with tempfile.TemporaryDirectory() as td:
+        absent = os.path.join(td, "no-such-mount")   # deliberately not created
+        script = _guard_fs_variant(td, absent)
+        for rel, label in [("", "absent mount root"), ("/A/paper.pdf", "absent mount file")]:
+            _assert_silent_exit0(_run_guard_fs_variant(script, absent + rel), label)
+
+
+def test_zotero_guard_neighbour_paths_silent() -> None:
+    """Traversal-out and prefix look-alike paths are NOT denied."""
+    print("\n[zotero: guard-fs.sh neighbour paths]")
+    if _HOOK_SKIP:
+        print("  (skipped — jq/bash absent)", file=sys.stderr)
+        return
+    with tempfile.TemporaryDirectory() as td:
+        mount = os.path.join(td, "zoteromount")
+        os.makedirs(mount)
+        script = _guard_fs_variant(td, mount)
+        for path, label in [
+            (mount + "/../escape.md", "traversal out of the mount"),
+            (mount + "-notes/file.md", "prefix look-alike sibling"),
+            ("/workspace/zotero/file.md", "unrelated path containing 'zotero'"),
+        ]:
+            _assert_silent_exit0(_run_guard_fs_variant(script, path), label)
+
+
+def test_zotero_guard_bash_idioms() -> None:
+    """guard-bash.sh blocks shell-write idioms under /zotero/, reads pass."""
+    print("\n[zotero: guard-bash.sh write idioms]")
+    if _HOOK_SKIP:
+        print("  (skipped — jq/bash absent)", file=sys.stderr)
+        return
+    for cmd_str, label in [
+        ("echo hi > /zotero/ABCD1234/notes.md", "redirect"),
+        ("cp paper.pdf /zotero/ABCD1234/paper.pdf", "cp"),
+        ("rm /zotero/ABCD1234/paper.pdf", "rm"),
+        ("tee /zotero/ABCD1234/x.md", "tee"),
+        ("sed -i s/a/b/ /zotero/ABCD1234/x.md", "sed -i"),
+    ]:
+        r = _run_guard_bash(cmd_str)
+        check(f"[zotero] bash write ({label}): exit 2", r.returncode == 2,
+              f"exit={r.returncode} stderr={r.stderr[:200]}")
+        check(f"[zotero] bash write ({label}): stderr names zotero",
+              "zotero" in r.stderr.lower(), r.stderr[:200])
+    for cmd_str, label in [
+        ("cat /zotero/ABCD1234/paper.pdf", "cat"),
+        ("ls /zotero/ABCD1234", "ls"),
+        ("grep -r term /zotero/", "grep"),
+    ]:
+        _assert_silent_exit0(_run_guard_bash(cmd_str), f"bash read ({label})")
+    # git-rule precedence: both fire → still exit 2, git message wins
+    r = _run_guard_bash("git push --force origin main && rm /zotero/x.pdf")
+    check("[zotero] git block beats zotero block: exit 2", r.returncode == 2,
+          f"exit={r.returncode}")
+
+
+def test_zotero_guard_learnings_unregressed() -> None:
+    """The /learnings ask branch is unchanged by the /zotero addition."""
+    print("\n[zotero: /learnings regression]")
+    if _HOOK_SKIP:
+        print("  (skipped — jq/bash absent)", file=sys.stderr)
+        return
+    r = _run_guard_fs('{"tool_input":{"file_path":"/learnings/x.md"}}')
+    _assert_ask_json(r, "/learnings still asks")
+    check("[zotero] /learnings emits exactly one envelope",
+          r.stdout.count("hookSpecificOutput") == 1, r.stdout[:200])
+
+
 def test_task009_settings_json_updated() -> None:
     """AC4: vibe heredoc contains Write|Edit|MultiEdit matcher entry (persistent fix).
 
@@ -12576,6 +12716,11 @@ def main() -> int:
     test_task009_readme_updated()
     test_task009_code_check_clean()
     test_task009_hardening_notebookedit_not_in_matcher()
+    test_zotero_guard_deny_fixtures()
+    test_zotero_guard_silent_without_mount()
+    test_zotero_guard_neighbour_paths_silent()
+    test_zotero_guard_bash_idioms()
+    test_zotero_guard_learnings_unregressed()
     test_task009_hardening_guard_bash_set_euo()
     test_task009_hardening_guard_fs_realpath_m()
     test_task013_vs_md_intelligent_stopping()

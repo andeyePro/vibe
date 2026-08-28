@@ -80,6 +80,41 @@ if grep -qE '(^|[[:space:]]|;|&|\|)sed[[:space:]]' <<<"$cmd" && \
   should_ask=true
 fi
 
+# ── (b2) Evaluate /zotero write idioms — deny, not ask ───────────────────────
+# The Zotero library mount is contractually read-only (guard-fs.sh denies the
+# structured Write/Edit path); mirror that for the same best-effort shell
+# idioms as /learnings. Deny rather than ask for the guard-fs.sh reason:
+# there is no legitimate in-container write to the user's Zotero library.
+zotero_write=false
+
+if grep -qE '(>|>>|&>|&>>)[[:space:]]*['"'"'"]?/zotero/' <<<"$cmd"; then
+  zotero_write=true
+fi
+
+if grep -qE '(^|[[:space:]]|;|&|\|)tee([[:space:]]+-[a-zA-Z]+)*[[:space:]]+['"'"'"]?/zotero/' <<<"$cmd"; then
+  zotero_write=true
+fi
+
+for _bin in cp mv rm ln mkdir chmod chown truncate dd; do
+  if grep -qE "(^|[[:space:]]|;|&|\|)${_bin}([[:space:]]+-[a-zA-Z]+)*[[:space:]]+[^|;&]*['\"]?/zotero/" <<<"$cmd"; then
+    zotero_write=true
+    break
+  fi
+done
+
+if grep -qE '(^|[[:space:]]|;|&|\|)sed[[:space:]]' <<<"$cmd" && \
+   grep -qE '(^|[[:space:]])-[a-zA-Z]*i[a-zA-Z]*([[:space:]]|$)' <<<"$cmd" && \
+   grep -q '/zotero/' <<<"$cmd"; then
+  zotero_write=true
+fi
+
+# Fold into the block tier; the git rules keep precedence for the message.
+if [ "$zotero_write" = "true" ] && [ "$should_block" != "true" ]; then
+  should_block=true
+  block_rule="zotero-write"
+  block_msg="the Zotero library at /zotero is mounted read-only - copy the file into /workspace if you need to change it."
+fi
+
 # ── (c) Decide ────────────────────────────────────────────────────────────────
 # Block beats ask: if (a) fired, exit 2 regardless of (b).
 if [ "$should_block" = "true" ]; then
