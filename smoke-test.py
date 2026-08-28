@@ -6200,8 +6200,9 @@ def _read_override_out(r: subprocess.CompletedProcess) -> str:
 
 def test_build_override_config_brain2_and_zotero() -> None:
     """_build_override_config injects /brain2 (rw) and /zotero (ro) when the
-    dirs exist, skips the brain2 self-mount in the gardener, and falls back to
-    the base config when nothing applies."""
+    dirs exist, and skips the brain2 self-mount in the gardener. (Since
+    task_014 the override always renders — the projects bind is unconditional —
+    so the old nothing-applies fall-back to the base config is gone.)"""
     print("\n[brain2: _build_override_config gating]")
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
@@ -6234,8 +6235,10 @@ def test_build_override_config_brain2_and_zotero() -> None:
             check("[brain2] /brain2 injected (non-gardener)", "/brain2" in tgts, str(tgts))
             check("[brain2] /zotero injected", "/zotero" in tgts, str(tgts))
 
-        # Case 2: gardener — workspace IS the brain2 dir → no /brain2 self-mount,
-        # zotero disabled → nothing applies → base config returned unchanged.
+        # Case 2: gardener — workspace IS the brain2 dir → no /brain2 self-mount.
+        # (task_014: an override is still generated — it carries the
+        # unconditional projects bind — so assert /brain2's absence in it
+        # rather than the pre-task_014 fall-back to the base config.)
         env_g = {**no_op,
                  "HOME": str(home),
                  "VIBE_BRAIN2_PATH": str(brain2),
@@ -6243,8 +6246,12 @@ def test_build_override_config_brain2_and_zotero() -> None:
         r = _source_vibe_call(
             env_g, f'echo "OUT=[$(_build_override_config {shlex.quote(str(brain2))})]"')
         out_g = _read_override_out(r)
-        check("[brain2] gardener+no-zotero falls back to base devcontainer.json",
-              out_g.endswith("devcontainer/devcontainer.json"), out_g)
+        check("[brain2] gardener+no-zotero still renders an override (task_014)",
+              out_g.startswith(str(home / ".vibe" / "run")), out_g)
+        if out_g and Path(out_g).exists():
+            cfg_g = json.loads(Path(out_g).read_text())
+            tgts_g = [m.get("target") for m in cfg_g["mounts"] if isinstance(m, dict)]
+            check("[brain2] gardener gets NO /brain2 self-mount", "/brain2" not in tgts_g, str(tgts_g))
 
         # Case 3: zotero only.
         env_z = {**no_op,
@@ -12538,6 +12545,323 @@ def test_task028_ac10_changelog_entry_present() -> None:
           "no task_028 entry")
 
 
+# ── task_014: per-project Claude projects/ bind ────────────────────────────────
+
+
+def _t14_sha1(path: str) -> str:
+    """Reference sha1 (hex) of a workspace path, matching printf '%s' input."""
+    import hashlib
+    return hashlib.sha1(path.encode()).hexdigest()
+
+
+def _t14_mount_target(entry) -> str:
+    """Target of a mount entry in EITHER format: object ({'target': ...}) or
+    docker string ('source=...,target=...,type=...'). Never silently skips
+    string entries (spec AC7)."""
+    if isinstance(entry, dict):
+        return entry.get("target", "")
+    if isinstance(entry, str):
+        for part in entry.split(","):
+            if part.startswith("target="):
+                return part[len("target="):]
+    return ""
+
+
+def _t14_env(home, extra=None) -> dict:
+    """Clean-HOME env for _build_override_config runs: OP creds blanked,
+    brain2/zotero off, so only the mounts under test are in play."""
+    env = {"HOME": str(home),
+           "OPENPROJECT_MCP_URL": "", "OPENPROJECT_MCP_BEARER": "",
+           "VIBE_BRAIN2_PATH": "off", "VIBE_ZOTERO_PATH": "off",
+           "VIBE_SHARED_ENV_NAMES": ""}
+    if extra:
+        env.update(extra)
+    return env
+
+
+def _t14_build(home, ws) -> dict:
+    """Run _build_override_config for ws under a clean HOME; return the parsed
+    override JSON (checks that the file renders and parses on the way)."""
+    r = _source_vibe_call(
+        _t14_env(home), f'echo "OUT=[$(_build_override_config {shlex.quote(str(ws))})]"')
+    check("[task014] _build_override_config exits 0", r.returncode == 0, r.stderr[:300])
+    out = _read_override_out(r)
+    check("[task014] override rendered under HOME/.vibe/run",
+          out.startswith(str(Path(home) / ".vibe" / "run")), out)
+    check("[task014] override file exists and is readable",
+          bool(out) and Path(out).exists(), out)
+    return json.loads(Path(out).read_text()) if out and Path(out).exists() else {"mounts": []}
+
+
+def test_task014_ac1_sha1_helper() -> None:
+    """AC1: vibe_workspace_sha1 — 40-char lowercase hex, deterministic,
+    distinct for distinct inputs, exposed under VIBE_SOURCE_ONLY."""
+    print("\n[task_014 AC1: vibe_workspace_sha1 helper]")
+    r1 = _source_vibe_call({}, 'vibe_workspace_sha1 /Users/m/projA')
+    check("[task014] AC1 helper exposed + exits 0", r1.returncode == 0, r1.stderr[:300])
+    h1 = r1.stdout.strip()
+    check("[task014] AC1a output length is exactly 40", len(h1) == 40, h1)
+    check("[task014] AC1b output matches ^[0-9a-f]{40}$",
+          re.fullmatch(r"[0-9a-f]{40}", h1) is not None, h1)
+    r2 = _source_vibe_call({}, 'vibe_workspace_sha1 /Users/m/projA')
+    check("[task014] AC1c same input twice -> identical output",
+          r2.stdout.strip() == h1, r2.stdout)
+    r3 = _source_vibe_call({}, 'vibe_workspace_sha1 /Users/m/projB')
+    check("[task014] AC1d distinct inputs -> distinct outputs",
+          r3.stdout.strip() != h1, r3.stdout)
+    check("[task014] AC1 output equals reference sha1 of the exact path bytes",
+          h1 == _t14_sha1("/Users/m/projA"), f"{h1} != {_t14_sha1('/Users/m/projA')}")
+
+
+def test_task014_ac2_bind_path_helper() -> None:
+    """AC2: vibe_projects_bind_path echoes $HOME/.vibe/projects/<sha1>,
+    fully resolved (respects an overridden $HOME)."""
+    print("\n[task_014 AC2: vibe_projects_bind_path helper]")
+    with tempfile.TemporaryDirectory() as td:
+        ws = "/Users/m/projA"
+        r = _source_vibe_call({"HOME": td}, f'vibe_projects_bind_path {shlex.quote(ws)}')
+        check("[task014] AC2 helper exposed + exits 0", r.returncode == 0, r.stderr[:300])
+        expected = f"{td}/.vibe/projects/{_t14_sha1(ws)}"
+        check("[task014] AC2 path is exactly $HOME/.vibe/projects/<sha1-of-workspace>",
+              r.stdout.strip() == expected, f"{r.stdout.strip()} != {expected}")
+
+
+def test_task014_ac3_mkdir_before_up_static() -> None:
+    """AC3: static — the launcher mkdir -p's the per-project bind path (via
+    vibe_projects_bind_path, assigned-then-passed) before `devcontainer up`."""
+    print("\n[task_014 AC3: mkdir -p before devcontainer up (static)]")
+    src = VIBE.read_text()
+    assign = 'projects_dir="$(vibe_projects_bind_path "$workspace")"'
+    check("[task014] AC3 bind path assigned from vibe_projects_bind_path",
+          assign in src, "assignment not found")
+    mkdir_call = 'mkdir -p "$projects_dir"'
+    check("[task014] AC3 mkdir -p on the assigned bind path",
+          mkdir_call in src, "mkdir not found")
+    check("[task014] AC3 no bare $HOME/.vibe/projects/ mkdir (needs sha1 component)",
+          'mkdir -p "$HOME/.vibe/projects/"' not in src
+          and "mkdir -p $HOME/.vibe/projects/\n" not in src, "bare-prefix mkdir found")
+    i_up = src.index("UP_BASE_ARGS=(")
+    check("[task014] AC3 mkdir sits before UP_BASE_ARGS construction",
+          src.index(mkdir_call) < i_up, "")
+    check("[task014] AC3 override build (which runs the mkdir) precedes UP_BASE_ARGS",
+          src.index("OVERRIDE_CONFIG=$(_build_override_config") < i_up, "")
+
+
+def test_task014_ac4_override_always_exists() -> None:
+    """AC4: with learning fully disabled (clean tmp HOME, no learning.config)
+    the builder still renders a real override: 4 base mounts preserved verbatim
+    + the projects bind object = 5 mounts."""
+    print("\n[task_014 AC4: override JSON exists unconditionally]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        home = tmp / "home"; home.mkdir()
+        ws = tmp / "ws"; ws.mkdir()
+        cfg = _t14_build(home, ws)
+        base_mounts = json.loads(
+            (REPO / "devcontainer" / "devcontainer.json").read_text())["mounts"]
+        mounts = cfg.get("mounts", [])
+        for bm in base_mounts:
+            check(f"[task014] AC4 base mount preserved verbatim: {bm.split(',')[1]}",
+                  bm in mounts, str(mounts))
+        proj = next((m for m in mounts if isinstance(m, dict)
+                     and m.get("target") == "/home/node/.claude/projects"), None)
+        check("[task014] AC4 projects bind object present", proj is not None, str(mounts))
+        if proj:
+            expected_src = str(home / ".vibe" / "projects" / _t14_sha1(str(ws)))
+            check("[task014] AC4 projects bind source is $HOME/.vibe/projects/<sha1>",
+                  proj.get("source") == expected_src, str(proj))
+            check("[task014] AC4 projects bind is type=bind",
+                  proj.get("type") == "bind", str(proj))
+            check("[task014] AC4 projects bind is rw (no readonly key)",
+                  "readonly" not in proj, str(proj))
+        check("[task014] AC4 exactly 5 mounts with /learnings disabled",
+              len(mounts) == len(base_mounts) + 1, str(mounts))
+
+
+def test_task014_ac5_compose_with_learnings() -> None:
+    """AC5: learning enabled + valid path + no opt-out → override carries BOTH
+    the projects bind AND the /learnings bind (readonly). 6 mounts. Exercises
+    the FULL builder (gating via learning_should_mount), not the renderer."""
+    print("\n[task_014 AC5: composition with /learnings enabled]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        home = tmp / "home"; (home / ".vibe").mkdir(parents=True)
+        ws = tmp / "ws"; ws.mkdir()
+        lib = tmp / "library"; lib.mkdir()
+        (home / ".vibe" / "learning.config").write_text(
+            f'VIBE_LEARNING_ENABLED="true"\nVIBE_LEARNING_PATH="{lib}"\n'
+            'VIBE_LEARNING_VISIBILITY="private"\n')
+        cfg = _t14_build(home, ws)
+        mounts = cfg.get("mounts", [])
+        obj = [m for m in mounts if isinstance(m, dict)]
+        proj = next((m for m in obj if m.get("target") == "/home/node/.claude/projects"), None)
+        learn = next((m for m in obj if m.get("target") == "/learnings"), None)
+        check("[task014] AC5 projects bind present alongside /learnings",
+              proj is not None, str(mounts))
+        check("[task014] AC5 /learnings bind present", learn is not None, str(mounts))
+        if learn:
+            check("[task014] AC5 /learnings bind readonly",
+                  learn.get("readonly") is True, str(learn))
+            check("[task014] AC5 /learnings source is the configured library",
+                  learn.get("source") == str(lib), str(learn))
+        check("[task014] AC5 exactly 6 mounts with /learnings enabled",
+              len(mounts) == 6, str(mounts))
+
+
+def test_task014_ac6_learning_config_absent() -> None:
+    """AC6 sub-case 1: no learning.config at all → projects bind present,
+    no /learnings mount."""
+    print("\n[task_014 AC6a: learning config absent]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        home = tmp / "home"; home.mkdir()
+        ws = tmp / "ws"; ws.mkdir()
+        cfg = _t14_build(home, ws)
+        tgts = [_t14_mount_target(m) for m in cfg.get("mounts", [])]
+        check("[task014] AC6a projects bind present",
+              "/home/node/.claude/projects" in tgts, str(tgts))
+        check("[task014] AC6a no /learnings mount", "/learnings" not in tgts, str(tgts))
+
+
+def test_task014_ac6_learning_disabled() -> None:
+    """AC6 sub-case 2: VIBE_LEARNING_ENABLED="false" → projects bind present,
+    no /learnings mount."""
+    print("\n[task_014 AC6b: learning ENABLED=false]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        home = tmp / "home"; (home / ".vibe").mkdir(parents=True)
+        ws = tmp / "ws"; ws.mkdir()
+        lib = tmp / "library"; lib.mkdir()
+        (home / ".vibe" / "learning.config").write_text(
+            f'VIBE_LEARNING_ENABLED="false"\nVIBE_LEARNING_PATH="{lib}"\n')
+        cfg = _t14_build(home, ws)
+        tgts = [_t14_mount_target(m) for m in cfg.get("mounts", [])]
+        check("[task014] AC6b projects bind present",
+              "/home/node/.claude/projects" in tgts, str(tgts))
+        check("[task014] AC6b no /learnings mount", "/learnings" not in tgts, str(tgts))
+
+
+def test_task014_ac6_no_learn_marker() -> None:
+    """AC6 sub-case 3: learning enabled globally but a .no-learn marker in the
+    workspace → projects bind present, no /learnings mount."""
+    print("\n[task_014 AC6c: .no-learn marker]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        home = tmp / "home"; (home / ".vibe").mkdir(parents=True)
+        ws = tmp / "ws"; ws.mkdir()
+        lib = tmp / "library"; lib.mkdir()
+        (home / ".vibe" / "learning.config").write_text(
+            f'VIBE_LEARNING_ENABLED="true"\nVIBE_LEARNING_PATH="{lib}"\n')
+        (ws / ".no-learn").touch()
+        cfg = _t14_build(home, ws)
+        tgts = [_t14_mount_target(m) for m in cfg.get("mounts", [])]
+        check("[task014] AC6c projects bind present despite opt-out",
+              "/home/node/.claude/projects" in tgts, str(tgts))
+        check("[task014] AC6c no /learnings mount", "/learnings" not in tgts, str(tgts))
+
+
+def test_task014_ac7_mount_order() -> None:
+    """AC7: the /home/node/.claude volume entry (string format) indexes
+    strictly below the /home/node/.claude/projects bind (object format), so
+    the bind nests on top of the mounted volume. Parses BOTH entry formats."""
+    print("\n[task_014 AC7: mount order — volume before nested bind]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        home = tmp / "home"; home.mkdir()
+        ws = tmp / "ws"; ws.mkdir()
+        cfg = _t14_build(home, ws)
+        tgts = [_t14_mount_target(m) for m in cfg.get("mounts", [])]
+        check("[task014] AC7 /home/node/.claude volume entry found (string parse works)",
+              "/home/node/.claude" in tgts, str(tgts))
+        check("[task014] AC7 projects bind entry found",
+              "/home/node/.claude/projects" in tgts, str(tgts))
+        if "/home/node/.claude" in tgts and "/home/node/.claude/projects" in tgts:
+            check("[task014] AC7 volume index strictly below projects-bind index",
+                  tgts.index("/home/node/.claude") < tgts.index("/home/node/.claude/projects"),
+                  str(tgts))
+
+
+def test_task014_ac8_hash_determinism() -> None:
+    """AC8: two distinct workspace paths → distinct bind dirs; the same path
+    twice → the same bind dir."""
+    print("\n[task_014 AC8: bind-dir determinism]")
+    with tempfile.TemporaryDirectory() as td:
+        env = {"HOME": td}
+        a1 = _source_vibe_call(env, 'vibe_projects_bind_path /Users/m/projA').stdout.strip()
+        a2 = _source_vibe_call(env, 'vibe_projects_bind_path /Users/m/projA').stdout.strip()
+        b = _source_vibe_call(env, 'vibe_projects_bind_path /Users/m/projB').stdout.strip()
+        check("[task014] AC8 same path -> same bind dir", a1 == a2 and a1 != "", f"{a1} vs {a2}")
+        check("[task014] AC8 distinct paths -> distinct bind dirs", a1 != b, f"{a1} vs {b}")
+
+
+def test_task014_bind_dir_created() -> None:
+    """Mechanism 3: building the override creates the per-project host dir
+    (idempotently) with owner-only permissions."""
+    print("\n[task_014: bind dir created on build]")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        home = tmp / "home"; home.mkdir()
+        ws = tmp / "ws"; ws.mkdir()
+        _t14_build(home, ws)
+        bind_dir = home / ".vibe" / "projects" / _t14_sha1(str(ws))
+        check("[task014] bind dir exists after build", bind_dir.is_dir(), str(bind_dir))
+        check("[task014] bind dir is chmod 700",
+              (bind_dir.stat().st_mode & 0o777) == 0o700, oct(bind_dir.stat().st_mode))
+        # Idempotent across a second build.
+        _t14_build(home, ws)
+        check("[task014] second build is idempotent (dir still there)",
+              bind_dir.is_dir(), str(bind_dir))
+
+
+def test_task014_ac14_no_cksum_in_builder() -> None:
+    """AC14: _build_override_config's body carries no cksum fallback any more —
+    it derives its run-dir sha1 from vibe_workspace_sha1 (the same helper that
+    names the bind dir), so the two hashes can never diverge."""
+    print("\n[task_014 AC14: cksum removed from _build_override_config]")
+    src = VIBE.read_text()
+    body = src.split("_build_override_config() {", 1)[1].split("\n}", 1)[0]
+    check("[task014] AC14 no cksum token in _build_override_config",
+          "cksum" not in body, "cksum still present")
+    check("[task014] AC14 builder calls vibe_workspace_sha1",
+          "vibe_workspace_sha1" in body, "helper not called")
+    check("[task014] AC14 builder calls vibe_projects_bind_path",
+          "vibe_projects_bind_path" in body, "bind-path helper not called")
+
+
+def test_task014_projects_bind_mount_drift() -> None:
+    """Drift comparator: a pre-existing container without (or with a stale)
+    /home/node/.claude/projects bind must trigger a recreate; a matching bind
+    or no container must not."""
+    print("\n[task_014: projects-bind mount drift comparator]")
+
+    desired = "/Users/m/.vibe/projects/" + _t14_sha1("/Users/m/projA")
+
+    def drift(actual: str) -> str:
+        r = _source_vibe_call(
+            {}, f'printf "%s" "$(projects_bind_mount_drift {shlex.quote(desired)} {shlex.quote(actual)})"')
+        check("[task014] drift comparator exits 0", r.returncode == 0, r.stderr[:300])
+        return r.stdout.strip()
+
+    matching = (f"/workspace\t/Users/m/projA\trw\n"
+                f"/home/node/.claude\t/var/lib/docker/volumes/vibe-claude-config/_data\trw\n"
+                f"/home/node/.claude/projects\t{desired}\trw\n")
+    check("[task014] matching bind -> no drift", drift(matching) == "", "")
+    check("[task014] no container sentinel -> no drift", drift("NONE") == "", "")
+    check("[task014] pre-task_014 container (bind absent) -> drift",
+          drift("/workspace\t/Users/m/projA\trw\n"
+                "/home/node/.claude\t/var/lib/docker/volumes/vibe-claude-config/_data\trw\n") == "1", "")
+    check("[task014] bind source moved -> drift",
+          drift(matching.replace(desired + "\trw", "/Users/m/.vibe/projects/other\trw")) == "1", "")
+    check("[task014] bind flipped to ro -> drift",
+          drift(matching.replace(desired + "\trw", desired + "\tro")) == "1", "")
+    # Wiring: the launch flow folds projects_drift into remove_existing_flag.
+    src = VIBE.read_text()
+    check("[task014] launch flow computes projects_bind_mount_drift",
+          'projects_drift="$(projects_bind_mount_drift "$(vibe_projects_bind_path "$WORKSPACE")" "$actual_mounts")"' in src, "")
+    check("[task014] projects_drift feeds remove_existing_flag",
+          '${drift_marker}${mount_drift}${projects_drift}' in src, "")
+
+
 def main() -> int:
     test_help()
     test_version()
@@ -13055,6 +13379,19 @@ def main() -> int:
     test_task029_default_patience()
     test_task030_mount_drift()
     test_task031_terminal_restore_and_exit_note()
+    test_task014_ac1_sha1_helper()
+    test_task014_ac2_bind_path_helper()
+    test_task014_ac3_mkdir_before_up_static()
+    test_task014_ac4_override_always_exists()
+    test_task014_ac5_compose_with_learnings()
+    test_task014_ac6_learning_config_absent()
+    test_task014_ac6_learning_disabled()
+    test_task014_ac6_no_learn_marker()
+    test_task014_ac7_mount_order()
+    test_task014_ac8_hash_determinism()
+    test_task014_bind_dir_created()
+    test_task014_ac14_no_cksum_in_builder()
+    test_task014_projects_bind_mount_drift()
 
     print()
     if FAILURES:

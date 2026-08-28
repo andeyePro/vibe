@@ -4,6 +4,8 @@ vibe runs Claude Code in a `--permission-mode bypassPermissions` container. That
 
 A security issue in vibe is anything that breaks one of those backstops.
 
+One data-location note: per-project session history and auto-memory live on the host at `~/.vibe/projects/<sha1-of-project-path>/` (chmod 700, like `~/.vibe/tokens`), not in a Docker volume. Session transcripts can quote secret material seen in-session, so that tree is included in whatever host-side backup/sync/indexing covers your home directory — treat it accordingly.
+
 ## In scope
 
 - Firewall bypass — reaching a non-allowlisted host from inside the container, or a change that leaves egress open on error instead of failing closed.

@@ -1011,3 +1011,14 @@ Needs real Docker and a registered shared repo.
 3. Recovery: re-run the unmodified script (`docker exec -u root <cid> /usr/local/bin/init-firewall.sh`) — it succeeds and both verification probes pass (fail-closed state is recoverable in place, as in Test 39).
 4. Fault injection on an optional domain (add a bogus domain to the list, `vibe --rebuild`): container still boots firewalled with `WARNING: could not resolve <domain> - skipping (not allowlisted this run; tier: optional)` — Test 28 behaviour preserved.
 
+### Test 42: per-project Claude history bind (task_014)
+
+**Setup:** two host dirs `~/work/projA` and `~/work/projB`, each with a sentinel `CLAUDE.md` ("this is project A" / "this is project B").
+
+1. `cd ~/work/projA && vibe`, hold a brief conversation, `/exit`.
+2. `cd ~/work/projB && vibe`, brief conversation, `/exit`.
+3. `cd ~/work/projA && vibe --continue`.
+
+**Pass:** step 3 resumes the projA conversation (Claude's prior turn references project A), NOT projB's; inside the container `ls /home/node/.claude/projects/` shows only the `-workspace` slug containing only projA's JSONL(s); on the host, `~/.vibe/projects/` holds two sha1-named dirs, one per project.
+**Also verify (drift):** with a container created before this change, the next plain `vibe` launch prints `per-project Claude history bind changed since this container was created - recreating it.` and recreates the container.
+**Fail:** the resumed conversation is projB's, both projects' JSONLs share one dir, or a pre-existing container is reused without the recreate line.

@@ -2625,12 +2625,48 @@ audit_handle_subcommand() {
 
 # ── Learning mount helper ─────────────────────────────────────────────────────
 
+# vibe_workspace_sha1 <abs_workspace_path> — echoes the 40-char lowercase hex
+# sha1 of the input (task_014). Single source of truth for every per-workspace
+# hash: the run-dir override filename AND the per-project projects bind dir
+# both call this, so the two can never disagree. Two-rung ladder only —
+# sha1sum (Linux coreutils) then shasum (Perl, ships with macOS); the old
+# cksum third rung is deliberately absent (cksum emits a decimal CRC32, not a
+# 40-char hex sha1, so it could never name a matching bind dir).
+vibe_workspace_sha1() {
+  local input="$1"
+  if command -v sha1sum >/dev/null 2>&1; then
+    printf '%s' "$input" | sha1sum | cut -c1-40
+  elif command -v shasum >/dev/null 2>&1; then
+    printf '%s' "$input" | shasum -a 1 | cut -c1-40
+  else
+    echo "vibe: neither sha1sum nor shasum found on PATH - cannot hash workspace path" >&2
+    return 1
+  fi
+}
+
+# vibe_projects_bind_path <abs_workspace_path> — echoes the fully-resolved host
+# dir that binds over /home/node/.claude/projects for this workspace:
+# $HOME/.vibe/projects/<sha1-of-abs-workspace-path>. Resolved (no
+# ${localEnv:HOME} template) so tests can override $HOME. Pure string
+# composition; no filesystem access.
+vibe_projects_bind_path() {
+  # The hash MUST NOT be inlined into printf's arguments: printf's exit status
+  # would mask a hash failure and the path would silently degrade to the
+  # PARENT ~/.vibe/projects/ dir — binding every project's history into one
+  # container. Capture-and-check so a failure propagates instead.
+  local h
+  h="$(vibe_workspace_sha1 "$1")" || return 1
+  printf '%s/.vibe/projects/%s\n' "$HOME" "$h"
+}
+
 # _build_override_config <workspace_abs_path> — collects the bind mounts that
-# apply to this workspace (learning library at /learnings, shared brain2 at
-# /brain2 rw, Zotero store at /zotero ro) and, if any apply, generates the
-# per-session override JSON under $HOME/.vibe/run/ and echoes its path. If none
-# apply, echoes the default $DEVCONTAINER_DIR/devcontainer.json path unchanged.
-# Always exits 0.
+# apply to this workspace (per-project Claude history at
+# /home/node/.claude/projects — unconditional; learning library at /learnings,
+# shared brain2 at /brain2 rw, Zotero store at /zotero ro — gated) and
+# generates the per-session override JSON under $HOME/.vibe/run/, echoing its
+# path. Since task_014 the projects bind is always present, so the override
+# file ALWAYS exists (the old fall-back to the bare devcontainer.json path is
+# gone). Always exits 0.
 # Hostname (no scheme/port/path) of the OpenProject MCP, derived from the staged
 # OPENPROJECT_MCP_URL. Empty when the OP MCP isn't configured. Used both to start
 # the forwarder and to inject the container's --add-host.
@@ -2706,6 +2742,29 @@ _build_override_config() {
   # Collect (source, target, ro) triples for every mount that applies.
   local mount_args=()
 
+  # Per-project Claude conversation history (task_014) — read-write bind over
+  # /home/node/.claude/projects, UNCONDITIONAL. Each host project gets its own
+  # transcripts + auto-memory dir under ~/.vibe/projects/<sha1>, while the rest
+  # of ~/.claude (login, agents, settings) stays shared via the
+  # vibe-claude-config volume. The volume mounts first (it sits at a lower
+  # index in the base config's mounts array; appended entries land after), so
+  # this bind nests on top of it. mkdir here runs BEFORE `devcontainer up` —
+  # the caller assigns OVERRIDE_CONFIG from this function well before
+  # UP_BASE_ARGS is assembled — and the mkdir side effect survives the $(...)
+  # subshell (only exported variables die with it).
+  local projects_dir
+  projects_dir="$(vibe_projects_bind_path "$workspace")" || {
+    echo "vibe: cannot derive the per-project history dir (workspace hash failed) - aborting launch rather than sharing history across projects" >&2
+    return 1
+  }
+  mkdir -p "$projects_dir"
+  # Session transcripts can quote secret material seen in-session; keep the
+  # tree owner-only, matching the ~/.vibe/tokens discipline. Non-fatal (a
+  # bind still works without the chmod) but never silent.
+  chmod 700 "$(dirname "$projects_dir")" "$projects_dir" 2>/dev/null || \
+    echo "WARNING: could not chmod 700 $projects_dir - per-project session history may be readable by other host users" >&2
+  mount_args+=("$projects_dir" "/home/node/.claude/projects" "0")
+
   # Learning library — read-only at /learnings (gated by learning.config +
   # per-project .no-learn, same as before).
   if learning_should_mount "$workspace"; then
@@ -2769,18 +2828,13 @@ _build_override_config() {
   local op_host
   op_host="$(_op_mcp_host)"
 
-  # Nothing to inject → use the base config untouched (preserves prior
-  # behaviour for projects with no learning/brain2/zotero AND no OP MCP).
-  if [ "${#mount_args[@]}" -eq 0 ] && [ -z "$op_host" ]; then
-    echo "$default_cfg"
-    return 0
-  fi
-
-  # Compute a sha1 of the workspace path for a stable per-workspace filename.
+  # Stable per-workspace sha1 for the run-dir filename — the SAME helper (and
+  # so the same hash) that named the projects bind dir above. The projects
+  # bind is unconditional, so there is no longer a "nothing to inject →
+  # fall back to the bare devcontainer.json" branch: the override always
+  # renders.
   local sha1
-  sha1=$(printf '%s' "$workspace" | sha1sum | cut -c1-40 2>/dev/null \
-         || printf '%s' "$workspace" | shasum | cut -c1-40 2>/dev/null \
-         || printf '%s' "$workspace" | cksum | awk '{print $1}')
+  sha1="$(vibe_workspace_sha1 "$workspace")"
 
   local run_dir="$HOME/.vibe/run"
   mkdir -p "$run_dir"
@@ -2958,6 +3012,32 @@ shared_repos_mount_drift() {
        "$(printf '%s' "$actual_lines" | LC_ALL=C sort)" ]; then
     echo 1
   fi
+  return 0
+}
+
+# projects_bind_mount_drift <desired_source> <actual_mounts>
+# Pure comparator (no docker), task_014's sibling of shared_repos_mount_drift.
+# <actual_mounts> is container_shared_mounts' output. Emits "1" iff a container
+# exists whose /home/node/.claude/projects mount is missing, points at a
+# different host source, or is not rw — i.e. whenever reusing the container
+# would silently keep an old (or absent) per-project Claude history bind. The
+# canonical case: a container created before task_014 has NO projects bind, so
+# `vibe` would otherwise resume cross-project history from the shared volume
+# forever. "NONE" (no container) is a fresh create, never drift.
+projects_bind_mount_drift() {
+  local desired="$1" actual="$2"
+  [ "$actual" = "NONE" ] && return 0
+  local dest src mode found=""
+  while IFS=$'\t' read -r dest src mode; do
+    [ "$dest" = "/home/node/.claude/projects" ] || continue
+    if [ "$src" = "$desired" ] && [ "$mode" = "rw" ]; then
+      found=1
+    else
+      echo 1
+      return 0
+    fi
+  done <<< "$actual"
+  [ -z "$found" ] && echo 1
   return 0
 }
 
@@ -3601,13 +3681,17 @@ UP_ARGS=("${UP_BASE_ARGS[@]}")
 # Detect image drift (container built from a superseded image) and fold in the
 # --rebuild flag so the flag is appended exactly once via remove_existing_flag.
 drift_marker="$(image_drift_needs_recreate "$WORKSPACE" "$IMAGE_TAG")"
-# Shared-repo mount drift (task_030): only worth computing when nothing else
-# already forces a recreate.
+# Shared-repo mount drift (task_030) + per-project Claude history bind drift
+# (task_014): only worth computing when nothing else already forces a
+# recreate. One container_shared_mounts snapshot feeds both comparators.
 mount_drift=""
+projects_drift=""
 if [ "$REBUILD" != true ] && [ -z "$drift_marker" ]; then
-  mount_drift="$(shared_repos_mount_drift "$SHARED_REPOS_SCAN" "$(container_shared_mounts "$WORKSPACE")")"
+  actual_mounts="$(container_shared_mounts "$WORKSPACE")"
+  mount_drift="$(shared_repos_mount_drift "$SHARED_REPOS_SCAN" "$actual_mounts")"
+  projects_drift="$(projects_bind_mount_drift "$(vibe_projects_bind_path "$WORKSPACE")" "$actual_mounts")"
 fi
-extra_flag="$(remove_existing_flag "$REBUILD" "${drift_marker}${mount_drift}")"
+extra_flag="$(remove_existing_flag "$REBUILD" "${drift_marker}${mount_drift}${projects_drift}")"
 [ -n "$extra_flag" ] && UP_ARGS+=("$extra_flag")
 # Print a distinct status line when drift (not --rebuild) triggered the recreate.
 if [ -n "$drift_marker" ] && [ "$REBUILD" != true ]; then
@@ -3616,6 +3700,10 @@ if [ -n "$drift_marker" ] && [ "$REBUILD" != true ]; then
 fi
 if [ -n "$mount_drift" ]; then
   echo "  shared-repo mounts changed since this container was created - recreating it."
+  echo ""
+fi
+if [ -n "$projects_drift" ]; then
+  echo "  per-project Claude history bind changed since this container was created - recreating it."
   echo ""
 fi
 
