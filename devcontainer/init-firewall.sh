@@ -75,6 +75,48 @@ fetch_gh_ranges() {
     return 1
 }
 
+# Tiered allowlist (task_031 follow-up, flagged by security-review on the
+# fail-closed PR). The per-domain loop below is deliberately non-fatal so one
+# dead OPTIONAL domain (the statsig.anthropic.com case) cannot abort before the
+# DROP policy — but that softness let a transient miss on a CRITICAL domain
+# boot a container that is firewalled yet unable to reach Anthropic: worse than
+# no boot, because `vibe` reuses a running container without re-running
+# postStart, so nothing ever retries. Domains listed here are must-have: a miss
+# gets the same patience as the GitHub meta fetch (retries with linear backoff
+# below), and if it STILL cannot resolve we exit 1 → the fail_closed trap locks
+# the box → `devcontainer up` reports failure → the launcher removes the
+# container and retries once fresh. Everything else stays warn-and-skip.
+#
+# Keep this tier conservative: only domains without which a vibe session is
+# pointless. GitHub (web/api/git) is covered separately by fetch_gh_ranges,
+# which is already fatal-after-retries.
+MUST_HAVE_DOMAINS="api.anthropic.com"
+
+DNS_RESOLVE_ATTEMPTS="${DNS_RESOLVE_ATTEMPTS:-6}"
+DNS_RESOLVE_BACKOFF="${DNS_RESOLVE_BACKOFF:-2}"
+
+# Resolve a domain's A records, retrying up to $2 attempts with the same
+# linear backoff shape as fetch_gh_ranges (2,4,6,8,10s for 6 attempts).
+# Prints one IP per line on stdout; returns 1 if every attempt came up empty.
+# Callers pass attempts=1 for optional domains so a genuinely dead domain
+# costs one dig, not ~30s of boot latency per miss.
+resolve_a_records() {
+    local domain="$1" attempts="$2" attempt=1 ips=""
+    while [ "$attempt" -le "$attempts" ]; do
+        ips=$(dig +noall +answer A "$domain" | awk '$4 == "A" {print $5}') || ips=""
+        if [ -n "$ips" ]; then
+            printf '%s\n' "$ips"
+            return 0
+        fi
+        if [ "$attempt" -lt "$attempts" ]; then
+            echo "WARNING: DNS attempt $attempt/$attempts could not resolve $domain - retrying" >&2
+            sleep "$(( DNS_RESOLVE_BACKOFF * attempt ))"
+        fi
+        attempt=$(( attempt + 1 ))
+    done
+    return 1
+}
+
 # Test hook: stop here when sourced for unit testing, before anything mutates
 # the host's network state.
 if [ -n "${VIBE_FIREWALL_SOURCE_ONLY:-}" ]; then
@@ -178,15 +220,28 @@ for domain in \
     "vscode.blob.core.windows.net" \
     "update.code.visualstudio.com"; do
     echo "Resolving $domain..."
-    # Non-fatal: a single domain that fails to resolve (e.g. a decommissioned
-    # endpoint) must NOT abort the whole allowlist build - skip it and carry on,
-    # so the rest of the firewall is still configured and the script still
-    # reaches the DROP policy. `|| true` stops pipefail from tripping `set -e`;
-    # the empty-check below handles the miss.
-    ips=$(dig +noall +answer A "$domain" | awk '$4 == "A" {print $5}') || true
-    if [ -z "$ips" ]; then
-        echo "WARNING: could not resolve $domain - skipping (not allowlisted this run)"
-        continue
+    # Two tiers (see MUST_HAVE_DOMAINS above). Optional: a domain that fails to
+    # resolve (e.g. a decommissioned endpoint) must NOT abort the whole
+    # allowlist build - skip it and carry on, so the rest of the firewall is
+    # still configured and the script still reaches the DROP policy. Must-have:
+    # retry with backoff first, then exit 1 so the fail_closed trap fires and
+    # the launcher's fresh-container retry gets a second go - a container that
+    # cannot reach this domain is not worth booting.
+    tier="optional"
+    case " $MUST_HAVE_DOMAINS " in
+        *" $domain "*) tier="must-have" ;;
+    esac
+    if [ "$tier" = "must-have" ]; then
+        if ! ips=$(resolve_a_records "$domain" "$DNS_RESOLVE_ATTEMPTS"); then
+            echo "WARNING: must-have domain $domain did not resolve after $DNS_RESOLVE_ATTEMPTS attempts - failing CLOSED (tier: must-have; a session without $domain is unusable)"
+            exit 1
+        fi
+    else
+        ips=$(resolve_a_records "$domain" 1) || true
+        if [ -z "$ips" ]; then
+            echo "WARNING: could not resolve $domain - skipping (not allowlisted this run; tier: optional)"
+            continue
+        fi
     fi
 
     while read -r ip; do

@@ -1001,3 +1001,13 @@ Needs real Docker and a registered shared repo.
 3. Relaunch again unchanged. Expect NO recreate line (sets match — idempotent).
 4. Edit `.vibe-repos` to remove the declaration; relaunch. Expect a recreate (container carries a mount no longer desired) and `/repos/<name>` gone.
 5. rw handoff: with the same repo declared `--rw` in two projects, exit the lock holder, relaunch the other. Expect a recreate (effective mode ro→rw) and the header showing `(rw)`.
+
+### Test 41: firewall must-have domain tier (tiered allowlist)
+
+`api.anthropic.com` is must-have: a resolution miss retries, then fails closed; optional domains still warn-and-skip.
+
+1. Plain `vibe` launch: postStart log shows `Resolving api.anthropic.com...` followed by `Adding <ip> for api.anthropic.com` with no `WARNING: DNS attempt` lines — a healthy boot costs one dig per domain, no added latency.
+2. In a running container, force a must-have miss: `docker exec -u root <cid> env DNS_RESOLVE_ATTEMPTS=2 DNS_RESOLVE_BACKOFF=0 sh -c 'sed "s/api.anthropic.com/api.anthropic.invalid/g" /usr/local/bin/init-firewall.sh > /tmp/fw && MUST_HAVE_DOMAINS=api.anthropic.invalid bash /tmp/fw'` — expect one `WARNING: DNS attempt 1/2 ... retrying` line, then `WARNING: must-have domain ... failing CLOSED (tier: must-have ...)` and `exiting rc=1 before completion - failing CLOSED`.
+3. Recovery: re-run the unmodified script (`docker exec -u root <cid> /usr/local/bin/init-firewall.sh`) — it succeeds and both verification probes pass (fail-closed state is recoverable in place, as in Test 39).
+4. Fault injection on an optional domain (add a bogus domain to the list, `vibe --rebuild`): container still boots firewalled with `WARNING: could not resolve <domain> - skipping (not allowlisted this run; tier: optional)` — Test 28 behaviour preserved.
+
