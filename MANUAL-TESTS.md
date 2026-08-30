@@ -1069,3 +1069,40 @@ Needs real Docker and a registered shared repo.
 **Pass:** step 3 resumes the projA conversation (Claude's prior turn references project A), NOT projB's; inside the container `ls /home/node/.claude/projects/` shows only the `-workspace` slug containing only projA's JSONL(s); on the host, `~/.vibe/projects/` holds two sha1-named dirs, one per project.
 **Also verify (drift):** with a container created before this change, the next plain `vibe` launch prints `per-project Claude history bind changed since this container was created - recreating it.` and recreates the container.
 **Fail:** the resumed conversation is projB's, both projects' JSONLs share one dir, or a pre-existing container is reused without the recreate line.
+
+### Test 43: `setup-ssh.sh` seeds host.docker.internal into known_hosts
+
+**Why:** `/home/node/.ssh` is rebuilt from the read-only host mount on every
+container start, so anything a session appends to `known_hosts` is wiped on
+the next launch — and the Mac's own `known_hosts` never contains its own key
+under the name `host.docker.internal`. Without the seed, an unattended run's
+first `ssh host.docker.internal` (Mac-build-bridge pattern, README § Building
+on the Mac from inside a container) hangs at the host-key prompt.
+
+**Setup:** macOS host with Remote Login enabled (System Settings → General →
+Sharing), any vibe project.
+
+1. `vibe` into the project; in the container run
+   `grep -c '|1|' ~/.ssh/known_hosts` (hashed entries) and
+   `ssh -o BatchMode=yes host.docker.internal true; echo $?`.
+2. `/exit`, relaunch `vibe`, repeat step 1.
+
+**Pass:** step 1's ssh exits WITHOUT a host-key prompt (exit code reflects
+auth, not key verification — `Host key verification failed` must NOT appear;
+with no key authorised for the host account, `Permission denied` is the
+expected, correct failure); the postStart log shows the
+`seeded host.docker.internal (unverified TOFU pin` line plus a
+`ssh-keygen -lf` fingerprint — compare it against
+`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the Mac; the seed
+survives the relaunch AND does not accumulate (the old entry is removed via
+`ssh-keygen -R` before each fresh scan is appended — entry count for the
+host stays constant across relaunches).
+**Also verify (non-fatal path):** with Remote Login OFF, container start is
+not delayed or broken — postStart completes with the
+`host-key scan unavailable` Note line (observable, not silent), `~/.ssh` is
+otherwise intact.
+**Fail:** an interactive `Are you sure you want to continue connecting?`
+prompt on first ssh, a start-up failure/delay when the scan can't complete,
+entries accumulating across relaunches, a silent no-op on the Remote-Login-
+off path, or the seed vanishing while in-session appends persist (would mean
+the copy loop ran after the seed).
