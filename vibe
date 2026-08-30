@@ -744,7 +744,7 @@ fable_billing_phase() {
 # exists; launch_claude_supervised backgrounds claude, captures its PID, and
 # runs vibe_stall_watchdog alongside it. The watchdog's kill gate is THREE
 # conditions, ALL required, so a crash-left marker in an unrelated later
-# interactive session is never mistaken for a live --sessions run: (1) marker
+# interactive session is never mistaken for a live /vsss run: (1) marker
 # active=1 (auto_resume_field, not auto_resume_pending, so the FINAL window —
 # remaining=0 — is still protected from an unwanted kill); (2) the marker was
 # refreshed DURING THIS launcher session — proven portably via
@@ -3797,7 +3797,8 @@ launch_claude() {
 # mtime: the stall watchdog only arms its kill for a marker that was
 # (re)written AFTER this launcher session began (portable `[ marker -nt ref ]`
 # — no stat -c/-f). That's what stops a crash-left marker from an earlier
-# --sessions run arming a kill against an unrelated interactive session
+# /vsss run arming a kill (or, since default persistence, an auto-resume
+# countdown) against an unrelated interactive session
 # started later in the same project. On mktemp failure the variable stays
 # EMPTY, and the empty-ref case never arms (fail-safe toward not killing).
 VIBE_SESSION_REF=$(mktemp "${TMPDIR:-/tmp}/vibe-session-ref.XXXXXX" 2>/dev/null) || VIBE_SESSION_REF=""
@@ -3870,11 +3871,30 @@ vibe_exit_hook_add 'restore_terminal || true'
 launch_claude_supervised "$CLAUDE_RESUME_ARGS" "" "$VIBE_SESSION_REF"
 
 # ── Auto-resume loop ──────────────────────────────────────────────────────────
-# Engages only when /vsss --sessions X left an active marker (see the
-# auto_resume_* helpers above). Waits out the 5h-window reset, then relaunches
-# the conversation with a literal "/vsss --resume" prompt. Ctrl-C during the
-# countdown cancels; deleting .vss/auto-resume deactivates permanently.
-while auto_resume_pending "$AUTO_RESUME_MARKER"; do
+# Engages only when /vsss left an active marker (default persistence since
+# 2026-08-29 — remaining=9999 unbounded sentinel; --sessions X caps it; see
+# the auto_resume_* helpers above). Waits out the 5h-window reset, then
+# relaunches the conversation with a literal "/vsss --resume" prompt. Ctrl-C
+# during the countdown cancels; deleting .vss/auto-resume deactivates
+# permanently.
+#
+# Freshness gate (task: default-persistence ambush fix): now that EVERY /vsss
+# run writes the marker, a crash-left marker from an EARLIER session must not
+# drop a later plain interactive launch into a surprise countdown+relaunch
+# loop (the moneyandeye/mailandeye stale-marker annoyance, TODO 2026-07-11).
+# Reuse the stall watchdog's arm check: active=1 AND marker (re)written during
+# THIS launcher session ([ marker -nt VIBE_SESSION_REF ]). The skill refreshes
+# the marker every iteration, so any live run passes; a stale marker gets a
+# loud hint instead of an auto-relaunch — genuine crash recovery is one
+# explicit "/vsss --resume" away, and the marker is left untouched for it.
+# Empty ref (mktemp failure) fails safe toward NOT auto-relaunching.
+if auto_resume_pending "$AUTO_RESUME_MARKER" && ! _vibe_stall_armed "$AUTO_RESUME_MARKER" "$VIBE_SESSION_REF"; then
+  echo ""
+  echo "  ◆ auto-resume: found a stale /vsss marker (left by an earlier session — not refreshed in this one)."
+  echo "    Not auto-relaunching. To continue that run: launch vibe and type '/vsss --resume'."
+  echo "    To discard it: delete .vss/auto-resume."
+fi
+while auto_resume_pending "$AUTO_RESUME_MARKER" && _vibe_stall_armed "$AUTO_RESUME_MARKER" "$VIBE_SESSION_REF"; do
   _ar_remaining=$(auto_resume_field "$AUTO_RESUME_MARKER" remaining)
   _ar_now=$(date +%s)
   # Wait = resume_at estimate (30 min default / +2 min future pad / 2 min

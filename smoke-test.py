@@ -5653,6 +5653,47 @@ def test_vsss_md_inherits_escalate_and_budget() -> None:
           "git push" in content.lower() and ("push-on-pass" in content or "Push policy" in content), "")
 
 
+def test_vsss_persist_until_complete() -> None:
+    """Persist-until-complete default (2026-08-29, prompted by a run that
+    exited 1h25 early on a time-fit ruling laundered through the perfection
+    gate). Pins the invariants so the spec can't drift back: time is not an
+    optimiser input, the chair voids time-justified stop verdicts, every run
+    except --sessions 1 writes the marker (remaining=9999 unbounded
+    sentinel), exit condition 3 is explicit-flag-only, exit reports must name
+    the condition that actually fired, and the launcher's countdown carries
+    the freshness gate that stops crash-left markers ambushing later plain
+    launches."""
+    print("\n[/vsss: persist-until-complete invariants]")
+    content = VSSS_MD.read_text()
+    check("[vsss-persist] time-is-not-an-input rule in optimiser prompt",
+          "Time is not an input" in content, "")
+    check("[vsss-persist] chair voids time-justified stop verdicts",
+          "wall-clock, window-fit" in content and "treat it as verdict 2" in content, "")
+    check("[vsss-persist] no stop-bias cushion clause",
+          "bias toward \"stop the loop\" (perfection gate)" not in content,
+          "old cushion clause is back — it caused the 1h25-early stop")
+    check("[vsss-persist] remaining time never a reason to stop",
+          "Remaining time is never a reason to stop" in content, "")
+    check("[vsss-persist] 9999 unbounded sentinel documented",
+          "9999" in content and "unbounded" in content, "")
+    check("[vsss-persist] marker written unless --sessions 1",
+          "With `--sessions 1` only, never write the marker" in content, "")
+    check("[vsss-persist] exit condition 3 explicit-flag-only",
+          "explicit flag only" in content, "")
+    check("[vsss-persist] default 5h is not an exit condition",
+          "NOT an exit condition" in content, "")
+    check("[vsss-persist] exit-report honesty rule",
+          "must never be reported as a perfection gate" in content
+          or "never be reported as a perfection gate" in content, "")
+    check("[vsss-persist] resume path never escalates on default clock",
+          "Never compute a \"negative budget\"" in content, "")
+    vibe_src = (REPO / "vibe").read_text()
+    check("[vsss-persist] launcher countdown freshness-gated",
+          "_vibe_stall_armed \"$AUTO_RESUME_MARKER\" \"$VIBE_SESSION_REF\"" in vibe_src, "")
+    check("[vsss-persist] launcher stale-marker hint",
+          "stale /vsss marker" in vibe_src, "")
+
+
 def test_todo_changelog_split() -> None:
     """TODO/CHANGELOG split adopted 2026-05-08 after AEP-Plugin PR #16
     review. CLAUDE.md must instruct: open work in TODO.md, done in
@@ -5861,8 +5902,8 @@ def test_fable_subagents_flag_docs() -> None:
           "threads into whatever tool it picks" in vss, "")
     check("[fable-flag] vss.md: launcher distinction pinned",
           "chair model only, no subagent authorisation" in vss, "")
-    check("[fable-flag] vsss.md: grant persists across --sessions relaunches",
-          "The grant PERSISTS across `--sessions` auto-resume relaunches" in vsss, "")
+    check("[fable-flag] vsss.md: grant persists across auto-resume relaunches",
+          "The grant PERSISTS across auto-resume relaunches" in vsss, "")
 
 
 def test_vs_md_panel_flag() -> None:
@@ -13093,6 +13134,7 @@ def main() -> int:
     test_vs_md_panel_flag()
     test_vs_md_multi_task_archive_convention()
     test_vsss_md_inherits_escalate_and_budget()
+    test_vsss_persist_until_complete()
     test_install_extras_syncs_hooks()
     test_conversation_history_fragment()
     test_install_extras_ssh_discipline_opt_in()
