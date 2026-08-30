@@ -5687,6 +5687,12 @@ def test_vsss_persist_until_complete() -> None:
           or "never be reported as a perfection gate" in content, "")
     check("[vsss-persist] resume path never escalates on default clock",
           "Never compute a \"negative budget\"" in content, "")
+    check("[vsss-persist] remaining is launcher-owned (refresh preserves it)",
+          "LAUNCHER-OWNED" in content and "never re-derive" in content, "")
+    check("[vsss-persist] resume_at re-based on resumed windows",
+          "re-bases it from the resumption timestamp" in content, "")
+    check("[vsss-persist] spent marker end-state documented",
+          "Spent marker" in content and "overwrites it wholesale" in content, "")
     vibe_src = (REPO / "vibe").read_text()
     check("[vsss-persist] launcher countdown freshness-gated",
           "_vibe_stall_armed \"$AUTO_RESUME_MARKER\" \"$VIBE_SESSION_REF\"" in vibe_src, "")

@@ -68,7 +68,7 @@ Only when the ORIGINAL invocation carried an explicit `--hours`/`--budget` cap d
 1. Read `.vss/sessions/<resumed-ISO>.md` end-to-end. Identify last completed iter and pending state.
 2. Read `git log` since session start (`git log --since="<start-ISO>" --oneline`) to verify the iter blocks match the actual commits. If they don't (e.g. iter block claims commit X but `git log` shows X was reverted), surface to the user — DO NOT silently proceed.
 3. Budget check: default persistence (no explicit `--hours`/`--budget` on the original invocation) → nothing to compute, continue. Explicit cap → compute remaining; if exceeded, escalate per § Resume budget arithmetic.
-4. Append a new `## Resumption — <ISO>` block to the session file noting: timestamp of resumption, hours-elapsed-during-halt, budget-remaining, the iter we're picking up at.
+4. Append a new `## Resumption — <ISO>` block to the session file noting: timestamp of resumption, hours-elapsed-during-halt, budget-remaining (explicit caps only), the iter we're picking up at. Rewrite the marker now: `remaining` read back unchanged (launcher-owned — see § Auto-resume), `resume_at` re-based to resumption epoch + 5*3600.
 5. Continue the loop from the next iter per the original priority queue / optimiser logic.
 
 ### Auto-resume across halts (default since 2026-08-29; `--sessions X` caps it — shipped 2026-07-04 as `--auto-resume N`, renamed 2026-07-08)
@@ -79,14 +79,16 @@ Automatic continuation across credit windows is the DEFAULT: a `/vsss` run keeps
 
 ```
 active=1
-remaining=<X-1 if --sessions X was passed; 9999 otherwise>
-resume_at=<START_TIME + 5*3600, epoch seconds>
+remaining=<X-1 if --sessions X was passed; 9999 otherwise — FRESH invocations only, see below>
+resume_at=<current window's start + 5*3600, epoch seconds>
 session_file=.vss/sessions/<start-ISO>.md
 ```
 
 `9999` is the unbounded-persistence sentinel — the launcher contract is digits-only, and 9999 windows is "as many as it takes" with a runaway failsafe. The launcher decrements it per relaunch like any other value; no launcher change is involved.
 
-- `resume_at` is the best estimate of the 5h-window reset (the window may have opened before `/vsss` did, so it can be late — the launcher pads it). Refresh the whole marker at the top of every iteration (cheap, atomic: write to `.vss/auto-resume.tmp`, `mv` over).
+- **`remaining` is LAUNCHER-OWNED once first written.** Only a fresh (non-resumed) invocation sets it (X-1 from `--sessions X`, else the 9999 sentinel). On every per-iteration refresh, and at the start of any RESUMED window, read the existing marker's `remaining` back and rewrite it UNCHANGED — never re-derive it from the flag or the sentinel. Re-deriving would silently undo the launcher's per-relaunch decrement, making a `--sessions X` cap unenforceable (the run would relaunch forever). A missing/unreadable marker on a resumed window is the one exception: rewrite it with the value the session file's window count implies, and note the reconstruction in the session file.
+- `resume_at` is the best estimate of the 5h-window reset, always computed from the CURRENT window's start: a fresh invocation uses `START_TIME + 5*3600`; a RESUMED window re-bases it from the resumption timestamp (resumption epoch + 5*3600), NOT the original `START_TIME` — a stale `resume_at` already in the past would collapse the launcher's countdown to its 120s past-grace and probe a genuinely exhausted window every 2 minutes, each probe costing a full stall-watchdog cycle. (This re-basing is only about the marker; an explicit `--hours`/`--budget` cap still measures against the original `START_TIME` per § Resume budget arithmetic.) The window may have opened before the current window's `/vsss` start did, so `resume_at` can still be late — the launcher pads and rate-limit-caps it. Refresh the whole marker at the top of every iteration (cheap, atomic: write to `.vss/auto-resume.tmp`, `mv` over; `remaining` preserved as above).
+- **Spent marker (`active=1, remaining=0`)**: when the launcher declines the final relaunch, nothing is left running to write `active=0`. That marker is inert — the countdown requires `remaining>=1` and the freshness gates see it as stale — and the next `/vsss` invocation overwrites it wholesale (a resumed final window's own clean exit writes `active=0` as normal). No manual cleanup is required, but deleting it is always safe.
 - **On ANY clean exit** (perfection gate, explicit user budget cap, hard-escalate abort, three no-op iterations — anything that writes `## Final state`), rewrite the marker with `active=0`. A finished loop must never relaunch. This is part of the atomic exit write; do not skip it on aborts.
 - With `--sessions 1` only, never write the marker (and set `active=0` in any stale one you find at start). Every other invocation — flag or no flag — writes it.
 
