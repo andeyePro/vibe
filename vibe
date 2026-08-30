@@ -1413,6 +1413,67 @@ learning_banner_state() {
   return 0
 }
 
+# learning_review_due <library_path> — task_012: exits 0 iff the learning
+# library is due a `/learn --review`, per the contract frozen in
+# devcontainer/commands/learn.md § "When a review is due": the receipt at
+# <library>/.last-review holds `reviewed: <ISO-8601>` and `entries: <N>`;
+# due iff 30+ entries, OR >90 days since `reviewed:`, OR >5 entries captured
+# since the receipt's count. A missing/unreadable/malformed receipt means
+# "never reviewed", not an error — then due iff the library holds MORE than
+# 5 entries (`/learn --review` itself bails below 5, so the hint must not
+# fire below that floor either). Every edge fails soft and silent: no
+# library, unparseable date (must work without GNU date — BSD date on a bare
+# macOS shell), garbage counts. Pure read-only predicate: never writes to
+# the library, never prints.
+learning_review_due() {
+  local lib="${1:-}" count receipt reviewed entries_then epoch_then epoch_now
+  if [ -z "$lib" ] || [ ! -d "$lib" ]; then
+    return 1
+  fi
+  count=$(find "$lib" -maxdepth 1 -name '*.md' -type f 2>/dev/null | grep -c .) || count=0
+  case "$count" in ''|*[!0-9]*) count=0 ;; esac
+  if [ "$count" -lt 5 ]; then
+    return 1
+  fi
+  if [ "$count" -ge 30 ]; then
+    return 0
+  fi
+  receipt="$lib/.last-review"
+  if [ ! -f "$receipt" ] || [ ! -r "$receipt" ]; then
+    # Never reviewed: due once past the 5-entry floor.
+    if [ "$count" -gt 5 ]; then
+      return 0
+    fi
+    return 1
+  fi
+  # Whitespace-FS awk, not -F':' — the ISO value contains colons itself.
+  reviewed=$(awk '$1=="reviewed:"{print $2; exit}' "$receipt" 2>/dev/null) || reviewed=""
+  entries_then=$(awk '$1=="entries:"{print $2; exit}' "$receipt" 2>/dev/null) || entries_then=""
+  case "$entries_then" in ''|*[!0-9]*) entries_then="" ;; esac
+  if [ -n "$entries_then" ] && [ $(( count - entries_then )) -gt 5 ]; then
+    return 0
+  fi
+  if [ -n "$reviewed" ]; then
+    epoch_then=$(date -u -d "$reviewed" +%s 2>/dev/null) \
+      || epoch_then=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$reviewed" +%s 2>/dev/null) \
+      || epoch_then=""
+    case "$epoch_then" in ''|*[!0-9]*) epoch_then="" ;; esac
+    if [ -n "$epoch_then" ]; then
+      epoch_now=$(date -u +%s)
+      if [ $(( epoch_now - epoch_then )) -gt $(( 90 * 24 * 3600 )) ]; then
+        return 0
+      fi
+    fi
+  else
+    # Receipt present but no parseable reviewed: line — treat as never
+    # reviewed (malformed is not an error; the hint just uses the floor).
+    if [ "$count" -gt 5 ]; then
+      return 0
+    fi
+  fi
+  return 1
+}
+
 # learning_entry_path <library_abs_path> <iso8601> <rand6_hex> — pure string
 # composition; echoes the full file path. No filesystem access.
 learning_entry_path() {
@@ -3320,6 +3381,19 @@ if [ "$REBUILD" != true ] && docker image inspect "$IMAGE_TAG" >/dev/null 2>&1; 
      || [ -n "$(find "$DEVCONTAINER_DIR" -type f -newer "$IMAGE_MARKER" -print 2>/dev/null | head -n 1)" ]; then
     echo "  devcontainer/ changed since last build — rebuilding image."
     REBUILD=true
+  fi
+fi
+
+# task_012: rebuild-time /learn --review hint. A rebuild is the natural
+# "stepping back" moment, so it is the one place vibe checks whether the
+# learning library is due a review (learning_review_due, contract in
+# learn.md § "When a review is due"). One stderr line when due; silent in
+# every other case — not enabled, project opted out, not due, any parse
+# edge. Read-only; the review itself stays an in-session /learn --review.
+if [ "$REBUILD" = true ] && learning_is_enabled \
+   && ! learning_project_opted_out "$WORKSPACE"; then
+  if learning_review_due "$VIBE_LEARNING_PATH"; then
+    echo "  ✎ learning library due for review (30+ entries, >90 days, or >5 new since last pass) — run /learn --review in a session." >&2
   fi
 fi
 

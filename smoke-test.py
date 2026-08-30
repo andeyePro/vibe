@@ -6226,6 +6226,82 @@ def test_ssh_marker_fail_closed() -> None:
           "_op_opted_in()" in vibe_src, "")
 
 
+def _review_due_result(setup: str) -> str:
+    """Source vibe, build a fixture library via `setup` (bash, LIB=path),
+    run learning_review_due "$LIB", echo DUE/NOT. Returns 'DUE'/'NOT'."""
+    call = (
+        'LIB=$(mktemp -d); ' + setup +
+        '; if learning_review_due "$LIB"; then echo RESULT=DUE; else echo RESULT=NOT; fi; '
+        'rm -rf "$LIB"'
+    )
+    r = _source_vibe_call({}, call)
+    if "RESULT=DUE" in r.stdout:
+        return "DUE"
+    if "RESULT=NOT" in r.stdout:
+        return "NOT"
+    return f"ERR({r.stdout}{r.stderr})"
+
+
+def test_task012_review_due_banner() -> None:
+    """task_012: learning_review_due implements learn.md's frozen due
+    contract (30+ entries / >90 days since reviewed: / >5 entries since the
+    receipt count; missing receipt = never reviewed, floor of 5), fails soft
+    on every malformed input, and the rebuild-path banner is gated on
+    REBUILD + learning_is_enabled + not-opted-out."""
+    print("\n[task_012: /learn --review due banner]")
+    mk = 'for i in $(seq 1 %d); do echo x > "$LIB/e$i.md"; done'
+    receipt = 'printf "reviewed: %s\\nentries: %s\\n" > "$LIB/.last-review"'
+    check("[t012] 4 entries, no receipt -> NOT (below floor)",
+          _review_due_result(mk % 4) == "NOT", "")
+    check("[t012] 6 entries, no receipt -> DUE (never reviewed)",
+          _review_due_result(mk % 6) == "DUE", "")
+    check("[t012] 5 entries, no receipt -> NOT (floor is >5)",
+          _review_due_result(mk % 5) == "NOT", "")
+    check("[t012] 30 entries, fresh receipt -> DUE (30+ always due)",
+          _review_due_result(
+              mk % 30 + '; ' + receipt % ('$(date -u +%Y-%m-%dT%H:%M:%SZ)', '30')
+          ) == "DUE", "")
+    check("[t012] 12 entries, receipt entries:5 -> DUE (>5 captured since)",
+          _review_due_result(
+              mk % 12 + '; ' + receipt % ('$(date -u +%Y-%m-%dT%H:%M:%SZ)', '5')
+          ) == "DUE", "")
+    check("[t012] 12 entries, receipt entries:8, fresh -> NOT",
+          _review_due_result(
+              mk % 12 + '; ' + receipt % ('$(date -u +%Y-%m-%dT%H:%M:%SZ)', '8')
+          ) == "NOT", "")
+    check("[t012] 6 entries, reviewed 100 days ago -> DUE (>90 days)",
+          _review_due_result(
+              mk % 6 + '; ' + receipt % (
+                  '$(date -u -d "@$(( $(date -u +%s) - 100*24*3600 ))" +%Y-%m-%dT%H:%M:%SZ)', '6')
+          ) == "DUE", "")
+    check("[t012] 6 entries, reviewed now, entries:6 -> NOT",
+          _review_due_result(
+              mk % 6 + '; ' + receipt % ('$(date -u +%Y-%m-%dT%H:%M:%SZ)', '6')
+          ) == "NOT", "")
+    check("[t012] garbage receipt, 6 entries -> DUE (treated never reviewed)",
+          _review_due_result(
+              mk % 6 + '; echo "not a receipt" > "$LIB/.last-review"'
+          ) == "DUE", "")
+    check("[t012] garbage receipt, 5 entries -> NOT (floor holds)",
+          _review_due_result(
+              mk % 5 + '; echo "not a receipt" > "$LIB/.last-review"'
+          ) == "NOT", "")
+    check("[t012] unparseable date, entries delta 4 -> NOT (date test skipped)",
+          _review_due_result(
+              mk % 10 + '; ' + receipt % ('yesterdayish', '6')
+          ) == "NOT", "")
+    check("[t012] missing library dir -> NOT",
+          _review_due_result('rmdir "$LIB"; true') == "NOT", "")
+    src = VIBE.read_text(encoding="utf-8")
+    check("[t012] banner gated on REBUILD + enabled + not opted out",
+          'if [ "$REBUILD" = true ] && learning_is_enabled' in src
+          and 'learning_project_opted_out "$WORKSPACE"' in src, "")
+    check("[t012] banner names /learn --review",
+          "run /learn --review in a session" in src, "")
+    check("[t012] predicate never writes to the library",
+          "Pure read-only predicate" in src, "")
+
+
 def test_extras_invocations_isolated() -> None:
     """Every INSTALL_EXTRAS invocation must route its env through
     _isolate_extras_env (security-review finding, 2026-08-30): the installer
@@ -13432,6 +13508,7 @@ def main() -> int:
     test_install_extras_ssh_discipline_opt_in()
     test_ssh_marker_fail_closed()
     test_extras_invocations_isolated()
+    test_task012_review_due_banner()
     test_brain2_zotero_source_resolution()
     test_render_devcontainer_with_mounts()
     test_op_mcp_addhost_injection()
