@@ -5702,6 +5702,14 @@ def test_vsss_persist_until_complete() -> None:
     check("[vsss-persist] MANUAL-TESTS pins marker write-timing",
           "Marker write-timing matters" in manual and "AFTER the" in manual,
           "Test 32 must teach the freshness gate or fixtures regress")
+    banner_at = vibe_src.find("relaunch(es) left")
+    decrement_at = vibe_src.find('auto_resume_decrement "$AUTO_RESUME_MARKER"')
+    check("[vsss-persist] countdown banner prints pre-decrement remaining",
+          0 <= banner_at < decrement_at,
+          "banner echo must precede the decrement call — 32i's expected "
+          "values (9999 then 9998) depend on it")
+    check("[vsss-persist] MANUAL-TESTS 32i documents pre-decrement banner",
+          "PRE-decrement" in manual, "")
 
 
 def test_todo_changelog_split() -> None:

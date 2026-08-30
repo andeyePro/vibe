@@ -725,7 +725,9 @@ terminal once vibe is up.
 **32a — simulated stall, relaunch happens:**
 - [ ] Launch `vibe` with the overrides above in a project with a stale
       `.vss/heartbeat`; once claude is up, from a second terminal write the
-      fake active marker (`.vss/auto-resume`: `active=1`, `remaining=1`) —
+      fake active marker (`.vss/auto-resume`: `active=1`, `remaining=1`,
+      `resume_at=<now>` — a near-past value, or the post-kill countdown
+      waits its 1800s unusable-field fallback instead of finishing fast) —
       AFTER launch, so the freshness gate sees it as live — then let claude
       sit idle (don't type anything)
 - [ ] After ~60s a loud warning appears (bell + threshold + "delete
@@ -735,8 +737,8 @@ terminal once vibe is up.
       `claude --continue "/vsss --resume"`
 
 **32b — same, but `remaining=0`:**
-- [ ] Same setup (marker written after launch) with `remaining=0` — after
-      the kill, vibe EXITS instead of hanging or relaunching (the final
+- [ ] Same setup (marker written after launch, near-past `resume_at`) with
+      `remaining=0` — after the kill, vibe EXITS instead of hanging or relaunching (the final
       window is protected from an infinite wait, not from the kill itself)
 
 **32c — crash-left marker, no kill:**
@@ -793,9 +795,10 @@ terminal once vibe is up.
 **32i — `remaining=9999` unbounded sentinel decrements normally:**
 - [ ] Using the 32a setup but with `remaining=9999` and a near-past
       `resume_at`, let two kill→countdown→relaunch cycles run
-- [ ] The countdown banner shows `9998` then `9997` relaunch(es) left —
-      the sentinel is an ordinary digits value to the launcher, not a
-      special case
+- [ ] The countdown banner shows `9999` then `9998` relaunch(es) left —
+      the banner reports the PRE-decrement value (the launcher decrements
+      after the countdown, just before relaunching); the sentinel is an
+      ordinary digits value to the launcher, not a special case
 
 **32j — `remaining` is launcher-owned (skill refresh must not reset it):**
 - [ ] During a real `/vsss --sessions 2` run that has survived one relaunch
