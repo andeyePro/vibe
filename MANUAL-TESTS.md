@@ -708,17 +708,26 @@ In a fresh folder with no GitHub repo, run `vibe` and accept "Create a GitHub re
 
 ---
 
-### Test 32: `--sessions` stall watchdog (task_016)
+### Test 32: /vsss auto-resume + stall watchdog (task_016; persist-by-default since 2026-08-29)
 
-Covers the heartbeat-driven kill of a wedged usage-limit picker. All sub-tests
-use short overrides so they finish in well under a minute:
+Covers the heartbeat-driven kill of a wedged usage-limit picker AND the
+auto-resume countdown's freshness gate. All sub-tests use short overrides so
+they finish in well under a minute:
 `VIBE_STALL_SECS=60 VIBE_STALL_POLL_SECS=5 VIBE_STALL_GRACE_SECS=5`.
 
+**Marker write-timing matters in every sub-test.** Both the stall-kill AND
+the auto-resume countdown only arm for a marker (re)written AFTER the
+launcher session starts (mtime vs the session-ref file). A marker planted
+before launch is deliberately treated as crash-left/stale (32c, 32h). To
+simulate a live run, write or `touch` `.vss/auto-resume` from a SECOND
+terminal once vibe is up.
+
 **32a — simulated stall, relaunch happens:**
-- [ ] In a project with a fake active marker (`.vss/auto-resume`:
-      `active=1`, `remaining=1`, plus a stale `.vss/heartbeat`), launch
-      `vibe` with the overrides above and let claude sit idle (don't type
-      anything)
+- [ ] Launch `vibe` with the overrides above in a project with a stale
+      `.vss/heartbeat`; once claude is up, from a second terminal write the
+      fake active marker (`.vss/auto-resume`: `active=1`, `remaining=1`) —
+      AFTER launch, so the freshness gate sees it as live — then let claude
+      sit idle (don't type anything)
 - [ ] After ~60s a loud warning appears (bell + threshold + "delete
       .vss/auto-resume to cancel")
 - [ ] After the grace period the claude window is killed
@@ -726,14 +735,15 @@ use short overrides so they finish in well under a minute:
       `claude --continue "/vsss --resume"`
 
 **32b — same, but `remaining=0`:**
-- [ ] Same setup with `remaining=0` — after the kill, vibe EXITS instead of
-      hanging or relaunching (the final window is protected from an
-      infinite wait, not from the kill itself)
+- [ ] Same setup (marker written after launch) with `remaining=0` — after
+      the kill, vibe EXITS instead of hanging or relaunching (the final
+      window is protected from an infinite wait, not from the kill itself)
 
 **32c — crash-left marker, no kill:**
 - [ ] Write `.vss/auto-resume` with `active=1` BEFORE launching vibe (i.e.
-      it predates this launcher session), then start a plain interactive
-      `vibe` session and leave it idle past the stall threshold
+      it predates this launcher session — the opposite timing to 32a), then
+      start a plain interactive `vibe` session and leave it idle past the
+      stall threshold
 - [ ] No kill occurs — the ref-file mtime gate holds (the marker wasn't
       refreshed during this session), so an old marker never arms a kill
       against a session you're actually using
@@ -760,14 +770,40 @@ use short overrides so they finish in well under a minute:
       Stop hooks), confirming the heartbeat isn't just seeded once at launch
 
 **32g — fresh rate-limit reading with headroom caps the countdown at 2m:**
-- [ ] With a fake active marker whose `resume_at` is hours away
-      (`active=1`, `remaining=1`, `resume_at=<now + 3*3600>`), write a fake
-      fresh reading: `.vss/rate-limit` containing `epoch=<now>` and `used=4`
+- [ ] With vibe up, write (from a second terminal — AFTER launch, per the
+      write-timing note) a fake active marker whose `resume_at` is hours
+      away (`active=1`, `remaining=1`, `resume_at=<now + 3*3600>`) and a
+      fake fresh reading: `.vss/rate-limit` containing `epoch=<now>` and
+      `used=4`
 - [ ] Trigger the countdown (e.g. `/exit` the claude window) — the message
       reads `window ~4% used per last reading — relaunching claude
       --continue in 2m 0s ...` instead of the multi-hour resume_at wait
 - [ ] Repeat with `used=90` (or delete `.vss/rate-limit`) — the countdown
       falls back to the full resume_at-based wait with the original message
+
+**32h — stale-marker hint instead of countdown ambush (2026-08-29 gate):**
+- [ ] Plant `.vss/auto-resume` (`active=1`, `remaining=9999`) BEFORE
+      launching vibe, run a plain interactive session, then `/exit`
+- [ ] NO countdown starts; the launcher prints the stale-marker notice
+      ("found a stale /vsss marker ... Not auto-relaunching ... type
+      '/vsss --resume' ... To discard it: delete .vss/auto-resume")
+- [ ] `.vss/auto-resume` is left IN PLACE unchanged (not deleted, not
+      deactivated) — deliberate, so `/vsss --resume` recovery stays possible
+
+**32i — `remaining=9999` unbounded sentinel decrements normally:**
+- [ ] Using the 32a setup but with `remaining=9999` and a near-past
+      `resume_at`, let two kill→countdown→relaunch cycles run
+- [ ] The countdown banner shows `9998` then `9997` relaunch(es) left —
+      the sentinel is an ordinary digits value to the launcher, not a
+      special case
+
+**32j — `remaining` is launcher-owned (skill refresh must not reset it):**
+- [ ] During a real `/vsss --sessions 2` run that has survived one relaunch
+      (`remaining` decremented `1` → `0`), watch `.vss/auto-resume` across a
+      few loop iterations (`cat` it repeatedly from the host)
+- [ ] The skill's per-iteration marker refreshes keep `remaining=0` — a
+      refresh that puts it back to `1` is a spec regression (the
+      `--sessions` cap would never terminate)
 
 ---
 

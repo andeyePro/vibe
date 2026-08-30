@@ -5698,6 +5698,10 @@ def test_vsss_persist_until_complete() -> None:
           "_vibe_stall_armed \"$AUTO_RESUME_MARKER\" \"$VIBE_SESSION_REF\"" in vibe_src, "")
     check("[vsss-persist] launcher stale-marker hint",
           "stale /vsss marker" in vibe_src, "")
+    manual = (REPO / "MANUAL-TESTS.md").read_text()
+    check("[vsss-persist] MANUAL-TESTS pins marker write-timing",
+          "Marker write-timing matters" in manual and "AFTER the" in manual,
+          "Test 32 must teach the freshness gate or fixtures regress")
 
 
 def test_todo_changelog_split() -> None:
