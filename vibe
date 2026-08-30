@@ -888,18 +888,25 @@ auto_resume_rate_headroom() {
 # countdown). Missing/stale/malformed reading → conservative base estimate
 # unchanged; nothing here can crash under `set -euo pipefail`.
 auto_resume_effective_wait() {
-  local marker="$1" rl="$2" now="$3" resume_at wait
+  local marker="$1" rl="$2" now="$3" resume_at wait grace
+  # VIBE_RESUME_PAST_GRACE_SECS (default 120) is the grace used for a past
+  # resume_at, the future pad, and the headroom cap — one knob, one concept.
+  # Exists so MANUAL-TESTS Test 32 can shorten the countdown the same way
+  # VIBE_STALL_* shorten the kill path; garbage collapses to the default,
+  # so production keeps the 120s floor unless deliberately overridden.
+  grace="${VIBE_RESUME_PAST_GRACE_SECS:-120}"
+  case "$grace" in ''|*[!0-9]*) grace=120 ;; esac
   resume_at=$(auto_resume_field "$marker" resume_at)
   wait=1800
   if [ -n "$resume_at" ]; then
     if [ "$resume_at" -gt "$now" ]; then
-      wait=$(( resume_at - now + 120 ))
+      wait=$(( resume_at - now + grace ))
     else
-      wait=120
+      wait=$grace
     fi
   fi
-  if [ "$wait" -gt 120 ] && [ -n "$(auto_resume_rate_headroom "$rl" "$now")" ]; then
-    wait=120
+  if [ "$wait" -gt "$grace" ] && [ -n "$(auto_resume_rate_headroom "$rl" "$now")" ]; then
+    wait=$grace
   fi
   echo "$wait"
 }

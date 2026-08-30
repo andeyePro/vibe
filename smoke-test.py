@@ -5710,6 +5710,12 @@ def test_vsss_persist_until_complete() -> None:
           "values (9999 then 9998) depend on it")
     check("[vsss-persist] MANUAL-TESTS 32i documents pre-decrement banner",
           "PRE-decrement" in manual, "")
+    check("[vsss-persist] countdown grace knob defaults to 120 in launcher",
+          "VIBE_RESUME_PAST_GRACE_SECS:-120" in vibe_src, "")
+    check("[vsss-persist] MANUAL-TESTS 32 names the countdown grace knob",
+          "VIBE_RESUME_PAST_GRACE_SECS" in manual,
+          "Test 32's timing claims depend on the countdown floor being "
+          "overridable — the preamble must say so")
 
 
 def test_todo_changelog_split() -> None:
@@ -9174,6 +9180,10 @@ def test_vibe_auto_resume_effective_wait() -> None:
         # resume_at already past → 120 grace regardless of any reading
         "printf 'active=1\\nremaining=2\\nresume_at=999999000\\n' > \"$m\"; "
         'echo "PAST=[$(auto_resume_effective_wait "$m" "$r.missing" "$now")]"; '
+        # grace knob: past resume_at with a 5s override → 5 (MANUAL-TESTS 32)
+        'echo "KNOBGRACE=[$(VIBE_RESUME_PAST_GRACE_SECS=5; auto_resume_effective_wait "$m" "$r.missing" "$now")]"; '
+        # garbage grace knob collapses to the 120 default
+        'echo "GGRACE=[$(VIBE_RESUME_PAST_GRACE_SECS="evil; rm -rf /"; auto_resume_effective_wait "$m" "$r.missing" "$now")]"; '
         # no usable resume_at → 1800 default
         "printf 'active=1\\nremaining=2\\n' > \"$m\"; "
         'echo "NORA=[$(auto_resume_effective_wait "$m" "$r.missing" "$now")]"; '
@@ -9193,6 +9203,8 @@ def test_vibe_auto_resume_effective_wait() -> None:
     check("[eff-wait] default refuses what the knob allowed", "DEFUSED=[7320]" in r.stdout, r.stdout)
     check("[eff-wait] garbage knob → default behaviour", "GKNOB=[120]" in r.stdout, r.stdout)
     check("[eff-wait] resume_at past → 120 grace", "PAST=[120]" in r.stdout, r.stdout)
+    check("[eff-wait] VIBE_RESUME_PAST_GRACE_SECS honoured", "KNOBGRACE=[5]" in r.stdout, r.stdout)
+    check("[eff-wait] garbage grace knob → 120 default", "GGRACE=[120]" in r.stdout, r.stdout)
     check("[eff-wait] no resume_at → 1800 default", "NORA=[1800]" in r.stdout, r.stdout)
 
 

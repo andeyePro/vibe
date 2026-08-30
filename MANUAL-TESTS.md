@@ -711,9 +711,15 @@ In a fresh folder with no GitHub repo, run `vibe` and accept "Create a GitHub re
 ### Test 32: /vsss auto-resume + stall watchdog (task_016; persist-by-default since 2026-08-29)
 
 Covers the heartbeat-driven kill of a wedged usage-limit picker AND the
-auto-resume countdown's freshness gate. All sub-tests use short overrides so
-they finish in well under a minute:
-`VIBE_STALL_SECS=60 VIBE_STALL_POLL_SECS=5 VIBE_STALL_GRACE_SECS=5`.
+auto-resume countdown's freshness gate. Two override families, shortening two
+different things: `VIBE_STALL_SECS=60 VIBE_STALL_POLL_SECS=5
+VIBE_STALL_GRACE_SECS=5` shorten only the KILL path (~70s to a kill);
+`VIBE_RESUME_PAST_GRACE_SECS=5` shortens the COUNTDOWN (which otherwise has a
+hardcoded-feeling 120s floor for a past `resume_at` — that IS the production
+default, the knob exists for this checklist). With all four set, kill-path
+sub-tests run in ~1–2 min and countdown sub-tests in seconds; without the
+grace knob, every countdown (32a's relaunch step, 32d, 32i twice) sits the
+full 2 minutes.
 
 **Marker write-timing matters in every sub-test.** Both the stall-kill AND
 the auto-resume countdown only arm for a marker (re)written AFTER the
@@ -737,9 +743,11 @@ terminal once vibe is up.
       `claude --continue "/vsss --resume"`
 
 **32b — same, but `remaining=0`:**
-- [ ] Same setup (marker written after launch, near-past `resume_at`) with
-      `remaining=0` — after the kill, vibe EXITS instead of hanging or relaunching (the final
-      window is protected from an infinite wait, not from the kill itself)
+- [ ] Same setup (marker written after launch; no `resume_at` needed — with
+      `remaining=0` the countdown loop is never entered, so the field is
+      irrelevant here) — after the kill, vibe EXITS instead of hanging or
+      relaunching (the final window is protected from an infinite wait, not
+      from the kill itself)
 
 **32c — crash-left marker, no kill:**
 - [ ] Write `.vss/auto-resume` with `active=1` BEFORE launching vibe (i.e.
