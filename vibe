@@ -720,7 +720,9 @@ fable_billing_phase() {
 }
 
 # ── Auto-resume helpers (marker-driven relaunch after credit exhaustion) ──────
-# /vsss --sessions X writes .vss/auto-resume in the project as KEY=VALUE
+# /vsss writes .vss/auto-resume in the project as KEY=VALUE (by default since
+# 2026-08-29 — every run persists across windows unless --sessions 1;
+# --sessions X caps it; remaining=9999 is the unbounded sentinel) with
 # lines: active (1/0), remaining (relaunches left), resume_at (epoch estimate
 # of the 5h-window reset), session_file. When claude exits while the marker is
 # active with relaunches remaining, the launcher waits until resume_at and

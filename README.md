@@ -65,7 +65,7 @@ Getting the most from Fable 5 on a subscription: reserve it for genuinely huge o
 
 ### Overnight auto-resume
 
-`/vsss --sessions X` (inside a session) runs an autonomous loop across up to X five-hour credit windows total, by writing a `.vss/auto-resume` marker. If the session dies — typically 5-hour-window credit exhaustion — the launcher notices the active marker after `claude` exits, counts down to the estimated window reset (Ctrl-C cancels; deleting the marker deactivates), then relaunches `claude --continue "/vsss --resume"`, up to X-1 times. The `/vsss` loop clears the marker whenever it exits cleanly, so finished runs never relaunch. (The flag was `--auto-resume N` — N extra windows — until 2026-07-08.)
+`/vsss` (inside a session) runs an autonomous loop that persists across five-hour credit windows by default, by writing a `.vss/auto-resume` marker: it keeps going until the task is genuinely complete, not until the window runs out. If the session dies — typically 5-hour-window credit exhaustion — the launcher notices the active marker after `claude` exits, counts down to the estimated window reset (Ctrl-C cancels; deleting the marker deactivates), then relaunches `claude --continue "/vsss --resume"`. `--sessions X` caps the run at X windows total (X-1 relaunches); `--sessions 1` opts out of relaunch for a single-window run. The `/vsss` loop clears the marker whenever it exits cleanly, so finished runs never relaunch. (Unbounded-by-default since 2026-08-29; before that, omitting `--sessions` meant one window. The flag was `--auto-resume N` — N extra windows — until 2026-07-08.)
 
 ### Budget visibility
 

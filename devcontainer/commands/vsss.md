@@ -1,5 +1,5 @@
 ---
-description: Versus Super Solo — runs /vss on the given args, then optimises args and loops /vss in argumentless A-mode until perfection-gate, session-credit exhaustion, or a hard-escalate trigger. Higher blast-radius than /vss; intended for end-of-day "burn the rest of my session productively" runs.
+description: Versus Super Solo — runs /vss on the given args, then optimises args and loops /vss in argumentless A-mode until perfection-gate, an explicit user budget cap, or a hard-escalate trigger — persisting across credit windows BY DEFAULT until the task is complete. Higher blast-radius than /vss; intended for end-of-day "burn the rest of my session productively" runs.
 ---
 
 # /vsss — versus super solo
@@ -25,10 +25,10 @@ At the very start of `/vsss`, before any work:
    - `/vsss --budget Nh <args>` — backward-compatible alias. Same semantics; `Nh` parsed as a positive integer or decimal followed by literal `h`.
    - `/vsss --budget Nm <args>` — minutes form, for short-runs (e.g. `--budget 30m`).
    - `/vsss --fable-subagents <args>` (alias `--fable`) — standing per-run pre-authorisation of the credit-billed Fable rung, propagated into EVERY wrapped `/vss` iteration (and from there into each `/vs` Model plan as `Fable rung: pre-authorised (--fable-subagents)`). Record the grant in the session file's Initial-plan block and note every Fable dispatch it enables in the per-iter Notes. The grant PERSISTS across `--sessions` auto-resume relaunches: a relaunched window continues the same user invocation, and the Resumption protocol restores args from the session file — the recorded Initial-plan grant IS the authority; do not demand a fresh flag mid-run. Task-class routing still governs — the flag never routes mechanical roles (Tester/Spec Critic) to Fable; it removes the mid-run ask for Generator/judgment rungs where Fable genuinely buys better or faster results. NOT the same as `vibe --fable`, which sets only the chair/session model.
-   - `/vsss --sessions X <args>` — combinable with the budget flags; run across up to X credit windows TOTAL (`--sessions 3` = the current window plus up to 2 automatic relaunches after credit-exhaustion halts; `--sessions 1` = no relaunch, same as omitting the flag). See § Auto-resume across halts. Legacy: `--auto-resume N` (retired 2026-07-08) meant N EXTRA windows — treat it as `--sessions N+1` if you ever see it.
-   - No flag → 5h default. Intended to consume a full Pro/Max session when `/vsss` is invoked at session start.
+   - `/vsss --sessions X <args>` — combinable with the budget flags; CAPS the run at X credit windows TOTAL (`--sessions 3` = the current window plus up to 2 automatic relaunches after credit-exhaustion halts; `--sessions 1` = single-window opt-out, no relaunch). **Omitting the flag does NOT mean one window** — since 2026-08-29 the default is unbounded persistence: the run continues across as many credit windows as the task needs, until a real exit condition fires. See § Auto-resume across halts. Legacy: `--auto-resume N` (retired 2026-07-08) meant N EXTRA windows — treat it as `--sessions N+1` if you ever see it.
+   - No budget flag → `BUDGET_HOURS=5`. This is the per-window clock used to estimate `resume_at` — NOT a finish line, and (absent an explicit `--hours`/`--budget` flag) NOT an exit condition.
 
-   There is no graceful-shutdown cushion — if the loop is approaching the cap, the optimiser should bias toward "stop the loop" (perfection gate) so pending work is committed cleanly before the cap rather than mid-iteration. If you want a softer cap, pass `--hours 4` explicitly.
+   **Remaining time is never a reason to stop, shrink, or skip work.** There is no graceful-shutdown cushion and none is needed: every iteration commits as it lands, and § Resumption protocol continues an interrupted iteration in the next window — a halt mid-iteration loses nothing. Never bias the optimiser toward "stop" because the clock is running down, and never pass over a queue item because it "won't fit this window" — start it; if the window dies first, resumption finishes it. An explicit `--hours N` / `--budget N[hm]` flag is the ONE user-imposed hard stop: on reaching it with work outstanding, commit what's in flight, write Final state with `Exit reason: user budget cap`, set the marker `active=0`, and stop — never label that stop a perfection gate.
 4. Open `.vss/sessions/<start-ISO>.md` (filename uses `T` separator and replaces `:` with `-`, e.g. `2026-05-07T14-29-02Z.md`) and write the audit header per the format defined in `/vss` § Session audit format. The Initial-plan section captures the initial args, priority queue (if any), and budget.
 
 Every iteration appends a full Iter section to the session file (Plan / Files touched / Commit / Outcome / Notes). Final-state line is appended at exit.
@@ -71,28 +71,30 @@ If remaining budget is negative (clock-wall exceeded the original cap during the
 4. Append a new `## Resumption — <ISO>` block to the session file noting: timestamp of resumption, hours-elapsed-during-halt, budget-remaining, the iter we're picking up at.
 5. Continue the loop from the next iter per the original priority queue / optimiser logic.
 
-### Auto-resume across halts (`--sessions X` — shipped 2026-07-04 as `--auto-resume N`, renamed 2026-07-08)
+### Auto-resume across halts (default since 2026-08-29; `--sessions X` caps it — shipped 2026-07-04 as `--auto-resume N`, renamed 2026-07-08)
 
-`/vsss --sessions X <args>` opts in to automatic continuation across up to X credit windows total — i.e. up to X-1 relaunches after out-of-session-credit halts. Skill side (this spec) and launcher side (`/workspace/vibe`) split the work:
+Automatic continuation across credit windows is the DEFAULT: a `/vsss` run keeps relaunching after out-of-credit halts until the task genuinely completes. `--sessions X` caps the run at X windows total (X-1 relaunches); `--sessions 1` opts out of relaunch entirely. Skill side (this spec) and launcher side (`/workspace/vibe`) split the work:
 
 **Skill side — you maintain the marker.** At session start, write `.vss/auto-resume` (the marker file keeps its name — it's the launcher-side contract; KEY=VALUE lines, digits only — the launcher rejects anything else):
 
 ```
 active=1
-remaining=<X-1>
+remaining=<X-1 if --sessions X was passed; 9999 otherwise>
 resume_at=<START_TIME + 5*3600, epoch seconds>
 session_file=.vss/sessions/<start-ISO>.md
 ```
 
+`9999` is the unbounded-persistence sentinel — the launcher contract is digits-only, and 9999 windows is "as many as it takes" with a runaway failsafe. The launcher decrements it per relaunch like any other value; no launcher change is involved.
+
 - `resume_at` is the best estimate of the 5h-window reset (the window may have opened before `/vsss` did, so it can be late — the launcher pads it). Refresh the whole marker at the top of every iteration (cheap, atomic: write to `.vss/auto-resume.tmp`, `mv` over).
-- **On ANY clean exit** (perfection gate, budget cap, hard-escalate abort, three no-op iterations — anything that writes `## Final state`), rewrite the marker with `active=0`. A finished loop must never relaunch. This is part of the atomic exit write; do not skip it on aborts.
-- Without `--sessions` (or with `--sessions 1`), never write the marker (and set `active=0` in any stale one you find at start).
+- **On ANY clean exit** (perfection gate, explicit user budget cap, hard-escalate abort, three no-op iterations — anything that writes `## Final state`), rewrite the marker with `active=0`. A finished loop must never relaunch. This is part of the atomic exit write; do not skip it on aborts.
+- With `--sessions 1` only, never write the marker (and set `active=0` in any stale one you find at start). Every other invocation — flag or no flag — writes it.
 
 **Launcher side (already implemented in `/workspace/vibe`).** When claude exits while the marker says `active=1` and `remaining>=1`, the launcher counts down to `resume_at` (+2 min pad; 30 min fallback if the field is unusable; Ctrl-C cancels), decrements `remaining`, and relaunches `claude --continue "/vsss --resume"` — which lands in this spec's Resumption protocol above. The relaunch cost is one window from the X budget, whatever the halt cause was — the launcher cannot reliably distinguish credit exhaustion from a crash, and both are legitimate resume cases; a user-typed `/exit` mid-run also triggers the countdown, which is why the countdown is loud and cancellable. The countdown is also rate-limit-AWARE: `resume_at` is a blind worst-case estimate (session start + 5h), so vibe's statusLine drops the REAL 5h-window usage into `.vss/rate-limit` as it renders, and a reading that is fresh (`VIBE_RATE_READING_MAX_AGE`, default 1800s) with headroom (`used` at most `VIBE_RESUME_USED_MAX`, default 50%) caps the wait at the 2-minute grace instead of sitting out a stale estimate — both knobs env-overridable per launch.
 
 **Launcher-side stall watchdog (the reason the marker refresh above is now load-bearing).** Interactive claude does NOT exit when a Pro/Max usage window runs out — it blocks forever at an interactive usage-limit picker, so the relaunch above never fires on its own. The launcher now backgrounds claude, watches a container-side heartbeat file (`.vss/heartbeat`, refreshed by `settings.local.json` hooks on tool activity while a marker exists), and kills a genuinely wedged claude itself. The kill only arms when THREE conditions hold: the marker is `active=1`; the marker was refreshed DURING the current launcher session (proven via the marker's mtime against a session-start reference file) — this is exactly why your per-iteration marker refresh (above) matters: without it, a live `--sessions` run could look like a stale crash-left marker and never get the stall protection; and the heartbeat has gone stale past the threshold. Defaults: `VIBE_STALL_SECS=1800` (heartbeat staleness before a kill is even considered — 30 min, chosen because hooks fire for subagent tool calls too, so long Task/Agent dispatches keep the heartbeat fresh, and a single Bash call is capped at 10 min by Claude Code itself), `VIBE_STALL_POLL_SECS=60` (watchdog poll interval), `VIBE_STALL_GRACE_SECS=120` (warn-then-wait before killing), `VIBE_STALL_KILL_PAUSE_SECS=10` (pause between the in-container kill attempt and the host-side fallback). All four are env-overridable per launch. On kill: with `remaining>=1` the launcher drops straight into the countdown/relaunch above; on the final window (`remaining=0`) the loop is simply not entered and vibe exits cleanly instead of hanging forever. The skill needs NO new behaviour beyond the marker refresh it already specifies above — this is entirely a launcher-side addition.
 
-**Budget arithmetic under `--sessions`.** Overriding the resume-budget rule above for this mode only: each auto-resumed window gets a FRESH `BUDGET_HOURS` allowance (the whole point is spanning multiple 5h windows); `remaining` is what bounds total run length. `--hours` still caps each window individually.
+**Budget arithmetic under persistence (default, and `--sessions X`).** Overriding the resume-budget rule above whenever the marker is active: each auto-resumed window gets a FRESH `BUDGET_HOURS` allowance (the whole point is spanning multiple 5h windows); `remaining` is what bounds total run length (effectively nothing, under the 9999 sentinel — the task's real exit conditions bound it). `--hours` still caps each window individually.
 
 ## Loop structure
 
@@ -250,12 +252,14 @@ Dispatch `Agent(subagent_type: "general-purpose", model: "opus")` as **optimiser
 > 2. **Args satisfied — switch to A-mode** — the brief is genuinely complete; next iteration should TODO-scan or repo-scan instead.
 > 3. **Stop the loop** — perfection gate. No further improvement adds positive expected value. Cite concrete reasons (NOT "looks good"). Examples of acceptable reasons: "all open TODO items resolved, repo-scan returned nothing", "test coverage 100% on changed paths and CHANGELOG up to date", "remaining TODO items are all on the hard-escalate list".
 >
+> **Time is not an input.** You are told nothing about remaining wall clock, window boundaries, or token budget, and you must not reason about any of them (including schedule hints that leak in via the executor's notes). "The next item needs more time/cycles than remain" is grounds for verdict 1 or 2 — NEVER verdict 3: persistence across credit windows is the default, so an oversized item simply spans windows; resumption finishes what a window boundary interrupts. Verdict 3 is lawful ONLY on the concrete task-complete reasons above.
+>
 > Original args: `<args>`
 > Diff stat: `<git diff --stat HEAD~1>`
 > Iteration commits: `<git log --oneline HEAD~N..HEAD>`
 > Notes from executor: `<executor's report>`
 
-Apply the optimiser's decision. If it returned "stop", exit cleanly.
+Apply the optimiser's decision. If it returned "stop", exit cleanly — but first check its cited reasons against the verdict-3 whitelist: a ruling that leans on wall-clock, window-fit, or "not enough time/cycles" reasoning is void; treat it as verdict 2 (A-mode) and continue.
 
 ## Exit conditions (any one ends the loop)
 
@@ -263,7 +267,7 @@ In priority order — check each at the start of every iteration:
 
 1. **Hard-escalate triggered inside any iteration.** Stop immediately. Surface the trigger reason.
 2. **Optimiser returns "stop the loop"** (perfection gate).
-3. **Session credit exhaustion signal.** Operationalised as: `(date -u +%s) - START_TIME` exceeds `BUDGET_HOURS * 3600`. Default 5h consumes a full Pro/Max session when `/vsss` is invoked at session start.
+3. **User budget cap — explicit flag only.** Fires only when the user passed `--hours`/`--budget` AND `(date -u +%s) - START_TIME` exceeds that cap. The default `BUDGET_HOURS=5` is NOT an exit condition — it only estimates `resume_at` for the marker. Real credit exhaustion needs no exit logic here: the client blocks at the usage-limit picker, the launcher's stall watchdog kills it, and the active marker relaunches `--resume` into the next window. Until that happens, keep emitting tool calls — every remaining minute and token belongs to the task.
 4. **Three consecutive A-mode iterations with `no-op` outcomes** (no commits). Indicates TODO is empty AND repo-scan finds nothing high-leverage. Stop.
 5. **Destructive-state signal.** If git is in an unrecoverable state (merge conflict, detached HEAD with uncommitted work, dirty tree the executor can't clean up). Stop, mark the abort in the session file's Final state.
 
@@ -296,7 +300,10 @@ If the loop produces three vacuous iterations, that's the design saying "nothing
 **At a real exit, and only there.** Before you write a single word of this
 block, name which numbered exit condition from § Exit conditions has fired. If
 you cannot name one, the loop has not ended and this section does not apply —
-go back and run the next iteration. "A version shipped", "a natural milestone",
+go back and run the next iteration. The named condition must be the one that
+ACTUALLY fired: a stop whose justification mentions wall-clock, window fit, or
+"the next item needs N cycles" is condition 3 — lawful only under an explicit
+`--hours`/`--budget` flag — and must never be reported as a perfection gate. "A version shipped", "a natural milestone",
 "I need Martin's input on this bit" and "the context is getting long" are NOT
 exit conditions, and the pull to report at each of them is exactly how a run
 dies hours early.
