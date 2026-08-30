@@ -64,6 +64,34 @@ INIT_FIREWALL = REPO / "devcontainer" / "init-firewall.sh"
 FAILURES: list[tuple[str, str]] = []
 
 
+_EXTRAS_SCRATCH_HOME: str | None = None
+
+
+def _isolate_extras_env(env: dict) -> dict:
+    """Make an install-claude-extras.sh invocation harmless to the real
+    environment (security-review finding, 2026-08-30): the installer
+    unconditionally writes global git config — `core.hooksPath` to a path
+    under CLAUDE_CONFIG_DIR (a deleted TemporaryDirectory after teardown,
+    which silently detaches the content-guard pre-commit/commit-msg/pre-push
+    scanners until the next container start) and safe.directory entries —
+    and ensure_project_gitignore writes the real /workspace/.gitignore.
+    Redirects HOME (when it is still the real one) and GIT_CONFIG_GLOBAL to
+    a session-scoped scratch dir, and defaults VIBE_AUTO_GITIGNORE=0.
+    Respects overrides a test set deliberately. Every INSTALL_EXTRAS call
+    site MUST route its env through this helper —
+    test_extras_invocations_isolated pins that statically."""
+    global _EXTRAS_SCRATCH_HOME
+    if _EXTRAS_SCRATCH_HOME is None:
+        _EXTRAS_SCRATCH_HOME = tempfile.mkdtemp(prefix="vibe-extras-home.")
+    env = dict(env)
+    if env.get("HOME") == os.environ.get("HOME"):
+        env["HOME"] = _EXTRAS_SCRATCH_HOME
+    env.setdefault("GIT_CONFIG_GLOBAL",
+                   str(Path(_EXTRAS_SCRATCH_HOME) / "gitconfig"))
+    env.setdefault("VIBE_AUTO_GITIGNORE", "0")
+    return env
+
+
 def check(name: str, cond: bool, detail: str = "") -> bool:
     print(f"  {'✓' if cond else '✗'} {name}")
     if not cond:
@@ -2857,7 +2885,7 @@ def test_c_slash_command_synced() -> None:
             "CLAUDE_CONFIG_DIR": str(dest_dir),
         }
 
-        r = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        r = run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env))
         check("[/c] extras sync exit 0", r.returncode == 0,
               f"exit={r.returncode} stderr={r.stderr}")
 
@@ -3056,7 +3084,7 @@ def test_c_preserves_user_commands() -> None:
             "CLAUDE_CONFIG_DIR": str(dest_dir),
         }
 
-        r = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        r = run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env))
         check("[/c] sync exit 0", r.returncode == 0, f"exit={r.returncode} stderr={r.stderr}")
 
         # Check user command still exists with original content
@@ -3099,7 +3127,7 @@ def test_c_agents_not_touched_by_retirement() -> None:
             "CLAUDE_CONFIG_DIR": str(dest_dir),
         }
 
-        r = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        r = run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env))
         check("[/c] sync exit 0", r.returncode == 0, f"exit={r.returncode} stderr={r.stderr}")
 
         # Check that the old agent was NOT deleted
@@ -3280,7 +3308,7 @@ def test_task007_t3_install_basics_one_fragment() -> None:
             "CLAUDE_CONFIG_DIR": str(dest_dir),
         }
 
-        r = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        r = run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env))
         check("[task007/t3] install exit 0", r.returncode == 0,
               f"exit={r.returncode} stderr={r.stderr}")
 
@@ -3343,7 +3371,7 @@ def test_task007_t4_create_from_scratch() -> None:
         claude_md = dest_dir / "CLAUDE.md"
         check("[task007/t4] CLAUDE.md does not exist initially", not claude_md.exists())
 
-        r = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        r = run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env))
         check("[task007/t4] install exit 0", r.returncode == 0,
               f"exit={r.returncode} stderr={r.stderr}")
         check("[task007/t4] CLAUDE.md created", claude_md.exists(), str(claude_md))
@@ -3378,13 +3406,13 @@ def test_task007_t5_idempotency() -> None:
         claude_md = dest_dir / "CLAUDE.md"
 
         # Run install twice
-        r1 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        r1 = run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env))
         check("[task007/t5] first install exit 0", r1.returncode == 0)
 
         content1 = claude_md.read_text()
         hash1 = __import__("hashlib").sha256(content1.encode()).hexdigest()
 
-        r2 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        r2 = run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env))
         check("[task007/t5] second install exit 0", r2.returncode == 0)
 
         content2 = claude_md.read_text()
@@ -3421,7 +3449,7 @@ def test_task007_t6_user_content_preserved() -> None:
         claude_md = dest_dir / "CLAUDE.md"
 
         # First run
-        r1 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        r1 = run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env))
         check("[task007/t6] first install exit 0", r1.returncode == 0)
 
         # Insert user content mid-file (between what will be the vibe block and the rest)
@@ -3435,7 +3463,7 @@ def test_task007_t6_user_content_preserved() -> None:
         # Second run with different fragment set
         (fixture_src / "b-fragment.md").write_text("Fragment B\n")
 
-        r2 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        r2 = run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env))
         check("[task007/t6] second install exit 0", r2.returncode == 0)
 
         content2 = claude_md.read_text()
@@ -3474,7 +3502,7 @@ def test_task007_t7_empty_source_cleanup() -> None:
 
         claude_md = dest_dir / "CLAUDE.md"
 
-        r1 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        r1 = run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env))
         check("[task007/t7] first install exit 0", r1.returncode == 0)
 
         content_with_block = claude_md.read_text()
@@ -3487,7 +3515,7 @@ def test_task007_t7_empty_source_cleanup() -> None:
         fixture_src.mkdir()
 
         # Re-run
-        r2 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        r2 = run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env))
         check("[task007/t7] second install (empty source) exit 0", r2.returncode == 0)
 
         content_after = claude_md.read_text()
@@ -3498,7 +3526,7 @@ def test_task007_t7_empty_source_cleanup() -> None:
               "block removal check")
 
         # Run again to check no trailing blank-line accumulation
-        r3 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        r3 = run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env))
         check("[task007/t7] third install exit 0", r3.returncode == 0)
 
         content_after_2 = claude_md.read_text()
@@ -3528,7 +3556,7 @@ def test_task007_t8_missing_source_directory() -> None:
         }
 
         # Run should not error
-        r = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        r = run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env))
         check("[task007/t8] install exit 0 (no claude-md dir)", r.returncode == 0,
               f"exit={r.returncode} stderr={r.stderr}")
 
@@ -3537,7 +3565,7 @@ def test_task007_t8_missing_source_directory() -> None:
         claude_md_src.mkdir()
         (claude_md_src / "test.md").write_text("Content\n")
 
-        r1 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        r1 = run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env))
         check("[task007/t8] first install (with fragment) exit 0", r1.returncode == 0)
 
         claude_md = dest_dir / "CLAUDE.md"
@@ -3550,7 +3578,7 @@ def test_task007_t8_missing_source_directory() -> None:
         shutil.rmtree(claude_md_src)
 
         # Re-run
-        r2 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        r2 = run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env))
         check("[task007/t8] install exit 0 (missing claude-md)", r2.returncode == 0,
               f"exit={r.returncode} stderr={r.stderr}")
 
@@ -3584,7 +3612,7 @@ def test_task007_t9_posix_byte_order_sort() -> None:
             "CLAUDE_CONFIG_DIR": str(dest_dir),
         }
 
-        r = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        r = run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env))
         check("[task007/t9] install exit 0", r.returncode == 0)
 
         claude_md = dest_dir / "CLAUDE.md"
@@ -3630,7 +3658,7 @@ def test_task007_t10_agents_and_commands_still_work() -> None:
             "CLAUDE_CONFIG_DIR": str(dest_dir),
         }
 
-        r = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        r = run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env))
         check("[task007/t10] install exit 0", r.returncode == 0,
               f"exit={r.returncode} stderr={r.stderr}")
 
@@ -3697,7 +3725,7 @@ def test_task007_t11_write_env_hint_coexistence() -> None:
               "hint block check")
 
         # Second: run install-claude-extras with fragment
-        r2 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        r2 = run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env))
         check("[task007/t11] install-claude-extras exit 0", r2.returncode == 0,
               f"exit={r2.returncode} stderr={r2.stderr}")
 
@@ -3727,7 +3755,7 @@ def test_task007_t11_write_env_hint_coexistence() -> None:
         # Third: run install-claude-extras again with a different fragment set
         (fixture_src / "another-frag.md").write_text("Another content\n")
 
-        r3 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        r3 = run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env))
         check("[task007/t11] second install exit 0", r3.returncode == 0)
 
         content_after_second_install = claude_md.read_text()
@@ -3767,7 +3795,7 @@ def test_task007_t12_fragment_removal_and_separation() -> None:
         claude_md = dest_dir / "CLAUDE.md"
 
         # First install with both fragments
-        r1 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        r1 = run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env))
         check("[task007/t12] first install exit 0", r1.returncode == 0)
 
         content_two = claude_md.read_text()
@@ -3795,7 +3823,7 @@ def test_task007_t12_fragment_removal_and_separation() -> None:
         (fixture_src / "first.md").unlink()
 
         # Re-run install
-        r2 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        r2 = run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env))
         check("[task007/t12] second install (after removal) exit 0", r2.returncode == 0)
 
         content_one = claude_md.read_text()
@@ -3835,7 +3863,7 @@ def test_task007_t13_absent_source_with_preexisting_block() -> None:
         claude_md = dest_dir / "CLAUDE.md"
 
         # First install
-        r1 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        r1 = run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env))
         check("[task007/t13] first install exit 0", r1.returncode == 0)
 
         content_with_block = claude_md.read_text()
@@ -3854,7 +3882,7 @@ def test_task007_t13_absent_source_with_preexisting_block() -> None:
         shutil.rmtree(fixture_src.parent / "claude-md")
 
         # Re-run install
-        r2 = run(["bash", str(INSTALL_EXTRAS)], env=env)
+        r2 = run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env))
         check("[task007/t13] install exit 0 (after dir deletion)", r2.returncode == 0,
               f"exit={r2.returncode} stderr={r2.stderr}")
 
@@ -6096,7 +6124,7 @@ def test_install_extras_ssh_discipline_opt_in() -> None:
         env_off.pop("VIBE_SSH_AUTO", None)
         r_off = subprocess.run(
             ["bash", str(INSTALL_EXTRAS)],
-            env=env_off, capture_output=True, text=True,
+            env=_isolate_extras_env(env_off), capture_output=True, text=True,
         )
         check("[ssh-opt-in] install exits 0 with VIBE_SSH_AUTO unset",
               r_off.returncode == 0, f"rc={r_off.returncode} err={r_off.stderr[:200]}")
@@ -6117,7 +6145,7 @@ def test_install_extras_ssh_discipline_opt_in() -> None:
         env_on["VIBE_SSH_AUTO"] = "1"
         r_on = subprocess.run(
             ["bash", str(INSTALL_EXTRAS)],
-            env=env_on, capture_output=True, text=True,
+            env=_isolate_extras_env(env_on), capture_output=True, text=True,
         )
         check("[ssh-opt-in] install exits 0 with VIBE_SSH_AUTO=1",
               r_on.returncode == 0, f"rc={r_on.returncode} err={r_on.stderr[:200]}")
@@ -6156,7 +6184,7 @@ def _ssh_marker_result(env_vars: dict, setup: str) -> tuple[str, str]:
         env["VIBE_AUTO_GITIGNORE"] = "0"
         env.update(env_vars)
         r = subprocess.run(["bash", str(INSTALL_EXTRAS)],
-                           env=env, capture_output=True, text=True)
+                           env=_isolate_extras_env(env), capture_output=True, text=True)
         if r.returncode != 0:
             return (f"ERR(rc={r.returncode})", r.stderr)
         md = (dest / "CLAUDE.md").read_text()
@@ -6172,7 +6200,8 @@ def test_ssh_marker_fail_closed() -> None:
     VIBE_SSH_AUTO=1 stays the non-git escape hatch."""
     print("\n[ssh-marker: fail-closed forge resistance]")
     git_ws = ('git -C "$WS" init -q && git -C "$WS" config user.email t@t '
-              '&& git -C "$WS" config user.name t')
+              '&& git -C "$WS" config user.name t '
+              '&& git -C "$WS" config core.hooksPath /dev/null')
     state, _ = _ssh_marker_result({}, f'{git_ws}; touch "$WS/.vibe-allow-ssh"')
     check("[ssh-marker AC1] untracked marker in git ws -> opted IN", state == "IN", state)
     state, err = _ssh_marker_result(
@@ -6197,6 +6226,66 @@ def test_ssh_marker_fail_closed() -> None:
           "_op_opted_in()" in vibe_src, "")
 
 
+def test_extras_invocations_isolated() -> None:
+    """Every INSTALL_EXTRAS invocation must route its env through
+    _isolate_extras_env (security-review finding, 2026-08-30): the installer
+    writes global git config unconditionally, so an un-isolated call site
+    leaves the machine's core.hooksPath pointing at a deleted temp dir —
+    content-guard hooks silently detached until the next container start.
+    Static pin catches a future bare call site; the behavioural half runs
+    the installer once and asserts the real global git state is untouched."""
+    print("\n[extras-isolation: installer runs must not touch real git config]")
+    src = Path(__file__).read_text()
+    call_pat = re.compile(r'\["bash", str\(INSTALL_' + r'EXTRAS\)\],\s*env=(\w+|_isolate_extras_env)')
+    callers = call_pat.findall(src)
+    bare = [c for c in callers if c != "_isolate_extras_env"]
+    check("[extras-iso] no bare env= at any INSTALL_EXTRAS call site",
+          len(bare) == 0 and len(callers) > 0,
+          f"bare env names: {bare[:5]} (route through _isolate_extras_env)")
+    hp_before = run(["git", "config", "--global", "--get", "core.hooksPath"]).stdout
+    sd_before = run(["git", "config", "--global", "--get-all", "safe.directory"]).stdout
+    gitconfig = Path(os.environ.get("HOME", "/home/node")) / ".gitconfig"
+    bytes_before = gitconfig.read_bytes() if gitconfig.exists() else b""
+    with tempfile.TemporaryDirectory() as tmp:
+        env0 = {
+            **os.environ,
+            "VIBE_EXTRAS_SRC_ROOT": str(REPO / "devcontainer"),
+            "CLAUDE_CONFIG_DIR": tmp,
+        }
+        r = subprocess.run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env0),
+                           capture_output=True, text=True)
+        check("[extras-iso] isolated installer run exits 0", r.returncode == 0,
+              f"rc={r.returncode} err={r.stderr[:200]}")
+    hp_after = run(["git", "config", "--global", "--get", "core.hooksPath"]).stdout
+    sd_after = run(["git", "config", "--global", "--get-all", "safe.directory"]).stdout
+    bytes_after = gitconfig.read_bytes() if gitconfig.exists() else b""
+    check("[extras-iso] core.hooksPath unchanged", hp_before == hp_after,
+          f"{hp_before!r} -> {hp_after!r}")
+    check("[extras-iso] safe.directory unchanged", sd_before == sd_after,
+          f"{sd_before!r} -> {sd_after!r}")
+    check("[extras-iso] real ~/.gitconfig byte-identical", bytes_before == bytes_after,
+          "installer wrote the real global git config despite isolation")
+    # Same guard for setup-git.sh: its SRC/DST were once hardcoded to
+    # /home/node, so a "sandbox HOME" run still overwrote the REAL
+    # ~/.gitconfig via the .gitconfig-host cp (wiping core.hooksPath —
+    # content-guard detached). Run it sandboxed and assert no real change.
+    with tempfile.TemporaryDirectory() as td:
+        sb = Path(td) / "home"
+        sb.mkdir()
+        (sb / ".gitconfig-host").write_text("[user]\n\temail = t@t\n")
+        r = subprocess.run(["bash", str(SETUP_GIT_SH)],
+                           env={**os.environ, "HOME": str(sb)},
+                           capture_output=True, text=True)
+        check("[extras-iso] sandboxed setup-git.sh exits 0", r.returncode == 0,
+              r.stderr[:200])
+        check("[extras-iso] setup-git wrote the sandbox, not the real HOME",
+              (sb / ".gitconfig").exists(), "sandbox .gitconfig missing")
+    bytes_after2 = gitconfig.read_bytes() if gitconfig.exists() else b""
+    check("[extras-iso] real ~/.gitconfig survives sandboxed setup-git.sh",
+          bytes_before == bytes_after2,
+          "setup-git.sh still writes a hardcoded /home/node path")
+
+
 def test_install_extras_syncs_hooks() -> None:
     """install-claude-extras.sh installs hooks/*.sh with +x into $DEST_ROOT/hooks/."""
     print("\n[hooks: install-claude-extras.sh syncs every shipped hook]")
@@ -6206,7 +6295,7 @@ def test_install_extras_syncs_hooks() -> None:
         env["CLAUDE_CONFIG_DIR"] = tmp
         r = subprocess.run(
             ["bash", str(INSTALL_EXTRAS)],
-            env=env, capture_output=True, text=True,
+            env=_isolate_extras_env(env), capture_output=True, text=True,
         )
         check("[hooks] install-extras exits 0",
               r.returncode == 0, f"rc={r.returncode} err={r.stderr[:200]}")
@@ -6417,7 +6506,7 @@ def test_install_extras_brain2_md_gated() -> None:
         env_off["CLAUDE_CONFIG_DIR"] = str(dest_off)
         env_off["VIBE_BRAIN2_MOUNT_DIR"] = str(tmp_path / "nope")
         r_off = subprocess.run(["bash", str(INSTALL_EXTRAS)],
-                               env=env_off, capture_output=True, text=True)
+                               env=_isolate_extras_env(env_off), capture_output=True, text=True)
         check("[brain2] install exits 0 (no mount)",
               r_off.returncode == 0, r_off.stderr[:200])
         md_off = (dest_off / "CLAUDE.md").read_text()
@@ -6433,7 +6522,7 @@ def test_install_extras_brain2_md_gated() -> None:
         env_on["CLAUDE_CONFIG_DIR"] = str(dest_on)
         env_on["VIBE_BRAIN2_MOUNT_DIR"] = str(mount_dir)
         r_on = subprocess.run(["bash", str(INSTALL_EXTRAS)],
-                              env=env_on, capture_output=True, text=True)
+                              env=_isolate_extras_env(env_on), capture_output=True, text=True)
         check("[brain2] install exits 0 (mount present)",
               r_on.returncode == 0, r_on.stderr[:200])
         md_on = (dest_on / "CLAUDE.md").read_text()
@@ -6484,7 +6573,7 @@ def test_install_extras_brain2_skills_synced() -> None:
         env["CLAUDE_CONFIG_DIR"] = str(dest)
         env["VIBE_BRAIN2_MOUNT_DIR"] = str(mount)
         r = subprocess.run(["bash", str(INSTALL_EXTRAS)],
-                           env=env, capture_output=True, text=True)
+                           env=_isolate_extras_env(env), capture_output=True, text=True)
         check("[brain2] install exits 0 (mount present)",
               r.returncode == 0, r.stderr[:200])
         dskills = dest / "skills"
@@ -6506,7 +6595,7 @@ def test_install_extras_brain2_skills_synced() -> None:
         env2["CLAUDE_CONFIG_DIR"] = str(dest2)
         env2["VIBE_BRAIN2_MOUNT_DIR"] = str(tmp_path / "nope")
         r2 = subprocess.run(["bash", str(INSTALL_EXTRAS)],
-                            env=env2, capture_output=True, text=True)
+                            env=_isolate_extras_env(env2), capture_output=True, text=True)
         check("[brain2] install exits 0 (no mount)",
               r2.returncode == 0, r2.stderr[:200])
         check("[brain2] no skills synced without the mount",
@@ -8561,7 +8650,7 @@ def test_task017_c3_install_extras_shared_repos_md_gated() -> None:
         env_off = env_base.copy()
         env_off["CLAUDE_CONFIG_DIR"] = str(dest_off)
         env_off["VIBE_SHARED_REPOS_MANIFEST"] = str(tmp_path / "does-not-exist-manifest")
-        r_off = subprocess.run(["bash", str(INSTALL_EXTRAS)], env=env_off, capture_output=True, text=True)
+        r_off = subprocess.run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env_off), capture_output=True, text=True)
         check("[c3-gate] install exits 0 (missing manifest)", r_off.returncode == 0, r_off.stderr[:200])
         md_off = (dest_off / "CLAUDE.md").read_text()
         check("[c3-gate] shared-repos.md ABSENT when manifest file is missing",
@@ -8577,7 +8666,7 @@ def test_task017_c3_install_extras_shared_repos_md_gated() -> None:
         env_empty = env_base.copy()
         env_empty["CLAUDE_CONFIG_DIR"] = str(dest_empty)
         env_empty["VIBE_SHARED_REPOS_MANIFEST"] = str(empty_manifest)
-        r_empty = subprocess.run(["bash", str(INSTALL_EXTRAS)], env=env_empty, capture_output=True, text=True)
+        r_empty = subprocess.run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env_empty), capture_output=True, text=True)
         check("[c3-gate] install exits 0 (empty manifest)", r_empty.returncode == 0, r_empty.stderr[:200])
         md_empty = (dest_empty / "CLAUDE.md").read_text()
         check("[c3-gate] shared-repos.md ABSENT when manifest file is empty",
@@ -8590,7 +8679,7 @@ def test_task017_c3_install_extras_shared_repos_md_gated() -> None:
         env_on = env_base.copy()
         env_on["CLAUDE_CONFIG_DIR"] = str(dest_on)
         env_on["VIBE_SHARED_REPOS_MANIFEST"] = str(manifest)
-        r_on = subprocess.run(["bash", str(INSTALL_EXTRAS)], env=env_on, capture_output=True, text=True)
+        r_on = subprocess.run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env_on), capture_output=True, text=True)
         check("[c3-gate] install exits 0 (non-empty manifest)", r_on.returncode == 0, r_on.stderr[:200])
         md_on = (dest_on / "CLAUDE.md").read_text()
         check("[c3-gate] shared-repos.md PRESENT when manifest is non-empty",
@@ -9287,6 +9376,10 @@ def test_task019_ac1_staged_ghp_token_blocks() -> None:
         repo = Path(td) / "repo"
         repo.mkdir()
         run(["git", "init"], cwd=repo)
+        # Fixture repo: neutralise the machine-global content-guard hooks at
+        # local scope so fixture commits (some deliberately carry secrets/PII)
+        # are deterministic; hook-exercising tests re-pin their own hooksPath.
+        run(["git", "config", "core.hooksPath", "/dev/null"], cwd=repo)
         run(["git", "config", "user.email", "test@example.com"], cwd=repo)
         run(["git", "config", "user.name", "Test User"], cwd=repo)
 
@@ -9326,6 +9419,10 @@ def test_task019_ac3_staged_rfc1918_ip_warns() -> None:
         repo = Path(td) / "repo"
         repo.mkdir()
         run(["git", "init"], cwd=repo)
+        # Fixture repo: neutralise the machine-global content-guard hooks at
+        # local scope so fixture commits (some deliberately carry secrets/PII)
+        # are deterministic; hook-exercising tests re-pin their own hooksPath.
+        run(["git", "config", "core.hooksPath", "/dev/null"], cwd=repo)
         run(["git", "config", "user.email", "test@example.com"], cwd=repo)
         run(["git", "config", "user.name", "Test User"], cwd=repo)
 
@@ -9346,6 +9443,10 @@ def test_task019_ac4_clean_diff_passes() -> None:
         repo = Path(td) / "repo"
         repo.mkdir()
         run(["git", "init"], cwd=repo)
+        # Fixture repo: neutralise the machine-global content-guard hooks at
+        # local scope so fixture commits (some deliberately carry secrets/PII)
+        # are deterministic; hook-exercising tests re-pin their own hooksPath.
+        run(["git", "config", "core.hooksPath", "/dev/null"], cwd=repo)
         run(["git", "config", "user.email", "test@example.com"], cwd=repo)
         run(["git", "config", "user.name", "Test User"], cwd=repo)
 
@@ -9365,6 +9466,10 @@ def test_task019_ac5_override_bypasses_and_logs() -> None:
         repo = Path(td) / "repo"
         repo.mkdir()
         run(["git", "init"], cwd=repo)
+        # Fixture repo: neutralise the machine-global content-guard hooks at
+        # local scope so fixture commits (some deliberately carry secrets/PII)
+        # are deterministic; hook-exercising tests re-pin their own hooksPath.
+        run(["git", "config", "core.hooksPath", "/dev/null"], cwd=repo)
         run(["git", "config", "user.email", "test@example.com"], cwd=repo)
         run(["git", "config", "user.name", "Test User"], cwd=repo)
 
@@ -9387,6 +9492,10 @@ def test_task019_ac6_allowlist_suppresses_finding() -> None:
         repo = Path(td) / "repo"
         repo.mkdir()
         run(["git", "init"], cwd=repo)
+        # Fixture repo: neutralise the machine-global content-guard hooks at
+        # local scope so fixture commits (some deliberately carry secrets/PII)
+        # are deterministic; hook-exercising tests re-pin their own hooksPath.
+        run(["git", "config", "core.hooksPath", "/dev/null"], cwd=repo)
         run(["git", "config", "user.email", "test@example.com"], cwd=repo)
         run(["git", "config", "user.name", "Test User"], cwd=repo)
 
@@ -9405,6 +9514,10 @@ def test_task019_ac6_allowlist_suppresses_finding() -> None:
         repo2 = Path(td) / "repo2"
         repo2.mkdir()
         run(["git", "init"], cwd=repo2)
+        # Fixture repo: neutralise the machine-global content-guard hooks at
+        # local scope so fixture commits (some deliberately carry secrets/PII)
+        # are deterministic; hook-exercising tests re-pin their own hooksPath.
+        run(["git", "config", "core.hooksPath", "/dev/null"], cwd=repo2)
         run(["git", "config", "user.email", "test@example.com"], cwd=repo2)
         run(["git", "config", "user.name", "Test User"], cwd=repo2)
 
@@ -9423,6 +9536,10 @@ def test_task019_ac7_guard_off_marker_skips_scan() -> None:
         repo = Path(td) / "repo"
         repo.mkdir()
         run(["git", "init"], cwd=repo)
+        # Fixture repo: neutralise the machine-global content-guard hooks at
+        # local scope so fixture commits (some deliberately carry secrets/PII)
+        # are deterministic; hook-exercising tests re-pin their own hooksPath.
+        run(["git", "config", "core.hooksPath", "/dev/null"], cwd=repo)
         run(["git", "config", "user.email", "test@example.com"], cwd=repo)
         run(["git", "config", "user.name", "Test User"], cwd=repo)
 
@@ -9457,7 +9574,7 @@ def test_task019_ac8_install_hooks() -> None:
             "VIBE_EXTRAS_SRC_ROOT": str(REPO / "devcontainer"),
         }
 
-        r = run(["bash", str(INSTALL_EXTRAS)], env=env, cwd=REPO)
+        r = run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env), cwd=REPO)
         check("[task_019 AC8] install exits 0", r.returncode == 0, r.stderr[:200])
 
         hooks_dir = claude_dir / "vibe-git-hooks"
@@ -9480,6 +9597,10 @@ def test_task019_ac9_audit_history_finds_deleted_secret() -> None:
         repo = Path(td) / "repo"
         repo.mkdir()
         run(["git", "init"], cwd=repo)
+        # Fixture repo: neutralise the machine-global content-guard hooks at
+        # local scope so fixture commits (some deliberately carry secrets/PII)
+        # are deterministic; hook-exercising tests re-pin their own hooksPath.
+        run(["git", "config", "core.hooksPath", "/dev/null"], cwd=repo)
         run(["git", "config", "user.email", "test@example.com"], cwd=repo)
         run(["git", "config", "user.name", "Test User"], cwd=repo)
 
@@ -9515,6 +9636,14 @@ def test_task019_ac10_real_hooks_block_commit() -> None:
         hooks_dir = repo / ".git" / "hooks"
 
         run(["git", "init"], cwd=repo)
+
+        # Fixture repo: neutralise the machine-global content-guard hooks at
+
+        # local scope so fixture commits (some deliberately carry secrets/PII)
+
+        # are deterministic; hook-exercising tests re-pin their own hooksPath.
+
+        run(["git", "config", "core.hooksPath", "/dev/null"], cwd=repo)
         # noreply form: the task_021 identity gate in pre-commit must stay
         # quiet here so this test exercises only the content scan.
         run(["git", "config", "user.email", "123+tester@users.noreply.github.com"], cwd=repo)
@@ -9603,6 +9732,10 @@ def test_task019_ac16_audit_history_reports_warn_pii() -> None:
         repo = Path(td) / "repo"
         repo.mkdir()
         run(["git", "init"], cwd=repo)
+        # Fixture repo: neutralise the machine-global content-guard hooks at
+        # local scope so fixture commits (some deliberately carry secrets/PII)
+        # are deterministic; hook-exercising tests re-pin their own hooksPath.
+        run(["git", "config", "core.hooksPath", "/dev/null"], cwd=repo)
         run(["git", "config", "user.email", "test@example.com"], cwd=repo)
         run(["git", "config", "user.name", "Test User"], cwd=repo)
 
@@ -9637,6 +9770,10 @@ def test_task019_ac17_new_branch_push_blocks_only_block_tier() -> None:
 
         # Setup local repo
         run(["git", "init"], cwd=repo)
+        # Fixture repo: neutralise the machine-global content-guard hooks at
+        # local scope so fixture commits (some deliberately carry secrets/PII)
+        # are deterministic; hook-exercising tests re-pin their own hooksPath.
+        run(["git", "config", "core.hooksPath", "/dev/null"], cwd=repo)
         run(["git", "config", "user.email", "test@example.com"], cwd=repo)
         run(["git", "config", "user.name", "Test User"], cwd=repo)
 
@@ -9709,6 +9846,10 @@ def test_task021_ac1_identity_mode_warns_on_real_email() -> None:
         repo = Path(td) / "repo"
         repo.mkdir()
         run(["git", "init"], cwd=repo)
+        # Fixture repo: neutralise the machine-global content-guard hooks at
+        # local scope so fixture commits (some deliberately carry secrets/PII)
+        # are deterministic; hook-exercising tests re-pin their own hooksPath.
+        run(["git", "config", "core.hooksPath", "/dev/null"], cwd=repo)
         run(["git", "config", "user.name", "Test User"], cwd=repo)
 
         # Real personal email -> WARN, exit 1
@@ -9748,6 +9889,10 @@ def test_task021_ac2_precommit_warns_on_real_email_identity() -> None:
         repo.mkdir()
         hooks_dir = repo / ".git" / "hooks"
         run(["git", "init"], cwd=repo)
+        # Fixture repo: neutralise the machine-global content-guard hooks at
+        # local scope so fixture commits (some deliberately carry secrets/PII)
+        # are deterministic; hook-exercising tests re-pin their own hooksPath.
+        run(["git", "config", "core.hooksPath", "/dev/null"], cwd=repo)
         run(["git", "config", "user.name", "Test User"], cwd=repo)
         run(["git", "config", "user.email", "someone@example.com"], cwd=repo)
 
@@ -9782,6 +9927,10 @@ def test_task021_ac3_audit_history_reports_identities() -> None:
         repo = Path(td) / "repo"
         repo.mkdir()
         run(["git", "init"], cwd=repo)
+        # Fixture repo: neutralise the machine-global content-guard hooks at
+        # local scope so fixture commits (some deliberately carry secrets/PII)
+        # are deterministic; hook-exercising tests re-pin their own hooksPath.
+        run(["git", "config", "core.hooksPath", "/dev/null"], cwd=repo)
         run(["git", "config", "user.name", "Test User"], cwd=repo)
         run(["git", "config", "user.email", "hidden@personal.net"], cwd=repo)
         (repo / "a.txt").write_text("clean content\n")
@@ -9816,7 +9965,9 @@ def test_task020_ac4_committed_marker_refused() -> None:
     print("\n[task_020 AC4: COMMITTED .vibe-allow-op refused (forge-resistant)]")
     setup = (
         'git -C "$WS" init -q; git -C "$WS" config user.email t@t; '
-        'git -C "$WS" config user.name t; touch "$WS/.vibe-allow-op"; '
+        'git -C "$WS" config user.name t; '
+        'git -C "$WS" config core.hooksPath /dev/null; '
+        'touch "$WS/.vibe-allow-op"; '
         'git -C "$WS" add .vibe-allow-op; git -C "$WS" commit -qm x'
     )
     res = _op_opted_in_result({}, setup)
@@ -9989,6 +10140,10 @@ def test_task022_ac2_corpus_staged_mode() -> None:
         repo = Path(td) / "repo"
         repo.mkdir()
         run(["git", "init"], cwd=repo)
+        # Fixture repo: neutralise the machine-global content-guard hooks at
+        # local scope so fixture commits (some deliberately carry secrets/PII)
+        # are deterministic; hook-exercising tests re-pin their own hooksPath.
+        run(["git", "config", "core.hooksPath", "/dev/null"], cwd=repo)
         run(["git", "config", "user.email", "test@example.com"], cwd=repo)
         run(["git", "config", "user.name", "Test User"], cwd=repo)
         f = repo / "corpus.txt"
@@ -10015,6 +10170,10 @@ def test_task022_ac2_corpus_range_block_tier_only() -> None:
         repo = Path(td) / "repo"
         repo.mkdir()
         run(["git", "init"], cwd=repo)
+        # Fixture repo: neutralise the machine-global content-guard hooks at
+        # local scope so fixture commits (some deliberately carry secrets/PII)
+        # are deterministic; hook-exercising tests re-pin their own hooksPath.
+        run(["git", "config", "core.hooksPath", "/dev/null"], cwd=repo)
         run(["git", "config", "user.email", "test@example.com"], cwd=repo)
         run(["git", "config", "user.name", "Test User"], cwd=repo)
         f = repo / "corpus.txt"
@@ -10080,6 +10239,10 @@ def test_task022_ac3_messages_stdin_parity_and_attribution() -> None:
         repo = Path(td) / "repo"
         repo.mkdir()
         run(["git", "init"], cwd=repo)
+        # Fixture repo: neutralise the machine-global content-guard hooks at
+        # local scope so fixture commits (some deliberately carry secrets/PII)
+        # are deterministic; hook-exercising tests re-pin their own hooksPath.
+        run(["git", "config", "core.hooksPath", "/dev/null"], cwd=repo)
         run(["git", "config", "user.email", "test@example.com"], cwd=repo)
         run(["git", "config", "user.name", "Test User"], cwd=repo)
 
@@ -10193,6 +10356,10 @@ def test_task022_ac5_exit_codes_all_modes() -> None:
         repo = Path(td) / "repo"
         repo.mkdir()
         run(["git", "init"], cwd=repo)
+        # Fixture repo: neutralise the machine-global content-guard hooks at
+        # local scope so fixture commits (some deliberately carry secrets/PII)
+        # are deterministic; hook-exercising tests re-pin their own hooksPath.
+        run(["git", "config", "core.hooksPath", "/dev/null"], cwd=repo)
         run(["git", "config", "user.email", "test@example.com"], cwd=repo)
         run(["git", "config", "user.name", "Test User"], cwd=repo)
         (repo / "clean.txt").write_text("hello world\n")
@@ -10245,6 +10412,10 @@ def test_task022_ac5_exit_codes_all_modes() -> None:
         repo = Path(td) / "repo"
         repo.mkdir()
         run(["git", "init"], cwd=repo)
+        # Fixture repo: neutralise the machine-global content-guard hooks at
+        # local scope so fixture commits (some deliberately carry secrets/PII)
+        # are deterministic; hook-exercising tests re-pin their own hooksPath.
+        run(["git", "config", "core.hooksPath", "/dev/null"], cwd=repo)
         run(["git", "config", "user.email", "test@example.com"], cwd=repo)
         run(["git", "config", "user.name", "Test User"], cwd=repo)
         (repo / "f.txt").write_text("base\n")
@@ -10269,6 +10440,10 @@ def test_task022_ac5_exit_codes_all_modes() -> None:
         repo = Path(td) / "repo"
         repo.mkdir()
         run(["git", "init"], cwd=repo)
+        # Fixture repo: neutralise the machine-global content-guard hooks at
+        # local scope so fixture commits (some deliberately carry secrets/PII)
+        # are deterministic; hook-exercising tests re-pin their own hooksPath.
+        run(["git", "config", "core.hooksPath", "/dev/null"], cwd=repo)
         run(["git", "config", "user.name", "Test User"], cwd=repo)
         run(["git", "config", "user.email", "123+tester@users.noreply.github.com"], cwd=repo)
         r_clean = run(["bash", str(VIBE_CONTENT_SCANNER), "--identity"], cwd=repo)
@@ -10287,6 +10462,10 @@ def test_task022_ac6_override_and_optout_new_primitives() -> None:
         repo = Path(td) / "repo"
         repo.mkdir()
         run(["git", "init"], cwd=repo)
+        # Fixture repo: neutralise the machine-global content-guard hooks at
+        # local scope so fixture commits (some deliberately carry secrets/PII)
+        # are deterministic; hook-exercising tests re-pin their own hooksPath.
+        run(["git", "config", "core.hooksPath", "/dev/null"], cwd=repo)
         run(["git", "config", "user.email", "test@example.com"], cwd=repo)
         run(["git", "config", "user.name", "Test User"], cwd=repo)
         token = "ghp_" + "A" * 36
@@ -10303,6 +10482,10 @@ def test_task022_ac6_override_and_optout_new_primitives() -> None:
         repo = Path(td) / "repo"
         repo.mkdir()
         run(["git", "init"], cwd=repo)
+        # Fixture repo: neutralise the machine-global content-guard hooks at
+        # local scope so fixture commits (some deliberately carry secrets/PII)
+        # are deterministic; hook-exercising tests re-pin their own hooksPath.
+        run(["git", "config", "core.hooksPath", "/dev/null"], cwd=repo)
         run(["git", "config", "user.email", "test@example.com"], cwd=repo)
         run(["git", "config", "user.name", "Test User"], cwd=repo)
         (repo / ".vibe-content-guard-off").write_text("")
@@ -10428,6 +10611,10 @@ def _t23_ghp() -> str:
 def _t23_init_repo(repo: Path) -> None:
     repo.mkdir(parents=True, exist_ok=True)
     run(["git", "init"], cwd=repo)
+    # Fixture repo: neutralise the machine-global content-guard hooks at
+    # local scope so fixture commits (some deliberately carry secrets/PII)
+    # are deterministic; hook-exercising tests re-pin their own hooksPath.
+    run(["git", "config", "core.hooksPath", "/dev/null"], cwd=repo)
     run(["git", "config", "user.email", "test@example.com"], cwd=repo)
     run(["git", "config", "user.name", "Test User"], cwd=repo)
 
@@ -10890,6 +11077,10 @@ def _t24_ip(parts: tuple = ("192", "168", "44", "5")) -> str:
 def _t24_init_repo(repo: Path) -> None:
     repo.mkdir(parents=True, exist_ok=True)
     run(["git", "init"], cwd=repo)
+    # Fixture repo: neutralise the machine-global content-guard hooks at
+    # local scope so fixture commits (some deliberately carry secrets/PII)
+    # are deterministic; hook-exercising tests re-pin their own hooksPath.
+    run(["git", "config", "core.hooksPath", "/dev/null"], cwd=repo)
     run(["git", "config", "user.email", "test@example.com"], cwd=repo)
     run(["git", "config", "user.name", "Test User"], cwd=repo)
 
@@ -11478,6 +11669,7 @@ def test_task026_ac4_auto_detect_repo_with_git() -> None:
 
         # Set up git repo with origin remote pointing to GitHub
         run(["git", "init"], cwd=checkout, env=env)
+        run(["git", "config", "core.hooksPath", "/dev/null"], cwd=checkout, env=env)
         run(["git", "remote", "add", "origin", "https://github.com/owner/repo.git"], cwd=checkout, env=env)
 
         script = f"""
@@ -11921,6 +12113,7 @@ def test_task026_c2_pat_no_arg_refuses_invalid_detected_slug() -> None:
         env = {**os.environ, "HOME": str(tmp), "PATH": new_path, "VIBE_CONFIG": f"{tmp}/no-config", "VIBE_SOURCE_ONLY": "1"}
 
         run(["git", "init"], cwd=checkout, env=env)
+        run(["git", "config", "core.hooksPath", "/dev/null"], cwd=checkout, env=env)
         run(["git", "remote", "add", "origin", "https://github.com/ow+ner/repo.git"], cwd=checkout, env=env)
 
         script = f"""
@@ -13238,6 +13431,7 @@ def main() -> int:
     test_conversation_history_fragment()
     test_install_extras_ssh_discipline_opt_in()
     test_ssh_marker_fail_closed()
+    test_extras_invocations_isolated()
     test_brain2_zotero_source_resolution()
     test_render_devcontainer_with_mounts()
     test_op_mcp_addhost_injection()

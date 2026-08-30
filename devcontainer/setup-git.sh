@@ -10,8 +10,12 @@
 
 set -euo pipefail
 
-SRC=/home/node/.gitconfig-host
-DST=/home/node/.gitconfig
+# $HOME-relative, not hardcoded /home/node: identical in production (HOME is
+# /home/node), but a hardcoded DST made every sandbox-HOME test run overwrite
+# the REAL ~/.gitconfig via the cp below — wiping core.hooksPath and silently
+# detaching the content-guard hooks (found 2026-08-30 chasing exactly that).
+SRC="$HOME/.gitconfig-host"
+DST="$HOME/.gitconfig"
 
 if [ -f "$SRC" ]; then
   cp "$SRC" "$DST"
