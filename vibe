@@ -2706,15 +2706,25 @@ _op_opted_in() {
   local ws="$1"
   [ "${VIBE_OP_AUTO:-}" = "1" ] && return 0
   [ -f "$ws/.vibe-allow-op" ] || return 1
-  # Marker present — require a verifiable git work tree, else refuse (fail closed).
-  if ! git -C "$ws" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  # Marker present — require a verifiable git work tree, else refuse (fail
+  # closed). String-compare: rev-parse exits 0 printing "false" inside .git.
+  if [ "$(git -C "$ws" rev-parse --is-inside-work-tree 2>/dev/null)" != "true" ]; then
     echo "  ⚠ .vibe-allow-op present but this workspace isn't a verifiable git work tree — OP opt-in refused (a marker in a non-git download must not enable OP). Set VIBE_OP_AUTO=1 in ~/.vibe/config for a trusted non-git project." >&2
     return 1
   fi
   # In a work tree — accept only if the marker is NOT tracked (a committed marker
-  # could be forged by a PR).
-  if git -C "$ws" ls-files --error-unmatch .vibe-allow-op >/dev/null 2>&1; then
+  # could be forged by a PR). :(icase): on macOS's case-folding filesystem a
+  # committed .Vibe-Allow-OP satisfies the -f test while dodging a
+  # case-sensitive index lookup.
+  if git -C "$ws" ls-files --error-unmatch ':(icase).vibe-allow-op' >/dev/null 2>&1; then
     echo "  ⚠ .vibe-allow-op is COMMITTED to this repo — ignored (OP opt-in must be a local, untracked file; a committed marker could be forged by a PR). 'touch .vibe-allow-op' locally to enable." >&2
+    return 1
+  fi
+  # Positive proof of untrackedness — --error-unmatch exits 1 for "not
+  # tracked" AND for any git error; its failure alone must not open the gate.
+  # No --exclude-standard: an ignored marker must still be listed.
+  if [ -z "$(git -C "$ws" ls-files -o -- ':(icase).vibe-allow-op' 2>/dev/null)" ]; then
+    echo "  ⚠ .vibe-allow-op could not be positively verified as an untracked file — OP opt-in refused (fail closed). Set VIBE_OP_AUTO=1 in ~/.vibe/config for a trusted non-git project." >&2
     return 1
   fi
   return 0

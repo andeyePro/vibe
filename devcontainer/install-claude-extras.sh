@@ -59,6 +59,63 @@ install_hooks() {
 # Install inline-prose Claude MD fragments into a managed block at the END
 # of $DEST_ROOT/CLAUDE.md. The block is delimited by HTML comment markers
 # distinct from write-env-hint.sh's block (which sits at the TOP).
+# _ssh_marker_opted_in — true iff THIS project is authorised to drop the
+# per-action SSH ask (i.e. omit the ssh-discipline.md fragment). Runs
+# IN-CONTAINER, so it cannot source the host launcher — it MIRRORS the
+# launcher's _op_opted_in semantics (see /workspace/vibe) and the two must
+# stay semantically paired (smoke-test pins this). Two opt-in signals:
+#   - VIBE_SSH_AUTO=1 (plumbed from ~/.vibe/config via containerEnv) —
+#     machine-global, and the escape hatch for genuinely non-git projects.
+#   - an UNTRACKED /workspace/.vibe-allow-ssh marker — per-project.
+# The marker is honoured ONLY with positive proof it is a local, untracked
+# file in a verifiable git work tree — fail CLOSED otherwise (the ask is
+# kept, nothing breaks). A marker COMMITTED to the repo is refused (a PR
+# must not be able to grant every clone autonomous SSH), and a marker where
+# git can't confirm tracking state (no git binary, not a work tree, git
+# error) is also refused — a ZIP/tarball distribution shipping the marker
+# must not silently disable the ask. VIBE_SSH_MARKER_WS is a test override.
+_ssh_marker_opted_in() {
+  # The workspace override is honoured ONLY under the smoke harness
+  # (VIBE_SMOKE=1) — a security-relevant path must not be relocatable by
+  # ambient env if the containerEnv plumbing ever broadens.
+  local ws=/workspace
+  if [ -n "${VIBE_SSH_MARKER_WS:-}" ] && [ "${VIBE_SMOKE:-}" = "1" ]; then
+    ws="$VIBE_SSH_MARKER_WS"
+  fi
+  if [ "${VIBE_SSH_AUTO:-0}" = "1" ]; then
+    return 0
+  fi
+  if [ ! -f "$ws/.vibe-allow-ssh" ]; then
+    return 1
+  fi
+  if ! command -v git >/dev/null 2>&1; then
+    echo "  ⚠ .vibe-allow-ssh present but git is unavailable to verify it — SSH opt-in refused (fail closed). Set VIBE_SSH_AUTO=1 in ~/.vibe/config to opt in without a marker." >&2
+    return 1
+  fi
+  # String-compare the output — rev-parse exits 0 printing "false" from
+  # inside a .git dir.
+  if [ "$(git -C "$ws" rev-parse --is-inside-work-tree 2>/dev/null)" != "true" ]; then
+    echo "  ⚠ .vibe-allow-ssh present but this workspace isn't a verifiable git work tree — SSH opt-in refused (a marker in a non-git download must not disable the per-action ask). Set VIBE_SSH_AUTO=1 in ~/.vibe/config for a trusted non-git project." >&2
+    return 1
+  fi
+  # :(icase) — the marker's -f test resolves through a case-folding
+  # filesystem on macOS bind mounts, so a repo committing .Vibe-Allow-SSH
+  # would otherwise satisfy -f while dodging a case-sensitive index lookup.
+  if git -C "$ws" ls-files --error-unmatch ':(icase).vibe-allow-ssh' >/dev/null 2>&1; then
+    echo "  ⚠ .vibe-allow-ssh is COMMITTED to this repo — ignored (SSH opt-in must be a local, untracked file; a committed marker would grant autonomous SSH to every clone). 'touch .vibe-allow-ssh' locally, untracked, then relaunch." >&2
+    return 1
+  fi
+  # Positive proof of untrackedness — ls-files --error-unmatch exits 1 for
+  # "not tracked" AND for any git error, so its failure alone must not open
+  # the gate. -o without --exclude-standard: the marker is gitignored by the
+  # managed block, and ignored files must still be listed here.
+  if [ -z "$(git -C "$ws" ls-files -o -- ':(icase).vibe-allow-ssh' 2>/dev/null)" ]; then
+    echo "  ⚠ .vibe-allow-ssh could not be positively verified as an untracked file — SSH opt-in refused (fail closed). Set VIBE_SSH_AUTO=1 in ~/.vibe/config to opt in without a marker." >&2
+    return 1
+  fi
+  return 0
+}
+
 install_claude_md_fragments() {
   local src_dir="$SRC_ROOT/claude-md"
   local target="$DEST_ROOT/CLAUDE.md"
@@ -90,16 +147,15 @@ install_claude_md_fragments() {
 
   # Collect sorted fragment files (LC_ALL=C for POSIX byte-order).
   # ssh-discipline.md is omitted when the user has opted into autonomous SSH
-  # for this project, either via VIBE_SSH_AUTO=1 in ~/.vibe/config (plumbed
-  # in through devcontainer.json's remoteEnv/containerEnv) or by touching
-  # /workspace/.vibe-allow-ssh in the project root.
+  # for this project — VIBE_SSH_AUTO=1, or an UNTRACKED .vibe-allow-ssh
+  # marker with fail-closed verification (see _ssh_marker_opted_in above).
   local fragments=()
   if [ -d "$src_dir" ]; then
     local f
     while IFS= read -r f; do
       [ -e "$f" ] || continue
       if [ "$(basename "$f")" = "ssh-discipline.md" ]; then
-        if [ "${VIBE_SSH_AUTO:-0}" = "1" ] || [ -f /workspace/.vibe-allow-ssh ]; then
+        if _ssh_marker_opted_in; then
           continue
         fi
       fi
@@ -303,6 +359,8 @@ ensure_project_gitignore() {
     echo ".claude/settings.local.json"
     echo ".vibe/"
     echo ".vibe-signals/"
+    echo ".vibe-allow-ssh"
+    echo ".vibe-allow-op"
     echo "$close"
   } >> "$gitignore"
   echo "vibe: added managed runtime-exclusions block to $gitignore" >&2

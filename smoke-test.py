@@ -5807,6 +5807,8 @@ def test_install_extras_ensures_project_gitignore() -> None:
           ".claude/settings.local.json" in src, "")
     check("[gi-fn] excludes .vibe/",
           '".vibe/"' in src or "echo \".vibe/\"" in src, "")
+    check("[gi-fn] excludes .vibe-allow-ssh",
+          'echo ".vibe-allow-ssh"' in src, "")
     check("[gi-fn] called from main script body",
           "ensure_project_gitignore\n" in src or "ensure_project_gitignore$" in src.rstrip() + "\n", "")
 
@@ -6126,6 +6128,73 @@ def test_install_extras_ssh_discipline_opt_in() -> None:
         check("[ssh-opt-in] other fragments still present with opt-in",
               "<!-- vibe-md: web-research.md -->" in md_on,
               "opt-in dropped unrelated fragments")
+
+
+def _ssh_marker_result(env_vars: dict, setup: str) -> tuple[str, str]:
+    """Run install-claude-extras.sh against a temp workspace built by
+    `setup` (bash with WS=workspace path). Returns (IN|OUT, stderr):
+    IN = ssh-discipline.md omitted (opt-in honoured), OUT = fragment kept."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        dest = tmp_path / "dest"
+        dest.mkdir()
+        subprocess.run(["bash", "-c", f'WS="{ws}"; {setup}'],
+                       capture_output=True, text=True)
+        env = os.environ.copy()
+        env.pop("VIBE_SSH_AUTO", None)
+        env["VIBE_EXTRAS_SRC_ROOT"] = str(REPO / "devcontainer")
+        env["CLAUDE_CONFIG_DIR"] = str(dest)
+        env["VIBE_SSH_MARKER_WS"] = str(ws)
+        env["VIBE_SMOKE"] = "1"  # gates the marker-ws override
+        # Keep the real environment untouched: the installer writes global
+        # git config (core.hooksPath at a throwaway path!) and would add the
+        # managed gitignore block to the real /workspace.
+        env["HOME"] = str(tmp_path)
+        env["GIT_CONFIG_GLOBAL"] = str(tmp_path / "gitconfig")
+        env["VIBE_AUTO_GITIGNORE"] = "0"
+        env.update(env_vars)
+        r = subprocess.run(["bash", str(INSTALL_EXTRAS)],
+                           env=env, capture_output=True, text=True)
+        if r.returncode != 0:
+            return (f"ERR(rc={r.returncode})", r.stderr)
+        md = (dest / "CLAUDE.md").read_text()
+        state = "IN" if "<!-- vibe-md: ssh-discipline.md -->" not in md else "OUT"
+        return (state, r.stderr)
+
+
+def test_ssh_marker_fail_closed() -> None:
+    """.vibe-allow-ssh forge-resistance (mirrors task_020's _op_opted_in for
+    the OP marker): the marker disables the per-action-SSH-ask fragment ONLY
+    as a local untracked file in a verifiable git work tree. Committed or
+    non-git markers are refused fail-closed (fragment kept) with a stderr ⚠;
+    VIBE_SSH_AUTO=1 stays the non-git escape hatch."""
+    print("\n[ssh-marker: fail-closed forge resistance]")
+    git_ws = ('git -C "$WS" init -q && git -C "$WS" config user.email t@t '
+              '&& git -C "$WS" config user.name t')
+    state, _ = _ssh_marker_result({}, f'{git_ws}; touch "$WS/.vibe-allow-ssh"')
+    check("[ssh-marker AC1] untracked marker in git ws -> opted IN", state == "IN", state)
+    state, err = _ssh_marker_result(
+        {}, f'{git_ws}; touch "$WS/.vibe-allow-ssh"; '
+            'git -C "$WS" add .vibe-allow-ssh; git -C "$WS" commit -qm x')
+    check("[ssh-marker AC2] COMMITTED marker -> refused (fragment kept)", state == "OUT", state)
+    check("[ssh-marker AC2] committed refusal warns on stderr", "COMMITTED" in err, err[:300])
+    state, err = _ssh_marker_result({}, 'touch "$WS/.vibe-allow-ssh"')
+    check("[ssh-marker AC3] marker in NON-git ws -> refused (fail closed)", state == "OUT", state)
+    check("[ssh-marker AC3] non-git refusal warns on stderr",
+          "verifiable git work tree" in err, err[:300])
+    state, _ = _ssh_marker_result({"VIBE_SSH_AUTO": "1"}, 'touch "$WS/.vibe-allow-ssh"')
+    check("[ssh-marker AC4] VIBE_SSH_AUTO=1 in non-git ws -> opted IN", state == "IN", state)
+    src = INSTALL_EXTRAS.read_text()
+    check("[ssh-marker AC5] fragment gate wired to _ssh_marker_opted_in",
+          "if _ssh_marker_opted_in; then" in src, "")
+    check("[ssh-marker AC5] helper mirrors launcher semantics (pairing note)",
+          "_op_opted_in" in src and "semantically paired" in src,
+          "helper must name its launcher twin so drift is visible")
+    vibe_src = VIBE.read_text(encoding="utf-8")
+    check("[ssh-marker AC5] launcher twin still exists",
+          "_op_opted_in()" in vibe_src, "")
 
 
 def test_install_extras_syncs_hooks() -> None:
@@ -13168,6 +13237,7 @@ def main() -> int:
     test_install_extras_syncs_hooks()
     test_conversation_history_fragment()
     test_install_extras_ssh_discipline_opt_in()
+    test_ssh_marker_fail_closed()
     test_brain2_zotero_source_resolution()
     test_render_devcontainer_with_mounts()
     test_op_mcp_addhost_injection()
