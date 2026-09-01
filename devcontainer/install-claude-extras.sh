@@ -314,7 +314,45 @@ check_sp_drift() {
   fi
   local checker="/usr/local/bin/check-sp-current.sh"
   [ -x "$checker" ] || return 0  # image predates the checker; skip quietly
+  # Throttle: at most one upstream probe per 24h across ALL projects — the
+  # probe hits api.github.com unauthenticated (60 req/h per IP, shared) and
+  # can hold postStart for up to its 10s curl cap. Stamp lives in
+  # $DEST_ROOT (the shared vibe-claude-config volume — correct scope:
+  # sp.md is shared, not per-project). Stamp is written on EVERY probe
+  # attempt, before the checker runs: this guarantees <=1 upstream call
+  # per window even when the network is down (a failed probe burns the
+  # day's slot — drift news can wait a day; hammering a dead network on
+  # every launch cannot). An unwritable $DEST_ROOT skips stamping but
+  # never blocks the probe or container start.
+  local stamp="$DEST_ROOT/.sp-drift-checked"
+  _sp_drift_due "$stamp" || return 0
+  date -u +%s > "$stamp" 2>/dev/null || true
   SP_MD="$DEST_ROOT/commands/sp.md" "$checker" || true
+}
+
+# _sp_drift_due <stamp_file> — pure read-only predicate: exits 0 iff the
+# drift probe should run now. Not due only when a readable stamp holds a
+# plausible epoch (digits, not in the future) younger than the window.
+# VIBE_SP_DRIFT_MAX_AGE_SECS overrides the 86400s default (0 = always due;
+# garbage collapses to the default). Every malformed edge — missing or
+# unreadable stamp, garbage bytes, future-dated epoch — counts as stale
+# (due), never as an error.
+_sp_drift_due() {
+  local stamp="${1:-}" max_age now last
+  max_age="${VIBE_SP_DRIFT_MAX_AGE_SECS:-86400}"
+  case "$max_age" in ''|*[!0-9]*) max_age=86400 ;; esac
+  if [ "$max_age" -eq 0 ]; then
+    return 0
+  fi
+  if [ -z "$stamp" ] || [ ! -r "$stamp" ]; then
+    return 0
+  fi
+  now=$(date -u +%s)
+  last=$(head -c 32 "$stamp" 2>/dev/null | tr -cd '0-9') || last=""
+  if [ -n "$last" ] && [ "$last" -le "$now" ] && [ $(( now - last )) -lt "$max_age" ]; then
+    return 1
+  fi
+  return 0
 }
 
 # Ensure /workspace/.gitignore excludes vibe's runtime files. Without this,

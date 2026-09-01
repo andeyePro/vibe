@@ -5071,6 +5071,53 @@ def test_check_sp_current_wired_into_container_start() -> None:
           '[ -x "$checker" ] || return 0' in extras, "")
     check("[sp-wire] points SP_MD at the synced commands dir",
           'SP_MD="$DEST_ROOT/commands/sp.md"' in extras, "")
+    # 24h throttle (2026-08-30): probe gated on _sp_drift_due; stamp written
+    # before every probe attempt so a dead network still burns one slot/day.
+    check("[sp-wire] probe gated on _sp_drift_due",
+          '_sp_drift_due "$stamp" || return 0' in extras, "")
+    check("[sp-wire] stamp written before the checker runs",
+          extras.find('date -u +%s > "$stamp"') < extras.find('SP_MD="$DEST_ROOT/commands/sp.md" "$checker"')
+          and 'date -u +%s > "$stamp"' in extras, "")
+    check("[sp-wire] VIBE_PLUGINS=0 short-circuits before the stamp path",
+          extras.split("check_sp_drift()")[1].find("VIBE_PLUGINS:-1")
+          < extras.split("check_sp_drift()")[1].find("_sp_drift_due"), "")
+
+    def due(setup: str, env_extra: str = "") -> str:
+        fn = subprocess.run(
+            ["bash", "-c",
+             'set -euo pipefail; '
+             f'source <(sed -n "/^_sp_drift_due()/,/^}}/p" {shlex.quote(str(INSTALL_EXTRAS))}); '
+             'S=$(mktemp -d)/stamp; ' + setup + '; '
+             + env_extra +
+             'if _sp_drift_due "$S"; then echo R=DUE; else echo R=NOT; fi'],
+            capture_output=True, text=True)
+        if "R=DUE" in fn.stdout:
+            return "DUE"
+        if "R=NOT" in fn.stdout:
+            return "NOT"
+        return f"ERR({fn.stdout}{fn.stderr})"
+
+    check("[sp-throttle] absent stamp -> due", due("true") == "DUE", "")
+    check("[sp-throttle] fresh stamp -> not due",
+          due('date -u +%s > "$S"') == "NOT", "")
+    check("[sp-throttle] stale stamp -> due",
+          due('echo $(( $(date -u +%s) - 90000 )) > "$S"') == "DUE", "")
+    check("[sp-throttle] malformed stamp -> due (stale, not error)",
+          due('echo garbage > "$S"') == "DUE", "")
+    check("[sp-throttle] future-dated stamp -> due",
+          due('echo $(( $(date -u +%s) + 3600 )) > "$S"') == "DUE", "")
+    check("[sp-throttle] override honoured at the boundary",
+          due('echo $(( $(date -u +%s) - 120 )) > "$S"',
+              "export VIBE_SP_DRIFT_MAX_AGE_SECS=60; ") == "DUE", "")
+    check("[sp-throttle] override: inside window -> not due",
+          due('echo $(( $(date -u +%s) - 30 )) > "$S"',
+              "export VIBE_SP_DRIFT_MAX_AGE_SECS=60; ") == "NOT", "")
+    check("[sp-throttle] zero override = always due",
+          due('date -u +%s > "$S"',
+              "export VIBE_SP_DRIFT_MAX_AGE_SECS=0; ") == "DUE", "")
+    check("[sp-throttle] garbage override collapses to default (fresh -> not due)",
+          due('date -u +%s > "$S"',
+              "export VIBE_SP_DRIFT_MAX_AGE_SECS=bogus; ") == "NOT", "")
 
 
 # ── /sp slash command tests ────────────────────────────────────────────────────
