@@ -60,7 +60,11 @@ while read -r local_ref local_sha remote_ref remote_sha; do
       [ -n "$c" ] && commit_array+=("$c")
     done <<< "$commits_raw"
     [ "${#commit_array[@]}" -gt 0 ] || continue
-    if ! git log -p --no-color "${commit_array[@]}" 2>/dev/null \
+    # --no-walk: positional commit args are revision TIPS — without it,
+    # git log -p diffs ALL history reachable from them, not the listed
+    # commits (observed: 8+ min scan + false BLOCK hits on ancient
+    # vendored code for a 2-commit new-branch push).
+    if ! git log -p --no-color --no-walk "${commit_array[@]}" 2>/dev/null \
          | "$SCANNER" --blob-stdin --tier block; then
       status=1
     fi

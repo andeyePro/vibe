@@ -9932,6 +9932,11 @@ def test_task019_ac17_new_branch_push_blocks_only_block_tier() -> None:
         run(["git", "commit", "-m", "Initial commit"], cwd=repo)
         run(["git", "push", "-u", "origin", "master"], cwd=repo)
 
+        # Pin hook discovery to the dir we populated (see AC10): left at
+        # /dev/null, the pre-push hook under test would never run and the
+        # pushes below would pass vacuously.
+        run(["git", "config", "core.hooksPath", str(hooks_dir)], cwd=repo)
+
         # Commit with WARN-tier PII (RFC1918 IP) on a new branch
         run(["git", "checkout", "-b", "feature"], cwd=repo)
         test_file = repo / "config.txt"
@@ -9942,6 +9947,72 @@ def test_task019_ac17_new_branch_push_blocks_only_block_tier() -> None:
         # Push new branch should succeed (pre-push scans BLOCK tier only, so WARN is allowed)
         r = run(["git", "push", "-u", "origin", "feature"], cwd=repo)
         check("[task_019 AC17] new branch push succeeds", r.returncode == 0, r.stderr)
+
+
+def test_prepush_no_walk_ignores_already_pushed_history() -> None:
+    """Regression (2026-08-30): the pre-push new-branch scan must diff ONLY
+    the commits absent from the remote. `git log -p <shas...>` treats
+    positional args as revision TIPS and walks ALL reachable history —
+    an O(history) scan (8+ min on a large repo) plus false BLOCK hits on
+    old, already-pushed commits. --no-walk pins the scan to the listed
+    commits."""
+    print("\n[pre-push --no-walk: remote-history secret must not block a clean new branch]")
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        repo.mkdir()
+
+        run(["git", "init"], cwd=repo)
+        # Fixture repo: neutralise the machine-global content-guard hooks at
+        # local scope so fixture commits (some deliberately carry secrets/PII)
+        # are deterministic; hook-exercising tests re-pin their own hooksPath.
+        run(["git", "config", "core.hooksPath", "/dev/null"], cwd=repo)
+        run(["git", "config", "user.email", "123+tester@users.noreply.github.com"], cwd=repo)
+        run(["git", "config", "user.name", "Test User"], cwd=repo)
+
+        bare_remote = Path(td) / "remote.git"
+        bare_remote.mkdir()
+        run(["git", "init", "--bare"], cwd=bare_remote)
+        run(["git", "remote", "add", "origin", str(bare_remote)], cwd=repo)
+
+        # History commit carrying a BLOCK-tier secret, pushed while hooks are
+        # neutralised — models legacy/vendored content already on the remote.
+        token = "ghp_" + ("C" * 36)
+        (repo / "legacy.txt").write_text(f"Token: {token}\n")
+        run(["git", "add", "legacy.txt"], cwd=repo)
+        run(["git", "commit", "-m", "Legacy commit"], cwd=repo)
+        run(["git", "push", "-u", "origin", "master"], cwd=repo)
+
+        # Install pre-push + scanner, then pin hook discovery to them.
+        hooks_dir = repo / ".git" / "hooks"
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        import shutil
+        for name in ["pre-push", "vibe-content-scan.sh"]:
+            src = REPO / "devcontainer" / "git-hooks" / name
+            dst = hooks_dir / name
+            shutil.copy2(src, dst)
+            dst.chmod(0o755)
+        run(["git", "config", "core.hooksPath", str(hooks_dir)], cwd=repo)
+
+        # Clean commit on a new branch: the legacy secret is reachable from
+        # the tip but already on the remote — push must succeed.
+        run(["git", "checkout", "-b", "feature"], cwd=repo)
+        (repo / "clean.txt").write_text("nothing to see\n")
+        run(["git", "add", "clean.txt"], cwd=repo)
+        run(["git", "commit", "-m", "Clean commit"], cwd=repo)
+        r = run(["git", "push", "-u", "origin", "feature"], cwd=repo)
+        check("[pre-push --no-walk] clean new branch pushes despite remote-history secret",
+              r.returncode == 0, r.stderr)
+
+        # Control: a NEW secret commit on another new branch must still block
+        # (--no-walk must not skip the listed commits themselves).
+        run(["git", "checkout", "-b", "feature2", "master"], cwd=repo)
+        token2 = "ghp_" + ("D" * 36)
+        (repo / "fresh-secret.txt").write_text(f"Token: {token2}\n")
+        run(["git", "add", "fresh-secret.txt"], cwd=repo)
+        run(["git", "commit", "-m", "Fresh secret"], cwd=repo)  # no pre-commit installed here
+        r2 = run(["git", "push", "-u", "origin", "feature2"], cwd=repo)
+        check("[pre-push --no-walk] new-branch secret still blocks",
+              r2.returncode != 0, r2.stderr)
 
 
 # ── task_020: per-project OpenProject MCP opt-in gate ──────────────────────────
@@ -13693,6 +13764,7 @@ def main() -> int:
     test_task019_ac15_content_guard_md_exists()
     test_task019_ac16_audit_history_reports_warn_pii()
     test_task019_ac17_new_branch_push_blocks_only_block_tier()
+    test_prepush_no_walk_ignores_already_pushed_history()
 
     # task_021: commit-identity guard — scanner --identity mode, pre-commit
     # wiring, and the audit identities pass (root cause of the 2026-07-17
