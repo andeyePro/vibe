@@ -411,6 +411,7 @@ Superpowers is complementary discipline, not a rival harness — `/vs` supplies 
 - **Immutable tests (rigorous only)** — once Tester lands tests, nobody edits or removes them. If acceptance criteria change, Planner writes a revised spec and restarts cycle 1. Does not apply in fuzzy mode (no tests).
 - **Status-field mutations only** on `tasks.json`. No unstructured edits.
 - **Fresh subagents per cycle** — context reset over compaction. Continuity via `.vs/` files only.
+- **Subagents run long commands in the foreground** — inside any dispatched subagent (Generator, Tester, Reviewer, panellist) a build/test/ssh run uses `timeout: 600000`, never `run_in_background`: a backgrounded command's completion notification goes to the chair, not the subagent that launched it, so the subagent parks forever.
 - **No cross-subagent context sharing** — Generator never sees Tester's / Reviewer's output; Tester / Reviewer never sees Generator's report. Spec Critic sees only the spec.
 - **No cross-panellist context sharing (`--panel`)** — panellists never read each other's verdicts or `.vs/cycle-<N>/panel/` at all; blindness is structural (read-only agent type, byte-identical briefs, one concurrent batch). A panellist brief that individuates panellists ("you are the security reviewer") breaks the mechanism — differentiation must emerge, not be assigned.
 - **Per-cycle commits** after pass or at escalation points.

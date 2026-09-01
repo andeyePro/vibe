@@ -37,6 +37,7 @@ For everything NOT on the escalate list, default like Martin would:
 - No em dashes in user-facing text. Use en dashes ` – ` per his writing-style memory.
 - Lead with literal commands, not abstract instructions.
 - Single-line paragraphs (no hard wrap) in any markdown intended for him to paste.
+- Inside any subagent the executor dispatches, long build/test/ssh runs are foreground with `timeout: 600000`, never `run_in_background`: a backgrounded command's completion notification goes to the chair, not the subagent that launched it, so the subagent parks forever.
 
 Read `MEMORY.md` at start; surface relevant feedback memories into the planner brief so the plan matches Martin's preferences before any execution.
 

@@ -291,6 +291,8 @@ Even with autonomy turned all the way up, never autonomously:
 
 If a wrapped `/vss` iteration tries any of these, the iteration aborts (per `/vss` rules) AND the `/vsss` loop exits per condition 1.
 
+Dispatch rule inherited by every wrapped iteration's subagents: long build/test/ssh runs are foreground with `timeout: 600000`, never `run_in_background`: a backgrounded command's completion notification goes to the chair, not the subagent that launched it, so the subagent parks forever.
+
 ## Why `/vsss` exists alongside `/vss`
 
 `/vss` is one bounded unit of work. Use it when you want to step away briefly. `/vsss` is "burn the rest of my session productively" — when you have hours of session credit, want it spent on the project, and trust the escalate list to catch anything dangerous. Higher blast radius, more discipline required at the spec level (the optimiser is what keeps the loop honest).
