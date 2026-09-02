@@ -511,3 +511,9 @@ Verdict: PASS. Committing as `/vs cycle 1: pass`. Not pushed.
 - smoke-test.py → 28-line entry + smoke/_core.py + 11 checks_NN parts (≤1,201 lines) + runner.py; AST-identical bodies, identical ✓/✗ lines and rc before/after, 487/487 importable. `.vs/review-focus.md` + CLAUDE.md § Testing policy.
 - Merge-step suite on main: one failure — the task010 AC19 meta-check grepped the entry file for its own function; now searches the package (d3c50df). Re-run of that check green; the three worktree-only failures (install.sh `.git`-directory detection) did not occur on main.
 - Content guard: the scanner's own test corpus moved into new files → BLOCK on fake keys; allowlisted per literal + `path-warn:smoke/*`.
+
+## task_032 cycle 1 — Evaluator: PASS (with one chair fix)
+- Mechanical gate: Tester (sonnet) +17 site-check guards (cast parse, placeholder advisory, chip+step marker mapping, redaction, fidelity over the cast, gzip budgets 65,530 B / 3,966 B, mount/COPY-blob/no-gutter, lazy-load wiring) and 9 node:test cases for scrub.mjs; `npm run check` 64 ok / 0 FAIL; chair re-ran both.
+- Tester finding (outside its ACs): `insertMarkers()` searched every chip prompt from event 0, so the identical `cd yourproject && vibe` typed for launch and first-launch would collapse onto one occurrence in a real recording. Chair fixed with a monotonic cursor and added a tenth node:test case (10/10).
+- Diff read: role gutter and typed-transcript pane removed; `const COPY` blob, chips, checklists, lock gate intact; static transcript in `<noscript>` and under reduced-motion; player lazy-loaded on `#demo` intersection with markers inlined at build; vendoring explicit in `build`. Generator flagged js-yaml as a transitive dependency of the placeholder synthesiser — acceptable (dev-time only), noted for the record.
+- Generator tier that passed: sonnet (cycle 1). Tester: sonnet. Fable rung pre-authorised, not used.

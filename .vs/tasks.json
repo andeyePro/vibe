@@ -233,8 +233,8 @@
   {
     "id": "task_032",
     "description": "asciinema pipeline: real-session cast replay via asciinema-player driving the 13 deck chips; record.md, scrub.mjs, placeholder cast, site-check fidelity over the cast",
-    "implementation_status": "pending",
-    "test_status": "pending",
+    "implementation_status": "complete",
+    "test_status": "passing",
     "assigned_to": "generator",
     "mode": "rigorous",
     "last_modified": "2026-09-02T20:45:31Z"

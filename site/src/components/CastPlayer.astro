@@ -1,0 +1,180 @@
+---
+// CastPlayer.astro — the demo pane: a lazily-loaded asciinema-player replay
+// of (eventually) a real recorded vibe session, driven by the 13 deck chips
+// via markers. Until Martin records the real thing (site/demo/record.md),
+// site/public/demo/vibe.cast is a clearly-labelled synthetic placeholder
+// (site/demo/make-placeholder-cast.mjs). Nothing here talks to the network
+// at build time — markers.json is read from disk and inlined so the client
+// script never needs a second fetch just to know where things are.
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const MARKERS_PATH = path.resolve(HERE, '../../public/demo/markers.json');
+const markersData = JSON.parse(readFileSync(MARKERS_PATH, 'utf8'));
+
+// Same mono stack the rest of the page's terminal-flavoured type uses
+// (.term-body / .chip-cmd in index.astro) — kept as one literal string so
+// there's exactly one place to change it.
+const TERMINAL_FONT_FAMILY = 'ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace';
+---
+<div class="term-body cast-pane" id="cast" tabindex="0" aria-label="A vibe session, played out as you click">
+  <div class="cast-fallback" id="castFallback">Loading the demo…</div>
+</div>
+
+<script type="application/json" id="castMarkers" set:html={JSON.stringify(markersData)}></script>
+
+<script is:inline define:vars={{ TERMINAL_FONT_FAMILY }}>
+(function () {
+'use strict';
+
+// markers.json, inlined at build time (see the JSON <script> block above) —
+// [{id, time, label}], chip markers in deck order, each chip's step markers
+// immediately after it. Order here is also the index order the player's own
+// `markers` option uses, which is what seek({marker: i}) addresses.
+var MARKERS = JSON.parse(document.getElementById('castMarkers').textContent);
+var MARKER_INDEX = {}; // label -> index into MARKERS / the player's own markers array
+MARKERS.forEach(function (m, i) { MARKER_INDEX[m.label] = i; });
+
+var mount = document.getElementById('cast');
+var fallback = document.getElementById('castFallback');
+var CAST_URL = '/demo/vibe.cast';
+var VENDOR_JS = '/vendor/asciinema-player.min.js';
+var VENDOR_CSS = '/vendor/asciinema-player.css';
+
+var player = null;
+var loadPromise = null;
+
+function injectCss() {
+  if (document.querySelector('link[data-cast-css]')) return;
+  var link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = VENDOR_CSS;
+  link.setAttribute('data-cast-css', '');
+  document.head.appendChild(link);
+}
+
+// loadPlayer(): lazily imports the vendored bundle and mounts the player.
+// Called from the IntersectionObserver below AND from a chip click that
+// lands before the player exists yet (see seekChip).
+function loadPlayer() {
+  if (loadPromise) return loadPromise;
+  loadPromise = import(VENDOR_JS).then(function (mod) {
+    var AsciinemaPlayer = mod.default;
+    injectCss();
+    if (fallback) { fallback.remove(); fallback = null; }
+    player = AsciinemaPlayer.create(CAST_URL, mount, {
+      controls: false,
+      poster: 'npt:0:0',
+      idleTimeLimit: 2,
+      fit: 'width',
+      terminalFontFamily: TERMINAL_FONT_FAMILY,
+      terminalLineHeight: 1.7,
+      markers: MARKERS.map(function (m) { return [m.time, m.label]; }),
+    });
+    player.addEventListener('marker', onMarker);
+    window.vibeCast.player = player;
+    return player;
+  }).catch(function (err) {
+    if (fallback) fallback.textContent = 'Could not load the demo player.';
+    console.error('cast player failed to load', err);
+  });
+  return loadPromise;
+}
+
+// Marker crossing drives both kinds of tick the deck needs: a chip-id label
+// marks that chip "active" (and, for "launch", unlocks the rest of the
+// deck — the real unlock signal used to be "the typed transcript finished";
+// now it's "playback actually reached the launch marker"); a "<chip>:<n>"
+// label ticks checklist item n for that chip. Kept as a free function
+// (not a closure over one chip) since one continuous cast can cross many
+// chips' markers as it plays on.
+function onMarker(ev) {
+  var label = ev.label;
+  var sep = label.indexOf(':');
+  if (sep === -1) {
+    setActiveChip(label);
+    if (label === 'launch') unlockDeck();
+  } else {
+    var chipId = label.slice(0, sep);
+    var n = Number(label.slice(sep + 1));
+    tickStep(chipId, n);
+  }
+}
+
+function box(chipId) { return document.getElementById('step-' + chipId); }
+
+function tickStep(chipId, n) {
+  var b = box(chipId);
+  if (!b) return;
+  var li = b.querySelectorAll('.steps li')[n - 1];
+  if (!li) return;
+  li.classList.add('done');
+  var t = li.querySelector('.tick');
+  if (t) t.textContent = '✓';
+}
+
+function resetTicks(chipId) {
+  var b = box(chipId);
+  if (!b) return;
+  b.querySelectorAll('.steps li').forEach(function (li) {
+    li.classList.remove('done');
+    var t = li.querySelector('.tick');
+    if (t) t.textContent = '○';
+  });
+}
+
+var activeChip = null;
+function setActiveChip(chipId) {
+  if (activeChip && activeChip !== chipId) {
+    var prev = box(activeChip);
+    if (prev) { var c = prev.querySelector('.chip'); if (c) c.classList.remove('running'); }
+  }
+  activeChip = chipId;
+  var b = box(chipId);
+  if (b) { var chip = b.querySelector('.chip'); if (chip) chip.classList.add('running'); }
+}
+
+function unlockDeck() {
+  document.querySelectorAll('.dstep.locked').forEach(function (d) {
+    d.classList.remove('locked');
+    var chip = d.querySelector('.chip');
+    if (chip) chip.setAttribute('aria-disabled', 'false');
+  });
+}
+
+// window.vibeCast: the small public surface index.astro's chip-click
+// handler drives, and the escape hatch for anything else that wants to
+// reach the underlying player.
+window.vibeCast = {
+  player: null,
+  seekChip: function (id) {
+    resetTicks(id);
+    var run = function () {
+      var idx = MARKER_INDEX[id];
+      if (idx === undefined || !player) return;
+      player.seek({ marker: idx }).then(function () { player.play(); });
+    };
+    if (player) { run(); } else { loadPlayer().then(run); }
+  },
+};
+
+// Lazy mount: only load the ~65KB gz player once the pane is actually
+// approaching the viewport — nothing in <head> references it, and nothing
+// loads it just because the page did.
+if ('IntersectionObserver' in window) {
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (entry) {
+      if (entry.isIntersecting) { loadPlayer(); io.disconnect(); }
+    });
+  }, { rootMargin: '200px' });
+  var demoSection = document.getElementById('demo');
+  if (demoSection) io.observe(demoSection);
+} else {
+  // no IntersectionObserver (very old browser) — fall back to loading on
+  // first interaction, which seekChip already does.
+}
+
+})();
+</script>

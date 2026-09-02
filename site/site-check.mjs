@@ -2,6 +2,7 @@
 // builds first) or `node site-check.mjs` against an existing dist/. Guards the
 // invariants the page copy has been reviewed against; exits 1 on failure.
 import { readFileSync, existsSync } from 'node:fs';
+import { gzipSync } from 'node:zlib';
 
 const distPath = new URL('./dist/index.html', import.meta.url);
 if (!existsSync(distPath)) {
@@ -229,6 +230,163 @@ check('/c scratch path matches c.md (copy-latest.txt)',
 // andeye sites rule: no raw email addresses ever
 check('no mailto: and no raw email addresses',
   !html.includes('mailto:') && !/[\w.+-]+@[\w-]+\.[a-z]{2,}/i.test(html.replace(/[\w.+-]+%40/g, '')));
+
+// ---------------------------------------------------------------------------
+// task_032: asciinema pipeline — cast fidelity (AC2/AC3), markers/chip
+// mapping (AC4), redaction (AC5), launcher/firewall fidelity over the cast
+// text (AC6), vendored bundle size (AC8), player-mount markup + the COPY
+// fallback data (AC9), and the lazy-load client script shape (AC11).
+//
+// AC10 (fallback) needs no new guards here: every existing guard ABOVE this
+// section — the copy-accuracy inBoth() guards, the exact-13-chips count, the
+// .term-body clamp regex, stepsContiguous, and the chip-scoped
+// launch/first-launch/pat guards — still runs unchanged against the same
+// dist/index.html shape and still passes. No existing guard above had to
+// change for this task.
+// ---------------------------------------------------------------------------
+const distDir = new URL('./dist/', import.meta.url);
+const distExists = (p) => existsSync(new URL(p, distDir));
+const readDistText = (p) => readFileSync(new URL(p, distDir), 'utf8');
+const readDistBuf = (p) => readFileSync(new URL(p, distDir));
+
+// --- AC2: dist/demo/vibe.cast parses ---------------------------------------
+let castHeader = null;
+let castEvents = [];
+let castParseError = null;
+try {
+  const raw = readDistText('demo/vibe.cast');
+  const lines = raw.split('\n').filter((l) => l.trim().length > 0);
+  if (lines.length === 0) throw new Error('empty cast file');
+  castHeader = JSON.parse(lines[0]);
+  castEvents = lines.slice(1).map((l) => JSON.parse(l));
+} catch (e) {
+  castParseError = e;
+}
+check('dist/demo/vibe.cast parses as newline-delimited JSON (header + events)', !castParseError);
+check('cast header is version 2 with integer width/height',
+  !!castHeader && castHeader.version === 2
+  && Number.isInteger(castHeader.width) && Number.isInteger(castHeader.height));
+
+const CAST_CODES = new Set(['o', 'i', 'm', 'r']);
+function castEventsWellFormed(events) {
+  let prevTime = -Infinity;
+  for (const e of events) {
+    if (!Array.isArray(e) || e.length !== 3) return false;
+    const [t, code] = e;
+    if (typeof t !== 'number' || Number.isNaN(t) || !CAST_CODES.has(code) || t < prevTime) return false;
+    prevTime = t;
+  }
+  return true;
+}
+check(`every cast line is a [time, code, data] 3-tuple with code in o/i/m/r and numeric non-decreasing time (${castEvents.length} events)`,
+  castEventsWellFormed(castEvents));
+
+// --- AC3: placeholder advisory — printed (not a failure) only while the
+// cast header carries "placeholder": true; nothing printed when it's absent.
+if (castHeader && castHeader.placeholder) {
+  console.log("advisory: dist/demo/vibe.cast is a synthetic placeholder — awaiting Martin's real recording (see site/demo/record.md)");
+}
+
+// --- AC4: markers.json shape + chip <-> marker mapping ---------------------
+let markersData = [];
+let markersParseError = null;
+try {
+  markersData = JSON.parse(readDistText('demo/markers.json'));
+} catch (e) {
+  markersParseError = e;
+}
+check('dist/demo/markers.json parses as an array of {id, time, label}',
+  !markersParseError && Array.isArray(markersData)
+  && markersData.every((m) => m && typeof m.id === 'string' && typeof m.time === 'number' && typeof m.label === 'string'));
+
+const deckStepIds = [...html.matchAll(/data-step="([a-z0-9-]+)"/g)].map((m) => m[1]);
+const chipMarkers = markersData.filter((m) => !m.id.includes(':'));
+check('chip-marker ids, in order, equal the 13 data-step ids in dist/index.html',
+  JSON.stringify(chipMarkers.map((m) => m.id)) === JSON.stringify(deckStepIds));
+
+check('every checklist step of every chip has its <chip>:<n> step marker',
+  chipIds.every((id) => {
+    const len = checklistLength(id);
+    for (let n = 1; n <= len; n++) {
+      if (!markersData.some((m) => m.id === `${id}:${n}`)) return false;
+    }
+    return true;
+  }));
+
+check('every markers.json entry has a matching "m" cast event at the same time with label = id',
+  !markersParseError && !castParseError
+  && markersData.every((m) => castEvents.some((e) => e[1] === 'm' && e[0] === m.time && e[2] === m.label)));
+
+// --- AC5: redaction over the concatenated, ANSI-stripped "o" payloads ------
+const ansiStrip = (s) => s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
+const castOText = ansiStrip(
+  castEvents.filter((e) => e[1] === 'o' && typeof e[2] === 'string').map((e) => e[2]).join(''));
+
+const AC5_PATTERNS = [
+  /ghp_[A-Za-z0-9]{6,}/,
+  /github_pat_/,
+  /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[a-z]{2,}/,
+  /\/Users\/[^/ ]+/,
+  /\b(10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)\b/,
+];
+check('cast text matches none of the AC5 redaction patterns (tokens/emails/home paths/private IPs)',
+  AC5_PATTERNS.every((re) => !re.test(castOText)));
+check('cast text contains no real repo slug (andeyePro/ or Aqueum/)',
+  !castOText.includes('andeyePro/') && !castOText.includes('Aqueum/'));
+
+// --- AC6: fidelity — launcher/firewall strings appear in the cast text AND
+// in the sources they're pinned against --------------------------------
+check('cast fidelity: launcher/firewall strings appear in the cast text and in their sources',
+  ['vibe session starting', 'github  : ', 'Firewall verification passed', 'Token saved',
+   'Building vibe container image', '90 days is a good default']
+    .every((s) => castOText.includes(s) && (launcher.includes(s) || firewall.includes(s))));
+
+// --- AC8: vendoring — devDependency pin, build/check scripts, gitignore,
+// and the vendored bundle's actual gzip size after a real build ------------
+const pkgJson = JSON.parse(src('./package.json'));
+check('site/package.json pins asciinema-player 3.17.0 as a devDependency',
+  !!pkgJson.devDependencies && pkgJson.devDependencies['asciinema-player'] === '3.17.0');
+check('build vendors the player before astro build; check runs build then site-check',
+  pkgJson.scripts.build === 'node scripts/vendor-player.mjs && astro build'
+  && pkgJson.scripts.check === 'npm run build && node site-check.mjs');
+check('site/public/vendor/ is gitignored',
+  src('./.gitignore').split('\n').some((l) => l.trim().replace(/^\//, '') === 'public/vendor/'));
+check('dist/vendor/asciinema-player.min.js exists and gzips to <= 75000 B',
+  distExists('vendor/asciinema-player.min.js')
+  && gzipSync(readDistBuf('vendor/asciinema-player.min.js')).length <= 75000);
+check('dist/vendor/asciinema-player.css exists and gzips to <= 6000 B',
+  distExists('vendor/asciinema-player.css')
+  && gzipSync(readDistBuf('vendor/asciinema-player.css')).length <= 6000);
+
+// --- AC9: player mount markup; legacy typed-transcript markup is gone; the
+// embedded COPY blob (the fallback transcript's data source) still parses
+// with its lines/subs/notes shape intact ------------------------------------
+check('player mount has id="cast" and /demo/vibe.cast is referenced',
+  html.includes('id="cast"') && html.includes('/demo/vibe.cast'));
+check('legacy typed-transcript markup is gone (class="trole" / id="termLive")',
+  !html.includes('class="trole"') && !html.includes('id="termLive"'));
+check('embedded COPY blob still parses via parseCopy(), with its lines/subs/notes shape intact',
+  !!COPY_DATA && !!COPY_DATA.lines && !!COPY_DATA.subs && !!COPY_DATA.notes);
+
+// --- AC11: lazy load — nothing in <head> references the player; the client
+// script IntersectionObserver-loads it, dynamically imports the vendored
+// path, passes the spec's options, wires seek()/marker events, and loads
+// before seeking on an early chip click --------------------------------
+const headEnd = html.indexOf('</head>');
+const headHtml = headEnd === -1 ? html : html.slice(0, headEnd);
+check('nothing in <head> references asciinema-player (no script src / preload / modulepreload)',
+  !/asciinema-player/.test(headHtml));
+check('client script lazily loads the player via IntersectionObserver + a dynamic import of the vendored bundle',
+  /IntersectionObserver/.test(html)
+  && /import\(\s*VENDOR_JS\s*\)|import\(\s*['"`][^'"`]*asciinema-player\.min\.js['"`]\s*\)/.test(html));
+check("player is created with the spec's options, matched minifier-tolerantly",
+  [/controls\s*:\s*(false|!1)/, /npt:0:0/, /idleTimeLimit\s*:\s*2\b/,
+   /fit\s*:\s*["']width["']/, /terminalLineHeight\s*:\s*1\.7/, /terminalFontFamily/]
+    .every((re) => re.test(html)));
+check('marker seek/listen wiring is present (seek({marker...}) and a "marker" event listener)',
+  /seek\(\{\s*marker/.test(html) && /addEventListener\(\s*["']marker["']/.test(html));
+check('a chip click before the player has loaded triggers the load then seeks (loadPlayer referenced from the click handler)',
+  /function\s+loadPlayer/.test(html) && /loadPlayer\(\)\.then/.test(html) && html.includes('vibeCast.seekChip(id)'));
 
 if (failures) {
   console.error(`\n${failures} check(s) failed`);

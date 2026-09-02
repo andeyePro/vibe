@@ -65,3 +65,10 @@ path-warn:smoke-test.py
 .*BEARER=YmFzZTY0dG9rZW4=.*
 .*myorg/secret=/real/registered/path.*
 path-warn:smoke/*
+# task_032: scrub.test.mjs feeds obviously-fake tokens into the site's own
+# redaction scrubber to prove they come out redacted; docs mention the
+# `/Users/<name>/` placeholder the scrubber targets.
+.*ghp_ABCDEFGHIJ0123456789.*
+.*github_pat_11ABCDEFG0123456789abcdefghij.*
+.*/Users/<name>.*
+path-warn:site/demo/*

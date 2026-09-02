@@ -4,11 +4,14 @@
   "version": "0.1.0",
   "scripts": {
     "dev": "astro dev",
-    "build": "astro build",
+    "build": "node scripts/vendor-player.mjs && astro build",
     "preview": "astro preview",
-    "check": "astro build && node site-check.mjs"
+    "check": "npm run build && node site-check.mjs"
   },
   "dependencies": {
     "astro": "^4.16.0"
+  },
+  "devDependencies": {
+    "asciinema-player": "3.17.0"
   }
 }
