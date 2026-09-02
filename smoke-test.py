@@ -5777,6 +5777,228 @@ def test_vsss_persist_until_complete() -> None:
           "overridable — the preamble must say so")
 
 
+def test_vsss_fromto_format() -> None:
+    """Task 029: fromto format — minimal fromClaude template, brain2 override,
+    exit-append rule removed. AC1–AC7 and AC12 assertions against vsss.md."""
+    print("\n[/vsss: fromto format]")
+    check("[fromto] vsss.md exists", VSSS_MD.exists(), str(VSSS_MD))
+    if not VSSS_MD.exists():
+        return
+    content = VSSS_MD.read_text()
+
+    # AC1: heading present and positioned correctly
+    three_files_idx = content.find("### The three files")
+    fromto_heading_idx = content.find("### fromto format")
+    question_format_idx = content.find("### Question format (fromClaude)")
+
+    check("[fromto] AC1: '### fromto format' heading exists",
+          fromto_heading_idx >= 0, "")
+    check("[fromto] AC1: fromto heading after '### The three files'",
+          three_files_idx >= 0 and fromto_heading_idx > three_files_idx,
+          f"three_files={three_files_idx}, fromto={fromto_heading_idx}")
+    check("[fromto] AC1: fromto heading before '### Question format'",
+          question_format_idx >= 0 and fromto_heading_idx < question_format_idx,
+          f"fromto={fromto_heading_idx}, question_format={question_format_idx}")
+
+    # Extract fromto format section (from heading to next ### heading)
+    next_heading_idx = content.find("###", fromto_heading_idx + 10)
+    if next_heading_idx < 0:
+        next_heading_idx = len(content)
+    fromto_section = content[fromto_heading_idx:next_heading_idx]
+
+    # AC2: nine-line template appears verbatim
+    template_lines = [
+        "---",
+        "state: authored",
+        "author: Claude (<harness>, <repo>)",
+        "created: <ISO date>",
+        "cssclasses: [trust-authored]",
+        "---",
+        "Reply in [[<project>-from<User>]]. History: [[<project>-Q&A-archive]].",
+        "",
+        "1. <action point: a question to answer, or a test to run> (T<n>)",
+    ]
+    template_text = "\n".join(template_lines)
+    check("[fromto] AC2: nine-line template appears verbatim",
+          template_text in fromto_section,
+          "Template not found as contiguous block")
+
+    # AC3: literal strings in fromto format section (account for line breaks)
+    ac3_checks = [
+        ("one ordered list and nothing else", "one ordered list and nothing else"),
+        ("no session report", "no session report"),
+        ("Information appears only", "Information appears only"),
+        ("action points only", "action points only"),
+        ("contiguous", "contiguous"),
+        ("from 1", "from 1"),
+    ]
+    for label, pattern in ac3_checks:
+        check(f"[fromto] AC3: '{label}' in fromto section",
+              pattern in fromto_section, f"missing: {pattern!r}")
+
+    # AC4: exit-line sentinel and "exactly one line"
+    # Check for the key parts of the sentinel (account for line breaks)
+    check("[fromto] AC4: 'Exit appends exactly one line:' present",
+          "Exit appends exactly one line:" in fromto_section, "")
+    check("[fromto] AC4: 'Session log:' present",
+          "Session log:" in fromto_section, "")
+    check("[fromto] AC4: '.vss/sessions/<start-ISO>.md' present",
+          ".vss/sessions/<start-ISO>.md" in fromto_section, "")
+    check("[fromto] AC4: '<N> commits, <pushed|not pushed>' present",
+          "<N> commits, <pushed|not pushed>" in fromto_section, "")
+
+    # AC5: brain2 override note and credential boundary
+    check("[fromto] AC5: '/brain2/meta/fromto-format.md' mentioned",
+          "/brain2/meta/fromto-format.md" in fromto_section, "")
+    check("[fromto] AC5: 'overrides this default' present",
+          "overrides this default" in fromto_section, "")
+    check("[fromto] AC5: 'verbatim' present",
+          "verbatim" in fromto_section, "")
+    check("[fromto] AC5: 'write-files-only' present",
+          "write-files-only" in fromto_section, "")
+    check("[fromto] AC5: \"never `git` against\" present",
+          "never `git` against" in fromto_section, "")
+    check("[fromto] AC5: 'read-only' NOT in fromto section",
+          "read-only" not in fromto_section,
+          "found 'read-only' in fromto section — should use 'write-files-only' instead")
+
+    # AC6: deletions and structural guards
+    check("[fromto] AC6: '### At exit' NOT in file",
+          "### At exit" not in content,
+          "Old '### At exit' section should be deleted")
+    check("[fromto] AC6: 'Append the exit report' NOT in file",
+          "Append the exit report (same content as § Reporting back at exit)" not in content,
+          "Old exit-append mandate should be deleted")
+    check("[fromto] AC6: 'If fromto channels are active' NOT in file",
+          "If fromto channels are active" not in content,
+          "Old conditional should be deleted")
+
+    # AC6: structural guard (a) — no fromClaude/from<User> in Reporting section
+    reporting_idx = content.find("## Reporting back at exit")
+    if reporting_idx >= 0:
+        reporting_section = content[reporting_idx:]
+        check("[fromto] AC6: no 'fromClaude' in Reporting section",
+              "fromClaude" not in reporting_section, "")
+        check("[fromto] AC6: no 'from<User>' in Reporting section",
+              "from<User>" not in reporting_section, "")
+
+    # AC6: structural guard (b) — regex check for (append|mirror|copy).{0,60}(report|outcome).{0,60}fromClaude
+    pattern = re.compile(r"(append|mirror|copy).{0,60}(report|outcome).{0,60}fromClaude", re.I)
+    outside_fromto = content[:fromto_heading_idx] + content[next_heading_idx:]
+    outside_matches = len(pattern.findall(outside_fromto))
+    check("[fromto] AC6: no append/mirror/copy...report/outcome...fromClaude outside fromto section",
+          outside_matches == 0,
+          f"found {outside_matches} matches outside fromto section")
+    inside_matches = len(pattern.findall(fromto_section))
+    check("[fromto] AC6: at most 1 match of pattern inside fromto section",
+          inside_matches <= 1,
+          f"found {inside_matches} matches (expect ≤1, the exit-line rule of AC4)")
+
+    # AC6: structural guard (c) — fromClaude count check
+    baseline_content = subprocess.run(
+        ["git", "show", "73172fb:devcontainer/commands/vsss.md"],
+        capture_output=True, text=True, cwd=REPO
+    ).stdout
+    baseline_fromto_idx = baseline_content.find("### fromto format")
+    baseline_next_idx = baseline_content.find("###", baseline_fromto_idx + 10)
+    if baseline_next_idx < 0:
+        baseline_next_idx = len(baseline_content)
+    baseline_fromto = baseline_content[baseline_fromto_idx:baseline_next_idx]
+    baseline_fromclaude_count = baseline_content.count("fromClaude")
+    current_fromclaude_count = content.count("fromClaude")
+    current_fromto_count = fromto_section.count("fromClaude")
+    expected_max = baseline_fromclaude_count - 2 + current_fromto_count
+    check("[fromto] AC6: fromClaude count ≤ baseline-2 + fromto_count",
+          current_fromclaude_count <= expected_max,
+          f"current={current_fromclaude_count}, baseline={baseline_fromclaude_count}, "
+          f"in_fromto={current_fromto_count}, max={expected_max}")
+
+    # AC7: preserved sections still exist and in correct order
+    required_strings = [
+        "## Reporting back at exit",
+        "Total iterations run.",
+        "Lead with `---` before the report block.",
+        "### Question format (fromClaude)",
+        "questions and blocking",
+        "asks only",
+        "no progress notes, no FYIs",
+    ]
+    for s in required_strings:
+        check(f"[fromto] AC7: '{s}' preserved",
+              s in content, f"missing: {s!r}")
+
+    # AC7: heading order check
+    headings_to_check = [
+        ("### The three files", "The three files"),
+        ("### fromto format", "fromto format"),
+        ("### Question format (fromClaude)", "Question format"),
+        ("### Answer format (from<User>)", "Answer format"),
+        ("### Consume protocol", "Consume protocol"),
+        ("### Precedence", "Precedence"),
+        ("### Interaction with the loop", "Interaction with the loop"),
+        ("### After each /vss completes", "After each /vss completes"),
+    ]
+    indices = {}
+    for heading, label in headings_to_check:
+        idx = content.find(heading)
+        indices[label] = idx
+        if idx < 0:
+            check(f"[fromto] AC7: heading '{label}' exists", False, f"missing: {heading!r}")
+
+    # Verify order
+    last_idx = -1
+    for _, label in headings_to_check:
+        idx = indices.get(label, -1)
+        if idx >= 0:
+            check(f"[fromto] AC7: '{label}' after previous heading",
+                  idx > last_idx, f"idx={idx}, last={last_idx}")
+            last_idx = idx
+
+    # AC12: word count check
+    baseline_wc = len(baseline_content.split())
+    current_wc = len(content.split())
+    check("[fromto] AC12: word count ≤ baseline + 120",
+          current_wc <= baseline_wc + 120,
+          f"current={current_wc}, baseline={baseline_wc}, diff={current_wc - baseline_wc}")
+
+    # AC8: brain2 file check (only if it exists)
+    brain2_file = Path("/brain2/meta/fromto-format.md")
+    if brain2_file.exists():
+        brain2_content = brain2_file.read_text()
+
+        # Check frontmatter
+        frontmatter_match = re.match(r"^---\n(.*?)\n---", brain2_content, re.DOTALL)
+        if frontmatter_match:
+            frontmatter = frontmatter_match.group(1)
+            check("[fromto] AC8: brain2 frontmatter has 'state: authored'",
+                  "state: authored" in frontmatter, "")
+            check("[fromto] AC8: brain2 frontmatter has 'authorised:' with empty value",
+                  "authorised:" in frontmatter and re.search(r"authorised:\s*$", frontmatter, re.M),
+                  "")
+            check("[fromto] AC8: brain2 frontmatter has 'created: 2026-09-02'",
+                  "created: 2026-09-02" in frontmatter, "")
+            check("[fromto] AC8: brain2 frontmatter has 'cssclasses: [trust-authored]'",
+                  "cssclasses: [trust-authored]" in frontmatter, "")
+            check("[fromto] AC8: brain2 frontmatter has 'vibe' tag",
+                  "vibe" in frontmatter and "tags:" in frontmatter, "")
+            check("[fromto] AC8: brain2 frontmatter has 'fromto' tag",
+                  "fromto" in frontmatter, "")
+
+        # Check body contains template (normalize whitespace)
+        normalized_brain2_body = re.sub(r'\s+', ' ', brain2_content)
+        normalized_template = re.sub(r'\s+', ' ', template_text)
+        check("[fromto] AC8: brain2 body contains template (normalized)",
+              normalized_template in normalized_brain2_body, "")
+
+        # Check for "every project" phrase (accounting for line breaks)
+        # Normalize whitespace for this check
+        normalized_brain2 = re.sub(r'\s+', ' ', brain2_content)
+        check("[fromto] AC8: brain2 body contains 'every project'",
+              "every project" in normalized_brain2, "")
+    else:
+        print("  [skip] AC8: /brain2/meta/fromto-format.md not found (brain2 is per-machine mount)")
+
+
 def test_todo_changelog_split() -> None:
     """TODO/CHANGELOG split adopted 2026-05-08 after AEP-Plugin PR #16
     review. CLAUDE.md must instruct: open work in TODO.md, done in
@@ -13938,6 +14160,7 @@ def main() -> int:
     test_vs_md_multi_task_archive_convention()
     test_vsss_md_inherits_escalate_and_budget()
     test_vsss_persist_until_complete()
+    test_vsss_fromto_format()
     test_install_extras_syncs_hooks()
     test_conversation_history_fragment()
     test_install_extras_ssh_discipline_opt_in()

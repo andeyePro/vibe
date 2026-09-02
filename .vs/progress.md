@@ -495,3 +495,9 @@ Verdict: PASS. Committing as `/vs cycle 1: pass`. Not pushed.
 - Numbers: fragments 8,060 → 6,149 words (−1,911 ≈ 2.6k tokens per session); vs+vss+vsss 13,062 → 12,696 (−366).
 - Sanctioned deviations: (a) Generator rewrote pre-existing `test_fable_subagents_flag_docs`, which asserted the exact vss.md phrase AC7 forbids — spec-class conflict, intent preserved, accepted; (b) `/vsss --sessions X` bullet compressed to a pointer at § Auto-resume across halts (untouched) to reach AC8 — no rule lost, accepted.
 - Generator tier that passed: opus (cycle 1). Tester: haiku. Fable rung pre-authorised, not used.
+
+## task_029 cycle 1 — Evaluator: PASS
+- Mechanical gate: Tester (haiku) 53 [fromto] checks green inside a full green suite (2,490 checks); regressions none; code-check clean. Chair re-ran the full suite independently (see session file).
+- Diff read: § fromto format added between § The three files and § Question format with the template verbatim, all rule sentinels, the single exit line, and the brain2 override + write-files-only boundary; § At exit and the § Reporting back closing paragraph deleted; nothing after `## Reporting back at exit` mentions fromClaude. `/brain2/meta/fromto-format.md` written authored/unauthorised with the same template and an 8-bullet rule list.
+- Quality note: the block is terse (net +3 words) because task_028's permanent ceiling on vs+vss+vsss (≤12,700) left a 1-word margin. Chair follow-up: raise the permanent ceilings to budgets with headroom (skills ≤12,900, fragments ≤6,400 — both still far below the pre-merge 13,062 / 8,060) and give the block a real purpose line.
+- Generator tier that passed: sonnet (cycle 1). Tester: haiku. Fable rung pre-authorised, not used.

@@ -168,6 +168,32 @@ session start while active, print one terminal line: questions land in
 `<fromClaude path>`, answers go in `<from-User path>`. The files cross-link
 with `[[wikilinks]]` so the user can hop between them in Obsidian.
 
+### fromto format
+
+fromClaude template.
+
+```
+---
+state: authored
+author: Claude (<harness>, <repo>)
+created: <ISO date>
+cssclasses: [trust-authored]
+---
+Reply in [[<project>-from<User>]]. History: [[<project>-Q&A-archive]].
+
+1. <action point: a question to answer, or a test to run> (T<n>)
+```
+
+Rules: one ordered list and nothing else: action points only, contiguous
+from 1, no session report (§ Question format). Information appears only
+where it answers a question the user asked.
+
+Exit appends exactly one line: Session log:
+`.vss/sessions/<start-ISO>.md` — <N> commits, <pushed|not pushed>.
+
+When present, `/brain2/meta/fromto-format.md` overrides this default
+verbatim — write-files-only, never `git` against it.
+
 ### Question format (fromClaude)
 
 One single ordered list, numbered contiguously `1..N`, containing ONLY live
@@ -233,14 +259,6 @@ the question, move to the next area needing no input, pick the answer up at a
 later iteration boundary. If every remaining area is blocked on unanswered
 questions, that is exit-condition territory (no-op iterations) — the exit
 report then says exactly which numbered questions unblock which work.
-
-### At exit
-
-Append the exit report (same content as § Reporting back at exit) to
-fromClaude below the live list, including every still-live question number and
-what each unblocks — so the user reads the outcome and their remaining asks in
-Obsidian without touching the TTY. Credential boundary reminder: brain2 is
-write-files-only from a container — never `git` against it.
 
 ### After each /vss completes
 
@@ -323,10 +341,6 @@ When the loop ends (any reason), report to the user:
 - Reminder line: "not pushed; review the session file then `git push` if approved" (omit the reminder only if `--push-on-pass` was passed AND the run cleared the perfection-gate).
 
 Lead with `---` before the report block.
-
-If fromto channels are active (§ fromto channels), also append this report to
-the fromClaude file below the live question list, listing every still-live
-question number and what each unblocks.
 
 ---
 
