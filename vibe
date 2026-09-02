@@ -1,6 +1,6 @@
 #!/bin/bash
 # vibe — single-command containerised YOLO Claude Code sessions
-# https://github.com/Aqueum/vibe
+# https://github.com/andeyePro/vibe
 #
 # Usage:
 #   vibe                     # cd to your project folder, then just run this
@@ -3327,7 +3327,7 @@ fi
 if [ ! -f "$DEVCONTAINER_DIR/devcontainer.json" ]; then
   echo "  ✗ vibe source not found at $DEVCONTAINER_DIR"
   echo "    Run the installer:"
-  echo "      bash <(curl -fsSL https://raw.githubusercontent.com/Aqueum/vibe/main/install.sh)"
+  echo "      bash <(curl -fsSL https://raw.githubusercontent.com/andeyePro/vibe/main/install.sh)"
   exit 1
 fi
 

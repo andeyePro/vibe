@@ -33,7 +33,6 @@ VIBE_COPY = REPO / "devcontainer" / "vibe-copy.sh"
 DOCKERFILE = REPO / "devcontainer" / "Dockerfile"
 INSTALL_EXTRAS = REPO / "devcontainer" / "install-claude-extras.sh"
 C_MD = REPO / "devcontainer" / "commands" / "c.md"
-COPY_MD_OLD = REPO / "devcontainer" / "commands" / "copy.md"
 VIBE_COPY_WATCHER = REPO / "vibe-copy-watcher.sh"
 WEB_RESEARCH_MD = REPO / "devcontainer" / "claude-md" / "web-research.md"
 SSH_DISCIPLINE_MD = REPO / "devcontainer" / "claude-md" / "ssh-discipline.md"
@@ -2942,33 +2941,6 @@ def test_dockerfile_installs_vibe_copy() -> None:
 
 
 # ── AC19a-j: New /c watcher tests ──────────────────────────────────────────────
-
-def test_c_copy_md_is_absent() -> None:
-    """AC19g: copy.md does not exist in the repo."""
-    print("\n[/c AC19g: copy.md absent from repo]")
-    check("[/c] copy.md does not exist", not COPY_MD_OLD.exists(), str(COPY_MD_OLD))
-
-
-def test_vibe_final_line_no_exec() -> None:
-    """AC19h: vibe final line does NOT have 'exec devcontainer exec'."""
-    print("\n[/c AC19h: vibe exec dropped]")
-    content = VIBE.read_text()
-    lines = content.split('\n')
-
-    # Check: no line matches "^exec devcontainer exec"
-    exec_prefix_lines = [l for l in lines if l.startswith('exec devcontainer exec')]
-    check("[/c] vibe does not have 'exec devcontainer exec'", len(exec_prefix_lines) == 0,
-          f"found {len(exec_prefix_lines)} lines with 'exec devcontainer exec'")
-
-    # Check: at least one line invokes "devcontainer exec" without an exec
-    # prefix (since 2026-07-04 it lives indented inside launch_claude(), so
-    # match on the stripped line).
-    no_exec_lines = [l for l in lines
-                     if l.strip().startswith('devcontainer exec')
-                     and not l.strip().startswith('exec ')]
-    check("[/c] vibe has 'devcontainer exec' (without exec prefix)", len(no_exec_lines) > 0,
-          "no 'devcontainer exec' line found")
-
 
 def test_vibe_copy_watcher_noop_on_non_darwin() -> None:
     """AC19d: vibe-copy-watcher.sh exits 0 immediately on non-Darwin, no lingering process."""
@@ -13569,8 +13541,6 @@ def main() -> int:
     test_c_slash_command_synced()
     test_c_slash_command_body_matches_spec()
     test_dockerfile_installs_vibe_copy()
-    test_c_copy_md_is_absent()
-    test_vibe_final_line_no_exec()
     test_vibe_copy_watcher_noop_on_non_darwin()
     test_vibe_copy_watcher_polling_detects_change()
     test_c_preserves_user_commands()

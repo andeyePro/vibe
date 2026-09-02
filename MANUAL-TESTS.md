@@ -433,6 +433,7 @@ ls ~/.claude/commands/
 **Expected:**
 - [ ] `~/.claude/agents/shellcheck-fixer.md` exists
 - [ ] `~/.claude/agents/security-review.md` exists
+- [ ] `~/.claude/agents/code-reviewer.md`, `code-writer.md`, `software-architect.md` exist
 - [ ] `~/.claude/commands/diet.md` exists
 - [ ] `~/.claude/commands/feast.md` exists
 - [ ] `~/.claude/commands/vs.md` exists
@@ -458,8 +459,6 @@ Inside Claude Code:
 - [ ] Edit `devcontainer/agents/shellcheck-fixer.md` on the host, rebuild (Test 4), relaunch
 - [ ] `~/.claude/agents/shellcheck-fixer.md` inside the container reflects the edit
 - [ ] Any user-created agents in `~/.claude/agents/` (not shipped by vibe) are left untouched
-
----
 
 ---
 
