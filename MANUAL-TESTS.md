@@ -439,6 +439,8 @@ ls ~/.claude/commands/
 - [ ] `~/.claude/commands/vs.md` exists
 - [ ] `~/.claude/commands/vss.md` exists
 - [ ] `~/.claude/commands/vsss.md` exists
+- [ ] `~/.claude/commands/wide.md` exists
+- [ ] `~/.claude/commands/narrow.md` exists
 
 Inside Claude Code:
 - [ ] Typing `/diet` lists the command with its description in the picker

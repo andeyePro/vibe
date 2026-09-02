@@ -8,4 +8,4 @@ Lean mode off. Resume default behavior:
 - Run verifications proactively (shellcheck, smoke tests) after non-trivial changes.
 - Give fuller explanations where they actually help.
 
-Acknowledge with a single line and return to the current task.
+Acknowledge with a single line and return to the current task. (Orthogonal to `/wide`, the width axis — see `wide.md` — which is unaffected by leaving lean mode.)

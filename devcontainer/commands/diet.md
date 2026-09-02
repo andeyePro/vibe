@@ -18,3 +18,5 @@ Before acting, briefly evaluate the most token-efficient way to complete what's 
 - If the conversation is long and prior context isn't load-bearing, suggest `/compact`.
 
 Acknowledge with a single line stating the efficiency choice (or "staying as-is" if none apply) and return to the current task.
+
+Precedence under `/wide`: `/diet` still suppresses optional agents and cheap-tiers the rest, but the mandatory `/vs` roles (Spec Critic, Generator, Tester) still run — concurrently where legal per `wide.md`.

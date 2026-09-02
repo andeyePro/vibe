@@ -195,10 +195,10 @@ def test_task028_fragment_merges_and_fable_grant() -> None:
             check("[ac7] vs.md --fable-subagents flag line contains '§ Model economy'",
                   "§ Model economy" in fable_flag_line, f"line: {fable_flag_line[:80]}")
     
-    # AC8: vs.md+vss.md+vsss.md total words <= 12900
+    # AC8: vs.md+vss.md+vsss.md total words <= 13500 (bumped from 12900 by task_033 to accommodate /wide)
     vs_vss_vsss_text = vs_text + vss_text + vsss_text
     vs_vss_vsss_words = len(vs_vss_vsss_text.split())
-    check("[ac8] vs+vss+vsss total words <= 12900", vs_vss_vsss_words <= 12900, f"found {vs_vss_vsss_words}")
+    check("[ac8] vs+vss+vsss total words <= 13500", vs_vss_vsss_words <= 13500, f"found {vs_vss_vsss_words}")
     
     # AC9: grep deleted filenames - only permitted in CHANGELOG.md and test names/labels in smoke-test.py
     deleted_filenames = ["learn-hook.md", "feedback-auto-promote.md", "conversation-history.md"]

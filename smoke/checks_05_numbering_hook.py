@@ -577,24 +577,11 @@ def test_vsss_fromto_format() -> None:
           inside_matches <= 1,
           f"found {inside_matches} matches (expect ≤1, the exit-line rule of AC4)")
 
-    # AC6: structural guard (c) — fromClaude count check
-    baseline_content = subprocess.run(
-        ["git", "show", "73172fb:devcontainer/commands/vsss.md"],
-        capture_output=True, text=True, cwd=REPO
-    ).stdout
-    baseline_fromto_idx = baseline_content.find("### fromto format")
-    baseline_next_idx = baseline_content.find("###", baseline_fromto_idx + 10)
-    if baseline_next_idx < 0:
-        baseline_next_idx = len(baseline_content)
-    baseline_fromto = baseline_content[baseline_fromto_idx:baseline_next_idx]
-    baseline_fromclaude_count = baseline_content.count("fromClaude")
-    current_fromclaude_count = content.count("fromClaude")
-    current_fromto_count = fromto_section.count("fromClaude")
-    expected_max = baseline_fromclaude_count - 2 + current_fromto_count
-    check("[fromto] AC6: fromClaude count ≤ baseline-2 + fromto_count",
-          current_fromclaude_count <= expected_max,
-          f"current={current_fromclaude_count}, baseline={baseline_fromclaude_count}, "
-          f"in_fromto={current_fromto_count}, max={expected_max}")
+    # AC6: stable invariants replace cycle-time gate pins removed in task_028
+    # The frozen-baseline fromClaude count pin (expected_max) and word-count pin (+120)
+    # fail on any legitimate edit to vsss.md, exactly the cycle-time gate the chair removed.
+    # Stable invariants: (a) no fromClaude/from<User> in Reporting section (checked above),
+    # (b) no exit-append regex outside fromto section (checked above).
 
     # AC7: preserved sections still exist and in correct order
     required_strings = [
@@ -637,12 +624,7 @@ def test_vsss_fromto_format() -> None:
                   idx > last_idx, f"idx={idx}, last={last_idx}")
             last_idx = idx
 
-    # AC12: word count check
-    baseline_wc = len(baseline_content.split())
-    current_wc = len(content.split())
-    check("[fromto] AC12: word count ≤ baseline + 120",
-          current_wc <= baseline_wc + 120,
-          f"current={current_wc}, baseline={baseline_wc}, diff={current_wc - baseline_wc}")
+    # AC12: word count invariant — vs.md+vss.md+vsss.md ≤13500 checked in test_wide_mode()
 
     # AC8: brain2 file check (only if it exists)
     brain2_file = Path("/brain2/meta/fromto-format.md")
@@ -680,6 +662,206 @@ def test_vsss_fromto_format() -> None:
               "every project" in normalized_brain2, "")
     else:
         print("  [skip] AC8: /brain2/meta/fromto-format.md not found (brain2 is per-machine mount)")
+
+
+def test_wide_mode() -> None:
+    """Task 033: /wide and /narrow parallelism mode. AC1–AC11, AC13, AC14 sentinels."""
+    print("\n[/wide and /narrow: parallelism mode]")
+
+    # AC1: wide.md and narrow.md exist with description
+    check("[wide] AC1: wide.md exists", WIDE_MD.exists(), str(WIDE_MD))
+    check("[wide] AC1: narrow.md exists", NARROW_MD.exists(), str(NARROW_MD))
+
+    if WIDE_MD.exists():
+        wide_content = WIDE_MD.read_text()
+        check("[wide] AC1: wide.md has description in frontmatter",
+              "description:" in wide_content, "")
+        check("[wide] AC1: wide.md mentions /narrow", "/narrow" in wide_content, "")
+
+    if NARROW_MD.exists():
+        narrow_content = NARROW_MD.read_text()
+        check("[wide] AC1: narrow.md has description in frontmatter",
+              "description:" in narrow_content, "")
+        check("[wide] AC1: narrow.md mentions /wide", "/wide" in narrow_content, "")
+        check("[wide] AC1: narrow.md states strictly serial dispatch",
+              "strictly serial" in narrow_content, "")
+
+    # AC2: wide.md contains concurrency caps with specific literals
+    if WIDE_MD.exists():
+        check("[wide] AC2: '6 default, 8 ceiling' present",
+              "6 default, 8 ceiling" in wide_content, "")
+        check("[wide] AC2: 'max 2 concurrent' heavy verifications present",
+              "max 2 concurrent" in wide_content, "")
+        check("[wide] AC2: '10-minute Bash cap' present",
+              "10-minute Bash cap" in wide_content, "")
+        check("[wide] AC2: 'single-writer-per-file' present",
+              "single-writer-per-file" in wide_content, "")
+        check("[wide] AC2: 'max 1 concurrent Fable dispatch' present",
+              "max 1 concurrent Fable dispatch" in wide_content, "")
+        check("[wide] AC2: 'never widens the grant' present",
+              "never widens the grant" in wide_content, "")
+
+    # AC3: stacking table with specific rows
+    if WIDE_MD.exists():
+        check("[wide] AC3: 'mandatory roles only' present",
+              "mandatory roles only" in wide_content, "")
+        check("[wide] AC3: 'Heavy-verify cap 1' present",
+              "Heavy-verify cap 1" in wide_content, "")
+        check("[wide] AC3: '--panel 3' present",
+              "--panel 3" in wide_content, "")
+        check("[wide] AC3: '8 agents' present",
+              "8 agents" in wide_content, "")
+        check("[wide] AC3: 'strictly serial' present",
+              "strictly serial" in wide_content, "")
+
+    # AC4: what may overlap and must stay serial
+    if WIDE_MD.exists():
+        check("[wide] AC4: 'Tester ∥ panel' present",
+              "Tester ∥ panel" in wide_content, "")
+        check("[wide] AC4: 'Evaluator pre-reads' present",
+              "Evaluator pre-reads" in wide_content, "")
+        check("[wide] AC4: \"next queue item's Planner + Spec Critic\" present",
+              "next queue item's Planner + Spec Critic" in wide_content, "")
+        check("[wide] AC4: 'Spec Critic iterations' present",
+              "Spec Critic iterations" in wide_content, "")
+        check("[wide] AC4: 'Generator → Tester of the same cycle' present",
+              "Generator → Tester of the same cycle" in wide_content, "")
+        check("[wide] AC4: 'subagents run long commands in the foreground' present",
+              "subagents run long commands in the foreground" in wide_content, "")
+        check("[wide] AC4: 'never run_in_background' present",
+              "never run_in_background" in wide_content, "")
+
+    # AC5: chair discipline
+    if WIDE_MD.exists():
+        check("[wide] AC5: 'one notification per completion' present",
+              "one notification per completion" in wide_content, "")
+        check("[wide] AC5: 'never poll' present",
+              "never poll" in wide_content, "")
+
+    # AC6: vs.md updated
+    if VS_MD.exists():
+        vs_content = VS_MD.read_text()
+        check("[wide] AC6: vs.md mentions '/vs --wide'",
+              "/vs --wide" in vs_content, "")
+        check("[wide] AC6: vs.md mentions '--narrow'",
+              "--narrow" in vs_content, "")
+        check("[wide] AC6: vs.md 'propagates into wrapped invocations'",
+              "propagates into wrapped invocations" in vs_content, "")
+        check("[wide] AC6: vs.md references 'wide.md'",
+              "wide.md" in vs_content, "")
+        check("[wide] AC6: vs.md 'max 1 concurrent Fable dispatch'",
+              "max 1 concurrent Fable dispatch" in vs_content, "")
+
+    # AC7: vss.md updated
+    if VSS_MD.exists():
+        vss_content = VSS_MD.read_text()
+        check("[wide] AC7: vss.md '--wide' passthrough documented",
+              "--wide" in vss_content, "")
+        check("[wide] AC7: vss.md 'five concurrent read-only' Explore agents",
+              "five concurrent read-only" in vss_content, "")
+        check("[wide] AC7: vss.md '270' seconds redirect window preserved",
+              "270" in vss_content, "")
+
+    # AC8: vsss.md Parallel plan documented
+    if VSSS_MD.exists():
+        vsss_content = VSSS_MD.read_text()
+        check("[wide] AC8: vsss.md 'Parallel plan' block documented",
+              "## Parallel plan" in vsss_content, "")
+        check("[wide] AC8: vsss.md 'files:' key present",
+              "files:" in vsss_content, "")
+        check("[wide] AC8: vsss.md 'depends-on:' key present",
+              "depends-on:" in vsss_content, "")
+        check("[wide] AC8: vsss.md 'worktree:' key present",
+              "worktree:" in vsss_content, "")
+        check("[wide] AC8: vsss.md 'owner-model:' key present",
+              "owner-model:" in vsss_content, "")
+        check("[wide] AC8: vsss.md 'Merge order:' present",
+              "Merge order:" in vsss_content, "")
+        check("[wide] AC8: vsss.md 'Serial because:' present",
+              "Serial because:" in vsss_content, "")
+        check("[wide] AC8: vsss.md worktree convention documented",
+              ".claude/worktrees/<task-id>" in vsss_content, "")
+        check("[wide] AC8: vsss.md branch convention documented",
+              "vsss/<task-id>-<slug>" in vsss_content, "")
+        check("[wide] AC8: vsss.md 'worktree tasks never touch CHANGELOG.md or TODO.md'",
+              "worktree tasks never touch CHANGELOG.md or TODO.md" in vsss_content, "")
+
+    # AC9: merge step order
+    if VSSS_MD.exists():
+        check("[wide] AC9: vsss.md merge sequence 'rebase'",
+              "rebase" in vsss_content, "")
+        check("[wide] AC9: vsss.md merge sequence 'full suite once'",
+              "full suite once" in vsss_content, "")
+        check("[wide] AC9: vsss.md merge sequence '--ff-only'",
+              "--ff-only" in vsss_content, "")
+
+    # AC10: fromto channels dependency analysis
+    if VSSS_MD.exists():
+        check("[wide] AC10: vsss.md fromto channels 'never guess'",
+              "never guess" in vsss_content, "")
+        check("[wide] AC10: vsss.md 'fromClaude question in the minimal template'",
+              "fromClaude question in the minimal template" in vsss_content, "")
+
+    # AC11: README.md and CLAUDE.md mention /wide and /narrow
+    if README_MD.exists():
+        readme_content = README_MD.read_text()
+        check("[wide] AC11: README.md mentions '/wide'",
+              "/wide" in readme_content, "")
+        check("[wide] AC11: README.md mentions '/narrow'",
+              "/narrow" in readme_content, "")
+
+    claude_md_path = REPO / "CLAUDE.md"
+    if claude_md_path.exists():
+        claude_content = claude_md_path.read_text()
+        check("[wide] AC11: CLAUDE.md shipped extras list includes '/wide'",
+              "/wide" in claude_content, "")
+        check("[wide] AC11: CLAUDE.md shipped extras list includes '/narrow'",
+              "/narrow" in claude_content, "")
+
+    # AC11: MANUAL-TESTS.md Test 24
+    if MANUAL_TESTS_MD.exists():
+        manual_content = MANUAL_TESTS_MD.read_text()
+        check("[wide] AC11: MANUAL-TESTS.md Test 24 includes 'wide.md'",
+              "wide.md" in manual_content, "")
+        check("[wide] AC11: MANUAL-TESTS.md Test 24 includes 'narrow.md'",
+              "narrow.md" in manual_content, "")
+
+    # AC13: diet.md gains /wide precedence sentence
+    if DIET_MD.exists():
+        diet_content = DIET_MD.read_text()
+        check("[wide] AC13: diet.md mentions '/wide'",
+              "/wide" in diet_content, "")
+        check("[wide] AC13: diet.md mentions 'mandatory'",
+              "mandatory" in diet_content, "")
+
+    # AC13: feast.md names /wide
+    if FEAST_MD.exists():
+        feast_content = FEAST_MD.read_text()
+        check("[wide] AC13: feast.md mentions '/wide'",
+              "/wide" in feast_content, "")
+
+    # AC14: wide.md within-cycle rule
+    if WIDE_MD.exists():
+        check("[wide] AC14: wide.md 'within-cycle' present",
+              "within-cycle" in wide_content, "")
+
+    # AC14: vsss.md diagram shows parallel items
+    if VSSS_MD.exists():
+        check("[wide] AC14: vsss.md shows '∥' or 'in parallel' for concurrent items",
+              "∥" in vsss_content or "in parallel" in vsss_content, "")
+
+    # AC12 word budget: vs.md + vss.md + vsss.md ≤ 13,500 words
+    if VS_MD.exists() and VSS_MD.exists() and VSSS_MD.exists():
+        vs_content_full = VS_MD.read_text()
+        vss_content_full = VSS_MD.read_text()
+        vsss_content_full = VSSS_MD.read_text()
+        vs_words = len(vs_content_full.split())
+        vss_words = len(vss_content_full.split())
+        vsss_words = len(vsss_content_full.split())
+        total_words = vs_words + vss_words + vsss_words
+        check("[wide] AC12: combined vs+vss+vsss word count ≤ 13,500",
+              total_words <= 13500,
+              f"vs={vs_words}, vss={vss_words}, vsss={vsss_words}, total={total_words}")
 
 
 def test_todo_changelog_split() -> None:

@@ -52,6 +52,12 @@ VS_MD = REPO / "devcontainer" / "commands" / "vs.md"
 SP_MD = REPO / "devcontainer" / "commands" / "sp.md"
 VSS_MD = REPO / "devcontainer" / "commands" / "vss.md"
 VSSS_MD = REPO / "devcontainer" / "commands" / "vsss.md"
+WIDE_MD = REPO / "devcontainer" / "commands" / "wide.md"
+NARROW_MD = REPO / "devcontainer" / "commands" / "narrow.md"
+DIET_MD = REPO / "devcontainer" / "commands" / "diet.md"
+FEAST_MD = REPO / "devcontainer" / "commands" / "feast.md"
+README_MD = REPO / "README.md"
+MANUAL_TESTS_MD = REPO / "MANUAL-TESTS.md"
 CHECK_SP_CURRENT = REPO / "devcontainer" / "check-sp-current.sh"
 CYCLE_1_DIFF = REPO / ".vs" / "cycle-1" / "diff.patch"
 CREDENTIAL_HELPER = REPO / "devcontainer" / "credential-helper.sh"
@@ -1057,6 +1063,11 @@ def _fw_run(tmp: Path, stub_body: str, snippet: str):
         # not the shipped default (which task_029 raised and asserts
         # separately in AC11).
         "GH_FETCH_ATTEMPTS": "3",
+        # Never let a stubbed fetch write the LIVE ~/.claude/gh-meta-cache.json
+        # (a fixture cache served on a real boot would allowlist 1.2.3.0/24
+        # instead of GitHub) and never let a live cache rescue a test that
+        # expects fail-closed.
+        "GH_META_CACHE": str(tmp / "gh-meta-cache.json"),
     }
     script = f"source {shlex.quote(str(INIT_FIREWALL))}\n{snippet}\n"
     r = run(["bash", "-c", script], env=env)
@@ -1248,4 +1259,10 @@ __all__ = [
     'subprocess',
     'sys',
     'tempfile',
+    'DIET_MD',
+    'FEAST_MD',
+    'MANUAL_TESTS_MD',
+    'NARROW_MD',
+    'README_MD',
+    'WIDE_MD',
 ]

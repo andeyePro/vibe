@@ -6,7 +6,7 @@ description: Versus Solo — autonomous one-shot. No args = pick from TODO.md (o
 
 You are the top-level session model (Opus by default; Fable 5 if launched via `vibe --fable`). `/vss` runs autonomously: no mid-flow approvals from the user except when an item on the **hard-escalate list** is hit. The point is one bounded unit of work end-to-end without back-and-forth.
 
-`$ARGUMENTS` may be empty (Mode A) or a task brief (Mode B).
+`$ARGUMENTS` may be empty (Mode A) or a task brief (Mode B). `--wide` (`--narrow` to force off) passes through to whichever tool the planner picks — `/vs --wide`, or Mode A's parallel repo-scan below; see `wide.md` for caps.
 
 ## Hard-escalate list (inviolable in both modes)
 
@@ -51,6 +51,8 @@ Read `MEMORY.md` at start; surface relevant feedback memories into the planner b
    3. Documentation drift: README, CLAUDE.md, MANUAL-TESTS.md vs actual code state.
    4. Dead code / unused exports.
    5. Performance or readability wins under 50 lines of diff.
+
+   Under `--wide`, run this scan as **five concurrent read-only** Explore agents (one per category above, batched in a single message), the chair ranks their findings and announces one; without `--wide`, scan the categories serially yourself.
 
    Announce the top candidate with one-line rationale (lead with the literal action). **At the moment of announcement, ring the terminal bell to surface the wait window to the user**: `Bash(command: "printf '\\a' >&2", description: "vss A-mode notify – bounce terminal icon + audio cue")`. The bell character maps to a system sound + dock-icon bounce in Ghostty / Terminal.app / iTerm — vibe already uses this idiom for idle hooks (see `vibe` line ~1043). One bell per announcement; do not spam.
 

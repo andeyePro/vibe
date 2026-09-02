@@ -58,7 +58,7 @@ Step 2's spec includes a **Model plan**: starting tier and escalation ceiling pe
 
 ### Fable grant (`--fable-subagents`)
 
-`/vs --fable-subagents <prompt>` (alias `--fable`) defines the credit-billed grant: it **permits, never forces**. The Model plan records `Fable rung: pre-authorised (--fable-subagents)`; the Planner MAY start the Generator at Fable when difficulty demands it, and the ladder MAY take that rung on capability-fails without a fresh ask. Task-class routing still governs: NEVER Fable for mechanical roles (Tester, Spec Critic, cost admin), nor scoped small generations where Opus is near-parity — permission, not routing. Without the flag the ask-before-Fable gate is unchanged. `--fable-gen` forces a Fable start and still quotes estimated credits. Distinct from the `vibe --fable` LAUNCHER flag, which sets only the chair/session model and authorises no subagent spend. `/vss` and `/vsss` thread this grant through.
+`/vs --fable-subagents <prompt>` (alias `--fable`) defines the credit-billed grant: it **permits, never forces**. The Model plan records `Fable rung: pre-authorised (--fable-subagents)`; the Planner MAY start the Generator at Fable when difficulty demands it, and the ladder MAY take that rung on capability-fails without a fresh ask. Task-class routing still governs: NEVER Fable for mechanical roles (Tester, Spec Critic, cost admin), nor scoped small generations where Opus is near-parity — permission, not routing. Without the flag the ask-before-Fable gate is unchanged. `--fable-gen` forces a Fable start and still quotes estimated credits. Distinct from the `vibe --fable` LAUNCHER flag, which sets only the chair/session model and authorises no subagent spend. `/vss` and `/vsss` thread this grant through. Under `--wide`, `max 1 concurrent Fable dispatch` regardless of the overall concurrency cap — `/wide` widens everything else, never the grant; see `wide.md`.
 
 ### Escalation ladder (capability-gated)
 
@@ -92,6 +92,8 @@ Log every escalation in `.vs/progress.md` (`escalated generator sonnet→opus: <
 - `/vs --vN-spec N <prompt>` — Spec Critic-only verbosity override. Same 0-9 scale.
 - `/vs --vN-test N <prompt>` — Tester-only verbosity override.
 - `/vs --vN-eval N <prompt>` — Evaluator-only verbosity override.
+- `/vs --wide [N] <prompt>` — dispatch legally-concurrent stages together instead of one at a time (default 6, ceiling 8 concurrent agents). `propagates into wrapped invocations` — `/vss`/`/vsss` inherit it. Caps, the stacking table, and which stages may overlap: `wide.md`.
+- `/vs --narrow <prompt>` — force strictly serial dispatch, overriding any `--wide` inherited from a wrapping `/vss`/`/vsss`. Inverse of `--wide`; see `narrow.md`.
 
 The `--plain` / `--techy` and `--verbosity` flags are independent dimensions: `--plain --verbosity 9` is verbose plain English; `--techy --verbosity 0` is one-line technical pass/fail. The cross-product is always meaningful.
 
@@ -410,6 +412,7 @@ Superpowers is complementary discipline, not a rival harness — `/vs` supplies 
 ## Rules
 
 - **Ask before credits** — no credit-billed dispatch without user consent (§ Model economy). Inherited by `/vss` / `/vsss` as a hard-escalate item.
+- **Concurrency (`--wide`/`--narrow`)** — legal overlaps (e.g. Tester ∥ panel, next item's Planner + Spec Critic) and required-serial stages (Spec Critic iterations, Generator → Tester of the same cycle) are defined in `wide.md`; default with neither flag is strictly serial, unchanged.
 - **Immutable tests (rigorous only)** — once Tester lands tests, nobody edits or removes them. If acceptance criteria change, Planner writes a revised spec and restarts cycle 1. Does not apply in fuzzy mode (no tests).
 - **Status-field mutations only** on `tasks.json`. No unstructured edits.
 - **Fresh subagents per cycle** — context reset over compaction. Continuity via `.vs/` files only.

@@ -105,9 +105,20 @@ iter 1:  /vss $ARGUMENTS                      (Mode B if args, else A)
 opt:     Opus optimiser proposes refined args, OR returns "satisfied"
 iter 2:  /vss <optimised args>                (Mode B with optimised args)
          OR /vss                              (Mode A — no args)
+iter 2∥3: (--wide) two independent queue items in parallel, each in its own worktree
 ...
 iter N:  loop continues until exit condition
 ```
+
+### Parallel plan (`--wide`)
+
+Under `--wide`, before iter 1 (and refreshed at every iteration boundary) write a `## Parallel plan` block to the session file: one row per queued item with `files:`, `depends-on:`, `worktree:`, `owner-model:`, plus plan-level `Merge order:` and `Serial because:` lines naming what can't run concurrently and why. See `wide.md` for the concurrency caps this plan must respect.
+
+Worktree convention: `.claude/worktrees/<task-id>`, branch `vsss/<task-id>-<slug>`. Hot shared single-writer files — never assign two concurrent items the same one: `smoke-test.py`, `site/site-check.mjs`, `site/src/content/home.md`, `.vibe-content-allow`, `devcontainer/commands/*.md`.
+
+`.vs/` split under `--wide`: per-task files (`spec.md`, `cycle-N/`) live in the worktree; repo-wide accumulators (`tasks.json`, `progress.md`, `cost-summary.json`) stay chair-owned on main — a worktree task never writes them directly, it appends its cycle summary to `.vs/progress-block.md` instead, folded into `progress.md` by the chair at merge. And worktree tasks never touch CHANGELOG.md or TODO.md — the chair appends both on main at merge, one entry per merged item, in merge order.
+
+**Merging a worktree item**: `rebase` onto current main → `full suite once` (once after rebase, not per-worktree) → `--ff-only` merge → chair appends CHANGELOG/TODO/progress → `git worktree remove`. A rebase conflict signals a dependency-analysis miss, not a retry point: drop the parallel attempt for that item and finish it serially instead.
 
 ### What "the loop" actually is — read this before iter 1
 
@@ -251,6 +262,10 @@ prompt is always supreme — "are we safe to exit" means stop cleanly NOW, never
 "after I finish the from<User> backlog". Instructions in `from<User>` redirect
 the queue (log the redirect in the session file); they are user instructions,
 not suggestions.
+
+### Ambiguous dependency analysis (`--wide`)
+
+When the Parallel plan's dependency analysis is ambiguous — unclear whether two queued items touch overlapping state — never guess: post a fromClaude question in the minimal template (§ fromto format above), and run that item serially in the meantime; fold the answer into the plan once it arrives.
 
 ### Interaction with the loop
 
