@@ -1107,3 +1107,204 @@ prompt on first ssh, a start-up failure/delay when the scan can't complete,
 entries accumulating across relaunches, a silent no-op on the Remote-Login-
 off path, or the seed vanishing while in-session appends persist (would mean
 the copy loop ran after the seed).
+
+## Linux host (Ubuntu 24.04 LTS)
+
+Tests 44–50 cover the `[L]` acceptance criteria of task_034 (Linux host
+support), which need a real Linux box and so cannot live in the smoke suite.
+Reference platform: **Ubuntu 24.04 LTS with Docker Engine from the `docker-ce`
+repo** (not Docker Desktop). Each test names the Mac test it mirrors; run the
+Mac test first if you want a baseline to compare against.
+
+Unless stated otherwise, "in the container" means a shell obtained with
+`vibe` in the project, and `$` prompts are the Linux host shell.
+
+### Test 44: fresh install + preflight without Docker (mirrors Test 1)
+
+On a clean Ubuntu 24.04 box with **no Docker installed**:
+
+```
+$ sudo apt-get update && sudo apt-get install -y git
+$ bash <(curl -fsSL https://raw.githubusercontent.com/andeyePro/vibe/main/install.sh)
+```
+
+**Pass:** the installer stops at preflight and prints Linux hints — including
+a `✗ docker missing — install Docker Engine from the docker-ce repo:
+https://docs.docker.com/engine/install/ubuntu/` line — then
+`Install the missing dependencies above, then re-run this installer.` and
+exits 1. **No `brew` and no `xcode-select` appears anywhere in the output.**
+
+Now install the rest and re-run:
+
+```
+$ sudo apt-get install -y nodejs npm gh && sudo npm install -g @devcontainers/cli
+$ # Docker Engine per https://docs.docker.com/engine/install/ubuntu/
+$ sudo systemctl enable --now docker
+$ bash <(curl -fsSL https://raw.githubusercontent.com/andeyePro/vibe/main/install.sh)
+```
+
+**Pass:** installer completes; `Next steps:` names
+`Docker Engine:   https://docs.docker.com/engine/install/ubuntu/` and
+`Add yourself to the docker group: sudo usermod -aG docker $USER`.
+
+**Docker-group warning (deliberately non-fatal).** Before running
+`usermod -aG docker $USER`, re-run the installer:
+
+**Pass:** it prints `⚠  <user> is not in the 'docker' group …` naming
+`sudo usermod -aG docker $USER`, and **exits 0** (a warning, not a failure —
+rootless Docker legitimately has no such group).
+**Fail:** a non-zero exit, or any `brew`/`xcode-select` text.
+
+### Test 45: first launch — build, PAT prompt, banner (mirrors Test 2)
+
+```
+$ cd ~/Projects/<some-repo> && vibe
+```
+
+**Pass:** the image builds (first run, several minutes), the fine-grained PAT
+prompt appears exactly as on the Mac, the launch banner names the project repo
+and any `/repos/*` shared repos, and a Claude Code session opens. `docker ps`
+on the host shows one container for the workspace.
+**Fail:** a build failure, a permission error from the Docker socket (means the
+`docker` group step was skipped), or the banner naming repos not declared.
+
+### Test 46: firewall fail-closed + `host.docker.internal` resolves (mirrors Test 28)
+
+In the container:
+
+```
+$ getent hosts host.docker.internal
+$ curl -sS -m 5 https://example.com ; echo "exit=$?"
+$ curl -sS -m 5 https://api.github.com ; echo "exit=$?"
+```
+
+**Pass:** `getent hosts host.docker.internal` prints the gateway IP and exits 0
+— this is the criterion that only passes because of the unconditional
+`--add-host=host.docker.internal:host-gateway` (Docker Engine has no built-in
+name for the host). `example.com` fails closed (non-zero, connection refused or
+timeout); `api.github.com` succeeds.
+**Fail:** `getent` printing nothing (add-host missing), or `example.com`
+succeeding (firewall not fail-closed).
+
+Also confirm the flag is not doubled:
+
+```
+$ docker inspect --format '{{json .HostConfig.ExtraHosts}}' <container>
+```
+
+**Pass:** exactly one `host.docker.internal:host-gateway` entry. With the
+OpenProject MCP configured, a second, *differently named* `<op-host>:host-gateway`
+entry is expected and correct.
+
+**Mac re-verification (run this on the Mac too, after shipping).** In a Mac
+container, `getent hosts host.docker.internal` must still resolve, on both
+Docker Desktop and OrbStack — the new `/etc/hosts` line now shadows the
+embedded DNS answer for that name, and this confirms it resolves to the same
+gateway.
+
+### Test 47: SSH to a LAN host by IP and by `.local`; mDNS probe warns once (mirrors Test 43)
+
+Pick a LAN box the user already has keys for. In the container:
+
+```
+$ ssh -o BatchMode=yes <user>@<lan-ip> true ; echo "exit=$?"
+$ ssh -o BatchMode=yes <user>@<host>.local true ; echo "exit=$?"
+```
+
+**Pass (IP):** connects, or fails on *authentication* — never on name
+resolution.
+**Pass (`.local`):** either it resolves (host has `avahi-daemon` or
+`MulticastDNS=yes`), or it fails with a name-resolution error **and** the
+launcher warned about exactly that (next check). Both outcomes are acceptable;
+a silent failure is not.
+
+mDNS probe, once per machine:
+
+```
+$ rm -f ~/.vibe/mdns-probe
+$ vibe            # launch 1
+$ /exit
+$ vibe            # launch 2
+```
+
+**Pass:** on a host that cannot resolve `$(hostname).local`, launch 1 prints
+the `⚠  mDNS: this host cannot resolve …` block naming `avahi-daemon` /
+`MulticastDNS=yes` and `host.docker.internal`; **launch 2 prints nothing** and
+`~/.vibe/mdns-probe` exists. On a host that *can* resolve it, neither launch
+warns. On a Mac, neither launch warns and no marker is created.
+**Fail:** the warning repeating on every launch, the warning appearing on a
+host whose mDNS works, any warning on macOS, or the probe aborting the launch.
+
+### Test 48: `/c` under Wayland, X11, and headless (mirrors Test 12)
+
+Run three times, checking `echo $XDG_SESSION_TYPE` each time.
+
+**Wayland** (`wl-copy` installed): in a session, ask Claude for a fenced code
+block, then `/c`.
+**Pass:** `wl-paste` on the host prints exactly the block's bytes.
+
+**X11** (`xclip` installed, `wl-copy` absent): same.
+**Pass:** `xclip -selection clipboard -o` prints exactly the block's bytes —
+note **clipboard**, not PRIMARY: `xclip -o` alone (PRIMARY) is *not* the
+criterion, and if only PRIMARY is populated the test fails.
+With `xsel` only: `xsel --clipboard --output` must print the bytes.
+
+**Headless** (none of `wl-copy`/`xclip`/`xsel` installed): same.
+**Pass:** `/c` reports the scratch-file fallback, `.vibe/copy-latest.txt`
+contains the block, **no watcher process is left running**
+(`pgrep -af vibe-copy-watcher.sh` prints nothing), and the launch is otherwise
+unaffected.
+
+**Mac unchanged:** repeat Test 12 on the Mac — `/c` must still populate the Mac
+clipboard via `pbcopy`, including the exit-time flush when the session ends
+without an intervening watcher poll.
+
+### Test 49: auto-rebuild on devcontainer change (mirrors Test 16)
+
+```
+$ touch ~/.vibe-src/devcontainer/Dockerfile   # or edit it
+$ vibe
+```
+
+**Pass:** the launcher notices the change and rebuilds before launching,
+exactly as on the Mac; the session then opens normally.
+
+**nsswitch idempotency (AC10) — check this here, it needs the rebuild.** Force
+a cache-busted rebuild and then, in the container:
+
+```
+$ vibe --rebuild
+  … in the container:
+$ grep -c mdns4_minimal /etc/nsswitch.conf
+$ grep '^hosts:' /etc/nsswitch.conf
+```
+
+**Pass:** the count is exactly `1`, and the `hosts:` line reads
+`files mdns4_minimal [NOTFOUND=return] dns` with the mdns entry before `dns`.
+**Fail:** a count of `2` — meaning the layer was served from cache and the
+image still predates the idempotency fix; bust the cache and rebuild again.
+(Images built before 2026-09-02 all carry the duplicate; the fix only lands on
+a real rebuild.)
+
+### Test 50: history bind + brain2/Zotero mounts (mirrors Tests 42 and 29)
+
+With `VIBE_BRAIN2_PATH` and `VIBE_ZOTERO_PATH` pointing at real directories on
+the Linux host (or the defaults `~/brain2` and `~/Zotero/storage` existing):
+
+```
+  … in the container:
+$ ls /brain2 && ls /zotero | head
+$ touch /brain2/.write-probe && rm /brain2/.write-probe   # rw
+$ touch /zotero/.write-probe ; echo "exit=$?"             # must FAIL (ro)
+$ ls ~/.claude/projects/
+```
+
+**Pass:** `/brain2` is present and writable; `/zotero` is present and
+**read-only** (the write probe fails); `~/.claude/projects/` shows this
+project's own history only, and a second project launched in parallel sees a
+different set (the per-project bind of Test 42). Ownership inside the container
+is usable by `node` — a Linux host's uid/gid mapping is direct, unlike Docker
+Desktop's, so this is the check most likely to differ from the Mac.
+**Fail:** a missing mount, `/zotero` writable, history shared across projects,
+or permission-denied on `/brain2` writes (a uid-mapping problem: the host
+directory must be owned by, or group-writable to, the invoking user).

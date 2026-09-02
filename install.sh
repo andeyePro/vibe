@@ -19,6 +19,70 @@ BIN_DIR="$HOME/bin"
 echo "vibe installer"
 echo ""
 
+# ── Platform detection (task_034) ─────────────────────────────────────────────
+# vibe supports macOS (primary) and Linux (reference: Ubuntu 24.04 LTS + Docker
+# Engine, NOT Docker Desktop). Everything platform-specific below branches on
+# VIBE_OS; the Darwin path is byte-identical to the pre-Linux installer.
+# VIBE_OS / VIBE_PKG are overridable so the smoke suite can exercise each
+# platform's hint text without a matching host.
+# `uname` itself can be absent (the smoke suite runs this script with an empty
+# PATH to exercise the all-deps-missing path), and `set -e` would abort on a
+# failed command substitution. Degrade to Darwin: that is exactly the
+# pre-Linux-support behaviour, so an unknown platform keeps the old output.
+VIBE_OS="${VIBE_OS:-$(uname -s 2>/dev/null || true)}"
+[ -n "$VIBE_OS" ] || VIBE_OS="Darwin"
+
+# vibe_linux_pkg — echo the package-manager family for this Linux box, from
+# /etc/os-release ID / ID_LIKE. "apt" for Debian/Ubuntu, "dnf" for Fedora/RHEL,
+# "" when neither is recognised (hints then stay generic rather than wrong).
+vibe_linux_pkg() {
+  local id="" like=""
+  if [ -r /etc/os-release ]; then
+    # shellcheck disable=SC1091  # runtime host file, not shipped in this repo
+    id="$(. /etc/os-release 2>/dev/null && printf '%s' "${ID:-}")"
+    like="$(. /etc/os-release 2>/dev/null && printf '%s' "${ID_LIKE:-}")"
+  fi
+  case " $id $like " in
+    *" debian "*|*" ubuntu "*) printf 'apt' ;;
+    *" fedora "*|*" rhel "*|*" centos "*) printf 'dnf' ;;
+    *) printf '' ;;
+  esac
+}
+VIBE_PKG="${VIBE_PKG:-}"
+if [ "$VIBE_OS" != "Darwin" ] && [ -z "$VIBE_PKG" ]; then
+  VIBE_PKG="$(vibe_linux_pkg)"
+fi
+
+# vibe_dep_hint <cmd> — echo the platform-appropriate remedy for a missing dep.
+vibe_dep_hint() {
+  if [ "$VIBE_OS" = "Darwin" ]; then
+    case "$1" in
+      git)          echo "  ✗ git missing — xcode-select --install" ;;
+      docker)       echo "  ✗ docker missing — brew install --cask orbstack  (or Docker Desktop: https://www.docker.com/products/docker-desktop/)" ;;
+      node)         echo "  ✗ node missing — brew install node" ;;
+      devcontainer) echo "  ✗ devcontainer missing — npm install -g @devcontainers/cli" ;;
+      gh)           echo "  ✗ gh missing — brew install gh  (then: gh auth login)" ;;
+    esac
+    return 0
+  fi
+  # Linux. Docker gets the docker-ce repo, never the distro's stale docker.io.
+  case "$VIBE_PKG:$1" in
+    apt:git)    echo "  ✗ git missing — sudo apt-get install -y git" ;;
+    dnf:git)    echo "  ✗ git missing — sudo dnf install -y git" ;;
+    *:git)      echo "  ✗ git missing — install git with your distro's package manager" ;;
+    apt:docker) echo "  ✗ docker missing — install Docker Engine from the docker-ce repo: https://docs.docker.com/engine/install/ubuntu/" ;;
+    dnf:docker) echo "  ✗ docker missing — install Docker Engine from the docker-ce repo: https://docs.docker.com/engine/install/fedora/" ;;
+    *:docker)   echo "  ✗ docker missing — install Docker Engine: https://docs.docker.com/engine/install/" ;;
+    apt:node)   echo "  ✗ node missing — sudo apt-get install -y nodejs npm  (or nodesource for a current LTS)" ;;
+    dnf:node)   echo "  ✗ node missing — sudo dnf install -y nodejs npm" ;;
+    *:node)     echo "  ✗ node missing — install Node.js 18+ with your distro's package manager" ;;
+    *:devcontainer) echo "  ✗ devcontainer missing — npm install -g @devcontainers/cli" ;;
+    apt:gh)     echo "  ✗ gh missing — sudo apt-get install -y gh  (then: gh auth login)" ;;
+    dnf:gh)     echo "  ✗ gh missing — sudo dnf install -y gh  (then: gh auth login)" ;;
+    *:gh)       echo "  ✗ gh missing — install the GitHub CLI: https://cli.github.com  (then: gh auth login)" ;;
+  esac
+}
+
 # ── Preflight: required dependencies ──────────────────────────────────────────
 # Check everything a vibe session needs BEFORE cloning or touching ~/bin, so a
 # fresh machine gets one actionable list instead of a half-finished install and
@@ -28,13 +92,7 @@ preflight_deps() {
   for cmd in git docker node devcontainer gh; do
     command -v "$cmd" >/dev/null 2>&1 && continue
     missing=1
-    case "$cmd" in
-      git)          echo "  ✗ git missing — xcode-select --install" ;;
-      docker)       echo "  ✗ docker missing — brew install --cask orbstack  (or Docker Desktop: https://www.docker.com/products/docker-desktop/)" ;;
-      node)         echo "  ✗ node missing — brew install node" ;;
-      devcontainer) echo "  ✗ devcontainer missing — npm install -g @devcontainers/cli" ;;
-      gh)           echo "  ✗ gh missing — brew install gh  (then: gh auth login)" ;;
-    esac
+    vibe_dep_hint "$cmd"
   done
   if [ "$missing" -ne 0 ]; then
     echo ""
@@ -44,6 +102,28 @@ preflight_deps() {
   fi
 }
 preflight_deps
+
+# ── Linux-only preflight: daemon reachable + docker group (task_034) ──────────
+# Runs AFTER preflight_deps, so `docker` is known to exist. Both checks WARN
+# and continue: rootless Docker legitimately fails the group check, and a
+# daemon that is merely stopped is a one-command fix, not a reason to refuse
+# to install the launcher. macOS output is unaffected (function returns early).
+preflight_linux() {
+  [ "$VIBE_OS" = "Darwin" ] && return 0
+  if ! docker info >/dev/null 2>&1; then
+    echo "  ⚠  docker daemon not reachable — start it with:"
+    echo "       sudo systemctl enable --now docker"
+    echo "     (then re-run this installer to re-check)"
+  fi
+  if ! id -nG 2>/dev/null | grep -qw docker; then
+    echo "  ⚠  $(id -un 2>/dev/null || echo you) is not in the 'docker' group — vibe would need sudo for every"
+    echo "     container command. Fix with:"
+    echo "       sudo usermod -aG docker \$USER"
+    echo "     then log out and back in (or: newgrp docker). Harmless to ignore if"
+    echo "     you run rootless Docker, which does not use that group."
+  fi
+}
+preflight_linux
 
 # Detect whether we're being run from a real vibe clone. If so, use it
 # in-place instead of maintaining a separate ~/.vibe-src. A "real" clone
@@ -111,6 +191,7 @@ for cmd in docker devcontainer gh node; do
   fi
 done
 
+if [ "$VIBE_OS" = "Darwin" ]; then
 cat <<'EOF'
 
   Next steps:
@@ -122,3 +203,30 @@ cat <<'EOF'
         gh auth login
     - Then: cd <a project> && vibe
 EOF
+elif [ "$VIBE_PKG" = "dnf" ]; then
+cat <<'EOF'
+
+  Next steps:
+    - Ensure ~/bin is on your PATH
+    - Missing deps? Install:
+        Docker Engine:   https://docs.docker.com/engine/install/fedora/
+        devcontainer:    npm install -g @devcontainers/cli
+        gh (GitHub CLI): sudo dnf install -y gh
+        gh auth login
+    - Add yourself to the docker group: sudo usermod -aG docker $USER  (then re-login)
+    - Then: cd <a project> && vibe
+EOF
+else
+cat <<'EOF'
+
+  Next steps:
+    - Ensure ~/bin is on your PATH
+    - Missing deps? Install:
+        Docker Engine:   https://docs.docker.com/engine/install/ubuntu/
+        devcontainer:    npm install -g @devcontainers/cli
+        gh (GitHub CLI): sudo apt-get install -y gh
+        gh auth login
+    - Add yourself to the docker group: sudo usermod -aG docker $USER  (then re-login)
+    - Then: cd <a project> && vibe
+EOF
+fi

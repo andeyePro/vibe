@@ -1,0 +1,151 @@
+=== cd /workspace/site && npm run check ===
+
+> vibe-andeye-com@0.1.0 check
+> npm run build && node site-check.mjs
+
+
+> vibe-andeye-com@0.1.0 build
+> node scripts/vendor-player.mjs && astro build
+
+vendor-player: wrote public/vendor/asciinema-player.min.js and public/vendor/asciinema-player.css
+21:20:36 [WARN] [content] home.md must live in a content/... collection subdirectory.
+21:20:36 [types] Generated 168ms
+21:20:36 [build] output: "static"
+21:20:36 [build] directory: /workspace/site/dist/
+21:20:36 [build] Collecting build info...
+21:20:36 [build] ✓ Completed in 192ms.
+21:20:36 [build] Building static entrypoints...
+21:20:38 [vite] ✓ built in 1.33s
+21:20:38 [build] ✓ Completed in 1.39s.
+
+ generating static routes 
+21:20:38 ▶ src/pages/index.astro
+21:20:38   └─ /index.html (+22ms)
+21:20:38 ✓ Completed in 52ms.
+
+21:20:38 [build] 1 page(s) built in 1.69s
+21:20:38 [build] Complete!
+ok   install CTA links the README install section
+ok   register CTA uses the contact.andeye.com prefill convention
+ok   no "one-click install" promise anywhere
+ok   command deck has exactly 13 chips (found 13)
+ok   every chip carries a checklist (found 13)
+ok   no server-rendered locked state on any chip
+ok   launch chip present
+ok   journey.locked_note copy is unchanged ("run Launch first" still renders)
+ok   red-team chips present (firewall + content guard)
+ok   firewall copy names the extras rather than claiming a closed trio
+ok   content-guard copy says WARN also stops the commit
+ok   terminal height is viewport-bounded, not a bare fixed px
+ok   hero links to #demo
+ok   legacy #how / #sandbox anchors preserved
+ok   everyday-launch banner quotes the launcher, in its own field order (project/path/github/hooks/extras)
+ok   everyday-launch chip keeps the firewall verification pin, verbatim from init-firewall.sh
+ok   everyday-launch chip shows Claude sign-in already valid, not a prompt
+ok   everyday-launch checklist keeps the short-allowlist line
+ok   everyday-launch chip carries no first-launch-only content (PAT prompt / image build / token-saved)
+ok   first-launch chip present
+ok   first-launch chip carries the PAT-prompt / image-build lines verbatim from the launcher
+ok   first-launch checklist mentions the fine-grained PAT and the sandboxed container
+ok   pat chip present with cmd `vibe pat`
+ok   pat chip quotes the launcher's expiry / no-rebuild wording
+ok   every chip's line "step" values are contiguous 1..checklist length (13 chips checked)
+ok   launch banner fields are the launcher's own (project/github/hooks/extras)
+ok   PAT wording quotes the launcher (Token saved / not asked again)
+ok   container build line quotes the launcher
+ok   firewall verification line is verbatim from init-firewall.sh
+ok   firewall allowlist domains the demo names exist in init-firewall.sh
+ok   fail-closed claim is real (init-firewall.sh fails CLOSED)
+ok   Radicle claim pinned to the allowlist (seed.radicle.garden)
+ok   content-guard rule id in the demo is a real BLOCK rule
+ok   no invented content-guard rule ids
+ok   /vss redirect window matches the spec (270s + auto-proceed)
+ok   /vss audit-trail path matches the spec (.vss/sessions/)
+ok   /vsss relaunch string matches the launcher (claude --continue)
+ok   no-autonomous-push claim matches the /vsss exit report
+ok   /budget honesty line quotes budget.md (estimates, not invoices)
+ok   /c scratch path matches c.md (copy-latest.txt)
+ok   no mailto: and no raw email addresses
+ok   dist/demo/vibe.cast parses as newline-delimited JSON (header + events)
+ok   cast header is version 2 with integer width/height
+ok   every cast line is a [time, code, data] 3-tuple with code in o/i/m/r and numeric non-decreasing time (123 events)
+advisory: dist/demo/vibe.cast is a synthetic placeholder — awaiting Martin's real recording (see site/demo/record.md)
+ok   dist/demo/markers.json parses as an array of {id, time, label}
+ok   chip-marker ids, in order, equal the 13 data-step ids in dist/index.html
+ok   every checklist step of every chip has its <chip>:<n> step marker
+ok   every markers.json entry has a matching "m" cast event at the same time with label = id
+ok   cast text matches none of the AC5 redaction patterns (tokens/emails/home paths/private IPs)
+ok   cast text contains no real repo slug (andeyePro/ or Aqueum/)
+ok   cast fidelity: launcher/firewall strings appear in the cast text and in their sources
+ok   site/package.json pins asciinema-player 3.17.0 as a devDependency
+ok   build vendors the player before astro build; check runs build then site-check
+ok   site/public/vendor/ is gitignored
+ok   dist/vendor/asciinema-player.min.js exists and gzips to <= 75000 B
+ok   dist/vendor/asciinema-player.css exists and gzips to <= 6000 B
+ok   player mount has id="cast" and /demo/vibe.cast is referenced
+ok   legacy typed-transcript markup is gone (class="trole" / id="termLive")
+ok   embedded COPY blob still parses via parseCopy(), with its lines/subs/notes shape intact
+ok   nothing in <head> references asciinema-player (no script src / preload / modulepreload)
+ok   client script lazily loads the player via IntersectionObserver + a dynamic import of the vendored bundle
+ok   player is created with the spec's options, matched minifier-tolerantly
+ok   marker seek/listen wiring is present (seek({marker...}) and a "marker" event listener)
+ok   a chip click before the player has loaded triggers the load then seeks (loadPlayer referenced from the click handler)
+
+all site checks passed
+
+=== node --test demo/scrub.test.mjs ===
+TAP version 13
+# Subtest: redacts a classic GitHub PAT (ghp_ prefix)
+ok 1 - redacts a classic GitHub PAT (ghp_ prefix)
+  ---
+  duration_ms: 1.920458
+  ...
+# Subtest: redacts a fine-grained GitHub PAT (github_pat_ prefix)
+ok 2 - redacts a fine-grained GitHub PAT (github_pat_ prefix)
+  ---
+  duration_ms: 0.94075
+  ...
+# Subtest: redacts email addresses
+ok 3 - redacts email addresses
+  ---
+  duration_ms: 0.226792
+  ...
+# Subtest: redacts macOS home paths
+ok 4 - redacts macOS home paths
+  ---
+  duration_ms: 0.105125
+  ...
+# Subtest: redacts RFC1918 / link-local private IPs
+ok 5 - redacts RFC1918 / link-local private IPs
+  ---
+  duration_ms: 0.241417
+  ...
+# Subtest: redacts known real repo slugs (andeyePro/ and Aqueum/) to you/yourproject
+ok 6 - redacts known real repo slugs (andeyePro/ and Aqueum/) to you/yourproject
+  ---
+  duration_ms: 0.098375
+  ...
+# Subtest: normalises asciicast v3 (delta times, term.cols/rows) to v2 (absolute times, flat width/height)
+ok 7 - normalises asciicast v3 (delta times, term.cols/rows) to v2 (absolute times, flat width/height)
+  ---
+  duration_ms: 0.887083
+  ...
+# Subtest: normalises asciicast v2 input to a v2 copy unchanged in shape
+ok 8 - normalises asciicast v2 input to a v2 copy unchanged in shape
+  ---
+  duration_ms: 0.099292
+  ...
+# Subtest: inserts a chip "m" marker at the first "o" event containing the record.md prompt text
+ok 9 - inserts a chip "m" marker at the first "o" event containing the record.md prompt text
+  ---
+  duration_ms: 0.7005
+  ...
+1..9
+# tests 9
+# suites 0
+# pass 9
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 299.966959

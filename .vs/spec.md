@@ -1,37 +1,81 @@
-# Spec — task_032: asciinema pipeline — the site's terminal pane replays a real recorded vibe session
+# Spec — task_034: Linux host support (worktree task034, branch vsss/task034-linux-host, baseline 3b23b19)
+
+# /vs spec draft — Linux host support (Tier 2)
+
+**Status:** draft; not for execution now. Source: `/brain2/andeye/vibe-roadmap-2026-09.md` answer 1, Tier 2. Evidence at `5125e3c`.
 
 ## Task summary
-vibe.andeye.com's terminal pane is a hand-authored transcript typed out by JS with an 8-character role gutter real Claude Code never prints. Replace the pane with asciinema-player (3.17.0, Apache-2.0, Rust→WASM VT with alternate-screen support; standalone bundle 65 KB gz JS + 4 KB gz CSS) replaying a real `.cast`; the 13 deck chips drive the player via markers and `seek({marker: i})`, so chips, checklists and ticking survive; only the pane changes and the role gutter goes away. Until Martin records on his Mac, a clearly-labelled synthetic placeholder cast generated from the deck's own lines ships; `site/demo/record.md` is the exact typing script so a re-record is mechanical; `site/demo/scrub.mjs` redacts and normalises any recording (asciicast v2 or v3 in → v2 out) and inserts markers post-hoc by matching `record.md` prompts in the output stream; site-check asserts fidelity over the cast text. Builds on task_030's deck (13 chips: launch, first-launch, pat, vs, vss, vsss, curl, leak, push, budget, learn, copy, diet). Baseline: ec1d21c (task_030 archived).
+
+Make a Linux box a first-class vibe host (reference: **Ubuntu 24.04 LTS + Docker Engine**, not Docker Desktop). Two real gaps: `host.docker.internal` does not exist on native Docker Engine, and `.local` mDNS depends on the host resolver. The rest is Mac-only ergonomics (clipboard, installer hints) and missing Linux test coverage — BSD/GNU paths are already dual (`vibe:799, 1264, 1457, 2702`), the image multi-arch. **Every change additive or `uname`-guarded; the Darwin path stays byte-identical.**
+
+## Changes
+
+### (a) Unconditional `--add-host=host.docker.internal:host-gateway`
+
+`runArgs` are assembled in one place: the embedded Python in `render_devcontainer_with_mounts` (`vibe:1499-1556`), called once from `_build_override_config` (`vibe:2922-2924`), rendering `$HOME/.vibe/run/devcontainer-<sha1>.json` from `devcontainer/devcontainer.json` (base `runArgs` `:4-7`). That override always renders, so add the flag to the base JSON and keep the Python's `if flag not in cfg["runArgs"]` guard (`vibe:1531`) against doubling up with the `/op` injection.
+
+Safety confirmed: `host-gateway` is Docker Engine 20.10+ and universal since; OrbStack accepts it (≥0.6.0); and **vibe already ships a `:host-gateway` add-host on the Mac** whenever `/op` is configured (`vibe:1530`), with `init-firewall.sh:275-291` recording it resolving in production. On Docker Desktop/OrbStack the extra `/etc/hosts` line names the same gateway the embedded DNS returns — a no-op; on Linux it is the only way the name exists. `init-firewall.sh:280` uses `getent hosts`, so it copes either way, and `setup-ssh.sh:67`'s `ssh-keyscan` seed then succeeds on Linux.
+
+### (b) `uname`-guarded clipboard; host-watcher no-op on Linux
+
+Add `vibe_clipboard_cmd()` **above** the `VIBE_SOURCE_ONLY` guard (`vibe:3182`) so tests can source it: `pbcopy` on Darwin, else the first of `wl-copy` → `xclip -selection clipboard` → `xsel --clipboard --input` (bare `xclip`/`xsel` write the X11 PRIMARY selection, not the clipboard) present, else empty. At `vibe:3847` keep the Darwin branch **verbatim** (its exit-hook body is byte-pinned at `smoke/checks_04_hooks_guards.py (test_task008_ac3_block_scoping, test_task008_ac11_direct_read, test_clipboard_drain_on_exit) and smoke/checks_07_sharedrepos_cycles.py:803-804`) and add a separate `else` branch exporting `VIBE_COPY_CMD`, which `vibe-copy-watcher.sh:11` already honours; relax the watcher gate (`:8`) to "Darwin **or** `VIBE_COPY_CMD` set". Headless Linux → watcher never starts, `/c` falls back to the scratch file, and `smoke/checks_04_hooks_guards.py (test_clipboard_drain_on_exit)` stays green. mtime reads are already dual.
+
+### (c) `install.sh` apt/dnf hints + Linux preflight
+
+`preflight_deps` (`install.sh:26-45`) hard-codes `brew`/`xcode-select`. Branch on `uname -s`, and on Linux on `/etc/os-release` `ID`/`ID_LIKE`: apt (`apt-get install -y git nodejs gh`, Docker Engine via the `docker-ce` repo) or dnf. Three Linux-only checks: daemon reachable (`docker info`); user in the `docker` group (`id -nG | grep -qw docker`; remedy `sudo usermod -aG docker $USER` + re-login — **warn, don't exit**, rootless Docker legitimately fails it); `devcontainer` on PATH. macOS output byte-identical. Same for the "Next steps" heredoc (`install.sh:110-124`).
+
+### (d) mDNS
+
+The image carries `avahi-daemon`/`libnss-mdns` and rewrites nsswitch (`Dockerfile:37-44`), started by `postStartCommand`, but on a Linux host the bridge NATs multicast, so `.local` may not resolve. Document: the **host** needs systemd-resolved with `MulticastDNS=yes` or `avahi-daemon`; in-container the supported path to the host is `host.docker.internal`. Add a once-per-machine Linux launch probe (marker `~/.vibe/mdns-probe`): if `getent hosts "$(hostname).local"` fails, warn once, naming the remedy. **Bug found while auditing:** the `Dockerfile:44` sed is not idempotent — this container's live nsswitch reads `mdns4_minimal [NOTFOUND=return]` twice. Guard it.
+
+### (e) Docs
+
+`README.md:24` ("Linux untested") → a Linux subsection: Ubuntu 24.04 LTS + Docker Engine, docker group, apt deps, the `.local` caveat, `host.docker.internal` as the host path. Mark the build bridge (`README.md:70-79`) macOS-only. `ONBOARDING.md` steps 2-4 fork for apt (no Homebrew/`xcode-select`).
+
+### (f) MANUAL-TESTS
+
+New `## Linux host (Ubuntu 24.04 LTS)` section, Tests 44-50, each naming the Mac test it mirrors: 44 fresh install + preflight without Docker; 45 first launch (build, PAT prompt, banner); 46 firewall (Test 28 fail-closed, plus `getent hosts host.docker.internal`); 47 SSH to a LAN host by IP **and** `.local`; 48 `/c` under Wayland, X11, headless; 49 auto-rebuild (Test 16); 50 history bind + brain2/Zotero mounts (Tests 42, 29).
+
+### (g) Smoke tests (in-container, no Docker)
+
+All via `_source_vibe_call` with `VIBE_SOURCE_ONLY=1` and a fixture `uname` shim first on `PATH`: exactly-one `--add-host=host.docker.internal:host-gateway` in the rendered override, `/op` on and off; `vibe_clipboard_cmd` precedence under Darwin/Linux/no-tool shims; watcher exit-0 without `VIBE_COPY_CMD`; `install.sh` hint text per platform (plus `bash -n`); the Darwin-invariance diff (AC4).
 
 ## Acceptance criteria
-- AC1 Files exist and run: `site/demo/record.md` (one section per marker id, in deck order, each with the exact text to type), `site/demo/scrub.mjs` (`node site/demo/scrub.mjs <in.cast> [--out site/public/demo/vibe.cast --markers site/public/demo/markers.json --record site/demo/record.md]`, exit 0 on the placeholder), `site/demo/make-placeholder-cast.mjs` (synthesises a v2 cast from `site/src/content/home.md` `journey` lines, emitting an `"m"` chip marker at each chip's first line and an `"m"` step marker `<chip>:<n>` at each line carrying `step: n`; header `"placeholder": true`), `site/demo/scrub.test.mjs` (node:test).
-- AC2 `site/public/demo/vibe.cast` parses: line 1 is a JSON object with `version: 2`, integer `width` and `height`; every later line is a JSON 3-tuple `[time, code, data]` with `code ∈ {"o","i","m","r"}`, numeric non-decreasing `time`.
-- AC3 While synthetic, the cast header has `"placeholder": true` and site-check prints an advisory line (not a failure) saying the cast is a placeholder awaiting Martin's recording; when the flag is absent, no advisory.
-- AC4 `site/public/demo/markers.json` is an array of `{id, time, label}` with two kinds of entries: chip markers whose `id` is the chip id, and step markers whose `id` is `<chip>:<n>` for n = 1..len(checklist). The chip-marker ids, in order, equal the 13 `data-step` ids in `dist/index.html`; every checklist step of every chip has its step marker; each entry has a matching `"m"` event in the cast at the same `time` with `label` = the id. Chip click seeks to the chip marker; step markers drive the per-item ticks (so granular ticking is preserved, not regressed).
-- AC5 Redaction: the concatenation of all `"o"` payloads matches none of `/ghp_[A-Za-z0-9]{6,}/`, `/github_pat_/`, `/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[a-z]{2,}/`, `/\/Users\/[^/ ]+/`, `/\b(10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)\b/`, and contains no real repo slug other than `you/yourproject` (site-check greps for `andeyePro/` and `Aqueum/` and fails on a hit).
-- AC6 Fidelity: site-check's `inBoth()` runs over the cast text (the concatenated, ANSI-stripped `"o"` payloads) for at least these launcher/firewall strings, each also present in the sources: `vibe session starting`, `github  : `, `Firewall verification passed`, `Token saved`, `Building vibe container image`, `90 days is a good default`.
-- AC7 `node --test site/demo/scrub.test.mjs` passes: one test per redaction class in AC5 (input containing the pattern → output does not), a v3-input→v2-output normalisation test, and a marker-insertion test (prompt text from a record.md fixture → an `"m"` event at the first `"o"` event containing that text).
-- AC8 Vendoring: `site/package.json` has `"asciinema-player": "3.17.0"` as a devDependency; the `build` script becomes `node scripts/vendor-player.mjs && astro build` and `check` becomes `npm run build && node site-check.mjs` (npm lifecycle `prebuild` does NOT fire for `check`'s direct `astro build`, so the vendoring must be explicit in `build`); `scripts/vendor-player.mjs` copies `dist/bundle/asciinema-player.min.js` and `dist/bundle/asciinema-player.css` from node_modules into `site/public/vendor/`; after `npm run build`, `dist/vendor/asciinema-player.min.js` gzips to ≤ 75 KB and the CSS to ≤ 6 KB (site-check measures with `zlib.gzipSync`). `site/public/vendor/` is gitignored; the vendoring runs on every build.
-- AC9 `dist/index.html` contains the player mount element with exactly `id="cast"` and the string `/demo/vibe.cast`, and does NOT contain `class="trole"` or `id="termLive"`. The inline `const COPY = {...}` blob that `site-check.mjs`'s `parseCopy()` reads MUST still be emitted unchanged in shape (it is the fallback transcript's data and ~20 guards depend on it) — dropping it is a fail.
-- AC10 Fallback: the static transcript from `home.md` is still server-rendered inside a `<noscript>` block (and shown under `prefers-reduced-motion`), so every existing guard over `dist/index.html` — the copy-accuracy `inBoth` guards AND the structural ones (the `.term-body` CSS clamp regex, the exact-13-chips count, `stepsContiguous`, the chip-scoped launch/first-launch/pat guards) — still passes unchanged; the Tester lists any guard that had to change and why.
-- AC11 Lazy load (Tester-owned in site-check.mjs, asserted on `dist/index.html` + the emitted client script): no `<script src>`/`<link rel="preload">`/`modulepreload` referencing `asciinema-player` in `<head>`; the emitted script contains `IntersectionObserver`, a dynamic `import(` of the vendored bundle path, the options, matched whitespace-tolerantly and minifier-tolerantly (regexes such as `/controls\s*:\s*(false|!1)/`, `/npt:0:0/`, `/idleTimeLimit\s*:\s*2\b/`, `/fit\s*:\s*["']width["']/`, `/terminalLineHeight\s*:\s*1\.7/`, `/terminalFontFamily/`); `seek({marker` and `addEventListener("marker"`/`'marker'` appear; a chip click before the player has loaded triggers the load then seeks (assert the load function is called from the click handler — string `loadPlayer` or equivalent named in the component and referenced in the handler).
-- AC12 `cd site && npm run check` exits 0 (node_modules present; run `npm install --no-audit --no-fund` once to add the devDependency — registry is reachable); `python3 code-check.py` clean; no change under `devcontainer/` or to `vibe`.
-- AC13 (Evaluator) The page still reads correctly with the cast pane: chips unlock/tick, the placeholder cast visibly reproduces the deck lines in order, and `record.md`'s prompts correspond one-to-one with the chips' `cmd` fields.
+
+1. `python3 code-check.py` clean.
+2. `python3 smoke-test.py` green, no test deleted.
+3. Rendered override carries exactly one `host.docker.internal:host-gateway`, `/op` on and off.
+4. **Mac path unchanged (except the one intended line):** the test embeds a LITERAL golden of the pre-change rendered override for a fixed fixture input (captured from the current launcher before this task and pasted into the test as a string — never derived from the post-change or current `devcontainer.json`); under a Darwin `uname` shim the newly rendered override must equal that golden plus exactly the one `--add-host=host.docker.internal:host-gateway` line and nothing else. (Critique: a golden computed from current sources would be tautological.)
+5. Exit-hook literal `pbcopy < "$CLIP"` unchanged; the three clipboard pins in `smoke/checks_04_hooks_guards.py` green.
+6. `vibe_clipboard_cmd`: `pbcopy` (Darwin), `wl-copy`>`xclip`>`xsel` (Linux), empty (none).
+7. Watcher exits 0 on Linux with no clipboard tool; runs with `VIBE_COPY_CMD`.
+8. `install.sh` Darwin output byte-identical to pre-change.
+9. Linux preflight names apt/dnf, docker group, `devcontainer`; group failure warns, exits 0.
+10. `Dockerfile` nsswitch edit idempotent (twice-applied ⇒ one `mdns4_minimal`). Existing images already carry the duplicate line (verified in a live container 2026-09-02): the fix only lands on a real rebuild — README/CHANGELOG say `vibe --rebuild` (cache-busted) is required, and MANUAL-TESTS gets a check that `/etc/nsswitch.conf` has exactly one `mdns4_minimal` after rebuild.
+11. README + ONBOARDING Linux sections exist; build bridge marked macOS-only.
+12. **[L]** Fresh Ubuntu 24.04: install, launch, firewall fail-closed, `host.docker.internal` resolves.
+13. **[L]** Container SSH to a LAN host by IP and `.local`; mDNS probe warns once on failure.
+14. **[L]** `/c` copies under Wayland and X11; Mac `/c` unchanged.
+
+`[L]` = needs a real Linux box → MANUAL-TESTS 44-50, not the smoke suite.
 
 ## Out of scope
-- Recording the real cast (Martin, on the Mac: `asciinema rec --output-format asciicast-v2 --idle-time-limit 2 --cols 96 --rows 28 site/demo/raw.cast`, then `node site/demo/scrub.mjs site/demo/raw.cast`); documenting that is in scope (README of `site/demo/record.md` top).
-- A `_headers` CSP for Pages (note in record.md that the bundle inlines WASM as a data: URL and would need `wasm-unsafe-eval` if a CSP is ever added).
-- Any change to deck content (`home.md` groups/chips), branding, or the vibe launcher.
 
-## Test location
-`site/site-check.mjs` (Tester-owned: AC2–AC6, AC8–AC11 assertions) and `site/demo/scrub.test.mjs` (Tester-owned: AC7). Generator writes everything else and must not create or edit those two files; Generator proves its work with scratch checks under `.vs/cycle-1/scratch-tests/`.
-
-## Proposed budget
-3 cycles.
+Windows/WSL2 (`vibe.cmd`); the multi-target build bridge (`.vibe/targets`, `vibe targets`, `vibe-build`); arm64/Pi 5; Homebrew tap and tagged releases.
 
 ## Model plan
-- Planner + Evaluator: session model (Fable 5.1 chair).
-- Spec Critic: sonnet.
-- Generator: sonnet, ceiling opus (Astro component + node scripts; well specified).
-- Tester: sonnet, ceiling opus (JS assertions and node:test).
-- Fable rung: pre-authorised (--fable-subagents, user prose grant), not indicated.
+
+Spec Critic **sonnet**. Generator **sonnet** for (a), (c)-(f); **opus** for (b), which touches byte-pinned exit-hook strings. Tester **haiku**: `code-check.py`, `smoke-test.py`, fixture shims. No credit-billed rung.
+
+## Risks
+
+**Breaking the Mac path is the only real risk.** Mitigations: every edit additive or `uname`-guarded; AC4's golden byte-diff; AC5's pinned-string assertion; the `/op` precedent proves `host-gateway` already works on Mac Docker. Residual: `/etc/hosts` now shadows Docker Desktop's embedded DNS for that name (same IP — verify on the Mac before merge); rootless Docker fails the group check (warn only); no clipboard tool on minimal server installs (silent no-op by design).
+
+
+## Critique-driven amendments (2026-09-02)
+- Clipboard: the `pbcopy` flush and `vibe-copy-watcher.sh` run HOST-side in the launcher, never in the container; the Linux fallback chain (`wl-copy` → `xclip -selection clipboard` → `xsel --clipboard --input`) is wired in the launcher's host-side branch only. The watcher gate becomes a 3-way OR: Darwin, OR `VIBE_COPY_CMD` set, OR `VIBE_COPY_WATCHER_FORCE` set (the existing `test_vibe_path_prefix_isolation` relies on FORCE alone) — no existing test deleted or weakened.
+- The `uname` PATH shim is new test infrastructure: the Generator's first scratch test proves the shim shadows the real `uname` (`uname -s` prints the fixture value) before any assertion relies on it.
+- `/op`'s existing `--add-host=<op_host>:host-gateway` is a different hostname; no dedup logic needed, only an "exactly one host.docker.internal entry" assertion.
+- Re-verification on real Docker Desktop and OrbStack after shipping goes to MANUAL-TESTS (a Mac-side check that `getent hosts host.docker.internal` inside the container still resolves).
+
+- Iteration-2 amendments: test citations point at the split layout (smoke/); AC6 uses the flagged `xclip -selection clipboard` / `xsel --clipboard --input` invocations everywhere.

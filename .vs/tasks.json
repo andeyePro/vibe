@@ -237,7 +237,7 @@
     "test_status": "passing",
     "assigned_to": "generator",
     "mode": "rigorous",
-    "last_modified": "2026-09-02T20:45:31Z"
+    "last_modified": "2026-09-02T22:47:35Z"
   },
   {
     "id": "task_033",
@@ -251,10 +251,10 @@
   {
     "id": "task_034",
     "description": "Linux host support: unconditional host-gateway add-host, Linux clipboard fallback chain, install.sh preflight/hints, mDNS probe, nsswitch idempotence, README/ONBOARDING Linux section, MANUAL-TESTS 44-50 (worktree task034)",
-    "implementation_status": "in_progress",
-    "test_status": "pending",
+    "implementation_status": "complete",
+    "test_status": "passing",
     "assigned_to": "generator",
     "mode": "rigorous",
-    "last_modified": "2026-09-02T21:08:07Z"
+    "last_modified": "2026-09-02T22:47:35Z"
   }
 ]

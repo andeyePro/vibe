@@ -1,0 +1,809 @@
+diff --git a/.vs/spec.md b/.vs/spec.md
+new file mode 100644
+index 0000000..e67b856
+--- /dev/null
++++ b/.vs/spec.md
+@@ -0,0 +1,81 @@
++# Spec — task_034: Linux host support (worktree task034, branch vsss/task034-linux-host, baseline 3b23b19)
++
++# /vs spec draft — Linux host support (Tier 2)
++
++**Status:** draft; not for execution now. Source: `/brain2/andeye/vibe-roadmap-2026-09.md` answer 1, Tier 2. Evidence at `5125e3c`.
++
++## Task summary
++
++Make a Linux box a first-class vibe host (reference: **Ubuntu 24.04 LTS + Docker Engine**, not Docker Desktop). Two real gaps: `host.docker.internal` does not exist on native Docker Engine, and `.local` mDNS depends on the host resolver. The rest is Mac-only ergonomics (clipboard, installer hints) and missing Linux test coverage — BSD/GNU paths are already dual (`vibe:799, 1264, 1457, 2702`), the image multi-arch. **Every change additive or `uname`-guarded; the Darwin path stays byte-identical.**
++
++## Changes
++
++### (a) Unconditional `--add-host=host.docker.internal:host-gateway`
++
++`runArgs` are assembled in one place: the embedded Python in `render_devcontainer_with_mounts` (`vibe:1499-1556`), called once from `_build_override_config` (`vibe:2922-2924`), rendering `$HOME/.vibe/run/devcontainer-<sha1>.json` from `devcontainer/devcontainer.json` (base `runArgs` `:4-7`). That override always renders, so add the flag to the base JSON and keep the Python's `if flag not in cfg["runArgs"]` guard (`vibe:1531`) against doubling up with the `/op` injection.
++
++Safety confirmed: `host-gateway` is Docker Engine 20.10+ and universal since; OrbStack accepts it (≥0.6.0); and **vibe already ships a `:host-gateway` add-host on the Mac** whenever `/op` is configured (`vibe:1530`), with `init-firewall.sh:275-291` recording it resolving in production. On Docker Desktop/OrbStack the extra `/etc/hosts` line names the same gateway the embedded DNS returns — a no-op; on Linux it is the only way the name exists. `init-firewall.sh:280` uses `getent hosts`, so it copes either way, and `setup-ssh.sh:67`'s `ssh-keyscan` seed then succeeds on Linux.
++
++### (b) `uname`-guarded clipboard; host-watcher no-op on Linux
++
++Add `vibe_clipboard_cmd()` **above** the `VIBE_SOURCE_ONLY` guard (`vibe:3182`) so tests can source it: `pbcopy` on Darwin, else the first of `wl-copy` → `xclip -selection clipboard` → `xsel --clipboard --input` (bare `xclip`/`xsel` write the X11 PRIMARY selection, not the clipboard) present, else empty. At `vibe:3847` keep the Darwin branch **verbatim** (its exit-hook body is byte-pinned at `smoke/checks_04_hooks_guards.py (test_task008_ac3_block_scoping, test_task008_ac11_direct_read, test_clipboard_drain_on_exit) and smoke/checks_07_sharedrepos_cycles.py:803-804`) and add a separate `else` branch exporting `VIBE_COPY_CMD`, which `vibe-copy-watcher.sh:11` already honours; relax the watcher gate (`:8`) to "Darwin **or** `VIBE_COPY_CMD` set". Headless Linux → watcher never starts, `/c` falls back to the scratch file, and `smoke/checks_04_hooks_guards.py (test_clipboard_drain_on_exit)` stays green. mtime reads are already dual.
++
++### (c) `install.sh` apt/dnf hints + Linux preflight
++
++`preflight_deps` (`install.sh:26-45`) hard-codes `brew`/`xcode-select`. Branch on `uname -s`, and on Linux on `/etc/os-release` `ID`/`ID_LIKE`: apt (`apt-get install -y git nodejs gh`, Docker Engine via the `docker-ce` repo) or dnf. Three Linux-only checks: daemon reachable (`docker info`); user in the `docker` group (`id -nG | grep -qw docker`; remedy `sudo usermod -aG docker $USER` + re-login — **warn, don't exit**, rootless Docker legitimately fails it); `devcontainer` on PATH. macOS output byte-identical. Same for the "Next steps" heredoc (`install.sh:110-124`).
++
++### (d) mDNS
++
++The image carries `avahi-daemon`/`libnss-mdns` and rewrites nsswitch (`Dockerfile:37-44`), started by `postStartCommand`, but on a Linux host the bridge NATs multicast, so `.local` may not resolve. Document: the **host** needs systemd-resolved with `MulticastDNS=yes` or `avahi-daemon`; in-container the supported path to the host is `host.docker.internal`. Add a once-per-machine Linux launch probe (marker `~/.vibe/mdns-probe`): if `getent hosts "$(hostname).local"` fails, warn once, naming the remedy. **Bug found while auditing:** the `Dockerfile:44` sed is not idempotent — this container's live nsswitch reads `mdns4_minimal [NOTFOUND=return]` twice. Guard it.
++
++### (e) Docs
++
++`README.md:24` ("Linux untested") → a Linux subsection: Ubuntu 24.04 LTS + Docker Engine, docker group, apt deps, the `.local` caveat, `host.docker.internal` as the host path. Mark the build bridge (`README.md:70-79`) macOS-only. `ONBOARDING.md` steps 2-4 fork for apt (no Homebrew/`xcode-select`).
++
++### (f) MANUAL-TESTS
++
++New `## Linux host (Ubuntu 24.04 LTS)` section, Tests 44-50, each naming the Mac test it mirrors: 44 fresh install + preflight without Docker; 45 first launch (build, PAT prompt, banner); 46 firewall (Test 28 fail-closed, plus `getent hosts host.docker.internal`); 47 SSH to a LAN host by IP **and** `.local`; 48 `/c` under Wayland, X11, headless; 49 auto-rebuild (Test 16); 50 history bind + brain2/Zotero mounts (Tests 42, 29).
++
++### (g) Smoke tests (in-container, no Docker)
++
++All via `_source_vibe_call` with `VIBE_SOURCE_ONLY=1` and a fixture `uname` shim first on `PATH`: exactly-one `--add-host=host.docker.internal:host-gateway` in the rendered override, `/op` on and off; `vibe_clipboard_cmd` precedence under Darwin/Linux/no-tool shims; watcher exit-0 without `VIBE_COPY_CMD`; `install.sh` hint text per platform (plus `bash -n`); the Darwin-invariance diff (AC4).
++
++## Acceptance criteria
++
++1. `python3 code-check.py` clean.
++2. `python3 smoke-test.py` green, no test deleted.
++3. Rendered override carries exactly one `host.docker.internal:host-gateway`, `/op` on and off.
++4. **Mac path unchanged (except the one intended line):** the test embeds a LITERAL golden of the pre-change rendered override for a fixed fixture input (captured from the current launcher before this task and pasted into the test as a string — never derived from the post-change or current `devcontainer.json`); under a Darwin `uname` shim the newly rendered override must equal that golden plus exactly the one `--add-host=host.docker.internal:host-gateway` line and nothing else. (Critique: a golden computed from current sources would be tautological.)
++5. Exit-hook literal `pbcopy < "$CLIP"` unchanged; the three clipboard pins in `smoke/checks_04_hooks_guards.py` green.
++6. `vibe_clipboard_cmd`: `pbcopy` (Darwin), `wl-copy`>`xclip`>`xsel` (Linux), empty (none).
++7. Watcher exits 0 on Linux with no clipboard tool; runs with `VIBE_COPY_CMD`.
++8. `install.sh` Darwin output byte-identical to pre-change.
++9. Linux preflight names apt/dnf, docker group, `devcontainer`; group failure warns, exits 0.
++10. `Dockerfile` nsswitch edit idempotent (twice-applied ⇒ one `mdns4_minimal`). Existing images already carry the duplicate line (verified in a live container 2026-09-02): the fix only lands on a real rebuild — README/CHANGELOG say `vibe --rebuild` (cache-busted) is required, and MANUAL-TESTS gets a check that `/etc/nsswitch.conf` has exactly one `mdns4_minimal` after rebuild.
++11. README + ONBOARDING Linux sections exist; build bridge marked macOS-only.
++12. **[L]** Fresh Ubuntu 24.04: install, launch, firewall fail-closed, `host.docker.internal` resolves.
++13. **[L]** Container SSH to a LAN host by IP and `.local`; mDNS probe warns once on failure.
++14. **[L]** `/c` copies under Wayland and X11; Mac `/c` unchanged.
++
++`[L]` = needs a real Linux box → MANUAL-TESTS 44-50, not the smoke suite.
++
++## Out of scope
++
++Windows/WSL2 (`vibe.cmd`); the multi-target build bridge (`.vibe/targets`, `vibe targets`, `vibe-build`); arm64/Pi 5; Homebrew tap and tagged releases.
++
++## Model plan
++
++Spec Critic **sonnet**. Generator **sonnet** for (a), (c)-(f); **opus** for (b), which touches byte-pinned exit-hook strings. Tester **haiku**: `code-check.py`, `smoke-test.py`, fixture shims. No credit-billed rung.
++
++## Risks
++
++**Breaking the Mac path is the only real risk.** Mitigations: every edit additive or `uname`-guarded; AC4's golden byte-diff; AC5's pinned-string assertion; the `/op` precedent proves `host-gateway` already works on Mac Docker. Residual: `/etc/hosts` now shadows Docker Desktop's embedded DNS for that name (same IP — verify on the Mac before merge); rootless Docker fails the group check (warn only); no clipboard tool on minimal server installs (silent no-op by design).
++
++
++## Critique-driven amendments (2026-09-02)
++- Clipboard: the `pbcopy` flush and `vibe-copy-watcher.sh` run HOST-side in the launcher, never in the container; the Linux fallback chain (`wl-copy` → `xclip -selection clipboard` → `xsel --clipboard --input`) is wired in the launcher's host-side branch only. The watcher gate becomes a 3-way OR: Darwin, OR `VIBE_COPY_CMD` set, OR `VIBE_COPY_WATCHER_FORCE` set (the existing `test_vibe_path_prefix_isolation` relies on FORCE alone) — no existing test deleted or weakened.
++- The `uname` PATH shim is new test infrastructure: the Generator's first scratch test proves the shim shadows the real `uname` (`uname -s` prints the fixture value) before any assertion relies on it.
++- `/op`'s existing `--add-host=<op_host>:host-gateway` is a different hostname; no dedup logic needed, only an "exactly one host.docker.internal entry" assertion.
++- Re-verification on real Docker Desktop and OrbStack after shipping goes to MANUAL-TESTS (a Mac-side check that `getent hosts host.docker.internal` inside the container still resolves).
++
++- Iteration-2 amendments: test citations point at the split layout (smoke/); AC6 uses the flagged `xclip -selection clipboard` / `xsel --clipboard --input` invocations everywhere.
+diff --git a/MANUAL-TESTS.md b/MANUAL-TESTS.md
+index 14c3b30..89ca8c8 100644
+--- a/MANUAL-TESTS.md
++++ b/MANUAL-TESTS.md
+@@ -1105,3 +1105,204 @@ prompt on first ssh, a start-up failure/delay when the scan can't complete,
+ entries accumulating across relaunches, a silent no-op on the Remote-Login-
+ off path, or the seed vanishing while in-session appends persist (would mean
+ the copy loop ran after the seed).
++
++## Linux host (Ubuntu 24.04 LTS)
++
++Tests 44–50 cover the `[L]` acceptance criteria of task_034 (Linux host
++support), which need a real Linux box and so cannot live in the smoke suite.
++Reference platform: **Ubuntu 24.04 LTS with Docker Engine from the `docker-ce`
++repo** (not Docker Desktop). Each test names the Mac test it mirrors; run the
++Mac test first if you want a baseline to compare against.
++
++Unless stated otherwise, "in the container" means a shell obtained with
++`vibe` in the project, and `$` prompts are the Linux host shell.
++
++### Test 44: fresh install + preflight without Docker (mirrors Test 1)
++
++On a clean Ubuntu 24.04 box with **no Docker installed**:
++
++```
++$ sudo apt-get update && sudo apt-get install -y git
++$ bash <(curl -fsSL https://raw.githubusercontent.com/andeyePro/vibe/main/install.sh)
++```
++
++**Pass:** the installer stops at preflight and prints Linux hints — including
++a `✗ docker missing — install Docker Engine from the docker-ce repo:
++https://docs.docker.com/engine/install/ubuntu/` line — then
++`Install the missing dependencies above, then re-run this installer.` and
++exits 1. **No `brew` and no `xcode-select` appears anywhere in the output.**
++
++Now install the rest and re-run:
++
++```
++$ sudo apt-get install -y nodejs npm gh && sudo npm install -g @devcontainers/cli
++$ # Docker Engine per https://docs.docker.com/engine/install/ubuntu/
++$ sudo systemctl enable --now docker
++$ bash <(curl -fsSL https://raw.githubusercontent.com/andeyePro/vibe/main/install.sh)
++```
++
++**Pass:** installer completes; `Next steps:` names
++`Docker Engine:   https://docs.docker.com/engine/install/ubuntu/` and
++`Add yourself to the docker group: sudo usermod -aG docker $USER`.
++
++**Docker-group warning (deliberately non-fatal).** Before running
++`usermod -aG docker $USER`, re-run the installer:
++
++**Pass:** it prints `⚠  <user> is not in the 'docker' group …` naming
++`sudo usermod -aG docker $USER`, and **exits 0** (a warning, not a failure —
++rootless Docker legitimately has no such group).
++**Fail:** a non-zero exit, or any `brew`/`xcode-select` text.
++
++### Test 45: first launch — build, PAT prompt, banner (mirrors Test 2)
++
++```
++$ cd ~/Projects/<some-repo> && vibe
++```
++
++**Pass:** the image builds (first run, several minutes), the fine-grained PAT
++prompt appears exactly as on the Mac, the launch banner names the project repo
++and any `/repos/*` shared repos, and a Claude Code session opens. `docker ps`
++on the host shows one container for the workspace.
++**Fail:** a build failure, a permission error from the Docker socket (means the
++`docker` group step was skipped), or the banner naming repos not declared.
++
++### Test 46: firewall fail-closed + `host.docker.internal` resolves (mirrors Test 28)
++
++In the container:
++
++```
++$ getent hosts host.docker.internal
++$ curl -sS -m 5 https://example.com ; echo "exit=$?"
++$ curl -sS -m 5 https://api.github.com ; echo "exit=$?"
++```
++
++**Pass:** `getent hosts host.docker.internal` prints the gateway IP and exits 0
++— this is the criterion that only passes because of the unconditional
++`--add-host=host.docker.internal:host-gateway` (Docker Engine has no built-in
++name for the host). `example.com` fails closed (non-zero, connection refused or
++timeout); `api.github.com` succeeds.
++**Fail:** `getent` printing nothing (add-host missing), or `example.com`
++succeeding (firewall not fail-closed).
++
++Also confirm the flag is not doubled:
++
++```
++$ docker inspect --format '{{json .HostConfig.ExtraHosts}}' <container>
++```
++
++**Pass:** exactly one `host.docker.internal:host-gateway` entry. With the
++OpenProject MCP configured, a second, *differently named* `<op-host>:host-gateway`
++entry is expected and correct.
++
++**Mac re-verification (run this on the Mac too, after shipping).** In a Mac
++container, `getent hosts host.docker.internal` must still resolve, on both
++Docker Desktop and OrbStack — the new `/etc/hosts` line now shadows the
++embedded DNS answer for that name, and this confirms it resolves to the same
++gateway.
++
++### Test 47: SSH to a LAN host by IP and by `.local`; mDNS probe warns once (mirrors Test 43)
++
++Pick a LAN box the user already has keys for. In the container:
++
++```
++$ ssh -o BatchMode=yes <user>@<lan-ip> true ; echo "exit=$?"
++$ ssh -o BatchMode=yes <user>@<host>.local true ; echo "exit=$?"
++```
++
++**Pass (IP):** connects, or fails on *authentication* — never on name
++resolution.
++**Pass (`.local`):** either it resolves (host has `avahi-daemon` or
++`MulticastDNS=yes`), or it fails with a name-resolution error **and** the
++launcher warned about exactly that (next check). Both outcomes are acceptable;
++a silent failure is not.
++
++mDNS probe, once per machine:
++
++```
++$ rm -f ~/.vibe/mdns-probe
++$ vibe            # launch 1
++$ /exit
++$ vibe            # launch 2
++```
++
++**Pass:** on a host that cannot resolve `$(hostname).local`, launch 1 prints
++the `⚠  mDNS: this host cannot resolve …` block naming `avahi-daemon` /
++`MulticastDNS=yes` and `host.docker.internal`; **launch 2 prints nothing** and
++`~/.vibe/mdns-probe` exists. On a host that *can* resolve it, neither launch
++warns. On a Mac, neither launch warns and no marker is created.
++**Fail:** the warning repeating on every launch, the warning appearing on a
++host whose mDNS works, any warning on macOS, or the probe aborting the launch.
++
++### Test 48: `/c` under Wayland, X11, and headless (mirrors Test 12)
++
++Run three times, checking `echo $XDG_SESSION_TYPE` each time.
++
++**Wayland** (`wl-copy` installed): in a session, ask Claude for a fenced code
++block, then `/c`.
++**Pass:** `wl-paste` on the host prints exactly the block's bytes.
++
++**X11** (`xclip` installed, `wl-copy` absent): same.
++**Pass:** `xclip -selection clipboard -o` prints exactly the block's bytes —
++note **clipboard**, not PRIMARY: `xclip -o` alone (PRIMARY) is *not* the
++criterion, and if only PRIMARY is populated the test fails.
++With `xsel` only: `xsel --clipboard --output` must print the bytes.
++
++**Headless** (none of `wl-copy`/`xclip`/`xsel` installed): same.
++**Pass:** `/c` reports the scratch-file fallback, `.vibe/copy-latest.txt`
++contains the block, **no watcher process is left running**
++(`pgrep -af vibe-copy-watcher.sh` prints nothing), and the launch is otherwise
++unaffected.
++
++**Mac unchanged:** repeat Test 12 on the Mac — `/c` must still populate the Mac
++clipboard via `pbcopy`, including the exit-time flush when the session ends
++without an intervening watcher poll.
++
++### Test 49: auto-rebuild on devcontainer change (mirrors Test 16)
++
++```
++$ touch ~/.vibe-src/devcontainer/Dockerfile   # or edit it
++$ vibe
++```
++
++**Pass:** the launcher notices the change and rebuilds before launching,
++exactly as on the Mac; the session then opens normally.
++
++**nsswitch idempotency (AC10) — check this here, it needs the rebuild.** Force
++a cache-busted rebuild and then, in the container:
++
++```
++$ vibe --rebuild
++  … in the container:
++$ grep -c mdns4_minimal /etc/nsswitch.conf
++$ grep '^hosts:' /etc/nsswitch.conf
++```
++
++**Pass:** the count is exactly `1`, and the `hosts:` line reads
++`files mdns4_minimal [NOTFOUND=return] dns` with the mdns entry before `dns`.
++**Fail:** a count of `2` — meaning the layer was served from cache and the
++image still predates the idempotency fix; bust the cache and rebuild again.
++(Images built before 2026-09-02 all carry the duplicate; the fix only lands on
++a real rebuild.)
++
++### Test 50: history bind + brain2/Zotero mounts (mirrors Tests 42 and 29)
++
++With `VIBE_BRAIN2_PATH` and `VIBE_ZOTERO_PATH` pointing at real directories on
++the Linux host (or the defaults `~/brain2` and `~/Zotero/storage` existing):
++
++```
++  … in the container:
++$ ls /brain2 && ls /zotero | head
++$ touch /brain2/.write-probe && rm /brain2/.write-probe   # rw
++$ touch /zotero/.write-probe ; echo "exit=$?"             # must FAIL (ro)
++$ ls ~/.claude/projects/
++```
++
++**Pass:** `/brain2` is present and writable; `/zotero` is present and
++**read-only** (the write probe fails); `~/.claude/projects/` shows this
++project's own history only, and a second project launched in parallel sees a
++different set (the per-project bind of Test 42). Ownership inside the container
++is usable by `node` — a Linux host's uid/gid mapping is direct, unlike Docker
++Desktop's, so this is the check most likely to differ from the Mac.
++**Fail:** a missing mount, `/zotero` writable, history shared across projects,
++or permission-denied on `/brain2` writes (a uid-mapping problem: the host
++directory must be owned by, or group-writable to, the invoking user).
+diff --git a/ONBOARDING.md b/ONBOARDING.md
+index de84abd..b3458a9 100644
+--- a/ONBOARDING.md
++++ b/ONBOARDING.md
+@@ -15,7 +15,7 @@ vibe is a single command that opens a Claude Code session inside an isolated con
+ 
+ ## What the user needs before starting
+ 
+-1. A Mac (macOS 13 or newer; Apple Silicon or Intel). Linux works but is less tested – adapt the package steps.
++1. A Mac (macOS 13 or newer; Apple Silicon or Intel) **or** a Linux box (reference: Ubuntu 24.04 LTS with Docker Engine). Steps 2–4 fork by platform; everything from step 5 on is identical.
+ 2. A Claude **Pro or Max** subscription – vibe authenticates against it. No subscription, no vibe.
+ 3. A GitHub account (free is fine). If they don't have one, create it at github.com first.
+ 4. About 10 GB free disk for the container tooling and images.
+@@ -24,11 +24,19 @@ Confirm all four before installing anything.
+ 
+ ## Steps
+ 
++Steps 2, 3 and 4 have a **Mac** version and a **Linux** version. Ask the user which they're on before step 2 and follow only that branch; do not read both aloud.
++
+ ### 1. Open Terminal
+ 
+-Applications → Utilities → Terminal, or ⌘-space and type "Terminal". Everything below is pasted into that window, one line at a time.
++**Mac:** Applications → Utilities → Terminal, or ⌘-space and type "Terminal".
++
++**Linux:** the terminal app for their desktop (GNOME Terminal, Konsole, …), or Ctrl-Alt-T on most distributions.
++
++Everything below is pasted into that window, one line at a time.
++
++### 2. Install Homebrew (the Mac package manager) — **Mac only**
+ 
+-### 2. Install Homebrew (the Mac package manager)
++Linux users skip to step 2L.
+ 
+ ```
+ /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+@@ -38,7 +46,21 @@ It prints what it will do and asks for the user's Mac login password (typing sho
+ 
+ Check: `brew --version` prints a version.
+ 
+-### 3. Install the container runtime – OrbStack
++### 2L. Update the package index — **Linux only**
++
++Debian/Ubuntu:
++
++```
++sudo apt-get update
++```
++
++Fedora/RHEL: nothing to do; substitute `sudo dnf install -y` for `sudo apt-get install -y` throughout.
++
++There is no Homebrew step on Linux and no `xcode-select` – the distribution's package manager is the equivalent.
++
++Check: `apt-get --version` (or `dnf --version`) prints a version.
++
++### 3. Install the container runtime – OrbStack — **Mac only**
+ 
+ ```
+ brew install --cask orbstack
+@@ -48,16 +70,48 @@ Then open OrbStack once from Applications so it finishes its setup. (Docker Desk
+ 
+ Check: `docker --version` prints a version.
+ 
++### 3L. Install the container runtime – Docker Engine — **Linux only**
++
++Not Docker Desktop: follow the official Docker Engine (`docker-ce` repo) instructions for the distribution at https://docs.docker.com/engine/install/ubuntu/ (or `/fedora/`). The distro's own `docker.io` package is usually too old.
++
++Then start it and add the user to the `docker` group so vibe doesn't need `sudo` for every container command:
++
++```
++sudo systemctl enable --now docker
++```
++
++```
++sudo usermod -aG docker $USER
++```
++
++The group change only takes effect on a new login – have the user log out and back in (or run `newgrp docker` in that terminal).
++
++Check: `docker run --rm hello-world` prints "Hello from Docker!" **without** sudo. (If they run rootless Docker, the group step is unnecessary and the check still passes.)
++
+ ### 4. Install Node, the devcontainer CLI and the GitHub CLI
+ 
++**Mac:**
++
+ ```
+ brew install node gh
+ ```
+ 
++**Linux (Debian/Ubuntu):**
++
++```
++sudo apt-get install -y git nodejs npm gh
++```
++
++(Fedora/RHEL: `sudo dnf install -y git nodejs npm gh`. If `node --version` is below 18, install a current LTS from NodeSource instead.)
++
++**Both:**
++
+ ```
+ npm install -g @devcontainers/cli
+ ```
+ 
++On Linux that may need `sudo npm install -g @devcontainers/cli` depending on how npm's global prefix is set up.
++
+ Check: `node --version`, `devcontainer --version` and `gh --version` each print a version.
+ 
+ ### 5. Sign the GitHub CLI in
+diff --git a/README.md b/README.md
+index bd449aa..8f384bd 100644
+--- a/README.md
++++ b/README.md
+@@ -21,12 +21,59 @@ A single-command containerised Claude Code environment. `cd my-project && vibe`
+ 
+ ## Prerequisites
+ 
+-- macOS 13+ or Linux (Linux untested; open an issue if you hit anything)
++- macOS 13+ (primary) or Linux — see [Linux hosts](#linux-hosts) below
+ - [Docker Desktop](https://www.docker.com/products/docker-desktop/) or [OrbStack](https://orbstack.dev)
+ - Node.js, then `npm install -g @devcontainers/cli`
+ - [GitHub CLI](https://cli.github.com) — `gh auth login`
+ - A Claude **Pro or Max** subscription
+ 
++## Linux hosts
++
++Reference platform: **Ubuntu 24.04 LTS with Docker Engine** (the `docker-ce`
++repo), not Docker Desktop. Fedora/RHEL works the same way with `dnf`.
++
++```bash
++# Docker Engine — follow https://docs.docker.com/engine/install/ubuntu/
++sudo apt-get install -y git nodejs npm gh
++sudo npm install -g @devcontainers/cli
++sudo usermod -aG docker $USER   # then log out and back in
++gh auth login
++bash <(curl -fsSL https://raw.githubusercontent.com/andeyePro/vibe/main/install.sh)
++```
++
++The installer runs three extra Linux checks: the Docker daemon is reachable,
++your user is in the `docker` group, and `devcontainer` is on `PATH`. The group
++check **warns rather than fails** — rootless Docker legitimately doesn't use
++that group.
++
++Two Linux-specific things to know:
++
++- **`host.docker.internal`** is how anything in the container reaches the host.
++  Docker Engine has no built-in name for the host, so vibe passes
++  `--add-host=host.docker.internal:host-gateway` on every launch. This is the
++  supported host path on Linux, and it also keeps the Mac build bridge and the
++  OpenProject MCP forwarder working identically on both platforms.
++- **`.local` (mDNS) names may not resolve.** The image ships
++  `avahi-daemon`/`libnss-mdns`, but the Docker bridge NATs multicast, so a
++  container's `.local` lookup depends on the host resolver. Install
++  `avahi-daemon` on the host, or set `MulticastDNS=yes` in
++  `/etc/systemd/resolved.conf` and restart `systemd-resolved`. vibe probes this
++  once per machine at launch and warns with the remedy if it fails (marker:
++  `~/.vibe/mdns-probe`; delete it to see the warning again). If you'd rather not
++  bother, reach the host by `host.docker.internal` and LAN boxes by IP.
++
++**Existing images need one cache-busted rebuild.** Images built before
++2026-09-02 carry a duplicated `mdns4_minimal [NOTFOUND=return]` entry in
++`/etc/nsswitch.conf` — the Dockerfile's `sed` wasn't idempotent. The fix only
++lands on a real rebuild: run `vibe --rebuild` once (cache-busted, so the
++nsswitch layer is actually re-run), then confirm with
++`grep -c mdns4_minimal /etc/nsswitch.conf` inside the container, which must
++print `1`.
++
++Not covered on Linux: the Mac build bridge (below) is macOS-only, as is
++`/c` clipboard support beyond Wayland/X11 — headless servers fall back to the
++`.vibe/copy-latest.txt` scratch file.
++
+ ## Install
+ 
+ ```bash
+@@ -67,7 +114,9 @@ Getting the most from Fable 5 on a subscription: reserve it for genuinely huge o
+ 
+ `/vsss` (inside a session) runs an autonomous loop that persists across five-hour credit windows by default, by writing a `.vss/auto-resume` marker: it keeps going until the task is genuinely complete, not until the window runs out. If the session dies — typically 5-hour-window credit exhaustion — the launcher notices the active marker after `claude` exits, counts down to the estimated window reset (Ctrl-C cancels; deleting the marker deactivates), then relaunches `claude --continue "/vsss --resume"`. `--sessions X` caps the run at X windows total (X-1 relaunches); `--sessions 1` opts out of relaunch for a single-window run. The `/vsss` loop clears the marker whenever it exits cleanly, so finished runs never relaunch. (Unbounded-by-default since 2026-08-29; before that, omitting `--sessions` meant one window. The flag was `--auto-resume N` — N extra windows — until 2026-07-08.)
+ 
+-### Building on the Mac from inside a container (build bridge)
++### Building on the Mac from inside a container (build bridge) — macOS-only
++
++**macOS-only.** This section describes driving a *Mac* host over SSH from the container; there is no equivalent on a Linux host (nor a need for one — a Linux host's toolchain is generally installable in the image itself).
+ 
+ For projects whose build or test step must run on macOS (Xcode, Mac-only toolchains), a container can drive the Mac over SSH at `host.docker.internal`. The recurring setup, so the next project doesn't re-derive it (timeandeye's `mac-test.sh` is the working precedent):
+ 
+diff --git a/devcontainer/Dockerfile b/devcontainer/Dockerfile
+index fb80d81..67a5dc1 100644
+--- a/devcontainer/Dockerfile
++++ b/devcontainer/Dockerfile
+@@ -40,8 +40,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
+   shellcheck \
+   && apt-get clean && rm -rf /var/lib/apt/lists/*
+ 
+-# Enable mDNS (.local resolution) — insert mdns4_minimal before dns
+-RUN sed -i 's/^\(hosts:.*\)dns/\1mdns4_minimal [NOTFOUND=return] dns/' /etc/nsswitch.conf
++# Enable mDNS (.local resolution) — insert mdns4_minimal before dns.
++# Idempotent: a plain `s/…dns/…mdns4_minimal … dns/` re-applies on every build
++# layer that re-runs it and on any image whose base already carries the entry,
++# leaving `mdns4_minimal [NOTFOUND=return]` duplicated in the hosts: line
++# (observed live 2026-09-02). The negative lookahead-equivalent — skip the
++# substitution when the line already mentions mdns4_minimal — makes a
++# twice-applied edit yield exactly one entry. NOTE: existing images already
++# carry the duplicate; the fix only lands on a cache-busted `vibe --rebuild`.
++RUN sed -i '/^hosts:/{/mdns4_minimal/!s/\(hosts:.*\)dns/\1mdns4_minimal [NOTFOUND=return] dns/}' /etc/nsswitch.conf
+ 
+ # Ensure default node user has access to /usr/local/share
+ RUN mkdir -p /usr/local/share/npm-global && \
+diff --git a/devcontainer/devcontainer.json b/devcontainer/devcontainer.json
+index c184bdb..06960f5 100644
+--- a/devcontainer/devcontainer.json
++++ b/devcontainer/devcontainer.json
+@@ -3,7 +3,8 @@
+   "image": "vibe-dev:latest",
+   "runArgs": [
+     "--cap-add=NET_ADMIN",
+-    "--cap-add=NET_RAW"
++    "--cap-add=NET_RAW",
++    "--add-host=host.docker.internal:host-gateway"
+   ],
+   "customizations": {
+     "vscode": {
+diff --git a/install.sh b/install.sh
+index 5d660c5..3909013 100755
+--- a/install.sh
++++ b/install.sh
+@@ -19,6 +19,70 @@ BIN_DIR="$HOME/bin"
+ echo "vibe installer"
+ echo ""
+ 
++# ── Platform detection (task_034) ─────────────────────────────────────────────
++# vibe supports macOS (primary) and Linux (reference: Ubuntu 24.04 LTS + Docker
++# Engine, NOT Docker Desktop). Everything platform-specific below branches on
++# VIBE_OS; the Darwin path is byte-identical to the pre-Linux installer.
++# VIBE_OS / VIBE_PKG are overridable so the smoke suite can exercise each
++# platform's hint text without a matching host.
++# `uname` itself can be absent (the smoke suite runs this script with an empty
++# PATH to exercise the all-deps-missing path), and `set -e` would abort on a
++# failed command substitution. Degrade to Darwin: that is exactly the
++# pre-Linux-support behaviour, so an unknown platform keeps the old output.
++VIBE_OS="${VIBE_OS:-$(uname -s 2>/dev/null || true)}"
++[ -n "$VIBE_OS" ] || VIBE_OS="Darwin"
++
++# vibe_linux_pkg — echo the package-manager family for this Linux box, from
++# /etc/os-release ID / ID_LIKE. "apt" for Debian/Ubuntu, "dnf" for Fedora/RHEL,
++# "" when neither is recognised (hints then stay generic rather than wrong).
++vibe_linux_pkg() {
++  local id="" like=""
++  if [ -r /etc/os-release ]; then
++    # shellcheck disable=SC1091  # runtime host file, not shipped in this repo
++    id="$(. /etc/os-release 2>/dev/null && printf '%s' "${ID:-}")"
++    like="$(. /etc/os-release 2>/dev/null && printf '%s' "${ID_LIKE:-}")"
++  fi
++  case " $id $like " in
++    *" debian "*|*" ubuntu "*) printf 'apt' ;;
++    *" fedora "*|*" rhel "*|*" centos "*) printf 'dnf' ;;
++    *) printf '' ;;
++  esac
++}
++VIBE_PKG="${VIBE_PKG:-}"
++if [ "$VIBE_OS" != "Darwin" ] && [ -z "$VIBE_PKG" ]; then
++  VIBE_PKG="$(vibe_linux_pkg)"
++fi
++
++# vibe_dep_hint <cmd> — echo the platform-appropriate remedy for a missing dep.
++vibe_dep_hint() {
++  if [ "$VIBE_OS" = "Darwin" ]; then
++    case "$1" in
++      git)          echo "  ✗ git missing — xcode-select --install" ;;
++      docker)       echo "  ✗ docker missing — brew install --cask orbstack  (or Docker Desktop: https://www.docker.com/products/docker-desktop/)" ;;
++      node)         echo "  ✗ node missing — brew install node" ;;
++      devcontainer) echo "  ✗ devcontainer missing — npm install -g @devcontainers/cli" ;;
++      gh)           echo "  ✗ gh missing — brew install gh  (then: gh auth login)" ;;
++    esac
++    return 0
++  fi
++  # Linux. Docker gets the docker-ce repo, never the distro's stale docker.io.
++  case "$VIBE_PKG:$1" in
++    apt:git)    echo "  ✗ git missing — sudo apt-get install -y git" ;;
++    dnf:git)    echo "  ✗ git missing — sudo dnf install -y git" ;;
++    *:git)      echo "  ✗ git missing — install git with your distro's package manager" ;;
++    apt:docker) echo "  ✗ docker missing — install Docker Engine from the docker-ce repo: https://docs.docker.com/engine/install/ubuntu/" ;;
++    dnf:docker) echo "  ✗ docker missing — install Docker Engine from the docker-ce repo: https://docs.docker.com/engine/install/fedora/" ;;
++    *:docker)   echo "  ✗ docker missing — install Docker Engine: https://docs.docker.com/engine/install/" ;;
++    apt:node)   echo "  ✗ node missing — sudo apt-get install -y nodejs npm  (or nodesource for a current LTS)" ;;
++    dnf:node)   echo "  ✗ node missing — sudo dnf install -y nodejs npm" ;;
++    *:node)     echo "  ✗ node missing — install Node.js 18+ with your distro's package manager" ;;
++    *:devcontainer) echo "  ✗ devcontainer missing — npm install -g @devcontainers/cli" ;;
++    apt:gh)     echo "  ✗ gh missing — sudo apt-get install -y gh  (then: gh auth login)" ;;
++    dnf:gh)     echo "  ✗ gh missing — sudo dnf install -y gh  (then: gh auth login)" ;;
++    *:gh)       echo "  ✗ gh missing — install the GitHub CLI: https://cli.github.com  (then: gh auth login)" ;;
++  esac
++}
++
+ # ── Preflight: required dependencies ──────────────────────────────────────────
+ # Check everything a vibe session needs BEFORE cloning or touching ~/bin, so a
+ # fresh machine gets one actionable list instead of a half-finished install and
+@@ -28,13 +92,7 @@ preflight_deps() {
+   for cmd in git docker node devcontainer gh; do
+     command -v "$cmd" >/dev/null 2>&1 && continue
+     missing=1
+-    case "$cmd" in
+-      git)          echo "  ✗ git missing — xcode-select --install" ;;
+-      docker)       echo "  ✗ docker missing — brew install --cask orbstack  (or Docker Desktop: https://www.docker.com/products/docker-desktop/)" ;;
+-      node)         echo "  ✗ node missing — brew install node" ;;
+-      devcontainer) echo "  ✗ devcontainer missing — npm install -g @devcontainers/cli" ;;
+-      gh)           echo "  ✗ gh missing — brew install gh  (then: gh auth login)" ;;
+-    esac
++    vibe_dep_hint "$cmd"
+   done
+   if [ "$missing" -ne 0 ]; then
+     echo ""
+@@ -45,6 +103,28 @@ preflight_deps() {
+ }
+ preflight_deps
+ 
++# ── Linux-only preflight: daemon reachable + docker group (task_034) ──────────
++# Runs AFTER preflight_deps, so `docker` is known to exist. Both checks WARN
++# and continue: rootless Docker legitimately fails the group check, and a
++# daemon that is merely stopped is a one-command fix, not a reason to refuse
++# to install the launcher. macOS output is unaffected (function returns early).
++preflight_linux() {
++  [ "$VIBE_OS" = "Darwin" ] && return 0
++  if ! docker info >/dev/null 2>&1; then
++    echo "  ⚠  docker daemon not reachable — start it with:"
++    echo "       sudo systemctl enable --now docker"
++    echo "     (then re-run this installer to re-check)"
++  fi
++  if ! id -nG 2>/dev/null | grep -qw docker; then
++    echo "  ⚠  $(id -un 2>/dev/null || echo you) is not in the 'docker' group — vibe would need sudo for every"
++    echo "     container command. Fix with:"
++    echo "       sudo usermod -aG docker \$USER"
++    echo "     then log out and back in (or: newgrp docker). Harmless to ignore if"
++    echo "     you run rootless Docker, which does not use that group."
++  fi
++}
++preflight_linux
++
+ # Detect whether we're being run from a real vibe clone. If so, use it
+ # in-place instead of maintaining a separate ~/.vibe-src. A "real" clone
+ # has install.sh sitting next to vibe + devcontainer/devcontainer.json
+@@ -111,6 +191,7 @@ for cmd in docker devcontainer gh node; do
+   fi
+ done
+ 
++if [ "$VIBE_OS" = "Darwin" ]; then
+ cat <<'EOF'
+ 
+   Next steps:
+@@ -122,3 +203,30 @@ cat <<'EOF'
+         gh auth login
+     - Then: cd <a project> && vibe
+ EOF
++elif [ "$VIBE_PKG" = "dnf" ]; then
++cat <<'EOF'
++
++  Next steps:
++    - Ensure ~/bin is on your PATH
++    - Missing deps? Install:
++        Docker Engine:   https://docs.docker.com/engine/install/fedora/
++        devcontainer:    npm install -g @devcontainers/cli
++        gh (GitHub CLI): sudo dnf install -y gh
++        gh auth login
++    - Add yourself to the docker group: sudo usermod -aG docker $USER  (then re-login)
++    - Then: cd <a project> && vibe
++EOF
++else
++cat <<'EOF'
++
++  Next steps:
++    - Ensure ~/bin is on your PATH
++    - Missing deps? Install:
++        Docker Engine:   https://docs.docker.com/engine/install/ubuntu/
++        devcontainer:    npm install -g @devcontainers/cli
++        gh (GitHub CLI): sudo apt-get install -y gh
++        gh auth login
++    - Add yourself to the docker group: sudo usermod -aG docker $USER  (then re-login)
++    - Then: cd <a project> && vibe
++EOF
++fi
+diff --git a/vibe b/vibe
+index 5d5e83d..a7f17f7 100755
+--- a/vibe
++++ b/vibe
+@@ -3121,6 +3121,70 @@ projects_bind_mount_drift() {
+   return 0
+ }
+ 
++# ── Linux host support (task_034) ─────────────────────────────────────────────
++# Defined here, ABOVE the VIBE_SOURCE_ONLY guard, so smoke-test.py can source
++# and unit-test them behind a `uname` PATH shim. Both are HOST-side helpers:
++# they run on the machine invoking `vibe`, never inside the container.
++
++# vibe_clipboard_cmd — echo the host clipboard command for the /c scratch-file
++# drain, or nothing when no supported tool is installed. Darwin keeps `pbcopy`
++# verbatim; Linux prefers Wayland, then X11. The X11 tools are invoked with
++# their explicit clipboard-selection flags on purpose: bare `xclip` / `xsel`
++# write the PRIMARY selection (middle-click paste), not the CLIPBOARD that
++# Cmd/Ctrl-V reads. Echoes a possibly multi-word command; the watcher expands
++# $COPY_CMD unquoted, which is what makes the flagged forms work.
++vibe_clipboard_cmd() {
++  if [ "$(uname -s)" = "Darwin" ]; then
++    if command -v pbcopy >/dev/null 2>&1; then
++      printf 'pbcopy'
++    fi
++    return 0
++  fi
++  if command -v wl-copy >/dev/null 2>&1; then
++    printf 'wl-copy'
++  elif command -v xclip >/dev/null 2>&1; then
++    printf 'xclip -selection clipboard'
++  elif command -v xsel >/dev/null 2>&1; then
++    printf 'xsel --clipboard --input'
++  fi
++  return 0
++}
++
++# vibe_mdns_probe_needed <marker_path> — 0 (probe due) iff the marker is absent.
++# Split out from the probe itself so the once-per-machine logic is testable
++# without touching the real resolver.
++vibe_mdns_probe_needed() {
++  [ -e "$1" ] && return 1
++  return 0
++}
++
++# vibe_mdns_probe — Linux hosts only, once per machine. On a Linux host the
++# Docker bridge NATs multicast, so a container's `.local` lookups can fail even
++# though the image ships avahi/libnss-mdns. Warn once, name the remedy, and
++# drop a marker so every later launch stays silent. Never fails the launch:
++# mDNS is a convenience, `host.docker.internal` is the supported host path.
++vibe_mdns_probe() {
++  [ "$(uname -s)" = "Linux" ] || return 0
++  local marker="${VIBE_MDNS_MARKER:-$HOME/.vibe/mdns-probe}"
++  vibe_mdns_probe_needed "$marker" || return 0
++  mkdir -p "$(dirname "$marker")" 2>/dev/null || return 0
++  : > "$marker" 2>/dev/null || true
++  local host
++  host="$(hostname 2>/dev/null)" || host=""
++  [ -n "$host" ] || return 0
++  if getent hosts "${host}.local" >/dev/null 2>&1; then
++    return 0
++  fi
++  echo "  ⚠  mDNS: this host cannot resolve ${host}.local, so .local names will"
++  echo "     likely fail inside the container too (the Docker bridge NATs multicast)."
++  echo "     Fix on the HOST: install avahi-daemon, or set MulticastDNS=yes in"
++  echo "     /etc/systemd/resolved.conf and restart systemd-resolved."
++  echo "     The container reaches this machine at host.docker.internal regardless."
++  echo "     (Shown once; delete $marker to see it again.)"
++  echo ""
++  return 0
++}
++
+ # ── Argv parser ───────────────────────────────────────────────────────────────
+ # parse_vibe_args "$@" - parse flags and an optional project positional in any
+ # order. Sets globals REBUILD / CONTINUE / RESUME / RESUME_UID / PROJECT_ARG /
+@@ -3309,6 +3373,10 @@ require docker       "Install OrbStack (https://orbstack.dev) or Docker Desktop.
+ require devcontainer "Install with: npm install -g @devcontainers/cli"
+ require gh           "Install from: https://cli.github.com"
+ 
++# Linux hosts: warn once if the host resolver can't do mDNS (see vibe_mdns_probe).
++# No-op on Darwin and on any Linux host that already resolves .local.
++vibe_mdns_probe
++
+ # Suppress Docker Desktop's "What's next? Try Docker Debug..." hint.
+ # DOCKER_CLI_HINTS=false is the documented mechanism but doesn't always
+ # propagate through the devcontainer CLI to its docker subprocesses, so we
+@@ -3860,6 +3928,24 @@ if [[ "$(uname)" == "Darwin" ]] && command -v pbcopy >/dev/null 2>&1; then
+   # mechanism changed — it now shares the single EXIT slot with the
+   # shared-repo lock release via vibe_on_exit (see the dispatcher block).
+   vibe_exit_hook_add 'if [ -s "$CLIP" ] && [ "$(stat -f %m "$CLIP" 2>/dev/null || stat -c %Y "$CLIP" 2>/dev/null || echo 0)" != "$WATCHER_SEED_MTIME" ]; then pbcopy < "$CLIP" 2>/dev/null || true; fi; kill "$WATCHER_PID" 2>/dev/null || true'
++elif [ -n "$(vibe_clipboard_cmd)" ]; then
++  # Linux host with a clipboard tool (task_034). Deliberately additive: the
++  # Darwin branch above is byte-pinned by the task_008/016 smoke checks, so
++  # nothing here touches CLIP / WATCHER_SEED_MTIME / the exit-hook drain body.
++  # The watcher does its own scratch-file bookkeeping and honours
++  # VIBE_COPY_CMD, so exporting the detected command is the whole wiring.
++  # No exit-time flush: that path is Darwin-only by design; on Linux the
++  # watcher's poll loop has already copied anything written before exit.
++  # Headless (no wl-copy/xclip/xsel) falls through with no watcher at all and
++  # /c degrades to the scratch file, which is the documented fallback.
++  VIBE_COPY_CMD="$(vibe_clipboard_cmd)"
++  export VIBE_COPY_CMD
++  mkdir -p "$WORKSPACE/.vibe"
++  pkill -f "vibe-copy-watcher\.sh ${WORKSPACE}\$" 2>/dev/null || true
++  "$VIBE_REPO_DIR/vibe-copy-watcher.sh" "$WORKSPACE" &
++  # shellcheck disable=SC2034  # consumed by the exit hook string registered below
++  WATCHER_PID=$!
++  vibe_exit_hook_add 'kill "$WATCHER_PID" 2>/dev/null || true'
+ fi
+ 
+ # build_claude_model_args echoes "" / "--model <id>". MODEL_ARG is restricted
+diff --git a/vibe-copy-watcher.sh b/vibe-copy-watcher.sh
+index f79a21d..5a1fd73 100755
+--- a/vibe-copy-watcher.sh
++++ b/vibe-copy-watcher.sh
+@@ -1,10 +1,16 @@
+ #!/usr/bin/env bash
+-# vibe-copy-watcher.sh — host-side polling watcher that pbcopies the /c scratch
+-# file on change. Runs on the Mac; no-op on Linux.
+-# VIBE_COPY_WATCHER_FORCE=1 bypasses the Darwin check for testing only.
++# vibe-copy-watcher.sh — host-side polling watcher that copies the /c scratch
++# file to the host clipboard on change. Runs on the Mac (pbcopy) and, since
++# task_034, on a Linux host whose launcher detected a clipboard tool and
++# exported VIBE_COPY_CMD (wl-copy / xclip -selection clipboard / xsel
++# --clipboard --input). Still a no-op on a headless host: no tool, no
++# VIBE_COPY_CMD, no watcher — /c falls back to the scratch file.
++# VIBE_COPY_WATCHER_FORCE=1 bypasses the platform check for testing only.
+ set -euo pipefail
+ 
+-if [ "${VIBE_COPY_WATCHER_FORCE:-0}" != "1" ]; then
++# 3-way gate: Darwin, OR an explicit VIBE_COPY_CMD (the Linux path), OR the
++# test-only FORCE escape hatch. Any one of the three is enough to run.
++if [ "${VIBE_COPY_WATCHER_FORCE:-0}" != "1" ] && [ -z "${VIBE_COPY_CMD:-}" ]; then
+   [[ "$(uname)" == "Darwin" ]] || exit 0
+ fi
+ 

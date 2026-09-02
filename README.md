@@ -21,11 +21,58 @@ A single-command containerised Claude Code environment. `cd my-project && vibe` 
 
 ## Prerequisites
 
-- macOS 13+ or Linux (Linux untested; open an issue if you hit anything)
+- macOS 13+ (primary) or Linux — see [Linux hosts](#linux-hosts) below
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) or [OrbStack](https://orbstack.dev)
 - Node.js, then `npm install -g @devcontainers/cli`
 - [GitHub CLI](https://cli.github.com) — `gh auth login`
 - A Claude **Pro or Max** subscription
+
+## Linux hosts
+
+Reference platform: **Ubuntu 24.04 LTS with Docker Engine** (the `docker-ce`
+repo), not Docker Desktop. Fedora/RHEL works the same way with `dnf`.
+
+```bash
+# Docker Engine — follow https://docs.docker.com/engine/install/ubuntu/
+sudo apt-get install -y git nodejs npm gh
+sudo npm install -g @devcontainers/cli
+sudo usermod -aG docker $USER   # then log out and back in
+gh auth login
+bash <(curl -fsSL https://raw.githubusercontent.com/andeyePro/vibe/main/install.sh)
+```
+
+The installer runs three extra Linux checks: the Docker daemon is reachable,
+your user is in the `docker` group, and `devcontainer` is on `PATH`. The group
+check **warns rather than fails** — rootless Docker legitimately doesn't use
+that group.
+
+Two Linux-specific things to know:
+
+- **`host.docker.internal`** is how anything in the container reaches the host.
+  Docker Engine has no built-in name for the host, so vibe passes
+  `--add-host=host.docker.internal:host-gateway` on every launch. This is the
+  supported host path on Linux, and it also keeps the Mac build bridge and the
+  OpenProject MCP forwarder working identically on both platforms.
+- **`.local` (mDNS) names may not resolve.** The image ships
+  `avahi-daemon`/`libnss-mdns`, but the Docker bridge NATs multicast, so a
+  container's `.local` lookup depends on the host resolver. Install
+  `avahi-daemon` on the host, or set `MulticastDNS=yes` in
+  `/etc/systemd/resolved.conf` and restart `systemd-resolved`. vibe probes this
+  once per machine at launch and warns with the remedy if it fails (marker:
+  `~/.vibe/mdns-probe`; delete it to see the warning again). If you'd rather not
+  bother, reach the host by `host.docker.internal` and LAN boxes by IP.
+
+**Existing images need one cache-busted rebuild.** Images built before
+2026-09-02 carry a duplicated `mdns4_minimal [NOTFOUND=return]` entry in
+`/etc/nsswitch.conf` — the Dockerfile's `sed` wasn't idempotent. The fix only
+lands on a real rebuild: run `vibe --rebuild` once (cache-busted, so the
+nsswitch layer is actually re-run), then confirm with
+`grep -c mdns4_minimal /etc/nsswitch.conf` inside the container, which must
+print `1`.
+
+Not covered on Linux: the Mac build bridge (below) is macOS-only, as is
+`/c` clipboard support beyond Wayland/X11 — headless servers fall back to the
+`.vibe/copy-latest.txt` scratch file.
 
 ## Install
 
@@ -67,7 +114,9 @@ Getting the most from Fable 5 on a subscription: reserve it for genuinely huge o
 
 `/vsss` (inside a session) runs an autonomous loop that persists across five-hour credit windows by default, by writing a `.vss/auto-resume` marker: it keeps going until the task is genuinely complete, not until the window runs out. If the session dies — typically 5-hour-window credit exhaustion — the launcher notices the active marker after `claude` exits, counts down to the estimated window reset (Ctrl-C cancels; deleting the marker deactivates), then relaunches `claude --continue "/vsss --resume"`. `--sessions X` caps the run at X windows total (X-1 relaunches); `--sessions 1` opts out of relaunch for a single-window run. The `/vsss` loop clears the marker whenever it exits cleanly, so finished runs never relaunch. (Unbounded-by-default since 2026-08-29; before that, omitting `--sessions` meant one window. The flag was `--auto-resume N` — N extra windows — until 2026-07-08.)
 
-### Building on the Mac from inside a container (build bridge)
+### Building on the Mac from inside a container (build bridge) — macOS-only
+
+**macOS-only.** This section describes driving a *Mac* host over SSH from the container; there is no equivalent on a Linux host (nor a need for one — a Linux host's toolchain is generally installable in the image itself).
 
 For projects whose build or test step must run on macOS (Xcode, Mac-only toolchains), a container can drive the Mac over SSH at `host.docker.internal`. The recurring setup, so the next project doesn't re-derive it (timeandeye's `mac-test.sh` is the working precedent):
 

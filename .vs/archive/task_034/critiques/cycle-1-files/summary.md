@@ -1,0 +1,3 @@
+`code-check.py` clean (19 files, shellcheck). `smoke-test.py` full run: 2 failures, both pre-existing `install.sh: detects local clone` checks that fail in any git worktree because `.git` is a file, not a directory (environment artifact, unrelated to task_034 — matches the known caveat).
+Added `test_task034_linux_host()` (`smoke/checks_01_launcher_basics_and_codecheck.py`, registered in `smoke/runner.py`) covering AC3-AC10 plus the uname-shim/mDNS/docs mechanics; fixtures and the AC4 golden constant live in `smoke/_core.py` (`_task034_*`, `_make_uname_shim`, `TASK034_GOLDEN_DEVCONTAINER_RENDER_OP_OFF`) per the split-suite convention.
+62 task_034 checks, all green; zero tests deleted (pure additions: `_core.py` +140, `checks_01` +221, `runner.py` +1 line).

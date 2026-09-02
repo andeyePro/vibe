@@ -64,7 +64,6 @@ Two vibe-wide behaviour changes shipped and took effect on this rebuild — surf
 
 ## Open
 
-- [ ] **task_034: Linux host support** (/vsss 2026-09-02, worktree `task034`) — host-gateway add-host, Linux clipboard chain, install preflight, mDNS probe, nsswitch idempotence, docs; `[L]` criteria → MANUAL-TESTS 44-50 for the NUC. Spec: worktree `.vs/spec.md`.
 
 
 

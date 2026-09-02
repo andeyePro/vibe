@@ -93,6 +93,7 @@ def main() -> int:
     test_ac4_remove_existing_flag_rebuild_true_drift_marker()
     test_ac4_remove_existing_flag_rebuild_true_no_drift()
     test_ac4_remove_existing_flag_no_rebuild_drift_marker()
+    test_task034_linux_host()
     test_ac4_remove_existing_flag_no_rebuild_no_drift()
     test_ac5a_docker_all_fail()
     test_ac5b_ps_ok_inspect_fails()

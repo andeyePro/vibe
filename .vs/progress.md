@@ -523,3 +523,8 @@ Verdict: PASS. Committing as `/vs cycle 1: pass`. Not pushed.
 - Diff read: wide.md/narrow.md carry every cap and the stacking table; vs/vss/vsss gained the flag, the Parallel plan block, the merge step and the fromto ambiguity rule; diet/feast precedence sentences present.
 - Merge note: the worktree's rebase mis-applied (duplicated pick); the docs/commands diff was applied with `git apply -3` and the test hunks by context-matched `patch` — recorded as a merge-step lesson for wide.md's next revision (prefer cherry-pick -n per file over rebase when main's shared files moved underneath).
 - Generator tier that passed: sonnet (cycle 1). Tester: haiku. Fable rung pre-authorised, not used.
+
+## task_034 cycle 1 — Evaluator: PASS (worktree task034 → main)
+- Mechanical gate: Tester (sonnet) 62 checks green (AC4 golden: literal pre-change render + exactly one add-host line; clipboard chain; watcher 3-way OR; install preflight `set -e` safety; nsswitch idempotence; mDNS probe; docs) inside a green worktree suite (only the two `.git`-is-a-file install checks). Chair pre-read: every launcher change `uname`-guarded, Darwin branch untouched; the one Mac-visible change is booked for Mac re-verification in Manual Test 46.
+- Generator (opus) caught a real regression in its own preflight (bare `$(uname -s)` fatal under `set -e` with an empty PATH) before handing over.
+- Generator tier that passed: opus (cycle 1). Tester: sonnet. Fable rung pre-authorised, not used.

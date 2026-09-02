@@ -1,0 +1,11 @@
+vibe installer
+
+  ✗ git missing — xcode-select --install
+  ✗ docker missing — brew install --cask orbstack  (or Docker Desktop: https://www.docker.com/products/docker-desktop/)
+  ✗ node missing — brew install node
+  ✗ devcontainer missing — npm install -g @devcontainers/cli
+  ✗ gh missing — brew install gh  (then: gh auth login)
+
+  Install the missing dependencies above, then re-run this installer.
+  (A Claude Pro or Max subscription is also required to launch a session.)
+EXIT=1

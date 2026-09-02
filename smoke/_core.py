@@ -1126,6 +1126,141 @@ def _t14_build(home, ws) -> dict:
     return json.loads(Path(out).read_text()) if out and Path(out).exists() else {"mounts": []}
 
 
+
+# -- task_034: Linux host support fixtures --------------------------------------
+
+def _make_uname_shim(tmp, kernel: str) -> Path:
+    """Create a directory holding an executable `uname` shim that prints
+    `kernel` for any invocation (covers `uname -s` and bare `uname`). Callers
+    prepend the returned dir to PATH so it shadows the real uname -- used to
+    exercise the Darwin/Linux branches in-container without a matching host."""
+    bindir = Path(tmp) / "unameshim"
+    bindir.mkdir(parents=True, exist_ok=True)
+    shim = bindir / "uname"
+    shim.write_text("#!/bin/sh\necho '" + kernel + "'\n")
+    shim.chmod(0o755)
+    return bindir
+
+
+# task_034 AC4: pre-change golden. Captured ONCE by checking out the baseline
+# launcher (`git show 3b23b19:vibe`) and the baseline devcontainer.json
+# (`git show 3b23b19:devcontainer/devcontainer.json`), then re-baselined by the
+# chair at merge to 48af1ce's postStartCommand (the firewall token pipe landed
+# on main between the worktree's branch point and its merge; that line is not
+# task_034's) — still never derived from HEAD, sourcing the baseline
+# vibe under a Darwin `uname` shim with VIBE_SOURCE_ONLY=1, and rendering:
+#   render_devcontainer_with_mounts <baseline devcontainer.json> out \
+#       /host/brain2 /brain2 0 /host/zotero /zotero 1
+# render_devcontainer_with_mounts itself is untouched by task_034 (the new
+# add-host line lives in the base devcontainer.json, not in this function),
+# so re-deriving this from current sources would be tautological -- this is
+# pasted verbatim from that one baseline capture and must never be
+# regenerated from HEAD.
+TASK034_GOLDEN_DEVCONTAINER_RENDER_OP_OFF = '{\n  "name": "vibe",\n  "image": "vibe-dev:latest",\n  "runArgs": [\n    "--cap-add=NET_ADMIN",\n    "--cap-add=NET_RAW"\n  ],\n  "customizations": {\n    "vscode": {\n      "extensions": [\n        "anthropic.claude-code",\n        "dbaeumer.vscode-eslint",\n        "esbenp.prettier-vscode",\n        "eamodio.gitlens"\n      ],\n      "settings": {\n        "editor.formatOnSave": true,\n        "editor.defaultFormatter": "esbenp.prettier-vscode",\n        "editor.codeActionsOnSave": {\n          "source.fixAll.eslint": "explicit"\n        },\n        "terminal.integrated.defaultProfile.linux": "zsh",\n        "terminal.integrated.profiles.linux": {\n          "bash": {\n            "path": "bash",\n            "icon": "terminal-bash"\n          },\n          "zsh": {\n            "path": "zsh"\n          }\n        }\n      }\n    }\n  },\n  "remoteUser": "node",\n  "mounts": [\n    "source=vibe-bash-history,target=/commandhistory,type=volume",\n    "source=vibe-claude-config,target=/home/node/.claude,type=volume",\n    "source=${localEnv:HOME}/.ssh,target=/home/node/.ssh-host,type=bind,readonly",\n    "source=${localEnv:HOME}/.gitconfig,target=/home/node/.gitconfig-host,type=bind,readonly",\n    {\n      "source": "/host/brain2",\n      "target": "/brain2",\n      "type": "bind"\n    },\n    {\n      "source": "/host/zotero",\n      "target": "/zotero",\n      "type": "bind",\n      "readonly": true\n    }\n  ],\n  "containerEnv": {\n    "NODE_OPTIONS": "--max-old-space-size=4096",\n    "CLAUDE_CONFIG_DIR": "/home/node/.claude",\n    "POWERLEVEL9K_DISABLE_GITSTATUS": "true",\n    "VIBE_SSH_AUTO": "${localEnv:VIBE_SSH_AUTO}",\n    "GIT_OPTIONAL_LOCKS": "0"\n  },\n  "remoteEnv": {\n    "GITHUB_TOKEN": "${localEnv:GITHUB_TOKEN}",\n    "VIBE_PROJECT_NAME": "${localEnv:VIBE_PROJECT_NAME}",\n    "GITHUB_REPO_SLUG": "${localEnv:GITHUB_REPO_SLUG}",\n    "ZOTERO_API_KEY": "${localEnv:ZOTERO_API_KEY}",\n    "OPENPROJECT_MCP_URL": "${localEnv:OPENPROJECT_MCP_URL}",\n    "OPENPROJECT_MCP_BEARER": "${localEnv:OPENPROJECT_MCP_BEARER}",\n    "OPENPROJECT_MCP_FWD_PORT": "${localEnv:OPENPROJECT_MCP_FWD_PORT}",\n    "NODE_OPTIONS": "--max-old-space-size=4096",\n    "CLAUDE_CONFIG_DIR": "/home/node/.claude",\n    "POWERLEVEL9K_DISABLE_GITSTATUS": "true",\n    "VIBE_SSH_AUTO": "${localEnv:VIBE_SSH_AUTO}",\n    "GIT_OPTIONAL_LOCKS": "0"\n  },\n  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",\n  "workspaceFolder": "/workspace",\n  "postStartCommand": "printf %s \\"${GITHUB_TOKEN:-}\\" | sudo /usr/local/bin/init-firewall.sh && sudo /usr/sbin/avahi-daemon --daemonize --no-drop-root 2>/dev/null || true && /usr/local/bin/setup-ssh.sh && /usr/local/bin/setup-git.sh && /usr/local/bin/write-env-hint.sh && /usr/local/bin/install-claude-extras.sh && /usr/local/bin/register-op-mcp.sh",\n  "waitFor": "postStartCommand"\n}\n'
+
+
+def _task034_baseline_text(rel_path: str) -> tuple:
+    """git show 3b23b19:<rel_path> — baseline content, fetched live (these
+    are structural byte-diffs, not the tautology-avoidance golden AC4 needs).
+    Returns (text, returncode) so the caller can check() the git-show itself."""
+    r = run(["git", "show", f"3b23b19:{rel_path}"], cwd=REPO)
+    return r.stdout, r.returncode
+
+
+def _task034_tool_dir(tmp: Path, name: str, tools: list) -> Path:
+    """A PATH dir holding no-op executable stubs for the given tool names."""
+    d = Path(tmp) / name
+    d.mkdir(parents=True, exist_ok=True)
+    for t in tools:
+        p = d / t
+        p.write_text("#!/bin/sh\ntrue\n")
+        p.chmod(0o755)
+    return d
+
+
+def _task034_clipboard_cmd(uname_dir: Path, tool_dirs: list) -> str:
+    """Source vibe under the given uname shim + tool dirs and echo
+    vibe_clipboard_cmd()'s output (empty string if it printed nothing)."""
+    path_parts = [str(uname_dir)] + [str(d) for d in tool_dirs] + [os.environ.get("PATH", "")]
+    env = {"PATH": os.pathsep.join(path_parts)}
+    r = _source_vibe_call(env, 'printf "CMD=[%s]" "$(vibe_clipboard_cmd)"')
+    m = re.search(r"CMD=\[(.*?)\]", r.stdout)
+    return m.group(1) if m else "<no match: %r>" % r.stdout
+
+
+def _task034_watcher_alive_after(env_extra: dict, ws: Path, linux_shim: Path) -> bool:
+    """Spawn vibe-copy-watcher.sh under a Linux shim with env_extra merged in,
+    wait briefly, report whether it is still running, then always clean it up."""
+    ws.mkdir(parents=True, exist_ok=True)
+    env = {**os.environ, "PATH": f"{linux_shim}{os.pathsep}{os.environ.get('PATH', '')}", **env_extra}
+    proc = subprocess.Popen(["bash", str(VIBE_COPY_WATCHER), str(ws)],
+                             env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        import time
+        time.sleep(0.5)
+        return proc.poll() is None
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
+def _task034_run_install(src_text: str, home: Path, darwin_shim: Path) -> str:
+    """Run install.sh source text as a standalone script under a fully-stubbed
+    Darwin environment; return combined stdout+stderr with `home`'s own path
+    normalised out, so two separate runs (baseline vs current) are comparable."""
+    home = Path(home)
+    home.mkdir(parents=True, exist_ok=True)
+    script = home / "install.sh"
+    script.write_text(src_text)
+    stub = home / "stubbin"
+    stub.mkdir(exist_ok=True)
+    for cmd in ("git", "docker", "node", "devcontainer", "gh"):
+        p = stub / cmd
+        p.write_text("#!/bin/sh\nexit 0\n")
+        p.chmod(0o755)
+    (home / ".vibe").mkdir(exist_ok=True)
+    (home / ".vibe" / "config").write_text('VIBE_PROJECTS_DIR="%s/Projects"\n' % home)
+    env = {
+        "HOME": str(home),
+        "PATH": f"{darwin_shim}{os.pathsep}{stub}{os.pathsep}{os.environ.get('PATH', '')}",
+    }
+    r = run(["bash", str(script)], env=env, cwd=home)
+    return (r.stdout + r.stderr).replace(str(home), "<HOME>")
+
+
+def _task034_run_install_linux(pkg: str, in_group: bool, home: Path) -> subprocess.CompletedProcess:
+    """Run the repo's real install.sh with VIBE_OS/VIBE_PKG forced to Linux,
+    a stubbed `id` reporting docker-group membership per in_group, and every
+    other dependency stubbed present."""
+    home = Path(home)
+    home.mkdir(parents=True, exist_ok=True)
+    stub = home / "stubbin"
+    stub.mkdir(exist_ok=True)
+    for cmd in ("git", "docker", "node", "devcontainer", "gh"):
+        p = stub / cmd
+        p.write_text("#!/bin/sh\nexit 0\n")
+        p.chmod(0o755)
+    groups = "docker other" if in_group else "other"
+    idstub = stub / "id"
+    idstub.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "-nG" ]; then echo "' + groups + '"; '
+        'elif [ "$1" = "-un" ]; then echo "testuser"; fi\n'
+    )
+    idstub.chmod(0o755)
+    (home / ".vibe").mkdir(exist_ok=True)
+    (home / ".vibe" / "config").write_text('VIBE_PROJECTS_DIR="%s/Projects"\n' % home)
+    env = {
+        "HOME": str(home),
+        "VIBE_OS": "Linux",
+        "VIBE_PKG": pkg,
+        "PATH": f"{stub}{os.pathsep}{os.environ.get('PATH', '')}",
+    }
+    return run(["bash", str(INSTALL)], env=env, cwd=home)
+
 __all__ = [
     'AUTO_MEMORY_SCOPE_MD',
     'BRAIN2_MD',
@@ -1165,6 +1300,7 @@ __all__ = [
     'TASK022_CLEAN_LINES',
     'TASK022_CORPUS',
     'TASK022_EXPECTED_ALL',
+    'TASK034_GOLDEN_DEVCONTAINER_RENDER_OP_OFF',
     'TASK022_EXPECTED_BLOCK_ONLY',
     'TODO_CHANGELOG_MD',
     'VERSION_FILE',
@@ -1206,6 +1342,7 @@ __all__ = [
     '_line',
     '_load_code_check_module',
     '_make_bad_script',
+    '_make_uname_shim',
     '_make_good_script',
     '_op_opted_in_result',
     '_parse_args_probe',
@@ -1243,6 +1380,12 @@ __all__ = [
     '_t24_ghp',
     '_t24_init_repo',
     '_t24_ip',
+    '_task034_baseline_text',
+    '_task034_clipboard_cmd',
+    '_task034_run_install',
+    '_task034_run_install_linux',
+    '_task034_tool_dir',
+    '_task034_watcher_alive_after',
     '_task022_counts',
     '_task022_extract_function_body',
     '_task022_parse_findings',

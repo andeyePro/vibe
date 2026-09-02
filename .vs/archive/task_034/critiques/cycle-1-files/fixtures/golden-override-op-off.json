@@ -3,8 +3,7 @@
   "image": "vibe-dev:latest",
   "runArgs": [
     "--cap-add=NET_ADMIN",
-    "--cap-add=NET_RAW",
-    "--add-host=host.docker.internal:host-gateway"
+    "--cap-add=NET_RAW"
   ],
   "customizations": {
     "vscode": {
@@ -38,7 +37,23 @@
     "source=vibe-bash-history,target=/commandhistory,type=volume",
     "source=vibe-claude-config,target=/home/node/.claude,type=volume",
     "source=${localEnv:HOME}/.ssh,target=/home/node/.ssh-host,type=bind,readonly",
-    "source=${localEnv:HOME}/.gitconfig,target=/home/node/.gitconfig-host,type=bind,readonly"
+    "source=${localEnv:HOME}/.gitconfig,target=/home/node/.gitconfig-host,type=bind,readonly",
+    {
+      "source": "/fixture/host/projects",
+      "target": "/home/node/.claude/projects",
+      "type": "bind"
+    },
+    {
+      "source": "/fixture/host/brain2",
+      "target": "/brain2",
+      "type": "bind"
+    },
+    {
+      "source": "/fixture/host/zotero",
+      "target": "/zotero",
+      "type": "bind",
+      "readonly": true
+    }
   ],
   "containerEnv": {
     "NODE_OPTIONS": "--max-old-space-size=4096",
@@ -63,6 +78,6 @@
   },
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
   "workspaceFolder": "/workspace",
-  "postStartCommand": "printf %s \"${GITHUB_TOKEN:-}\" | sudo /usr/local/bin/init-firewall.sh && sudo /usr/sbin/avahi-daemon --daemonize --no-drop-root 2>/dev/null || true && /usr/local/bin/setup-ssh.sh && /usr/local/bin/setup-git.sh && /usr/local/bin/write-env-hint.sh && /usr/local/bin/install-claude-extras.sh && /usr/local/bin/register-op-mcp.sh",
+  "postStartCommand": "sudo /usr/local/bin/init-firewall.sh && sudo /usr/sbin/avahi-daemon --daemonize --no-drop-root 2>/dev/null || true && /usr/local/bin/setup-ssh.sh && /usr/local/bin/setup-git.sh && /usr/local/bin/write-env-hint.sh && /usr/local/bin/install-claude-extras.sh && /usr/local/bin/register-op-mcp.sh",
   "waitFor": "postStartCommand"
 }

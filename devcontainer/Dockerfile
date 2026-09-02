@@ -40,8 +40,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   shellcheck \
   && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Enable mDNS (.local resolution) — insert mdns4_minimal before dns
-RUN sed -i 's/^\(hosts:.*\)dns/\1mdns4_minimal [NOTFOUND=return] dns/' /etc/nsswitch.conf
+# Enable mDNS (.local resolution) — insert mdns4_minimal before dns.
+# Idempotent: a plain `s/…dns/…mdns4_minimal … dns/` re-applies on every build
+# layer that re-runs it and on any image whose base already carries the entry,
+# leaving `mdns4_minimal [NOTFOUND=return]` duplicated in the hosts: line
+# (observed live 2026-09-02). The negative lookahead-equivalent — skip the
+# substitution when the line already mentions mdns4_minimal — makes a
+# twice-applied edit yield exactly one entry. NOTE: existing images already
+# carry the duplicate; the fix only lands on a cache-busted `vibe --rebuild`.
+RUN sed -i '/^hosts:/{/mdns4_minimal/!s/\(hosts:.*\)dns/\1mdns4_minimal [NOTFOUND=return] dns/}' /etc/nsswitch.conf
 
 # Ensure default node user has access to /usr/local/share
 RUN mkdir -p /usr/local/share/npm-global && \

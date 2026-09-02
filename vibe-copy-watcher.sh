@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
-# vibe-copy-watcher.sh — host-side polling watcher that pbcopies the /c scratch
-# file on change. Runs on the Mac; no-op on Linux.
-# VIBE_COPY_WATCHER_FORCE=1 bypasses the Darwin check for testing only.
+# vibe-copy-watcher.sh — host-side polling watcher that copies the /c scratch
+# file to the host clipboard on change. Runs on the Mac (pbcopy) and, since
+# task_034, on a Linux host whose launcher detected a clipboard tool and
+# exported VIBE_COPY_CMD (wl-copy / xclip -selection clipboard / xsel
+# --clipboard --input). Still a no-op on a headless host: no tool, no
+# VIBE_COPY_CMD, no watcher — /c falls back to the scratch file.
+# VIBE_COPY_WATCHER_FORCE=1 bypasses the platform check for testing only.
 set -euo pipefail
 
-if [ "${VIBE_COPY_WATCHER_FORCE:-0}" != "1" ]; then
+# 3-way gate: Darwin, OR an explicit VIBE_COPY_CMD (the Linux path), OR the
+# test-only FORCE escape hatch. Any one of the three is enough to run.
+if [ "${VIBE_COPY_WATCHER_FORCE:-0}" != "1" ] && [ -z "${VIBE_COPY_CMD:-}" ]; then
   [[ "$(uname)" == "Darwin" ]] || exit 0
 fi
 

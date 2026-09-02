@@ -3121,6 +3121,70 @@ projects_bind_mount_drift() {
   return 0
 }
 
+# ── Linux host support (task_034) ─────────────────────────────────────────────
+# Defined here, ABOVE the VIBE_SOURCE_ONLY guard, so smoke-test.py can source
+# and unit-test them behind a `uname` PATH shim. Both are HOST-side helpers:
+# they run on the machine invoking `vibe`, never inside the container.
+
+# vibe_clipboard_cmd — echo the host clipboard command for the /c scratch-file
+# drain, or nothing when no supported tool is installed. Darwin keeps `pbcopy`
+# verbatim; Linux prefers Wayland, then X11. The X11 tools are invoked with
+# their explicit clipboard-selection flags on purpose: bare `xclip` / `xsel`
+# write the PRIMARY selection (middle-click paste), not the CLIPBOARD that
+# Cmd/Ctrl-V reads. Echoes a possibly multi-word command; the watcher expands
+# $COPY_CMD unquoted, which is what makes the flagged forms work.
+vibe_clipboard_cmd() {
+  if [ "$(uname -s)" = "Darwin" ]; then
+    if command -v pbcopy >/dev/null 2>&1; then
+      printf 'pbcopy'
+    fi
+    return 0
+  fi
+  if command -v wl-copy >/dev/null 2>&1; then
+    printf 'wl-copy'
+  elif command -v xclip >/dev/null 2>&1; then
+    printf 'xclip -selection clipboard'
+  elif command -v xsel >/dev/null 2>&1; then
+    printf 'xsel --clipboard --input'
+  fi
+  return 0
+}
+
+# vibe_mdns_probe_needed <marker_path> — 0 (probe due) iff the marker is absent.
+# Split out from the probe itself so the once-per-machine logic is testable
+# without touching the real resolver.
+vibe_mdns_probe_needed() {
+  [ -e "$1" ] && return 1
+  return 0
+}
+
+# vibe_mdns_probe — Linux hosts only, once per machine. On a Linux host the
+# Docker bridge NATs multicast, so a container's `.local` lookups can fail even
+# though the image ships avahi/libnss-mdns. Warn once, name the remedy, and
+# drop a marker so every later launch stays silent. Never fails the launch:
+# mDNS is a convenience, `host.docker.internal` is the supported host path.
+vibe_mdns_probe() {
+  [ "$(uname -s)" = "Linux" ] || return 0
+  local marker="${VIBE_MDNS_MARKER:-$HOME/.vibe/mdns-probe}"
+  vibe_mdns_probe_needed "$marker" || return 0
+  mkdir -p "$(dirname "$marker")" 2>/dev/null || return 0
+  : > "$marker" 2>/dev/null || true
+  local host
+  host="$(hostname 2>/dev/null)" || host=""
+  [ -n "$host" ] || return 0
+  if getent hosts "${host}.local" >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "  ⚠  mDNS: this host cannot resolve ${host}.local, so .local names will"
+  echo "     likely fail inside the container too (the Docker bridge NATs multicast)."
+  echo "     Fix on the HOST: install avahi-daemon, or set MulticastDNS=yes in"
+  echo "     /etc/systemd/resolved.conf and restart systemd-resolved."
+  echo "     The container reaches this machine at host.docker.internal regardless."
+  echo "     (Shown once; delete $marker to see it again.)"
+  echo ""
+  return 0
+}
+
 # ── Argv parser ───────────────────────────────────────────────────────────────
 # parse_vibe_args "$@" - parse flags and an optional project positional in any
 # order. Sets globals REBUILD / CONTINUE / RESUME / RESUME_UID / PROJECT_ARG /
@@ -3308,6 +3372,10 @@ export VIBE_PROJECT_NAME
 require docker       "Install OrbStack (https://orbstack.dev) or Docker Desktop."
 require devcontainer "Install with: npm install -g @devcontainers/cli"
 require gh           "Install from: https://cli.github.com"
+
+# Linux hosts: warn once if the host resolver can't do mDNS (see vibe_mdns_probe).
+# No-op on Darwin and on any Linux host that already resolves .local.
+vibe_mdns_probe
 
 # Suppress Docker Desktop's "What's next? Try Docker Debug..." hint.
 # DOCKER_CLI_HINTS=false is the documented mechanism but doesn't always
@@ -3860,6 +3928,24 @@ if [[ "$(uname)" == "Darwin" ]] && command -v pbcopy >/dev/null 2>&1; then
   # mechanism changed — it now shares the single EXIT slot with the
   # shared-repo lock release via vibe_on_exit (see the dispatcher block).
   vibe_exit_hook_add 'if [ -s "$CLIP" ] && [ "$(stat -f %m "$CLIP" 2>/dev/null || stat -c %Y "$CLIP" 2>/dev/null || echo 0)" != "$WATCHER_SEED_MTIME" ]; then pbcopy < "$CLIP" 2>/dev/null || true; fi; kill "$WATCHER_PID" 2>/dev/null || true'
+elif [ -n "$(vibe_clipboard_cmd)" ]; then
+  # Linux host with a clipboard tool (task_034). Deliberately additive: the
+  # Darwin branch above is byte-pinned by the task_008/016 smoke checks, so
+  # nothing here touches CLIP / WATCHER_SEED_MTIME / the exit-hook drain body.
+  # The watcher does its own scratch-file bookkeeping and honours
+  # VIBE_COPY_CMD, so exporting the detected command is the whole wiring.
+  # No exit-time flush: that path is Darwin-only by design; on Linux the
+  # watcher's poll loop has already copied anything written before exit.
+  # Headless (no wl-copy/xclip/xsel) falls through with no watcher at all and
+  # /c degrades to the scratch file, which is the documented fallback.
+  VIBE_COPY_CMD="$(vibe_clipboard_cmd)"
+  export VIBE_COPY_CMD
+  mkdir -p "$WORKSPACE/.vibe"
+  pkill -f "vibe-copy-watcher\.sh ${WORKSPACE}\$" 2>/dev/null || true
+  "$VIBE_REPO_DIR/vibe-copy-watcher.sh" "$WORKSPACE" &
+  # shellcheck disable=SC2034  # consumed by the exit hook string registered below
+  WATCHER_PID=$!
+  vibe_exit_hook_add 'kill "$WATCHER_PID" 2>/dev/null || true'
 fi
 
 # build_claude_model_args echoes "" / "--model <id>". MODEL_ARG is restricted

@@ -15,7 +15,7 @@ vibe is a single command that opens a Claude Code session inside an isolated con
 
 ## What the user needs before starting
 
-1. A Mac (macOS 13 or newer; Apple Silicon or Intel). Linux works but is less tested – adapt the package steps.
+1. A Mac (macOS 13 or newer; Apple Silicon or Intel) **or** a Linux box (reference: Ubuntu 24.04 LTS with Docker Engine). Steps 2–4 fork by platform; everything from step 5 on is identical.
 2. A Claude **Pro or Max** subscription – vibe authenticates against it. No subscription, no vibe.
 3. A GitHub account (free is fine). If they don't have one, create it at github.com first.
 4. About 10 GB free disk for the container tooling and images.
@@ -24,11 +24,19 @@ Confirm all four before installing anything.
 
 ## Steps
 
+Steps 2, 3 and 4 have a **Mac** version and a **Linux** version. Ask the user which they're on before step 2 and follow only that branch; do not read both aloud.
+
 ### 1. Open Terminal
 
-Applications → Utilities → Terminal, or ⌘-space and type "Terminal". Everything below is pasted into that window, one line at a time.
+**Mac:** Applications → Utilities → Terminal, or ⌘-space and type "Terminal".
 
-### 2. Install Homebrew (the Mac package manager)
+**Linux:** the terminal app for their desktop (GNOME Terminal, Konsole, …), or Ctrl-Alt-T on most distributions.
+
+Everything below is pasted into that window, one line at a time.
+
+### 2. Install Homebrew (the Mac package manager) — **Mac only**
+
+Linux users skip to step 2L.
 
 ```
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -38,7 +46,21 @@ It prints what it will do and asks for the user's Mac login password (typing sho
 
 Check: `brew --version` prints a version.
 
-### 3. Install the container runtime – OrbStack
+### 2L. Update the package index — **Linux only**
+
+Debian/Ubuntu:
+
+```
+sudo apt-get update
+```
+
+Fedora/RHEL: nothing to do; substitute `sudo dnf install -y` for `sudo apt-get install -y` throughout.
+
+There is no Homebrew step on Linux and no `xcode-select` – the distribution's package manager is the equivalent.
+
+Check: `apt-get --version` (or `dnf --version`) prints a version.
+
+### 3. Install the container runtime – OrbStack — **Mac only**
 
 ```
 brew install --cask orbstack
@@ -48,15 +70,47 @@ Then open OrbStack once from Applications so it finishes its setup. (Docker Desk
 
 Check: `docker --version` prints a version.
 
+### 3L. Install the container runtime – Docker Engine — **Linux only**
+
+Not Docker Desktop: follow the official Docker Engine (`docker-ce` repo) instructions for the distribution at https://docs.docker.com/engine/install/ubuntu/ (or `/fedora/`). The distro's own `docker.io` package is usually too old.
+
+Then start it and add the user to the `docker` group so vibe doesn't need `sudo` for every container command:
+
+```
+sudo systemctl enable --now docker
+```
+
+```
+sudo usermod -aG docker $USER
+```
+
+The group change only takes effect on a new login – have the user log out and back in (or run `newgrp docker` in that terminal).
+
+Check: `docker run --rm hello-world` prints "Hello from Docker!" **without** sudo. (If they run rootless Docker, the group step is unnecessary and the check still passes.)
+
 ### 4. Install Node, the devcontainer CLI and the GitHub CLI
+
+**Mac:**
 
 ```
 brew install node gh
 ```
 
+**Linux (Debian/Ubuntu):**
+
+```
+sudo apt-get install -y git nodejs npm gh
+```
+
+(Fedora/RHEL: `sudo dnf install -y git nodejs npm gh`. If `node --version` is below 18, install a current LTS from NodeSource instead.)
+
+**Both:**
+
 ```
 npm install -g @devcontainers/cli
 ```
+
+On Linux that may need `sudo npm install -g @devcontainers/cli` depending on how npm's global prefix is set up.
 
 Check: `node --version`, `devcontainer --version` and `gh --version` each print a version.
 
