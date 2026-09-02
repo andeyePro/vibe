@@ -743,7 +743,10 @@ def test_task010_smart_capture() -> None:
     # the vibe container (workspace at /workspace/). Earlier hardcoded
     # /workspace/smoke-test.py path failed in CI 2026-05-09 (commit 2ec36b3);
     # the bare except: swallowed FileNotFoundError into a check-fail.
-    smoke_test_content = (REPO / "smoke-test.py").read_text()
+    # Since the 2026-09-02 split the test bodies live under smoke/; the entry
+    # file only re-exports them, so search the package too.
+    smoke_test_content = "".join(
+        f.read_text() for f in [REPO / "smoke-test.py", *sorted((REPO / "smoke").glob("*.py"))])
     test_func_exists = "def test_task010_smart_capture() -> None:" in smoke_test_content
     check("[task010/AC19] test_task010_smart_capture function exists",
           test_func_exists, "function signature not found")
