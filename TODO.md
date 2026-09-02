@@ -64,6 +64,8 @@ Two vibe-wide behaviour changes shipped and took effect on this rebuild — surf
 
 ## Open
 
+- [ ] **task_034: Linux host support** (/vsss 2026-09-02, worktree `task034`) — host-gateway add-host, Linux clipboard chain, install preflight, mDNS probe, nsswitch idempotence, docs; `[L]` criteria → MANUAL-TESTS 44-50 for the NUC. Spec: worktree `.vs/spec.md`.
+
 - [ ] **task_032: asciinema pipeline for the site demo** (/vsss 2026-09-02 iter 4) — real-session cast replayed by asciinema-player, chips drive markers, placeholder cast until Martin records. Spec: `.vs/spec.md`.
 
 - [ ] **`/wide` parallelism mode (+ `--wide` on /vs, /vss, /vsss)** (Martin 2026-09-02) — maximise concurrent agents to cut wall time at equal quality; stacks with `/diet`/`/feast` (token axis) and `--fable-subagents` (model axis). Worktree-parallel queue items with file-overlap analysis, overlapped /vs stages, research fan-out, load cap (≤2 concurrent full-suite runs) and single-writer-per-file cap. Name TBC by Martin (`/fast` clashes with Claude Code's built-in). Roadmap: /brain2/andeye/vibe-roadmap-2026-09.md Tier 1 addendum.
