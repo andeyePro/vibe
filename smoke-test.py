@@ -9236,6 +9236,32 @@ def test_task017_c4_ac17_setup_git_functional_in_sandbox_home() -> None:
               usehttppath_r.stdout.strip() == "true", usehttppath_r.stdout)
 
 
+def test_setup_git_strips_host_credential_helpers() -> None:
+    print("\n[setup-git.sh strips host-only credential helpers (gh / osxkeychain) — no 'gh: not found' per push]")
+    host_cfg = (
+        "[user]\n\tname = Fixture\n"
+        "[credential \"https://github.com\"]\n\thelper = \n\thelper = !/opt/homebrew/bin/gh auth git-credential\n"
+        "[credential \"https://gist.github.com\"]\n\thelper = \n\thelper = !/opt/homebrew/bin/gh auth git-credential\n"
+        "[credential]\n\thelper = osxkeychain\n"
+    )
+    with tempfile.TemporaryDirectory() as td:
+        sandbox_home = Path(td) / "home"
+        sandbox_home.mkdir()
+        (sandbox_home / ".gitconfig-host").write_text(host_cfg)
+        env = {**os.environ, "HOME": str(sandbox_home)}
+        r = run(["bash", str(SETUP_GIT_SH)], env=env)
+        check("[cred-strip] setup-git.sh exits 0 with a gh/osxkeychain host config", r.returncode == 0, r.stderr)
+        all_helpers = run(["git", "config", "--global", "--get-regexp", r"^credential\..*helper$"], env=env).stdout
+        check("[cred-strip] only vibe's helper remains across every credential.*helper key",
+              all_helpers.strip() == "credential.helper /usr/local/bin/vibe-credential-helper", all_helpers)
+        check("[cred-strip] host user.name survives the strip",
+              run(["git", "config", "--global", "--get", "user.name"], env=env).stdout.strip() == "Fixture")
+        # Behavioural: git's resolved helper list for a github.com URL must be vibe's alone.
+        probe = run(["git", "-c", "credential.helper=", "config", "--global", "--get-all",
+                     "credential.https://github.com.helper"], env=env)
+        check("[cred-strip] no URL-scoped github.com helper entries left", probe.stdout.strip() == "", probe.stdout)
+
+
 def test_task017_c4_ac18_top_level_exports_outside_build_override_config() -> None:
     print("\n[task_017 C4 AC18: GITHUB_REPO_SLUG / VIBE_SHARED_TOKEN_* / VIBE_SHARED_SLUG_* exports sit "
           "OUTSIDE _build_override_config (top-level scope; exports inside $(...) die with the subshell)]")
@@ -13740,6 +13766,7 @@ def main() -> int:
     test_task017_c4_ac16_never_widen_attack_battery()
     test_task017_c4_ac17_usehttppath_same_scope_as_helper_registration()
     test_task017_c4_ac17_setup_git_functional_in_sandbox_home()
+    test_setup_git_strips_host_credential_helpers()
     test_task017_c4_ac18_top_level_exports_outside_build_override_config()
     test_task017_c4_ac18_remoteenv_shared_token_and_twin_injection()
     test_task017_c4_ac19_claude_md_invariant_text_amended()

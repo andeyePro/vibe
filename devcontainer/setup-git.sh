@@ -22,6 +22,17 @@ if [ -f "$SRC" ]; then
   chmod 644 "$DST"
 fi
 
+# Drop every credential helper the host copy carried before wiring vibe's.
+# Host helpers (gh, osxkeychain, manager-core, ...) do not exist in the
+# container: git still invokes them, so each fetch/push prints
+# "/opt/homebrew/bin/gh: not found" (twice: get + store) before falling
+# through to vibe's helper. URL-scoped entries such as
+# credential.https://github.com.helper survive a plain `git config --global
+# credential.helper` (different key), and gh's leading empty `helper =`
+# line resets git's helper list — so strip the lot, then set ours alone.
+while IFS= read -r _key; do
+  [ -n "$_key" ] && git config --global --unset-all "$_key" || true
+done < <(git config --global --name-only --get-regexp '^credential\.(.*\.)?helper$' 2>/dev/null || true)
 git config --global credential.helper /usr/local/bin/vibe-credential-helper
 
 # task_017 (shared-repos): make git send the repository `path` (owner/repo) to
