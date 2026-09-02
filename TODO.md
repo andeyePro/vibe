@@ -64,6 +64,9 @@ Two vibe-wide behaviour changes shipped and took effect on this rebuild — surf
 
 ## Open
 
+- [ ] **`/wide` parallelism mode (+ `--wide` on /vs, /vss, /vsss)** (Martin 2026-09-02) — maximise concurrent agents to cut wall time at equal quality; stacks with `/diet`/`/feast` (token axis) and `--fable-subagents` (model axis). Worktree-parallel queue items with file-overlap analysis, overlapped /vs stages, research fan-out, load cap (≤2 concurrent full-suite runs) and single-writer-per-file cap. Name TBC by Martin (`/fast` clashes with Claude Code's built-in). Roadmap: /brain2/andeye/vibe-roadmap-2026-09.md Tier 1 addendum.
+
+
 
 
 - [x] **smoke-test: isolate HOME/GIT_CONFIG_GLOBAL in every INSTALL_EXTRAS invocation** SHIPPED 2026-08-30 (see CHANGELOG) — (2026-08-30, security-review finding on the ssh-marker pass) — 30+ pre-existing tests run the real installer with the inherited HOME, so each smoke run leaves the machine's global `core.hooksPath` pointing at a deleted TemporaryDirectory — git then silently runs NO hooks (content-guard scanners included) until the next container start re-runs the installer. The new `_ssh_marker_result` helper does it right (`HOME`+`GIT_CONFIG_GLOBAL` into the fixture tree, `VIBE_AUTO_GITIGNORE=0`); sweep the same three env lines across the other call sites (grep `bash", str(INSTALL_EXTRAS)`), ideally via one shared env-builder helper.

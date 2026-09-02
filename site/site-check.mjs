@@ -27,16 +27,75 @@ check('no "one-click install" promise anywhere', !/one.click install/i.test(html
 
 // the journey: deck chips + checklists present, in launcher order
 const chips = html.match(/data-step="/g) || [];
-check(`command deck has at least 10 chips (found ${chips.length})`, chips.length >= 10);
+check(`command deck has exactly 13 chips (found ${chips.length})`, chips.length === 13);
 const checklists = html.match(/<ol class="steps"/g) || [];
 check(`every chip carries a checklist (found ${checklists.length})`, checklists.length === chips.length);
 // the deck must ship UNLOCKED server-side — lock states are script-applied,
 // so a dead script degrades to plain readable chips, not dimmed dead ones
 check('no server-rendered locked state on any chip', !/class="dstep[^"]*\blocked\b/.test(html));
 check('launch chip present', /id="step-launch"/.test(html));
-check('launch checklist covers repo → PAT → container → firewall → Claude sign-in',
-  ['its GitHub remote', 'fine-grained PAT', 'sandboxed container', 'short allowlist',
-   'your Claude subscription'].every((s) => html.includes(s)));
+check('journey.locked_note copy is unchanged ("run Launch first" still renders)',
+  html.includes('run Launch first'));
+
+// -----------------------------------------------------------------------
+// task_030 chip helpers: extract one chip's own built HTML fragment, and
+// the chip's own entries from the embedded lines map, without depending on
+// Astro's generated `data-astro-cid-*` attribute order.
+// -----------------------------------------------------------------------
+
+// chipBlock(id): the chip's rendered <div class="dstep" id="step-<id>" ...>
+// fragment, up to (but not including) the next chip's dstep div — or to the
+// end of the deck for the last chip. Matches the id attribute-agnostically
+// (Astro injects `data-astro-cid-*` right after it), never a literal
+// `id="step-<id>">`.
+function chipBlock(id) {
+  const startRe = new RegExp(`<div class="dstep"[^>]*\\bid="step-${id}"[^>]*>`);
+  const m = html.match(startRe);
+  if (!m) return '';
+  const rest = html.slice(m.index + m[0].length);
+  const nextIdx = rest.search(/<div class="dstep"[^>]*\bid="step-/);
+  return nextIdx === -1 ? rest : rest.slice(0, nextIdx);
+}
+
+// The embedded lines map: index.astro's define:vars block serialises
+// `stepLines` (chip id -> lines array) as a JSON object literal assigned to
+// `const COPY = {...}` inside an inline <script>. Parse that JSON rather
+// than regexing text, so `step` / `tone` / `text` come back as real fields.
+function parseCopy() {
+  const marker = 'const COPY = ';
+  const i = html.indexOf(marker);
+  if (i === -1) throw new Error('embedded COPY data (const COPY = {...}) not found in built HTML');
+  const start = i + marker.length;
+  const tail = html.slice(start);
+  const end = tail.indexOf('};');
+  if (end === -1) throw new Error('could not find the end of the embedded COPY data');
+  return JSON.parse(tail.slice(0, end + 1));
+}
+const COPY_DATA = parseCopy();
+
+// linesFor(id): this chip's entry from the embedded lines map (COPY.lines).
+function linesFor(id) {
+  return (COPY_DATA.lines && COPY_DATA.lines[id]) || [];
+}
+// All of a chip's line `text` values, newline-joined, for substring checks.
+const linesText = (id) => linesFor(id).map((l) => l.text).join('\n');
+
+// chipCmd(id): the chip's own top command, as rendered in its chip-cmd span
+// (the `cmd:` YAML field — distinct from a line's `cmd: true` marker, which
+// flags that line as an echoed shell command inside the terminal transcript).
+function chipCmd(id) {
+  const m = chipBlock(id).match(/<span class="chip-cmd"[^>]*>([^<]*)<\/span>/);
+  return m ? m[1] : null;
+}
+
+// checklistLength(id): number of <li> items in this chip's built checklist.
+// Astro injects a data-astro-cid-* attribute on both <ol class="steps"> and
+// each <li>, so match both attribute-agnostically rather than assuming the
+// literal closing `>` follows immediately.
+function checklistLength(id) {
+  const m = chipBlock(id).match(/<ol class="steps"[^>]*>([\s\S]*?)<\/ol>/);
+  return m ? (m[1].match(/<li[^>]*>/g) || []).length : 0;
+}
 check('red-team chips present (firewall + content guard)',
   html.includes('id="step-curl"') && html.includes('id="step-leak"'));
 check('firewall copy names the extras rather than claiming a closed trio',
@@ -71,6 +130,68 @@ const cCmd = src('../devcontainer/commands/c.md');
 const norm = (s) => s.replace(/[–—]/g, '-').replace(/…/g, '...');
 const H = norm(html);
 const inBoth = (s, source) => H.includes(norm(s)) && norm(source).includes(norm(s));
+// scoped variant of inBoth: the string must appear in the given text block
+// (a chip's lines-map text, or its rendered HTML block) AND in the
+// launcher/firewall source — used by the per-chip guards below instead of
+// matching against the whole page (H).
+const inBothIn = (s, text, source) => norm(text).includes(norm(s)) && norm(source).includes(norm(s));
+
+// -----------------------------------------------------------------------
+// task_030: the hero Launch chip is now the everyday reused-container path
+// (banner, firewall check, sign-in already valid, ready); the PAT-prompt /
+// image-build lines it used to carry moved to a demoted "First time" chip,
+// and a new "Once a quarter" chip carries `vibe pat`. Replaces the single
+// "launch checklist covers repo → PAT → container → firewall → Claude
+// sign-in" guard that used to live here.
+// -----------------------------------------------------------------------
+
+// (a) everyday-launch guard
+const launchBlock = chipBlock('launch');
+const launchLines = linesText('launch');
+const launchLinesJSON = JSON.stringify(linesFor('launch'));
+check('everyday-launch banner quotes the launcher, in its own field order (project/path/github/hooks/extras)',
+  ['\u{1F680} vibe session starting', 'project : ', 'path    : ', 'github  : ',
+   'hooks   : tool-call guards + idle bell',
+   'extras  : /diet · /feast · /vs · shellcheck-fixer · security-review']
+    .every((s) => inBothIn(s, launchLines, launcher)));
+check('everyday-launch chip keeps the firewall verification pin, verbatim from init-firewall.sh',
+  inBothIn('Firewall verification passed - unable to reach https://example.com as expected', launchLines, firewall));
+check('everyday-launch chip shows Claude sign-in already valid, not a prompt',
+  launchLines.includes('your Claude subscription'));
+check('everyday-launch checklist keeps the short-allowlist line',
+  launchBlock.includes('short allowlist'));
+check('everyday-launch chip carries no first-launch-only content (PAT prompt / image build / token-saved)',
+  ['fine-grained PAT', 'Token saved', 'Building vibe container image', 'Only select repositories', 'sandboxed container']
+    .every((s) => !launchBlock.includes(s) && !launchLinesJSON.includes(s)));
+
+// (b) first-launch guard
+check('first-launch chip present', /id="step-first-launch"/.test(html));
+const firstLaunchLines = linesText('first-launch');
+check('first-launch chip carries the PAT-prompt / image-build lines verbatim from the launcher',
+  ['No GitHub token found for', 'Only select repositories',
+   "Token saved - you won't be asked again for this repo", 'Building vibe container image']
+    .every((s) => inBothIn(s, firstLaunchLines, launcher)));
+check('first-launch checklist mentions the fine-grained PAT and the sandboxed container',
+  chipBlock('first-launch').includes('fine-grained PAT') && chipBlock('first-launch').includes('sandboxed container'));
+
+// (c) pat guard
+check('pat chip present with cmd `vibe pat`', /id="step-pat"/.test(html) && chipCmd('pat') === 'vibe pat');
+const patLines = linesText('pat');
+check('pat chip quotes the launcher\'s expiry / no-rebuild wording',
+  ['90 days is a good default', 'Takes effect on the next vibe launch (no rebuild needed)']
+    .every((s) => inBothIn(s, patLines, launcher)));
+
+// AC8: every chip's line `step` values (tone lines included) are contiguous
+// 1..N, where N is that chip's own built checklist length.
+function stepsContiguous(id) {
+  const len = checklistLength(id);
+  const steps = linesFor(id).map((l) => l.step).filter((s) => s !== undefined).sort((a, b) => a - b);
+  const expected = Array.from({ length: len }, (_, i) => i + 1);
+  return steps.length === expected.length && steps.every((v, i) => v === expected[i]);
+}
+const chipIds = Object.keys(COPY_DATA.lines || {});
+check(`every chip's line "step" values are contiguous 1..checklist length (${chipIds.length} chips checked)`,
+  chipIds.every(stepsContiguous));
 
 check('launch banner fields are the launcher\'s own (project/github/hooks/extras)',
   ['\u{1F680} vibe session starting', 'project : ', 'github  : ',

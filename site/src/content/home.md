@@ -36,24 +36,54 @@ journey:
           label: Launch
           desc: one command, from any project folder
           checklist:
-            - finds your project and its GitHub remote, then asks once for a fine-grained PAT – scoped to that one repo
-            - builds the sandboxed container image (first launch only – reused in seconds after that)
-            - announces the session – project, repo, hooks, extras – the blast radius on one screen
+            - finds your project and its GitHub remote, and reuses the PAT you set once
             - brings up the firewall and proves it – outbound on a short allowlist, verified before work starts
             - signs Claude Code in with your Claude subscription – no API key
+            - ready in seconds – the container's already built, the PAT's already on file
+          lines:
+            - { cmd: true, sh: true, text: "cd yourproject && vibe" }
+            - { role: vibe, text: "🚀 vibe session starting" }
+            - { role: vibe, text: "   project : yourproject" }
+            - { role: vibe, text: "   path    : ~/code/yourproject" }
+            - { role: vibe, text: "   github  : you/yourproject", step: 1 }
+            - { role: vibe, text: "   hooks   : tool-call guards + idle bell" }
+            - { role: vibe, text: "   extras  : /diet · /feast · /vs · shellcheck-fixer · security-review" }
+            - { role: guard, text: "Firewall verification passed - unable to reach https://example.com as expected", step: 2 }
+            - { role: claude, tone: note, text: "already signed in with your Claude subscription – nothing to re-enter", step: 3 }
+            - { role: claude, text: "ready – what shall we build?", step: 4 }
+    - label: First time
+      steps:
+        - id: first-launch
+          cmd: vibe
+          label: First launch
+          desc: once per repo, not every day
+          checklist:
+            - detects your project's GitHub remote, then asks once for a fine-grained PAT – scoped to that one repo
+            - builds the sandboxed container image (first launch only – reused in seconds after that)
+            - saves the token and reuses the image, so every launch after this one is instant
           lines:
             - { cmd: true, sh: true, text: "cd yourproject && vibe" }
             - { role: vibe, text: "No GitHub token found for you/yourproject – opening GitHub: Repository access → Only select repositories → yourproject" }
             - { role: vibe, text: "✓ Token saved – you won't be asked again for this repo.", step: 1 }
             - { role: vibe, text: "Building vibe container image (claude-code=latest)...", step: 2 }
-            - { role: vibe, text: "🚀 vibe session starting" }
-            - { role: vibe, text: "   project : yourproject" }
-            - { role: vibe, text: "   github  : you/yourproject", step: 3 }
-            - { role: vibe, text: "   hooks   : tool-call guards + idle bell" }
-            - { role: vibe, text: "   extras  : /diet · /feast · /vs · shellcheck-fixer · security-review" }
-            - { role: guard, text: "Firewall verification passed - unable to reach https://example.com as expected", step: 4 }
-            - { role: claude, text: "signed in with your Claude subscription – no API key anywhere", step: 5 }
-            - { role: claude, text: "ready – what shall we build?" }
+            - { role: claude, text: "next launch of this repo skips both steps – ready in seconds", step: 3 }
+    - label: Once a quarter
+      steps:
+        - id: pat
+          cmd: vibe pat
+          label: Rotate the PAT
+          desc: once every 90 days, in seconds
+          checklist:
+            - finds the repo and rotates its stored token in place – nothing else to update
+            - same advice as first launch – set an expiry, and 90 days is a good default
+            - takes effect on the next vibe launch – no rebuild needed
+          lines:
+            - { cmd: true, sh: true, text: "vibe pat" }
+            - { role: vibe, text: "Repo: you/yourproject" }
+            - { role: vibe, text: "stored token found — it will be replaced", step: 1 }
+            - { role: vibe, text: "https://github.com/settings/personal-access-tokens" }
+            - { role: vibe, text: "set an expiry on the new token – 90 days is a good default", step: 2 }
+            - { role: vibe, text: "✓ Token saved for you/yourproject. Takes effect on the next vibe launch (no rebuild needed).", step: 3 }
     - label: Build
       steps:
         - id: vs
