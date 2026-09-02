@@ -64,6 +64,8 @@ Two vibe-wide behaviour changes shipped and took effect on this rebuild — surf
 
 ## Open
 
+- [ ] **task_035: harness hygiene** (/vsss 2026-09-02 iter 5) — spawns never inherit stdin; one sandbox-env builder with a whole-suite meta-check; sha-pin lint; SAFE prunes; rules in CLAUDE.md § Testing. Spec: `.vs/spec.md`.
+
 
 
 

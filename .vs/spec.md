@@ -1,81 +1,31 @@
-# Spec — task_034: Linux host support (worktree task034, branch vsss/task034-linux-host, baseline 3b23b19)
-
-# /vs spec draft — Linux host support (Tier 2)
-
-**Status:** draft; not for execution now. Source: `/brain2/andeye/vibe-roadmap-2026-09.md` answer 1, Tier 2. Evidence at `5125e3c`.
+# Spec — task_035: harness hygiene — stdin-immune suite, one sandbox builder with a whole-suite meta-check, sha-pin lint, SAFE prunes
 
 ## Task summary
+This session's own harness debris, each patched at the point of pain and none prevented from recurring: (1) a background suite run hung 55 minutes inside a `vibe learn` test because `run()` inherits stdin when no `input` is given (`smoke/_core.py:116`; `run_bytes` `:127`; four `Popen` watcher spawns and ~10 direct `subprocess.run` calls likewise); (2) two live `~/.claude` writes — the CLAUDE.md managed block and a fixture GitHub-meta cache — because sandboxing was ad hoc: `_isolate_extras_env` lacks `GH_META_CACHE`, `_fw_run` sets it inline, and the only meta-check (`test_extras_invocations_isolated`, `checks_06`) scans `Path(__file__)` alone so it cannot see the other twelve files; (3) task_028/029's tests compared the tree against fixed commit shas and tripped on the very next commit. Fix all three structurally, record the rules in CLAUDE.md § Testing, and fold in the remaining SAFE prunes. Single stream on main. Baseline c7bf110.
 
-Make a Linux box a first-class vibe host (reference: **Ubuntu 24.04 LTS + Docker Engine**, not Docker Desktop). Two real gaps: `host.docker.internal` does not exist on native Docker Engine, and `.local` mDNS depends on the host resolver. The rest is Mac-only ergonomics (clipboard, installer hints) and missing Linux test coverage — BSD/GNU paths are already dual (`vibe:799, 1264, 1457, 2702`), the image multi-arch. **Every change additive or `uname`-guarded; the Darwin path stays byte-identical.**
-
-## Changes
-
-### (a) Unconditional `--add-host=host.docker.internal:host-gateway`
-
-`runArgs` are assembled in one place: the embedded Python in `render_devcontainer_with_mounts` (`vibe:1499-1556`), called once from `_build_override_config` (`vibe:2922-2924`), rendering `$HOME/.vibe/run/devcontainer-<sha1>.json` from `devcontainer/devcontainer.json` (base `runArgs` `:4-7`). That override always renders, so add the flag to the base JSON and keep the Python's `if flag not in cfg["runArgs"]` guard (`vibe:1531`) against doubling up with the `/op` injection.
-
-Safety confirmed: `host-gateway` is Docker Engine 20.10+ and universal since; OrbStack accepts it (≥0.6.0); and **vibe already ships a `:host-gateway` add-host on the Mac** whenever `/op` is configured (`vibe:1530`), with `init-firewall.sh:275-291` recording it resolving in production. On Docker Desktop/OrbStack the extra `/etc/hosts` line names the same gateway the embedded DNS returns — a no-op; on Linux it is the only way the name exists. `init-firewall.sh:280` uses `getent hosts`, so it copes either way, and `setup-ssh.sh:67`'s `ssh-keyscan` seed then succeeds on Linux.
-
-### (b) `uname`-guarded clipboard; host-watcher no-op on Linux
-
-Add `vibe_clipboard_cmd()` **above** the `VIBE_SOURCE_ONLY` guard (`vibe:3182`) so tests can source it: `pbcopy` on Darwin, else the first of `wl-copy` → `xclip -selection clipboard` → `xsel --clipboard --input` (bare `xclip`/`xsel` write the X11 PRIMARY selection, not the clipboard) present, else empty. At `vibe:3847` keep the Darwin branch **verbatim** (its exit-hook body is byte-pinned at `smoke/checks_04_hooks_guards.py (test_task008_ac3_block_scoping, test_task008_ac11_direct_read, test_clipboard_drain_on_exit) and smoke/checks_07_sharedrepos_cycles.py:803-804`) and add a separate `else` branch exporting `VIBE_COPY_CMD`, which `vibe-copy-watcher.sh:11` already honours; relax the watcher gate (`:8`) to "Darwin **or** `VIBE_COPY_CMD` set". Headless Linux → watcher never starts, `/c` falls back to the scratch file, and `smoke/checks_04_hooks_guards.py (test_clipboard_drain_on_exit)` stays green. mtime reads are already dual.
-
-### (c) `install.sh` apt/dnf hints + Linux preflight
-
-`preflight_deps` (`install.sh:26-45`) hard-codes `brew`/`xcode-select`. Branch on `uname -s`, and on Linux on `/etc/os-release` `ID`/`ID_LIKE`: apt (`apt-get install -y git nodejs gh`, Docker Engine via the `docker-ce` repo) or dnf. Three Linux-only checks: daemon reachable (`docker info`); user in the `docker` group (`id -nG | grep -qw docker`; remedy `sudo usermod -aG docker $USER` + re-login — **warn, don't exit**, rootless Docker legitimately fails it); `devcontainer` on PATH. macOS output byte-identical. Same for the "Next steps" heredoc (`install.sh:110-124`).
-
-### (d) mDNS
-
-The image carries `avahi-daemon`/`libnss-mdns` and rewrites nsswitch (`Dockerfile:37-44`), started by `postStartCommand`, but on a Linux host the bridge NATs multicast, so `.local` may not resolve. Document: the **host** needs systemd-resolved with `MulticastDNS=yes` or `avahi-daemon`; in-container the supported path to the host is `host.docker.internal`. Add a once-per-machine Linux launch probe (marker `~/.vibe/mdns-probe`): if `getent hosts "$(hostname).local"` fails, warn once, naming the remedy. **Bug found while auditing:** the `Dockerfile:44` sed is not idempotent — this container's live nsswitch reads `mdns4_minimal [NOTFOUND=return]` twice. Guard it.
-
-### (e) Docs
-
-`README.md:24` ("Linux untested") → a Linux subsection: Ubuntu 24.04 LTS + Docker Engine, docker group, apt deps, the `.local` caveat, `host.docker.internal` as the host path. Mark the build bridge (`README.md:70-79`) macOS-only. `ONBOARDING.md` steps 2-4 fork for apt (no Homebrew/`xcode-select`).
-
-### (f) MANUAL-TESTS
-
-New `## Linux host (Ubuntu 24.04 LTS)` section, Tests 44-50, each naming the Mac test it mirrors: 44 fresh install + preflight without Docker; 45 first launch (build, PAT prompt, banner); 46 firewall (Test 28 fail-closed, plus `getent hosts host.docker.internal`); 47 SSH to a LAN host by IP **and** `.local`; 48 `/c` under Wayland, X11, headless; 49 auto-rebuild (Test 16); 50 history bind + brain2/Zotero mounts (Tests 42, 29).
-
-### (g) Smoke tests (in-container, no Docker)
-
-All via `_source_vibe_call` with `VIBE_SOURCE_ONLY=1` and a fixture `uname` shim first on `PATH`: exactly-one `--add-host=host.docker.internal:host-gateway` in the rendered override, `/op` on and off; `vibe_clipboard_cmd` precedence under Darwin/Linux/no-tool shims; watcher exit-0 without `VIBE_COPY_CMD`; `install.sh` hint text per platform (plus `bash -n`); the Darwin-invariance diff (AC4).
-
-## Acceptance criteria
-
-1. `python3 code-check.py` clean.
-2. `python3 smoke-test.py` green, no test deleted.
-3. Rendered override carries exactly one `host.docker.internal:host-gateway`, `/op` on and off.
-4. **Mac path unchanged (except the one intended line):** the test embeds a LITERAL golden of the pre-change rendered override for a fixed fixture input (captured from the current launcher before this task and pasted into the test as a string — never derived from the post-change or current `devcontainer.json`); under a Darwin `uname` shim the newly rendered override must equal that golden plus exactly the one `--add-host=host.docker.internal:host-gateway` line and nothing else. (Critique: a golden computed from current sources would be tautological.)
-5. Exit-hook literal `pbcopy < "$CLIP"` unchanged; the three clipboard pins in `smoke/checks_04_hooks_guards.py` green.
-6. `vibe_clipboard_cmd`: `pbcopy` (Darwin), `wl-copy`>`xclip`>`xsel` (Linux), empty (none).
-7. Watcher exits 0 on Linux with no clipboard tool; runs with `VIBE_COPY_CMD`.
-8. `install.sh` Darwin output byte-identical to pre-change.
-9. Linux preflight names apt/dnf, docker group, `devcontainer`; group failure warns, exits 0.
-10. `Dockerfile` nsswitch edit idempotent (twice-applied ⇒ one `mdns4_minimal`). Existing images already carry the duplicate line (verified in a live container 2026-09-02): the fix only lands on a real rebuild — README/CHANGELOG say `vibe --rebuild` (cache-busted) is required, and MANUAL-TESTS gets a check that `/etc/nsswitch.conf` has exactly one `mdns4_minimal` after rebuild.
-11. README + ONBOARDING Linux sections exist; build bridge marked macOS-only.
-12. **[L]** Fresh Ubuntu 24.04: install, launch, firewall fail-closed, `host.docker.internal` resolves.
-13. **[L]** Container SSH to a LAN host by IP and `.local`; mDNS probe warns once on failure.
-14. **[L]** `/c` copies under Wayland and X11; Mac `/c` unchanged.
-
-`[L]` = needs a real Linux box → MANUAL-TESTS 44-50, not the smoke suite.
+## Acceptance criteria (mechanical; the Tester adds them to the suite)
+- AC1 `smoke/_core.py`'s `run()` and `run_bytes()` pass `stdin=subprocess.DEVNULL` exactly when no `input`/`input_bytes` argument is given, and never pass both `input=` and `stdin=` (subprocess raises).
+- AC2 Every `subprocess.run(`/`subprocess.Popen(`/`subprocess.check_output(` call in `smoke/*.py` that supplies neither `input=` nor an explicit `stdin=` passes `stdin=subprocess.DEVNULL` (or routes through `run()`/`run_bytes()`).
+- AC3 A new lint test `test_harness_spawns_never_inherit_stdin()` scans every `smoke/*.py` source, finds every spawn, and fails on any that satisfies neither condition; it asserts it found ≥ 20 spawns (non-vacuous).
+- AC4 Regression test `test_harness_survives_open_stdin()`: runs a small representative child (a sourced `vibe learn`-shaped invocation through `run()`, or `python3 -c` importing the entry module and calling one test that spawns `vibe`) with a never-written open pipe as stdin; it completes within 60 s.
+- AC5 `_isolate_extras_env` also sets `GH_META_CACHE` under the scratch HOME (and keeps HOME, GIT_CONFIG_GLOBAL, CLAUDE_CONFIG_DIR, VIBE_AUTO_GITIGNORE=0); `_fw_run` consumes it instead of setting its own; no other test sets these keys by hand except through the builder (a test may override AFTER calling it).
+- AC6 The meta-check `test_extras_invocations_isolated` (or a successor) scans ALL `smoke/*.py`, not `Path(__file__)`, for every invocation of `INSTALL_EXTRAS`, `SETUP_GIT_SH`, a `vibe learn` argv, and `INIT_FIREWALL` sourcing, and fails on any `env=` at those call sites not routed through `_isolate_extras_env` (or `_fw_run`, which must itself call the builder); it asserts ≥ 1 call site per category (non-vacuous), listing the counts in its labels.
+- AC7 A sha-pin lint `test_no_fixed_sha_baselines()` scans `smoke/*.py` for `git show <7-40 hex>:` and `git diff <7-40 hex>` in test bodies and fails unless the occurrence is registered in a documented allowlist constant `HISTORICAL_PINS_ALLOWED` in `_core.py` with a one-line reason each; the sole initial entry is `_task034_baseline_text`'s `3b23b19` (its comment explains why). `HEAD`, temp-repo shas produced at runtime, and `checks_09`'s `git show -s <sha>` against a repo the test itself created must not trip it (the regex must require a literal hex sha token in source, not a variable).
+- AC8 `CLAUDE.md` § Testing gains three bullets: spawns never inherit stdin (and `python3 smoke-test.py < /dev/null` for background runs); every real-installer / `vibe learn` / firewall-sourcing test goes through `_isolate_extras_env`; no permanent test pins a fixed commit sha (allowlist in `_core.py`).
+- AC9 `.gitignore`: the hand-written `.vibe/` and `.claude/settings.local.json` lines (top block) are removed, the vibe-managed block is byte-identical, and `install-claude-extras.sh`'s `ensure_project_gitignore` still finds its block (the Generator reads that function first; if the block's presence is what stops re-adding, nothing else changes). `site/.gitignore` reduces to `public/vendor/` (root already ignores `site/node_modules/`, `site/dist/`, `site/.astro/`). MANUAL-TESTS double rule: already gone, out of scope.
+- AC10 `python3 code-check.py` exits 0; `python3 smoke-test.py < /dev/null` exits 0; and the same suite invoked with an inherited open pipe on stdin (`sleep 1000 | python3 smoke-test.py` shape, or a Python harness holding the write end) exits 0 within the Bash cap — the Tester runs this once as the decisive check.
+- AC11 Scope lock: only `smoke/*.py`, `CLAUDE.md`, `.gitignore`, `site/.gitignore`, `TODO.md`, `CHANGELOG.md`, `.vs/`, `.vss/`.
 
 ## Out of scope
+- Any change to the launcher, installer, hooks, firewall, or site.
+- Rewriting test bodies beyond the spawn-argument sweep and the sandbox routing.
+- Removing lines from the vibe-managed `.gitignore` block.
 
-Windows/WSL2 (`vibe.cmd`); the multi-target build bridge (`.vibe/targets`, `vibe targets`, `vibe-build`); arm64/Pi 5; Homebrew tap and tagged releases.
+## Test location
+`smoke/checks_06_autoresume_and_sharedrepos.py` (the meta-check home; keep ≤ 1,500 lines — if it would exceed, the Tester creates `smoke/checks_12_harness_lints.py` and registers it in `runner.py` and the entry file's star-import list). Generator edits `_core.py`, the spawn sites across `checks_*.py`, CLAUDE.md, the two `.gitignore`s, CHANGELOG.md; Generator does NOT write the three new tests (AC3, AC4, AC6-successor, AC7) — those are the Tester's — but may add the `HISTORICAL_PINS_ALLOWED` constant and the `_isolate_extras_env` change.
+
+## Proposed budget
+2 cycles.
 
 ## Model plan
-
-Spec Critic **sonnet**. Generator **sonnet** for (a), (c)-(f); **opus** for (b), which touches byte-pinned exit-hook strings. Tester **haiku**: `code-check.py`, `smoke-test.py`, fixture shims. No credit-billed rung.
-
-## Risks
-
-**Breaking the Mac path is the only real risk.** Mitigations: every edit additive or `uname`-guarded; AC4's golden byte-diff; AC5's pinned-string assertion; the `/op` precedent proves `host-gateway` already works on Mac Docker. Residual: `/etc/hosts` now shadows Docker Desktop's embedded DNS for that name (same IP — verify on the Mac before merge); rootless Docker fails the group check (warn only); no clipboard tool on minimal server installs (silent no-op by design).
-
-
-## Critique-driven amendments (2026-09-02)
-- Clipboard: the `pbcopy` flush and `vibe-copy-watcher.sh` run HOST-side in the launcher, never in the container; the Linux fallback chain (`wl-copy` → `xclip -selection clipboard` → `xsel --clipboard --input`) is wired in the launcher's host-side branch only. The watcher gate becomes a 3-way OR: Darwin, OR `VIBE_COPY_CMD` set, OR `VIBE_COPY_WATCHER_FORCE` set (the existing `test_vibe_path_prefix_isolation` relies on FORCE alone) — no existing test deleted or weakened.
-- The `uname` PATH shim is new test infrastructure: the Generator's first scratch test proves the shim shadows the real `uname` (`uname -s` prints the fixture value) before any assertion relies on it.
-- `/op`'s existing `--add-host=<op_host>:host-gateway` is a different hostname; no dedup logic needed, only an "exactly one host.docker.internal entry" assertion.
-- Re-verification on real Docker Desktop and OrbStack after shipping goes to MANUAL-TESTS (a Mac-side check that `getent hosts host.docker.internal` inside the container still resolves).
-
-- Iteration-2 amendments: test citations point at the split layout (smoke/); AC6 uses the flagged `xclip -selection clipboard` / `xsel --clipboard --input` invocations everywhere.
+- Planner + Evaluator: session model (Fable 5.1 chair). Spec Critic: sonnet (attack the three lint regexes for vacuous pass / false positives). Generator: sonnet, ceiling opus. Tester: sonnet, ceiling opus. Fable rung: pre-authorised (--fable-subagents grant), not indicated.
