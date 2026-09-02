@@ -86,6 +86,14 @@ def _isolate_extras_env(env: dict) -> dict:
     env = dict(env)
     if env.get("HOME") == os.environ.get("HOME"):
         env["HOME"] = _EXTRAS_SCRATCH_HOME
+    # The installer's DEST_ROOT prefers CLAUDE_CONFIG_DIR over $HOME/.claude,
+    # and vibe sets CLAUDE_CONFIG_DIR ambiently in-container — so a sandboxed
+    # HOME alone still let installer runs rewrite the LIVE ~/.claude/CLAUDE.md
+    # managed block with test-fixture gates (observed 2026-09-02: shared-repos
+    # fragment injected, brain2 fragment dropped, mid-session). Pin it to the
+    # scratch HOME unless the caller chose its own sandbox.
+    if env.get("CLAUDE_CONFIG_DIR") == os.environ.get("CLAUDE_CONFIG_DIR"):
+        env["CLAUDE_CONFIG_DIR"] = str(Path(_EXTRAS_SCRATCH_HOME) / ".claude")
     env.setdefault("GIT_CONFIG_GLOBAL",
                    str(Path(_EXTRAS_SCRATCH_HOME) / "gitconfig"))
     env.setdefault("VIBE_AUTO_GITIGNORE", "0")
@@ -10119,37 +10127,18 @@ def test_task028_fragment_merges_and_fable_grant() -> None:
     # For smoke-test.py, deleted names are allowed in test function context
     # (AC9 permits mentions in test functions and check labels)
     
-    # AC10: Scope lock - git diff from baseline
-    baseline_commit = "c68707d"
-    r_diff = run(["git", "diff", "--name-only", baseline_commit], cwd=REPO)
-    diff_files = set(r_diff.stdout.strip().split('\n')) if r_diff.stdout.strip() else set()
-    
-    # Also check untracked files
-    r_untracked = run(["git", "ls-files", "--others", "--exclude-standard"], cwd=REPO)
-    untracked_files = set(r_untracked.stdout.strip().split('\n')) if r_untracked.stdout.strip() else set()
-    
-    all_changed = diff_files | untracked_files
-    all_changed.discard('')  # Remove empty strings
-    
-    allowed_paths = {
-        "devcontainer/claude-md/", "devcontainer/commands/vs.md", 
-        "devcontainer/commands/vss.md", "devcontainer/commands/vsss.md",
-        "smoke-test.py", "CLAUDE.md", "README.md", "ONBOARDING.md",
-        "MANUAL-TESTS.md", "TODO.md", "CHANGELOG.md", ".vs/", ".vss/"
-    }
-    
-    for changed_file in all_changed:
-        allowed = any(changed_file.startswith(p) for p in allowed_paths)
-        check(f"[ac10] {changed_file} is within allowed scope",
-              allowed, f"changed file outside scope: {changed_file}")
-    
+    # AC10 (scope lock against the c68707d baseline) was a cycle-time gate,
+    # not a regression pin: diffing the whole tree against a fixed historical
+    # sha fails on the first unrelated commit. Verified at cycle 1; removed
+    # from the permanent suite by the chair (2026-09-02).
+
     # AC12: Word count floors
     learnings_words = len(learnings_text.split())
     auto_memory_words = len(auto_memory_text.split())
     check("[ac12] learnings.md >= 650 words", learnings_words >= 650, f"found {learnings_words}")
     check("[ac12] auto-memory-scope.md >= 450 words", auto_memory_words >= 450, f"found {auto_memory_words}")
     
-    # AC13: Ten untouched fragments byte-identical to baseline
+    # AC13: the ten untouched fragments carry no reference to the deleted files
     untouched_fragments = [
         "web-research.md", "ssh-discipline.md", "brain2.md", "shared-repos.md",
         "harness-routing.md", "output-consolidation.md", "project-hygiene.md",
@@ -10160,13 +10149,9 @@ def test_task028_fragment_merges_and_fable_grant() -> None:
         frag_path = claude_md_dir / frag_name
         current_content = frag_path.read_text()
         
-        # Get content from baseline commit
-        r_show = run(["git", "show", f"{baseline_commit}:devcontainer/claude-md/{frag_name}"], cwd=REPO)
-        if r_show.returncode == 0:
-            baseline_content = r_show.stdout
-            check(f"[ac13] {frag_name} is byte-identical to baseline",
-                  current_content == baseline_content, "")
-        
+        # Byte-identity against the c68707d baseline was likewise a
+        # cycle-time gate (it would freeze these ten fragments forever);
+        # verified at cycle 1, dropped from the permanent suite by the chair.
         # Check no deleted filenames appear
         for deleted in deleted_filenames:
             check(f"[ac13] {frag_name} does not contain '{deleted}'",

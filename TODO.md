@@ -64,6 +64,8 @@ Two vibe-wide behaviour changes shipped and took effect on this rebuild — surf
 
 ## Open
 
+- [ ] **task_029: fromto format** (/vsss 2026-09-02 iter 2) — minimal fromClaude template as the vsss.md default, `/brain2/meta/fromto-format.md` verbatim override, both exit-append mandates deleted, one exit line. Spec: `.vs/spec.md`.
+
 
 - [x] **smoke-test: isolate HOME/GIT_CONFIG_GLOBAL in every INSTALL_EXTRAS invocation** SHIPPED 2026-08-30 (see CHANGELOG) — (2026-08-30, security-review finding on the ssh-marker pass) — 30+ pre-existing tests run the real installer with the inherited HOME, so each smoke run leaves the machine's global `core.hooksPath` pointing at a deleted TemporaryDirectory — git then silently runs NO hooks (content-guard scanners included) until the next container start re-runs the installer. The new `_ssh_marker_result` helper does it right (`HOME`+`GIT_CONFIG_GLOBAL` into the fixture tree, `VIBE_AUTO_GITIGNORE=0`); sweep the same three env lines across the other call sites (grep `bash", str(INSTALL_EXTRAS)`), ideally via one shared env-builder helper.
 
