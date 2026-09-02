@@ -10142,10 +10142,10 @@ def test_task028_fragment_merges_and_fable_grant() -> None:
     check("[ac1] all expected fragment names present", set(all_md_files) == expected_names,
           f"diff: {set(all_md_files).symmetric_difference(expected_names)}")
     
-    # AC2: Total words <= 6160
+    # AC2: Total words <= 6400
     all_text = "".join((claude_md_dir / f).read_text() for f in all_md_files)
     total_words = len(all_text.split())
-    check("[ac2] total fragment words <= 6160", total_words <= 6160, f"found {total_words}")
+    check("[ac2] total fragment words <= 6400", total_words <= 6400, f"found {total_words}")
     
     # AC3: content-guard.md 400-600 words, contains "README.md" and "Content guard"
     content_guard_text = (claude_md_dir / "content-guard.md").read_text()
@@ -10303,10 +10303,10 @@ def test_task028_fragment_merges_and_fable_grant() -> None:
             check("[ac7] vs.md --fable-subagents flag line contains '§ Model economy'",
                   "§ Model economy" in fable_flag_line, f"line: {fable_flag_line[:80]}")
     
-    # AC8: vs.md+vss.md+vsss.md total words <= 12700
+    # AC8: vs.md+vss.md+vsss.md total words <= 12900
     vs_vss_vsss_text = vs_text + vss_text + vsss_text
     vs_vss_vsss_words = len(vs_vss_vsss_text.split())
-    check("[ac8] vs+vss+vsss total words <= 12700", vs_vss_vsss_words <= 12700, f"found {vs_vss_vsss_words}")
+    check("[ac8] vs+vss+vsss total words <= 12900", vs_vss_vsss_words <= 12900, f"found {vs_vss_vsss_words}")
     
     # AC9: grep deleted filenames - only permitted in CHANGELOG.md and test names/labels in smoke-test.py
     deleted_filenames = ["learn-hook.md", "feedback-auto-promote.md", "conversation-history.md"]

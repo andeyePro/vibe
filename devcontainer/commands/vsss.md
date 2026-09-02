@@ -170,7 +170,7 @@ with `[[wikilinks]]` so the user can hop between them in Obsidian.
 
 ### fromto format
 
-fromClaude template.
+Default shape of the fromClaude file. The user can replace it (override below).
 
 ```
 ---
