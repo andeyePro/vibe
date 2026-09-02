@@ -1,0 +1,684 @@
+diff --git a/.vs/spec.md b/.vs/spec.md
+new file mode 100644
+index 0000000..b3564ca
+--- /dev/null
++++ b/.vs/spec.md
+@@ -0,0 +1,48 @@
++# Spec — task_029: fromto format — minimal fromClaude template, brain2 override, exit-append rule removed
++
++## Task summary
++`/vsss` § fromto channels tells Claude to write ONLY live questions to the user's fromClaude file (§ Question format: "questions and blocking asks only — no progress notes, no FYIs"), then § At exit (vsss.md ~237–242) and the closing paragraph of § Reporting back at exit (~327–329) mandate appending the full exit report to the same file. That contradiction is why "Session report" sections keep appearing and why Martin re-explains his format to every model (`/brain2/andeye/Money&I-Q&A-archive.md` "Session reports moved out of fromClaude, 2026-08-21"). Fix: define the minimal fromClaude template once in vsss.md as the default, let `/brain2/meta/fromto-format.md` override it verbatim when present, delete both exit-append mandates, replace them with ONE exit line, and write the brain2 override note holding the same default. Terminal report to the user (§ Reporting back at exit) is unchanged. Baseline commit: 73172fb.
++
++## Acceptance criteria
++- AC1 `devcontainer/commands/vsss.md` has a heading line exactly `### fromto format` positioned after the `### The three files` heading and before the `### Question format (fromClaude)` heading.
++- AC2 The § fromto format body contains this fenced template verbatim (line for line, inside a ```` ``` ```` fence):
++  ```
++  ---
++  state: authored
++  author: Claude (<harness>, <repo>)
++  created: <ISO date>
++  cssclasses: [trust-authored]
++  ---
++  Reply in [[<project>-from<User>]]. History: [[<project>-Q&A-archive]].
++
++  1. <action point: a question to answer, or a test to run> (T<n>)
++  ```
++- AC3 vsss.md contains, in § fromto format, each of these literal strings: `one ordered list and nothing else`; `no session report`; `Information appears only where it answers a question the user asked`; `action points only`; `contiguous from 1`. (§ Question format already carries the no-progress-notes/no-FYIs sentence; § fromto format may point to it rather than restate.)
++- AC4 vsss.md § fromto format contains the exit-line rule with the literal sentinel ``Session log: `.vss/sessions/<start-ISO>.md` — <N> commits, <pushed|not pushed>.`` and the words `exactly one line`.
++- AC5 vsss.md § fromto format contains `/brain2/meta/fromto-format.md`, `overrides this default verbatim`, and the credential-boundary sentence containing both `write-files-only` and ``never `git` against`` (brain2 is writable at file level from a container; only git is forbidden — do not write `read-only`).
++- AC6 Deleted: the string `### At exit` does not occur in vsss.md; the string `Append the exit report (same content as § Reporting back at exit)` does not occur; the string `If fromto channels are active` does not occur. Structural guards against paraphrase: (a) the text from the `## Reporting back at exit` heading to end-of-file contains zero occurrences of `fromClaude` and zero of `from<User>`; (b) outside § fromto format, vsss.md contains no line matching the regex `(append|mirror|copy).{0,60}(report|outcome).{0,60}fromClaude` (case-insensitive), and § fromto format itself contains no such line except the single exit-line rule of AC4; (c) the total count of `fromClaude` in vsss.md is ≤ the 73172fb count minus 2 plus the number of mentions inside § fromto format (Tester computes both numbers and asserts).
++- AC7 Preserved: vsss.md still contains `## Reporting back at exit`, `Total iterations run.`, ``Lead with `---` before the report block.``, the § Question format heading `### Question format (fromClaude)` and its hygiene sentence `questions and blocking asks only — no progress notes, no FYIs`; and `### After each /vss completes` still follows § fromto format's subsections in the same order as today (three files → fromto format → Question format → Answer format → Consume protocol → Precedence → Interaction with the loop → After each /vss completes).
++- AC8 `/brain2/meta/fromto-format.md` exists with YAML frontmatter fields `title`, `aliases`, `state: authored`, `author`, `checked: []`, `reviewed: []`, `authorised:` (empty value), `source_type: internal`, `sources`, `created: 2026-09-02`, `recorded_at: 2026-09-02`, `cssclasses: [trust-authored]`, `tags` (containing `vibe` and `fromto`); its body contains the same fenced template as AC2 verbatim and the sentence `Edit this note to change the format for every project` (or an equivalent containing `every project`); it never sets `state` above `authored` and never fills `authorised:`.
++- AC9 `smoke-test.py` gains `test_vsss_fromto_format()` (defined near the other `test_vsss_*` functions, registered in `main()` next to them) asserting AC1–AC7 against `VSSS_MD`; AC8 is asserted only when `/brain2/meta/fromto-format.md` exists (skip-with-note otherwise, since brain2 is a per-machine mount). No existing test is edited.
++- AC10 `python3 code-check.py` exits 0 and `python3 smoke-test.py` exits 0 (foreground, timeout 600000).
++- AC11 Scope lock: `git diff --name-only 73172fb` plus untracked files list only `devcontainer/commands/vsss.md`, `smoke-test.py`, `CHANGELOG.md`, `TODO.md`, `.vs/`, `.vss/`; brain2 is written by file only (no git commands against /brain2).
++- AC12 vsss.md word count does not grow by more than 120 words versus 73172fb (`wc -w`): the block is added, two mandates are deleted.
++
++## Out of scope
++- Any change to § Reporting back at exit's terminal report content, the exit conditions, the optimiser brief, the auto-resume marker, or § Question format / Answer format / Consume protocol semantics.
++- Changing the from<User> answer contract or the Q&A-archive format.
++- Rewriting existing fromClaude files in brain2 (the chair may separately re-emit `/brain2/andeye/vibe-fromClaude.md` in the new format after the pass).
++- Any file other than those in AC11.
++
++## Test location
++`smoke-test.py` — Tester adds `test_vsss_fromto_format()`; Generator does not touch smoke-test.py at all in this task.
++
++## Proposed budget
++2 cycles.
++
++## Model plan
++- Planner + Evaluator: session model (Fable 5.1 chair).
++- Spec Critic: sonnet.
++- Generator: sonnet, ceiling opus (small, fully specified prose surgery).
++- Tester: haiku, ceiling sonnet.
++- Fable rung: pre-authorised (--fable-subagents, user prose grant for this /vsss run), not indicated.
+diff --git a/.vs/tasks.json b/.vs/tasks.json
+index e796af0..0fbcf09 100644
+--- a/.vs/tasks.json
++++ b/.vs/tasks.json
+@@ -1,206 +1,215 @@
+ [
+- {
+-  "id": "task_001",
+-  "description": "Add --json output to code-check.py emitting machine-readable shellcheck findings",
+-  "implementation_status": "complete",
+-  "test_status": "passing",
+-  "assigned_to": "evaluator",
+-  "mode": "rigorous",
+-  "last_modified": "2026-04-23T01:00:00Z"
+- },
+- {
+-  "id": "task_003",
+-  "description": "Prize-worthy haiku about vibe \u2192 HAIKU.md (fuzzy mode)",
+-  "implementation_status": "complete",
+-  "test_status": "passing",
+-  "assigned_to": "evaluator",
+-  "mode": "fuzzy",
+-  "last_modified": "2026-04-23T05:00:00Z"
+- },
+- {
+-  "id": "task_004",
+-  "description": "Cross-org learning library (opt-in, host-only capture, public/private)",
+-  "implementation_status": "complete",
+-  "test_status": "passing",
+-  "assigned_to": "evaluator",
+-  "mode": "rigorous",
+-  "last_modified": "2026-04-23T09:15:00Z"
+- },
+- {
+-  "id": "task_005",
+-  "description": "OSC 52 clipboard bridge: vibe-copy shell helper + /copy slash command",
+-  "implementation_status": "complete",
+-  "test_status": "passing",
+-  "assigned_to": "generator",
+-  "mode": "rigorous",
+-  "last_modified": "2026-04-23T19:57:00Z"
+- },
+- {
+-  "id": "task_006",
+-  "description": "/c (renamed from /copy) + host-side clipboard watcher (vibe-copy-watcher.sh)",
+-  "implementation_status": "complete",
+-  "test_status": "passing",
+-  "assigned_to": "generator",
+-  "mode": "rigorous",
+-  "last_modified": "2026-04-23T22:00:00Z"
+- },
+- {
+-  "id": "task_007",
+-  "description": "Ship two operational rules (WebSearch-before-refusing + no-SSH-out-without-explicit-OK) to all vibe users via inline-prose CLAUDE.md fragments synced from devcontainer/claude-md/ by install-claude-extras.sh",
+-  "implementation_status": "complete",
+-  "test_status": "passing",
+-  "assigned_to": "generator",
+-  "mode": "rigorous",
+-  "last_modified": "2026-04-25T14:32:00Z"
+- },
+- {
+-  "id": "task_008",
+-  "description": "vibe: drain clipboard scratch on exit (race fix in EXIT trap)",
+-  "implementation_status": "complete",
+-  "test_status": "passing",
+-  "assigned_to": "evaluator",
+-  "mode": "rigorous",
+-  "last_modified": "2026-04-25T17:00:00Z"
+- },
+- {
+-  "id": "task_009",
+-  "description": "In-container /learn slash command + /learnings write-confirm PreToolUse hook (Write/Edit/Bash all gated)",
+-  "implementation_status": "complete",
+-  "test_status": "passing",
+-  "assigned_to": "evaluator",
+-  "mode": "rigorous",
+-  "last_modified": "2026-04-26T18:30:00Z"
+- },
+- {
+-  "id": "task_013",
+-  "description": "/vs intelligent Spec Critic iteration cap (convergence/plateau/divergence + --max-iter flag, replaces hardcoded max 2)",
+-  "implementation_status": "complete",
+-  "test_status": "failing",
+-  "assigned_to": "parked",
+-  "mode": "rigorous",
+-  "last_modified": "2026-04-27T00:00:00Z",
+-  "parked_note": "Cycle 1 Step 6 escalation: AC10 spec defect (diff.patch from git diff includes Planner bookkeeping in .vs/spec.md + .vs/tasks.json, which AC10 didn't whitelist). 18/19 task_013 checks pass; only AC10 fails. Resume options documented in TODO.md task_013 entry."
+- },
+- {
+-  "id": "task_010",
+-  "description": "/learn smart-capture: semantic check phase (contradiction detection, quality gate, option scheme Z1/Z2/N)",
+-  "implementation_status": "complete",
+-  "test_status": "passing",
+-  "assigned_to": "generator",
+-  "mode": "rigorous",
+-  "last_modified": "2026-05-07T00:00:00Z"
+- },
+- {
+-  "id": "task_014",
+-  "description": "Per-project Claude projects/ bind: each host project gets its own /home/node/.claude/projects/ inside the container so vibe X --continue scopes by project, not globally",
+-  "implementation_status": "pending",
+-  "test_status": "passing",
+-  "assigned_to": "planner",
+-  "mode": "rigorous",
+-  "last_modified": "2026-04-29T00:00:00Z"
+- },
+- {
+-  "id": "task_015",
+-  "description": "Auto-recreate a project's container when it was built from a superseded vibe-dev:latest (image-drift detection before devcontainer up); fixes silent stale-container env claude ENOENT",
+-  "implementation_status": "complete",
+-  "test_status": "passing",
+-  "assigned_to": "generator",
+-  "mode": "rigorous",
+-  "last_modified": "2026-05-27T00:00:00Z"
+- },
+- {
+-  "id": "task_016",
+-  "description": "--sessions auto-resume survives the out-of-credits block: heartbeat hooks + host-side stall watchdog (3-part gate), countdown Ctrl-C deactivate, claude exit-status propagation",
+-  "implementation_status": "complete",
+-  "test_status": "passing",
+-  "assigned_to": "generator",
+-  "mode": "rigorous",
+-  "last_modified": "2026-07-10T12:22:14Z"
+- },
+- {
+-  "id": "task_017",
+-  "description": "shared-repos: declaration+registry, /repos/<name> mounts, rw single-writer lock, claim/handoff, seam fragment, per-repo PATs via useHttpPath",
+-  "implementation_status": "complete",
+-  "test_status": "passing",
+-  "assigned_to": "generator",
+-  "mode": "rigorous",
+-  "last_modified": "2026-07-11T05:19:20Z",
+-  "cycle_1_note": "Generator (sonnet) delivered AC1-AC7: registry/declaration helpers, vibe repos add|remove|list, shared_repos_scan single-classification-pass mount assembly (2 binds/repo, ro hard-pinned), runtime manifest + install-claude-extras.sh safe.directory wiring, gitignore ownership, README+CHANGELOG. code-check clean, smoke 1080/1080 (no Tester checks yet - append-only per /vs convention, lands next). implementation_status stays in_progress (C1 of 4); C2 (rw lock) not started.",
+-  "cycle_2_note": "Tester (haiku) added 18 append-only smoke-test.py functions covering AC8 (rw-intent resolution: free-lock grant, live-holder contention fallback + named warning, ro-declared repos never touch the lock, shared_repo_declaration_set_mode at the helper level, PLUS CLI-level vibe repos add --rw: fresh-add-rw, upgrade-in-place, no-silent-downgrade on plain re-add, --rw position-agnostic - the flag wiring landed as an integrator edit mid-cycle after the Tester flagged it missing), AC9 (lock acquire/contend/stale-reclaim/release/torn-meta, all against real backgrounded processes), AC10 (exit dispatcher survives a refusing first hook via evidence files, single trap -p EXIT installer, no raw trap EXIT elsewhere, clipboard-flush + /learn tempfile cleanup both confirmed migrated into vibe_exit_hook_add), and one mode-coherence fixture tying manifest/override-JSON agreement together. Full suite: smoke-test.py 1273/1273 checks passing, 0 regressions in the frozen C1 suite; code-check.py shellcheck clean. Artifacts: .vs/cycle-2/test-output.log, .vs/cycle-2/summary.md.",
+-  "cycle_3_note": "Tester (haiku) added 10 append-only smoke-test.py functions (61 checks) covering AC12 (/repo command file shape incl. host/container ~/.vibe boundary + negation-window regression guard, claim path/KEY=VALUE content shape, and a substituted-placeholder run of the documented mkdir+write proving syntactic validity + last-claim-wins overwrite since the claim flow has no sourced vibe helper - pure documentation), AC13 (statusLine \u26a0 rw:<requester> segment: structural regression guard on forceLoginMethod/defaultMode/guard-bash.sh/guard-fs.sh entries, byte-identical spot-check of two frozen fixtures with VIBE_REPOS_DIR pointed at an empty temp dir, and three functional fixtures - holder+request present, request present but not-us-the-holder, holder-but-no-request - all via VIBE_REPOS_DIR/VIBE_PROJECT_NAME env overrides), AC14 (shared-repos.md fragment shape + install-claude-extras.sh gating on VIBE_SHARED_REPOS_MANIFEST across missing/empty/non-empty), and VIBE_PROJECT_NAME plumbing (top-level export site before the _build_override_config command-substitution subshell, remoteEnv-only carriage in devcontainer.json, absent from containerEnv). Full suite: smoke-test.py 1334/1334 checks passing, 0 regressions in the frozen C1/C2 suite; code-check.py shellcheck clean. AC13(c)'s discriminating power verified by hand-running a deliberately broken statusLine variant (holder-equality check removed) and confirming the assertion fails against it. No AC12-AC15 mechanism found unimplemented. Artifacts: .vs/cycle-3/test-output.log, .vs/cycle-3/summary.md.",
+-  "cycle_4_note": "Tester (haiku) added 28 append-only smoke-test.py functions (92 checks) covering AC16 (credential-helper.sh driven directly as a stdin->stdout filter: project-slug exact match, shared-slug match gated by the launcher-exported VIBE_SHARED_SLUG_* twin, unknown-repo silence, .git suffix, subdir suffix, trailing-slash-only (both unmatched and on the project's own slug), case-sensitivity, '..' traversal, embedded control byte, shell-metacharacter injection with a no-execution sentinel check, the post-security-review sanitisation-collision hardening (twin-mismatch silence is the gate-discriminating fixture; twin-match still serves correctly; twin-entirely-unset also silences), non-get ops, non-github host, lookalike subdomain host, http-not-https, empty-token-never-served, and a consolidated never-widen attack battery asserting $GITHUB_TOKEN never appears on stdout across 8 simultaneous non-project attempts), AC17 (useHttpPath registered at the same --global scope as credential.helper in setup-git.sh, plus a functional run of setup-git.sh against a fresh sandbox HOME confirming both settings land), AC18 (structural: GITHUB_REPO_SLUG / shared-token / shared-slug-twin exports all sit at column-0 top-level scope strictly outside and before the _build_override_config command-substitution call; functional: render_devcontainer_with_mounts injects matching VIBE_SHARED_TOKEN_*/VIBE_SHARED_SLUG_* remoteEnv passthroughs, remoteEnv-only never containerEnv), AC19 (CLAUDE.md + README text checks for the amended single-repo-PAT/launch-header-blast-radius/never-multi-repo-token wording). Full suite: smoke-test.py 1426/1426 checks passing, 0 regressions in the frozen C1-C3 suite; code-check.py shellcheck clean across 15 files. GAP FOUND: AC18's sanctioned C4 relaxation (missing token for an acked+registered ro repo should WARN and still MOUNT ro) is NOT implemented - shared_repos_scan still hard-blocks with 'B ... no token configured', so the C1 frozen test test_task017_delta_scan_b_token_absent is unchanged and still passes; no frozen-test amendment needed yet, this is UNIMPLEMENTED plumbing for the chair to pick up, not a Tester-side fix. AC20 (security-review) ran mid-cycle with a CLEAR verdict, closing one LOW (the sanitisation-collision twin-check) which this cycle's tests now cover as the gate-discriminating fixture. AC21's MANUAL-TESTS.md end-to-end push section (shared repo / project repo / undeclared repo) has not been authored yet - Generator/chair responsibility per spec, not Tester's. Artifacts: .vs/cycle-4/test-output.log, .vs/cycle-4/summary.md."
+- },
+- {
+-  "id": "task_019",
+-  "description": "regrettable-content guard: pre-commit/commit-msg/pre-push secret+PII scanner (block-by-default, two-tier, override/allowlist/opt-out) + vibe audit full-history scan; ships core",
+-  "implementation_status": "complete",
+-  "test_status": "passing",
+-  "assigned_to": "generator",
+-  "mode": "rigorous",
+-  "last_modified": "2026-07-15",
+-  "cycle_1_note": "Tester (haiku) added 15 append-only smoke-test.py functions (45 checks) covering AC1-AC17 (AC12/AC14 not testable via smoke-test: AC12 is regression guard on pre-existing guard-bash.sh, AC14 is pre-existing suite integrity - both verified separately). Scanner core tested: BLOCK tier (GitHub PAT, private-key), WARN tier (RFC1918 IP, home-path), clean content. Git hooks tested: real pre-commit blocks secrets; real commit-msg scans messages; pre-push new-branch permits WARN-tier PII (BLOCK-only backstop). Override (VIBE_CONTENT_GUARD=off) logs loudly. Allowlist (.vibe-content-allow regex) suppresses findings. Opt-out marker (.vibe-content-guard-off) immediate exit. Install wiring (install-claude-extras.sh + core.hooksPath) functional. Audit tested: --history finds deleted secrets (attributes to commit SHA), reports WARN-only with exit 0 (advisory). Trailer exemption verified on Co-Authored-By. All fixtures runtime-constructed (no literal secrets in test code). Full suite: smoke-test.py 1471/1471 checks passing (45 task_019 + 1426 pre-existing frozen), 0 regressions; code-check.py shellcheck clean on 15 files. Artifacts: .vs/cycle-1/test-output.log."
+- },
+- {
+-  "id": "task_022",
+-  "description": "vibe audit --history perf: scanner match primitives -> bash-native =~ (kill per-line grep forks) + --messages-stdin single-pass message scan; byte-identical findings gate",
+-  "implementation_status": "complete",
+-  "test_status": "passing",
+-  "assigned_to": "generator",
+-  "mode": "rigorous",
+-  "last_modified": "2026-07-17T07:16:00Z"
+- },
+- {
+-  "id": "task_023",
+-  "description": "content guard: path-warn:<glob> allowlist entries - per-file WARN-tier demotion in diff modes so vibe's repo is self-clean; BLOCK never path-suppressible; path-warn lines never enter the ERE loop",
+-  "implementation_status": "complete",
+-  "test_status": "passing",
+-  "assigned_to": "generator",
+-  "mode": "rigorous",
+-  "last_modified": "2026-07-17T07:38:43Z"
+- },
+- {
+-  "id": "task_024",
+-  "description": "content guard: hunk-aware diff parsing in scan_diff_stream + scan_blob_stdin - close added-line header-spoof hole (incl. suppressBlankEmpty zero-byte context exploit); BLOCK unhideable via ++ /dev/null spoof",
+-  "implementation_status": "complete",
+-  "test_status": "passing",
+-  "assigned_to": "generator",
+-  "mode": "rigorous",
+-  "last_modified": "2026-07-17T08:10:42Z"
+- },
+- {
+-  "id": "task_025",
+-  "description": "code-check.py shellchecks devcontainer/git-hooks/ (scanner + 3 extensionless bash hooks via shebang detection) + CODE_CHECK_SCRIPTS env seam retiring the brittle scripts()-body text-patch fixture",
+-  "implementation_status": "complete",
+-  "test_status": "passing",
+-  "assigned_to": "generator",
+-  "mode": "rigorous",
+-  "last_modified": "2026-07-17T09:19:00Z"
+- },
+- {
+-  "id": "task_026",
+-  "description": "vibe pat [repo] PAT rotation subcommand + launch-time 401 stored-token reprompt (fail-open probe, -K - stdin auth header, VIBE_PAT_CHECK=0 opt-out)",
+-  "implementation_status": "complete",
+-  "test_status": "passing",
+-  "assigned_to": "generator",
+-  "mode": "rigorous",
+-  "last_modified": "2026-07-21T15:54:05Z"
+- },
+- {
+-  "id": "task_027",
+-  "description": "detect_github_repo dotted-repo-name fix (dots in repo segment, shell .git strip, slug validation) + brain2 meta/vibe-operation.md auto-refreshed vibe --help managed block + vibe-cli.md claude-md fragment",
+-  "implementation_status": "complete",
+-  "test_status": "passing",
+-  "assigned_to": "generator",
+-  "mode": "rigorous",
+-  "last_modified": "2026-07-22T01:24:51Z"
+- },
+- {
+-  "id": "task_028",
+-  "description": "CLAUDE.md fragment merges (learnings trilogy; memory+history; content-guard trim) + single --fable-subagents definition in vs.md with vss/vsss pointers; >=1,900 words off every session's context",
+-  "implementation_status": "complete",
+-  "test_status": "passing",
+-  "assigned_to": "generator",
+-  "mode": "rigorous",
+-  "last_modified": "2026-09-02T17:55:00Z"
+- }
+-]
+\ No newline at end of file
++  {
++    "id": "task_001",
++    "description": "Add --json output to code-check.py emitting machine-readable shellcheck findings",
++    "implementation_status": "complete",
++    "test_status": "passing",
++    "assigned_to": "evaluator",
++    "mode": "rigorous",
++    "last_modified": "2026-04-23T01:00:00Z"
++  },
++  {
++    "id": "task_003",
++    "description": "Prize-worthy haiku about vibe \u2192 HAIKU.md (fuzzy mode)",
++    "implementation_status": "complete",
++    "test_status": "passing",
++    "assigned_to": "evaluator",
++    "mode": "fuzzy",
++    "last_modified": "2026-04-23T05:00:00Z"
++  },
++  {
++    "id": "task_004",
++    "description": "Cross-org learning library (opt-in, host-only capture, public/private)",
++    "implementation_status": "complete",
++    "test_status": "passing",
++    "assigned_to": "evaluator",
++    "mode": "rigorous",
++    "last_modified": "2026-04-23T09:15:00Z"
++  },
++  {
++    "id": "task_005",
++    "description": "OSC 52 clipboard bridge: vibe-copy shell helper + /copy slash command",
++    "implementation_status": "complete",
++    "test_status": "passing",
++    "assigned_to": "generator",
++    "mode": "rigorous",
++    "last_modified": "2026-04-23T19:57:00Z"
++  },
++  {
++    "id": "task_006",
++    "description": "/c (renamed from /copy) + host-side clipboard watcher (vibe-copy-watcher.sh)",
++    "implementation_status": "complete",
++    "test_status": "passing",
++    "assigned_to": "generator",
++    "mode": "rigorous",
++    "last_modified": "2026-04-23T22:00:00Z"
++  },
++  {
++    "id": "task_007",
++    "description": "Ship two operational rules (WebSearch-before-refusing + no-SSH-out-without-explicit-OK) to all vibe users via inline-prose CLAUDE.md fragments synced from devcontainer/claude-md/ by install-claude-extras.sh",
++    "implementation_status": "complete",
++    "test_status": "passing",
++    "assigned_to": "generator",
++    "mode": "rigorous",
++    "last_modified": "2026-04-25T14:32:00Z"
++  },
++  {
++    "id": "task_008",
++    "description": "vibe: drain clipboard scratch on exit (race fix in EXIT trap)",
++    "implementation_status": "complete",
++    "test_status": "passing",
++    "assigned_to": "evaluator",
++    "mode": "rigorous",
++    "last_modified": "2026-04-25T17:00:00Z"
++  },
++  {
++    "id": "task_009",
++    "description": "In-container /learn slash command + /learnings write-confirm PreToolUse hook (Write/Edit/Bash all gated)",
++    "implementation_status": "complete",
++    "test_status": "passing",
++    "assigned_to": "evaluator",
++    "mode": "rigorous",
++    "last_modified": "2026-04-26T18:30:00Z"
++  },
++  {
++    "id": "task_013",
++    "description": "/vs intelligent Spec Critic iteration cap (convergence/plateau/divergence + --max-iter flag, replaces hardcoded max 2)",
++    "implementation_status": "complete",
++    "test_status": "failing",
++    "assigned_to": "parked",
++    "mode": "rigorous",
++    "last_modified": "2026-04-27T00:00:00Z",
++    "parked_note": "Cycle 1 Step 6 escalation: AC10 spec defect (diff.patch from git diff includes Planner bookkeeping in .vs/spec.md + .vs/tasks.json, which AC10 didn't whitelist). 18/19 task_013 checks pass; only AC10 fails. Resume options documented in TODO.md task_013 entry."
++  },
++  {
++    "id": "task_010",
++    "description": "/learn smart-capture: semantic check phase (contradiction detection, quality gate, option scheme Z1/Z2/N)",
++    "implementation_status": "complete",
++    "test_status": "passing",
++    "assigned_to": "generator",
++    "mode": "rigorous",
++    "last_modified": "2026-05-07T00:00:00Z"
++  },
++  {
++    "id": "task_014",
++    "description": "Per-project Claude projects/ bind: each host project gets its own /home/node/.claude/projects/ inside the container so vibe X --continue scopes by project, not globally",
++    "implementation_status": "pending",
++    "test_status": "passing",
++    "assigned_to": "planner",
++    "mode": "rigorous",
++    "last_modified": "2026-04-29T00:00:00Z"
++  },
++  {
++    "id": "task_015",
++    "description": "Auto-recreate a project's container when it was built from a superseded vibe-dev:latest (image-drift detection before devcontainer up); fixes silent stale-container env claude ENOENT",
++    "implementation_status": "complete",
++    "test_status": "passing",
++    "assigned_to": "generator",
++    "mode": "rigorous",
++    "last_modified": "2026-05-27T00:00:00Z"
++  },
++  {
++    "id": "task_016",
++    "description": "--sessions auto-resume survives the out-of-credits block: heartbeat hooks + host-side stall watchdog (3-part gate), countdown Ctrl-C deactivate, claude exit-status propagation",
++    "implementation_status": "complete",
++    "test_status": "passing",
++    "assigned_to": "generator",
++    "mode": "rigorous",
++    "last_modified": "2026-07-10T12:22:14Z"
++  },
++  {
++    "id": "task_017",
++    "description": "shared-repos: declaration+registry, /repos/<name> mounts, rw single-writer lock, claim/handoff, seam fragment, per-repo PATs via useHttpPath",
++    "implementation_status": "complete",
++    "test_status": "passing",
++    "assigned_to": "generator",
++    "mode": "rigorous",
++    "last_modified": "2026-07-11T05:19:20Z",
++    "cycle_1_note": "Generator (sonnet) delivered AC1-AC7: registry/declaration helpers, vibe repos add|remove|list, shared_repos_scan single-classification-pass mount assembly (2 binds/repo, ro hard-pinned), runtime manifest + install-claude-extras.sh safe.directory wiring, gitignore ownership, README+CHANGELOG. code-check clean, smoke 1080/1080 (no Tester checks yet - append-only per /vs convention, lands next). implementation_status stays in_progress (C1 of 4); C2 (rw lock) not started.",
++    "cycle_2_note": "Tester (haiku) added 18 append-only smoke-test.py functions covering AC8 (rw-intent resolution: free-lock grant, live-holder contention fallback + named warning, ro-declared repos never touch the lock, shared_repo_declaration_set_mode at the helper level, PLUS CLI-level vibe repos add --rw: fresh-add-rw, upgrade-in-place, no-silent-downgrade on plain re-add, --rw position-agnostic - the flag wiring landed as an integrator edit mid-cycle after the Tester flagged it missing), AC9 (lock acquire/contend/stale-reclaim/release/torn-meta, all against real backgrounded processes), AC10 (exit dispatcher survives a refusing first hook via evidence files, single trap -p EXIT installer, no raw trap EXIT elsewhere, clipboard-flush + /learn tempfile cleanup both confirmed migrated into vibe_exit_hook_add), and one mode-coherence fixture tying manifest/override-JSON agreement together. Full suite: smoke-test.py 1273/1273 checks passing, 0 regressions in the frozen C1 suite; code-check.py shellcheck clean. Artifacts: .vs/cycle-2/test-output.log, .vs/cycle-2/summary.md.",
++    "cycle_3_note": "Tester (haiku) added 10 append-only smoke-test.py functions (61 checks) covering AC12 (/repo command file shape incl. host/container ~/.vibe boundary + negation-window regression guard, claim path/KEY=VALUE content shape, and a substituted-placeholder run of the documented mkdir+write proving syntactic validity + last-claim-wins overwrite since the claim flow has no sourced vibe helper - pure documentation), AC13 (statusLine \u26a0 rw:<requester> segment: structural regression guard on forceLoginMethod/defaultMode/guard-bash.sh/guard-fs.sh entries, byte-identical spot-check of two frozen fixtures with VIBE_REPOS_DIR pointed at an empty temp dir, and three functional fixtures - holder+request present, request present but not-us-the-holder, holder-but-no-request - all via VIBE_REPOS_DIR/VIBE_PROJECT_NAME env overrides), AC14 (shared-repos.md fragment shape + install-claude-extras.sh gating on VIBE_SHARED_REPOS_MANIFEST across missing/empty/non-empty), and VIBE_PROJECT_NAME plumbing (top-level export site before the _build_override_config command-substitution subshell, remoteEnv-only carriage in devcontainer.json, absent from containerEnv). Full suite: smoke-test.py 1334/1334 checks passing, 0 regressions in the frozen C1/C2 suite; code-check.py shellcheck clean. AC13(c)'s discriminating power verified by hand-running a deliberately broken statusLine variant (holder-equality check removed) and confirming the assertion fails against it. No AC12-AC15 mechanism found unimplemented. Artifacts: .vs/cycle-3/test-output.log, .vs/cycle-3/summary.md.",
++    "cycle_4_note": "Tester (haiku) added 28 append-only smoke-test.py functions (92 checks) covering AC16 (credential-helper.sh driven directly as a stdin->stdout filter: project-slug exact match, shared-slug match gated by the launcher-exported VIBE_SHARED_SLUG_* twin, unknown-repo silence, .git suffix, subdir suffix, trailing-slash-only (both unmatched and on the project's own slug), case-sensitivity, '..' traversal, embedded control byte, shell-metacharacter injection with a no-execution sentinel check, the post-security-review sanitisation-collision hardening (twin-mismatch silence is the gate-discriminating fixture; twin-match still serves correctly; twin-entirely-unset also silences), non-get ops, non-github host, lookalike subdomain host, http-not-https, empty-token-never-served, and a consolidated never-widen attack battery asserting $GITHUB_TOKEN never appears on stdout across 8 simultaneous non-project attempts), AC17 (useHttpPath registered at the same --global scope as credential.helper in setup-git.sh, plus a functional run of setup-git.sh against a fresh sandbox HOME confirming both settings land), AC18 (structural: GITHUB_REPO_SLUG / shared-token / shared-slug-twin exports all sit at column-0 top-level scope strictly outside and before the _build_override_config command-substitution call; functional: render_devcontainer_with_mounts injects matching VIBE_SHARED_TOKEN_*/VIBE_SHARED_SLUG_* remoteEnv passthroughs, remoteEnv-only never containerEnv), AC19 (CLAUDE.md + README text checks for the amended single-repo-PAT/launch-header-blast-radius/never-multi-repo-token wording). Full suite: smoke-test.py 1426/1426 checks passing, 0 regressions in the frozen C1-C3 suite; code-check.py shellcheck clean across 15 files. GAP FOUND: AC18's sanctioned C4 relaxation (missing token for an acked+registered ro repo should WARN and still MOUNT ro) is NOT implemented - shared_repos_scan still hard-blocks with 'B ... no token configured', so the C1 frozen test test_task017_delta_scan_b_token_absent is unchanged and still passes; no frozen-test amendment needed yet, this is UNIMPLEMENTED plumbing for the chair to pick up, not a Tester-side fix. AC20 (security-review) ran mid-cycle with a CLEAR verdict, closing one LOW (the sanitisation-collision twin-check) which this cycle's tests now cover as the gate-discriminating fixture. AC21's MANUAL-TESTS.md end-to-end push section (shared repo / project repo / undeclared repo) has not been authored yet - Generator/chair responsibility per spec, not Tester's. Artifacts: .vs/cycle-4/test-output.log, .vs/cycle-4/summary.md."
++  },
++  {
++    "id": "task_019",
++    "description": "regrettable-content guard: pre-commit/commit-msg/pre-push secret+PII scanner (block-by-default, two-tier, override/allowlist/opt-out) + vibe audit full-history scan; ships core",
++    "implementation_status": "complete",
++    "test_status": "passing",
++    "assigned_to": "generator",
++    "mode": "rigorous",
++    "last_modified": "2026-07-15",
++    "cycle_1_note": "Tester (haiku) added 15 append-only smoke-test.py functions (45 checks) covering AC1-AC17 (AC12/AC14 not testable via smoke-test: AC12 is regression guard on pre-existing guard-bash.sh, AC14 is pre-existing suite integrity - both verified separately). Scanner core tested: BLOCK tier (GitHub PAT, private-key), WARN tier (RFC1918 IP, home-path), clean content. Git hooks tested: real pre-commit blocks secrets; real commit-msg scans messages; pre-push new-branch permits WARN-tier PII (BLOCK-only backstop). Override (VIBE_CONTENT_GUARD=off) logs loudly. Allowlist (.vibe-content-allow regex) suppresses findings. Opt-out marker (.vibe-content-guard-off) immediate exit. Install wiring (install-claude-extras.sh + core.hooksPath) functional. Audit tested: --history finds deleted secrets (attributes to commit SHA), reports WARN-only with exit 0 (advisory). Trailer exemption verified on Co-Authored-By. All fixtures runtime-constructed (no literal secrets in test code). Full suite: smoke-test.py 1471/1471 checks passing (45 task_019 + 1426 pre-existing frozen), 0 regressions; code-check.py shellcheck clean on 15 files. Artifacts: .vs/cycle-1/test-output.log."
++  },
++  {
++    "id": "task_022",
++    "description": "vibe audit --history perf: scanner match primitives -> bash-native =~ (kill per-line grep forks) + --messages-stdin single-pass message scan; byte-identical findings gate",
++    "implementation_status": "complete",
++    "test_status": "passing",
++    "assigned_to": "generator",
++    "mode": "rigorous",
++    "last_modified": "2026-07-17T07:16:00Z"
++  },
++  {
++    "id": "task_023",
++    "description": "content guard: path-warn:<glob> allowlist entries - per-file WARN-tier demotion in diff modes so vibe's repo is self-clean; BLOCK never path-suppressible; path-warn lines never enter the ERE loop",
++    "implementation_status": "complete",
++    "test_status": "passing",
++    "assigned_to": "generator",
++    "mode": "rigorous",
++    "last_modified": "2026-07-17T07:38:43Z"
++  },
++  {
++    "id": "task_024",
++    "description": "content guard: hunk-aware diff parsing in scan_diff_stream + scan_blob_stdin - close added-line header-spoof hole (incl. suppressBlankEmpty zero-byte context exploit); BLOCK unhideable via ++ /dev/null spoof",
++    "implementation_status": "complete",
++    "test_status": "passing",
++    "assigned_to": "generator",
++    "mode": "rigorous",
++    "last_modified": "2026-07-17T08:10:42Z"
++  },
++  {
++    "id": "task_025",
++    "description": "code-check.py shellchecks devcontainer/git-hooks/ (scanner + 3 extensionless bash hooks via shebang detection) + CODE_CHECK_SCRIPTS env seam retiring the brittle scripts()-body text-patch fixture",
++    "implementation_status": "complete",
++    "test_status": "passing",
++    "assigned_to": "generator",
++    "mode": "rigorous",
++    "last_modified": "2026-07-17T09:19:00Z"
++  },
++  {
++    "id": "task_026",
++    "description": "vibe pat [repo] PAT rotation subcommand + launch-time 401 stored-token reprompt (fail-open probe, -K - stdin auth header, VIBE_PAT_CHECK=0 opt-out)",
++    "implementation_status": "complete",
++    "test_status": "passing",
++    "assigned_to": "generator",
++    "mode": "rigorous",
++    "last_modified": "2026-07-21T15:54:05Z"
++  },
++  {
++    "id": "task_027",
++    "description": "detect_github_repo dotted-repo-name fix (dots in repo segment, shell .git strip, slug validation) + brain2 meta/vibe-operation.md auto-refreshed vibe --help managed block + vibe-cli.md claude-md fragment",
++    "implementation_status": "complete",
++    "test_status": "passing",
++    "assigned_to": "generator",
++    "mode": "rigorous",
++    "last_modified": "2026-07-22T01:24:51Z"
++  },
++  {
++    "id": "task_028",
++    "description": "CLAUDE.md fragment merges (learnings trilogy; memory+history; content-guard trim) + single --fable-subagents definition in vs.md with vss/vsss pointers; >=1,900 words off every session's context",
++    "implementation_status": "complete",
++    "test_status": "passing",
++    "assigned_to": "generator",
++    "mode": "rigorous",
++    "last_modified": "2026-09-02T17:55:00Z"
++  },
++  {
++    "id": "task_029",
++    "description": "fromto format: minimal fromClaude template as vsss.md default, /brain2/meta/fromto-format.md verbatim override, exit-append mandates deleted, one exit line",
++    "implementation_status": "complete",
++    "test_status": "pending",
++    "assigned_to": "generator",
++    "mode": "rigorous",
++    "last_modified": "2026-09-02T18:59:36Z"
++  }
++]
+diff --git a/.vss/sessions/2026-09-02T16-04-16Z.md b/.vss/sessions/2026-09-02T16-04-16Z.md
+index fe942df..a6d655c 100644
+--- a/.vss/sessions/2026-09-02T16-04-16Z.md
++++ b/.vss/sessions/2026-09-02T16-04-16Z.md
+@@ -19,3 +19,11 @@ Work the vibe roadmap at /brain2/andeye/vibe-roadmap-2026-09.md, Tier 1, in this
+ 
+ **Plan**: Opus planner chose `/vs --gen opus` (rigorous: word counts, sentinels, installer sandbox, suite exit codes are all mechanical). Spec Critic: revise (10 concerns: AC6 would have written into the live ~/.claude without CLAUDE_CONFIG_DIR; one sentinel case-mismatch; marker form; baseline sha; per-file floors; untouched-fragment byte-identity) → pass at iteration 2, two MINOR tweaks applied. Spec approved acts-as-user. Model plan: Spec Critic sonnet; Generator opus (ceiling Fable, pre-authorised, not started); Tester haiku. Baseline c68707d.
+ **Finding (chair, mid-cycle)**: the live `~/.claude/CLAUDE.md` was rewritten at 16:18:37Z during a suite run — old fragment set plus `shared-repos.md` and minus `brain2.md`, i.e. a test's gate overrides reached the REAL managed block. Root cause: `smoke-test.py::_isolate_extras_env` sandboxes HOME but not `CLAUDE_CONFIG_DIR`, and the installer's `DEST_ROOT` prefers `CLAUDE_CONFIG_DIR`, which is set ambiently in-container. Exactly the hazard the Spec Critic flagged for AC6. Out of task_028's scope lock; fix as a chair follow-up commit after the cycle (set CLAUDE_CONFIG_DIR in `_isolate_extras_env`), then re-run the installer to restore the live block.
++**Files touched**: devcontainer/claude-md/{learnings,auto-memory-scope,content-guard}.md (3 deleted: learn-hook, feedback-auto-promote, conversation-history), devcontainer/commands/{vs,vss,vsss}.md, smoke-test.py (+test_task028_fragment_merges_and_fable_grant, 289 checks; constants repointed; one pre-existing test rewritten), CLAUDE.md, CHANGELOG.md, TODO.md, .vibe-content-allow (+2 entries for the reflowed noreply/placeholder lines), .vs/{spec,progress,tasks}.
++**Commit**: a53ddc1 — /vs cycle 1: pass — task_028 fragment merges + single Fable-grant definition (preceded by c68707d archiving task_027).
++**Outcome**: success — fragments 8,060 → 6,149 words (≈2.6k tokens/session), vs+vss+vsss 13,062 → 12,696; suite green, code-check clean; chair rule inventory: nothing lost.
++**Notes**: Generator (opus) ~110 min, used a backgrounded poll loop despite the foreground rule (harmless here; the new rule is in the skills it edited). Content guard WARN on the fragment's own noreply/placeholder lines → allowlisted. Optimiser: verdict 1, refined args target item (2) and add the duplicate exit-append mandate in § Reporting back at exit to the deletion list.
++
++## Iter 2 — task_029: fromto format (minimal fromClaude template, brain2 override, exit-append rules deleted)
++
++**Plan**: optimiser verdict 1 → planner chose `/vs` rigorous, Generator sonnet (ceiling opus), Tester haiku. Spec Critic: revise (AC5 wrongly demanded `read-only` — brain2 is write-files-only; AC6 string-absence alone was paraphrase-evadable) → structural guards added → pass at iteration 2. Baseline 73172fb (task_028 archived). Chair follow-up in flight alongside: `_isolate_extras_env` pins CLAUDE_CONFIG_DIR; task_028's frozen-baseline gates (scope lock vs c68707d, byte-identity vs c68707d) dropped from the permanent suite — the allowlist commit had already tripped the scope lock. Note: pre-existing `test_task028_ac*` functions (firewall retries) collide by name with this run's task_028 id; cosmetic, left as is.
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 7d3eeed..d873b0d 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -6,6 +6,10 @@ Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion
+ 
+ ## 2026-09-02
+ 
++- [x] **task_029: fromto format — minimal fromClaude template as the vsss.md default, `/brain2/meta/fromto-format.md` verbatim override, exit-append mandates deleted** — `/vsss` § fromto channels told Claude to write ONLY live questions to fromClaude (§ Question format: "questions and blocking asks only — no progress notes, no FYIs"), then § At exit and the closing paragraph of § Reporting back at exit mandated appending the FULL exit report to the same file — a standing contradiction that produced recurring "Session report" sections in fromClaude and forced Martin to re-explain the format to every model (`/brain2/andeye/Money&I-Q&A-archive.md` "Session reports moved out of fromClaude, 2026-08-21"). New `### fromto format` subsection (between § The three files and § Question format) defines the minimal default template once, states the rules (one ordered list and nothing else, action points only, contiguous from 1, no session report, information appears only where it answers a question the user asked), and replaces both exit-append mandates with exactly one appended line (`Session log: <path> — <N> commits, <pushed|not pushed>.`); the terminal report to the user in § Reporting back at exit is untouched. `/brain2/meta/fromto-format.md` written with the same default (`state: authored`, `authorised:` empty) so Martin can edit the format for every project by editing one note; `/vsss` reads it at session start and treats its body as a verbatim override. vsss.md net growth held to 2 words (4955 → 4957) against the 73172fb baseline to keep task_028's pinned `vs+vss+vsss <= 12700` total-word gate green (12698). Shipped via `/vs` task_029.
++
++- [x] **smoke-test.py: installer sandbox pins `CLAUDE_CONFIG_DIR`; task_028's frozen-baseline gates dropped from the permanent suite** — `_isolate_extras_env` redirected HOME but not `CLAUDE_CONFIG_DIR`, and the installer's `DEST_ROOT` prefers the latter (set ambiently in every vibe container), so any test running `install-claude-extras.sh` without its own sandbox rewrote the LIVE `~/.claude/CLAUDE.md` managed block with fixture gates (observed mid-session 2026-09-02: shared-repos fragment injected, brain2 fragment dropped). Now pinned to the scratch HOME unless the caller sandboxes it; verified by mtime that a full suite run leaves the live file untouched. Also removed two cycle-time assertions the task_028 Tester had left in the permanent suite — a scope lock diffing the whole tree against the fixed sha c68707d, and byte-identity of ten fragments against that sha — both of which fail on the first unrelated commit (the allowlist commit tripped the scope lock immediately); the deleted-filename checks stay. Follow-up 2c6fb1a: task_027's AC4 idempotence check compared two managed-block writes byte-for-byte although the block carries a seconds-resolution `Generated by vibe … at` line, so it flaked whenever the runs straddled a second (seen under a 6-minute suite run); that one line is now normalised before comparing.
++
+ - [x] **task_028: CLAUDE.md fragment merges + a single Fable-grant definition** — every session's `~/.claude/CLAUDE.md` managed block injects all `devcontainer/claude-md/*.md` fragments, and three groups restated one subsystem several times. Merged `learn-hook.md` + `feedback-auto-promote.md` into `learnings.md` (one file covering the library, the `guard-fs.sh` write-confirm hook trust model, and cross-repo auto-promotion); merged `conversation-history.md` into `auto-memory-scope.md` (per-project memory scope plus the JSONL transcript-search recipes); rewrote `content-guard.md` as a ~500-word operating summary that delegates rationale to `README.md`'s `### Content guard` section while keeping every rule and knob (both tiers, commit-identity, `VIBE_CONTENT_GUARD=off`/`VIBE_ALLOW_COMMIT=1`, `--no-verify`, `.vibe-content-guard-off`, `.vibe-content-allow`, `path-warn:` glob semantics with BLOCK-always-fires, the built-in trailer allowlist, `vibe audit --history/--staged`). Fragments 8,060 → 6,149 words (≈2.5k tokens off every session), 16 files → 13, no behavioural rule dropped. Separately, the `--fable-subagents` grant is now defined ONCE, in `vs.md` § Model economy (`### Fable grant`): permits but never forces, never Fable for mechanical roles or scoped small generations, ladder may take the rung without a fresh ask, `--fable-gen` forces a start, and the `vibe --fable` launcher flag stays distinct. `vss.md` and `vsss.md` carry pointers (`/vs § Model economy`) instead of restatements; vsss keeps its auto-resume persistence clause. vs+vss+vsss 13,062 → 12,696 words. `smoke-test.py` constants and the three affected tests repointed at the merged fragments, and `test_fable_subagents_flag_docs` rewritten to pin the single definition plus the pointer discipline. Shipped via `/vs` task_028.
+ 
+ - [x] **Redundancy prune (SAFE tier)** — from a read-only audit of the repo at 5125e3c (no dead shell functions: all 137 launcher functions have call sites; findings were docs/tests/config): stale `Aqueum/vibe` URLs in the launcher header (printed by every `vibe --help`) and the installer recovery hint (missed by the 2026-07-08 transfer sweep); `.gitignore` entry for a `site-recovered/` dir that never existed; two tombstone smoke tests (`test_c_copy_md_is_absent` asserting a 2026-04-23 deletion, `test_vibe_final_line_no_exec` which CHANGELOG records as passing trivially on baseline) and their `COPY_MD_OLD` constant; `CLAUDE.md` extras list drifted (named 2 of 5 agents, omitted `/budget` and `/repo`) and MANUAL-TESTS Test 24's expected list likewise; a doubled horizontal rule. The audit's LIKELY tier (delete `web/vibe-andeye.md`; remove the lapsed Fable free-window branch `fable_billing_phase`; drop the `--auto-resume` historical asides in vsss.md; the RETIRED_COMMANDS volume shim) and the context-weight merges (CLAUDE.md fragments ≈2.9k tokens/session; the thrice-stated `--fable-subagents` grant) are Martin-gated and recorded in the roadmap.
+diff --git a/TODO.md b/TODO.md
+index 14455e4..0090ae1 100644
+--- a/TODO.md
++++ b/TODO.md
+@@ -64,6 +64,8 @@ Two vibe-wide behaviour changes shipped and took effect on this rebuild — surf
+ 
+ ## Open
+ 
++- [ ] **task_029: fromto format** (/vsss 2026-09-02 iter 2) — minimal fromClaude template as the vsss.md default, `/brain2/meta/fromto-format.md` verbatim override, both exit-append mandates deleted, one exit line. Spec: `.vs/spec.md`.
++
+ 
+ - [x] **smoke-test: isolate HOME/GIT_CONFIG_GLOBAL in every INSTALL_EXTRAS invocation** SHIPPED 2026-08-30 (see CHANGELOG) — (2026-08-30, security-review finding on the ssh-marker pass) — 30+ pre-existing tests run the real installer with the inherited HOME, so each smoke run leaves the machine's global `core.hooksPath` pointing at a deleted TemporaryDirectory — git then silently runs NO hooks (content-guard scanners included) until the next container start re-runs the installer. The new `_ssh_marker_result` helper does it right (`HOME`+`GIT_CONFIG_GLOBAL` into the fixture tree, `VIBE_AUTO_GITIGNORE=0`); sweep the same three env lines across the other call sites (grep `bash", str(INSTALL_EXTRAS)`), ideally via one shared env-builder helper.
+ 
+diff --git a/devcontainer/commands/vsss.md b/devcontainer/commands/vsss.md
+index 4c5a591..29832da 100644
+--- a/devcontainer/commands/vsss.md
++++ b/devcontainer/commands/vsss.md
+@@ -168,6 +168,32 @@ session start while active, print one terminal line: questions land in
+ `<fromClaude path>`, answers go in `<from-User path>`. The files cross-link
+ with `[[wikilinks]]` so the user can hop between them in Obsidian.
+ 
++### fromto format
++
++fromClaude template.
++
++```
++---
++state: authored
++author: Claude (<harness>, <repo>)
++created: <ISO date>
++cssclasses: [trust-authored]
++---
++Reply in [[<project>-from<User>]]. History: [[<project>-Q&A-archive]].
++
++1. <action point: a question to answer, or a test to run> (T<n>)
++```
++
++Rules: one ordered list and nothing else: action points only, contiguous
++from 1, no session report (§ Question format). Information appears only
++where it answers a question the user asked.
++
++Exit appends exactly one line: Session log:
++`.vss/sessions/<start-ISO>.md` — <N> commits, <pushed|not pushed>.
++
++When present, `/brain2/meta/fromto-format.md` overrides this default
++verbatim — write-files-only, never `git` against it.
++
+ ### Question format (fromClaude)
+ 
+ One single ordered list, numbered contiguously `1..N`, containing ONLY live
+@@ -234,14 +260,6 @@ later iteration boundary. If every remaining area is blocked on unanswered
+ questions, that is exit-condition territory (no-op iterations) — the exit
+ report then says exactly which numbered questions unblock which work.
+ 
+-### At exit
+-
+-Append the exit report (same content as § Reporting back at exit) to
+-fromClaude below the live list, including every still-live question number and
+-what each unblocks — so the user reads the outcome and their remaining asks in
+-Obsidian without touching the TTY. Credential boundary reminder: brain2 is
+-write-files-only from a container — never `git` against it.
+-
+ ### After each /vss completes
+ 
+ Dispatch `Agent(subagent_type: "general-purpose", model: "opus")` as **optimiser**:
+@@ -324,10 +342,6 @@ When the loop ends (any reason), report to the user:
+ 
+ Lead with `---` before the report block.
+ 
+-If fromto channels are active (§ fromto channels), also append this report to
+-the fromClaude file below the live question list, listing every still-live
+-question number and what each unblocks.
+-
+ ---
+ 
+ Read `$ARGUMENTS` below. Run iter 1 of the loop.
+diff --git a/smoke-test.py b/smoke-test.py
+index 6c77ea8..51b5c01 100755
+--- a/smoke-test.py
++++ b/smoke-test.py
+@@ -86,6 +86,14 @@ def _isolate_extras_env(env: dict) -> dict:
+     env = dict(env)
+     if env.get("HOME") == os.environ.get("HOME"):
+         env["HOME"] = _EXTRAS_SCRATCH_HOME
++    # The installer's DEST_ROOT prefers CLAUDE_CONFIG_DIR over $HOME/.claude,
++    # and vibe sets CLAUDE_CONFIG_DIR ambiently in-container — so a sandboxed
++    # HOME alone still let installer runs rewrite the LIVE ~/.claude/CLAUDE.md
++    # managed block with test-fixture gates (observed 2026-09-02: shared-repos
++    # fragment injected, brain2 fragment dropped, mid-session). Pin it to the
++    # scratch HOME unless the caller chose its own sandbox.
++    if env.get("CLAUDE_CONFIG_DIR") == os.environ.get("CLAUDE_CONFIG_DIR"):
++        env["CLAUDE_CONFIG_DIR"] = str(Path(_EXTRAS_SCRATCH_HOME) / ".claude")
+     env.setdefault("GIT_CONFIG_GLOBAL",
+                    str(Path(_EXTRAS_SCRATCH_HOME) / "gitconfig"))
+     env.setdefault("VIBE_AUTO_GITIGNORE", "0")
+@@ -10119,37 +10127,18 @@ def test_task028_fragment_merges_and_fable_grant() -> None:
+     # For smoke-test.py, deleted names are allowed in test function context
+     # (AC9 permits mentions in test functions and check labels)
+     
+-    # AC10: Scope lock - git diff from baseline
+-    baseline_commit = "c68707d"
+-    r_diff = run(["git", "diff", "--name-only", baseline_commit], cwd=REPO)
+-    diff_files = set(r_diff.stdout.strip().split('\n')) if r_diff.stdout.strip() else set()
+-    
+-    # Also check untracked files
+-    r_untracked = run(["git", "ls-files", "--others", "--exclude-standard"], cwd=REPO)
+-    untracked_files = set(r_untracked.stdout.strip().split('\n')) if r_untracked.stdout.strip() else set()
+-    
+-    all_changed = diff_files | untracked_files
+-    all_changed.discard('')  # Remove empty strings
+-    
+-    allowed_paths = {
+-        "devcontainer/claude-md/", "devcontainer/commands/vs.md", 
+-        "devcontainer/commands/vss.md", "devcontainer/commands/vsss.md",
+-        "smoke-test.py", "CLAUDE.md", "README.md", "ONBOARDING.md",
+-        "MANUAL-TESTS.md", "TODO.md", "CHANGELOG.md", ".vs/", ".vss/"
+-    }
+-    
+-    for changed_file in all_changed:
+-        allowed = any(changed_file.startswith(p) for p in allowed_paths)
+-        check(f"[ac10] {changed_file} is within allowed scope",
+-              allowed, f"changed file outside scope: {changed_file}")
+-    
++    # AC10 (scope lock against the c68707d baseline) was a cycle-time gate,
++    # not a regression pin: diffing the whole tree against a fixed historical
++    # sha fails on the first unrelated commit. Verified at cycle 1; removed
++    # from the permanent suite by the chair (2026-09-02).
++
+     # AC12: Word count floors
+     learnings_words = len(learnings_text.split())
+     auto_memory_words = len(auto_memory_text.split())
+     check("[ac12] learnings.md >= 650 words", learnings_words >= 650, f"found {learnings_words}")
+     check("[ac12] auto-memory-scope.md >= 450 words", auto_memory_words >= 450, f"found {auto_memory_words}")
+     
+-    # AC13: Ten untouched fragments byte-identical to baseline
++    # AC13: the ten untouched fragments carry no reference to the deleted files
+     untouched_fragments = [
+         "web-research.md", "ssh-discipline.md", "brain2.md", "shared-repos.md",
+         "harness-routing.md", "output-consolidation.md", "project-hygiene.md",
+@@ -10160,13 +10149,9 @@ def test_task028_fragment_merges_and_fable_grant() -> None:
+         frag_path = claude_md_dir / frag_name
+         current_content = frag_path.read_text()
+         
+-        # Get content from baseline commit
+-        r_show = run(["git", "show", f"{baseline_commit}:devcontainer/claude-md/{frag_name}"], cwd=REPO)
+-        if r_show.returncode == 0:
+-            baseline_content = r_show.stdout
+-            check(f"[ac13] {frag_name} is byte-identical to baseline",
+-                  current_content == baseline_content, "")
+-        
++        # Byte-identity against the c68707d baseline was likewise a
++        # cycle-time gate (it would freeze these ten fragments forever);
++        # verified at cycle 1, dropped from the permanent suite by the chair.
+         # Check no deleted filenames appear
+         for deleted in deleted_filenames:
+             check(f"[ac13] {frag_name} does not contain '{deleted}'",
+@@ -12982,7 +12967,15 @@ echo "RC=$?"
+         check("second run exit 0", "RC=0" in r2.stdout, r2.stdout)
+ 
+         content_after_second = note_file.read_text()
+-        check("idempotent output", content_after_first == content_after_second, "content differs between runs")
++        # The managed block carries a seconds-resolution "Generated by vibe
++        # <version> at <ISO>" line, so two runs straddling a second boundary
++        # differ by design (flaky under load, seen 2026-09-02). Compare with
++        # that one line normalised; everything else must be byte-identical.
++        _gen = re.compile(r"^Generated by vibe .* at \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$", re.M)
++        check("idempotent output",
++              _gen.sub("Generated by vibe <v> at <t>", content_after_first)
++              == _gen.sub("Generated by vibe <v> at <t>", content_after_second),
++              "content differs between runs beyond the Generated-at timestamp")
+         check("user content still preserved", "My operational notes" in content_after_second, content_after_second[:300])
+ 
+ 
