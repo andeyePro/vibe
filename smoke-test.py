@@ -59,6 +59,7 @@ CREDENTIAL_HELPER = REPO / "devcontainer" / "credential-helper.sh"
 SETUP_GIT_SH = REPO / "devcontainer" / "setup-git.sh"
 VIBE_CONTENT_SCANNER = REPO / "devcontainer" / "git-hooks" / "vibe-content-scan.sh"
 CONTENT_GUARD_MD = REPO / "devcontainer" / "claude-md" / "content-guard.md"
+WORKSPACE_IS_THE_REPO_MD = REPO / "devcontainer" / "claude-md" / "workspace-is-the-repo.md"
 INIT_FIREWALL = REPO / "devcontainer" / "init-firewall.sh"
 
 FAILURES: list[tuple[str, str]] = []
@@ -9874,6 +9875,24 @@ def test_task019_ac15_content_guard_md_exists() -> None:
         check("[task_019 AC15] mentions vibe audit", "vibe audit" in content, "")
 
 
+def test_workspace_is_the_repo_fragment() -> None:
+    """workspace-is-the-repo.md ships and teaches the bind-mount fact + the no-pull rule."""
+    print("\n[workspace-is-the-repo.md: /workspace is a bind mount of the launch folder — no git pull for in-container work]")
+    check("[ws-repo] fragment exists", WORKSPACE_IS_THE_REPO_MD.is_file(), str(WORKSPACE_IS_THE_REPO_MD))
+    if WORKSPACE_IS_THE_REPO_MD.is_file():
+        content = WORKSPACE_IS_THE_REPO_MD.read_text()
+        check("[ws-repo] names the bind mount", "bind mount" in content, "")
+        check("[ws-repo] cites the devcontainer.json workspaceMount source", "localWorkspaceFolder" in content, "")
+        check("[ws-repo] states the no-pull rule", "git pull" in content and "Already up to date" in content, "")
+        check("[ws-repo] distinguishes relaunch/rebuild from pull", "vibe --rebuild" in content, "")
+        check("[ws-repo] covers the vibe-on-vibe symlink case", "readlink ~/bin/vibe" in content, "")
+        check("[ws-repo] covers Mac test bridges", "bridge" in content, "")
+    # The claim must stay true: devcontainer.json binds the launch folder to /workspace.
+    dc = (REPO / "devcontainer" / "devcontainer.json").read_text()
+    check("[ws-repo] devcontainer.json still binds ${localWorkspaceFolder} to /workspace",
+          "source=${localWorkspaceFolder},target=/workspace,type=bind" in dc, "")
+
+
 def test_task019_ac16_audit_history_reports_warn_pii() -> None:
     """AC16: vibe audit --history reports WARN PII findings (exit 0)."""
     print("\n[task_019 AC16: audit reports WARN findings]")
@@ -13789,6 +13808,7 @@ def main() -> int:
     test_task019_ac11_coauthored_by_trailer_clean()
     test_task019_ac13_shellcheck_passes()
     test_task019_ac15_content_guard_md_exists()
+    test_workspace_is_the_repo_fragment()
     test_task019_ac16_audit_history_reports_warn_pii()
     test_task019_ac17_new_branch_push_blocks_only_block_tier()
     test_prepush_no_walk_ignores_already_pushed_history()
