@@ -1,0 +1,65 @@
+
+> vibe-andeye-com@0.1.0 check
+> astro build && node site-check.mjs
+
+20:35:37 [WARN] [content] home.md must live in a content/... collection subdirectory.
+20:35:38 [types] Generated 3.89s
+20:35:38 [build] output: "static"
+20:35:38 [build] directory: /workspace/site/dist/
+20:35:38 [build] Collecting build info...
+20:35:38 [build] ✓ Completed in 4.68s.
+20:35:39 [build] Building static entrypoints...
+20:36:24 [vite] ✓ built in 41.99s
+20:36:24 [build] ✓ Completed in 45.17s.
+
+ generating static routes 
+20:36:24 ▶ src/pages/index.astro
+20:36:24   └─ /index.html (+330ms)
+20:36:25 ✓ Completed in 773ms.
+
+20:36:26 [build] 1 page(s) built in 52.28s
+20:36:26 [build] Complete!
+ok   install CTA links the README install section
+ok   register CTA uses the contact.andeye.com prefill convention
+ok   no "one-click install" promise anywhere
+ok   command deck has exactly 13 chips (found 13)
+ok   every chip carries a checklist (found 13)
+ok   no server-rendered locked state on any chip
+ok   launch chip present
+ok   journey.locked_note copy is unchanged ("run Launch first" still renders)
+ok   red-team chips present (firewall + content guard)
+ok   firewall copy names the extras rather than claiming a closed trio
+ok   content-guard copy says WARN also stops the commit
+ok   terminal height is viewport-bounded, not a bare fixed px
+ok   hero links to #demo
+ok   legacy #how / #sandbox anchors preserved
+ok   everyday-launch banner quotes the launcher, in its own field order (project/path/github/hooks/extras)
+ok   everyday-launch chip keeps the firewall verification pin, verbatim from init-firewall.sh
+ok   everyday-launch chip shows Claude sign-in already valid, not a prompt
+ok   everyday-launch checklist keeps the short-allowlist line
+ok   everyday-launch chip carries no first-launch-only content (PAT prompt / image build / token-saved)
+ok   first-launch chip present
+ok   first-launch chip carries the PAT-prompt / image-build lines verbatim from the launcher
+ok   first-launch checklist mentions the fine-grained PAT and the sandboxed container
+ok   pat chip present with cmd `vibe pat`
+ok   pat chip quotes the launcher's expiry / no-rebuild wording
+ok   every chip's line "step" values are contiguous 1..checklist length (13 chips checked)
+ok   launch banner fields are the launcher's own (project/github/hooks/extras)
+ok   PAT wording quotes the launcher (Token saved / not asked again)
+ok   container build line quotes the launcher
+ok   firewall verification line is verbatim from init-firewall.sh
+ok   firewall allowlist domains the demo names exist in init-firewall.sh
+ok   fail-closed claim is real (init-firewall.sh fails CLOSED)
+ok   Radicle claim pinned to the allowlist (seed.radicle.garden)
+ok   content-guard rule id in the demo is a real BLOCK rule
+ok   no invented content-guard rule ids
+ok   /vss redirect window matches the spec (270s + auto-proceed)
+ok   /vss audit-trail path matches the spec (.vss/sessions/)
+ok   /vsss relaunch string matches the launcher (claude --continue)
+ok   no-autonomous-push claim matches the /vsss exit report
+ok   /budget honesty line quotes budget.md (estimates, not invoices)
+ok   /c scratch path matches c.md (copy-latest.txt)
+ok   no mailto: and no raw email addresses
+
+all site checks passed
+EXIT:0

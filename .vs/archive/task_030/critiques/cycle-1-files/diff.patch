@@ -1,0 +1,145 @@
+diff --git a/.vs/tasks.json b/.vs/tasks.json
+index e48c31e..888b89e 100644
+--- a/.vs/tasks.json
++++ b/.vs/tasks.json
+@@ -10,7 +10,7 @@
+   },
+   {
+     "id": "task_003",
+-    "description": "Prize-worthy haiku about vibe → HAIKU.md (fuzzy mode)",
++    "description": "Prize-worthy haiku about vibe \u2192 HAIKU.md (fuzzy mode)",
+     "implementation_status": "complete",
+     "test_status": "passing",
+     "assigned_to": "evaluator",
+@@ -127,7 +127,7 @@
+     "last_modified": "2026-07-11T05:19:20Z",
+     "cycle_1_note": "Generator (sonnet) delivered AC1-AC7: registry/declaration helpers, vibe repos add|remove|list, shared_repos_scan single-classification-pass mount assembly (2 binds/repo, ro hard-pinned), runtime manifest + install-claude-extras.sh safe.directory wiring, gitignore ownership, README+CHANGELOG. code-check clean, smoke 1080/1080 (no Tester checks yet - append-only per /vs convention, lands next). implementation_status stays in_progress (C1 of 4); C2 (rw lock) not started.",
+     "cycle_2_note": "Tester (haiku) added 18 append-only smoke-test.py functions covering AC8 (rw-intent resolution: free-lock grant, live-holder contention fallback + named warning, ro-declared repos never touch the lock, shared_repo_declaration_set_mode at the helper level, PLUS CLI-level vibe repos add --rw: fresh-add-rw, upgrade-in-place, no-silent-downgrade on plain re-add, --rw position-agnostic - the flag wiring landed as an integrator edit mid-cycle after the Tester flagged it missing), AC9 (lock acquire/contend/stale-reclaim/release/torn-meta, all against real backgrounded processes), AC10 (exit dispatcher survives a refusing first hook via evidence files, single trap -p EXIT installer, no raw trap EXIT elsewhere, clipboard-flush + /learn tempfile cleanup both confirmed migrated into vibe_exit_hook_add), and one mode-coherence fixture tying manifest/override-JSON agreement together. Full suite: smoke-test.py 1273/1273 checks passing, 0 regressions in the frozen C1 suite; code-check.py shellcheck clean. Artifacts: .vs/cycle-2/test-output.log, .vs/cycle-2/summary.md.",
+-    "cycle_3_note": "Tester (haiku) added 10 append-only smoke-test.py functions (61 checks) covering AC12 (/repo command file shape incl. host/container ~/.vibe boundary + negation-window regression guard, claim path/KEY=VALUE content shape, and a substituted-placeholder run of the documented mkdir+write proving syntactic validity + last-claim-wins overwrite since the claim flow has no sourced vibe helper - pure documentation), AC13 (statusLine ⚠ rw:<requester> segment: structural regression guard on forceLoginMethod/defaultMode/guard-bash.sh/guard-fs.sh entries, byte-identical spot-check of two frozen fixtures with VIBE_REPOS_DIR pointed at an empty temp dir, and three functional fixtures - holder+request present, request present but not-us-the-holder, holder-but-no-request - all via VIBE_REPOS_DIR/VIBE_PROJECT_NAME env overrides), AC14 (shared-repos.md fragment shape + install-claude-extras.sh gating on VIBE_SHARED_REPOS_MANIFEST across missing/empty/non-empty), and VIBE_PROJECT_NAME plumbing (top-level export site before the _build_override_config command-substitution subshell, remoteEnv-only carriage in devcontainer.json, absent from containerEnv). Full suite: smoke-test.py 1334/1334 checks passing, 0 regressions in the frozen C1/C2 suite; code-check.py shellcheck clean. AC13(c)'s discriminating power verified by hand-running a deliberately broken statusLine variant (holder-equality check removed) and confirming the assertion fails against it. No AC12-AC15 mechanism found unimplemented. Artifacts: .vs/cycle-3/test-output.log, .vs/cycle-3/summary.md.",
++    "cycle_3_note": "Tester (haiku) added 10 append-only smoke-test.py functions (61 checks) covering AC12 (/repo command file shape incl. host/container ~/.vibe boundary + negation-window regression guard, claim path/KEY=VALUE content shape, and a substituted-placeholder run of the documented mkdir+write proving syntactic validity + last-claim-wins overwrite since the claim flow has no sourced vibe helper - pure documentation), AC13 (statusLine \u26a0 rw:<requester> segment: structural regression guard on forceLoginMethod/defaultMode/guard-bash.sh/guard-fs.sh entries, byte-identical spot-check of two frozen fixtures with VIBE_REPOS_DIR pointed at an empty temp dir, and three functional fixtures - holder+request present, request present but not-us-the-holder, holder-but-no-request - all via VIBE_REPOS_DIR/VIBE_PROJECT_NAME env overrides), AC14 (shared-repos.md fragment shape + install-claude-extras.sh gating on VIBE_SHARED_REPOS_MANIFEST across missing/empty/non-empty), and VIBE_PROJECT_NAME plumbing (top-level export site before the _build_override_config command-substitution subshell, remoteEnv-only carriage in devcontainer.json, absent from containerEnv). Full suite: smoke-test.py 1334/1334 checks passing, 0 regressions in the frozen C1/C2 suite; code-check.py shellcheck clean. AC13(c)'s discriminating power verified by hand-running a deliberately broken statusLine variant (holder-equality check removed) and confirming the assertion fails against it. No AC12-AC15 mechanism found unimplemented. Artifacts: .vs/cycle-3/test-output.log, .vs/cycle-3/summary.md.",
+     "cycle_4_note": "Tester (haiku) added 28 append-only smoke-test.py functions (92 checks) covering AC16 (credential-helper.sh driven directly as a stdin->stdout filter: project-slug exact match, shared-slug match gated by the launcher-exported VIBE_SHARED_SLUG_* twin, unknown-repo silence, .git suffix, subdir suffix, trailing-slash-only (both unmatched and on the project's own slug), case-sensitivity, '..' traversal, embedded control byte, shell-metacharacter injection with a no-execution sentinel check, the post-security-review sanitisation-collision hardening (twin-mismatch silence is the gate-discriminating fixture; twin-match still serves correctly; twin-entirely-unset also silences), non-get ops, non-github host, lookalike subdomain host, http-not-https, empty-token-never-served, and a consolidated never-widen attack battery asserting $GITHUB_TOKEN never appears on stdout across 8 simultaneous non-project attempts), AC17 (useHttpPath registered at the same --global scope as credential.helper in setup-git.sh, plus a functional run of setup-git.sh against a fresh sandbox HOME confirming both settings land), AC18 (structural: GITHUB_REPO_SLUG / shared-token / shared-slug-twin exports all sit at column-0 top-level scope strictly outside and before the _build_override_config command-substitution call; functional: render_devcontainer_with_mounts injects matching VIBE_SHARED_TOKEN_*/VIBE_SHARED_SLUG_* remoteEnv passthroughs, remoteEnv-only never containerEnv), AC19 (CLAUDE.md + README text checks for the amended single-repo-PAT/launch-header-blast-radius/never-multi-repo-token wording). Full suite: smoke-test.py 1426/1426 checks passing, 0 regressions in the frozen C1-C3 suite; code-check.py shellcheck clean across 15 files. GAP FOUND: AC18's sanctioned C4 relaxation (missing token for an acked+registered ro repo should WARN and still MOUNT ro) is NOT implemented - shared_repos_scan still hard-blocks with 'B ... no token configured', so the C1 frozen test test_task017_delta_scan_b_token_absent is unchanged and still passes; no frozen-test amendment needed yet, this is UNIMPLEMENTED plumbing for the chair to pick up, not a Tester-side fix. AC20 (security-review) ran mid-cycle with a CLEAR verdict, closing one LOW (the sanitisation-collision twin-check) which this cycle's tests now cover as the gate-discriminating fixture. AC21's MANUAL-TESTS.md end-to-end push section (shared repo / project repo / undeclared repo) has not been authored yet - Generator/chair responsibility per spec, not Tester's. Artifacts: .vs/cycle-4/test-output.log, .vs/cycle-4/summary.md."
+   },
+   {
+@@ -211,5 +211,14 @@
+     "assigned_to": "generator",
+     "mode": "rigorous",
+     "last_modified": "2026-09-02T18:59:36Z"
++  },
++  {
++    "id": "task_030",
++    "description": "site deck: everyday-launch hero chip (banner/firewall/sign-in/ready), First time group with the PAT+build lines, Once a quarter `vibe pat` chip; site-check guards rewritten",
++    "implementation_status": "complete",
++    "test_status": "pending",
++    "assigned_to": "generator",
++    "mode": "rigorous",
++    "last_modified": "2026-09-02T20:05:10Z"
+   }
+ ]
+diff --git a/.vss/sessions/2026-09-02T16-04-16Z.md b/.vss/sessions/2026-09-02T16-04-16Z.md
+index c6fbeda..1633438 100644
+--- a/.vss/sessions/2026-09-02T16-04-16Z.md
++++ b/.vss/sessions/2026-09-02T16-04-16Z.md
+@@ -30,3 +30,8 @@ Work the vibe roadmap at /brain2/andeye/vibe-roadmap-2026-09.md, Tier 1, in this
+ **Files touched**: devcontainer/commands/vsss.md (+§ fromto format; −§ At exit; −Reporting-back closing paragraph), /brain2/meta/fromto-format.md (new, authored), smoke-test.py (+test_vsss_fromto_format, 53 checks), CHANGELOG.md, TODO.md, .vs/{spec,progress,tasks}.
+ **Commit**: fa6aa94 — /vs cycle 1: pass — task_029 fromto format.
+ **Outcome**: success — chair suite run green (3m56s, exit 0); Tester 53/53 inside 2,490 green checks.
++**Notes**: Spec Critic caught a factual regression in my own spec (`read-only` vs write-files-only brain2 boundary). Follow-ups aab3b73 (ceilings → budgets with headroom, purpose line) and 2c6fb1a/7b633dd (de-flaked task_027 AC4 idempotence). Optimiser: verdict 1 — split item (3) into 3a (deck/scenario) and 3b (asciinema pipeline); iter 3 = 3a.
++
++## Iter 3 — item 3a: everyday-launch hero deck (site content + site-check guards)
++**Plan**: planner chose `/vs` rigorous — Test location `site/site-check.mjs` (Tester-owned, sonnet: rewrites the launch guards, adds chipBlock scoping + contiguous-step check), Generator sonnet edits `site/src/content/home.md` only, index.astro untouched (lock gate keys on `step-launch`, kept). Spec task_030 written; Spec Critic running. Baseline 8305ab3.
++**Parallelism (user ask 2026-09-02, mid-iter 3)**: Martin asked whether the loop is using as many agents as quality allows — it was not (strictly serial). From here: item 4 (smoke-test.py split) runs concurrently in the worktree `.claude/worktrees/task031` (branch `vsss/task031-smoke-split`) since it touches no site file; item 3b's planner runs now so its spec is ready the moment 3a lands; chair freezes its own edits to smoke-test.py until item 4 merges. Merge order: 3a → main, then 3b, then rebase+merge task031.
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index bb64c91..444b29e 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -6,6 +6,8 @@ Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion
+ 
+ ## 2026-09-02
+ 
++- [x] **task_030 (generator pass, cycle 1): vibe.andeye.com journey deck — hero Launch chip becomes the everyday reused-container launch; PAT-prompt/image-build lines demoted to new "First time" / "Once a quarter" groups** — the deck's `step-launch` chip previously opened with a first-launch PAT prompt and a container build, the worst possible everyday advert (a fine-grained PAT is set once per 90-day expiry, `vibe pat` rotates it in place with no rebuild, and Claude sign-in is rarely repeated). `site/src/content/home.md`'s `journey.groups`: the hero `launch` chip's banner now quotes the launcher verbatim in its own printed order (`🚀 vibe session starting` / `project : ` / a new `path    : ` line, between project and github per vibe:3691-3695 / `github  : ` / `hooks   : ` / `extras  : `), keeps the firewall pin verbatim from `init-firewall.sh`, and adds a `tone: note` sign-in line ("already signed in with your Claude subscription – nothing to re-enter") plus a stepped ready line — no PAT prompt, no build, no sign-in prompt anywhere in the chip. Its checklist bullet 1 is split (repo-discovery half stays: "reuses the PAT you set once"; the PAT-prompt half moves out) and a "ready" bullet is added; `step:` renumbered contiguously 1-4. New "First time" group (`id: first-launch`) carries the moved lines verbatim (`No GitHub token found for`, `Only select repositories`, `✓ Token saved — you won't be asked again for this repo.`, `Building vibe container image`, all pinned to `/workspace/vibe`) with a checklist mentioning `fine-grained PAT` and `sandboxed container`. New "Once a quarter" group (`id: pat`, `cmd: vibe pat`) quotes the launcher's PAT-rotation wording verbatim (`90 days is a good default`, `Takes effect on the next vibe launch (no rebuild needed)`), 3-bullet checklist. Total chips 11 → 13; every other group/chip byte-identical; `journey.locked_note` untouched. `site/site-check.mjs` is untouched (Tester-owned — its whole-page launch-checklist guard happens to still pass here since the moved strings now live elsewhere on the same page, but the guard itself needs rewriting to be chip-scoped per the task_030 spec). `npm run build` exits 0. Scratch TDD check (`.vs/cycle-1/scratch-tests/check_task_030.mjs`, red against baseline / green after the edit) covers AC1-AC8 and AC12's mechanical proxies. Generator pass of `/vs` task_030 cycle 1; Tester/Evaluator review pending.
++
+ - [x] **task_029: fromto format — minimal fromClaude template as the vsss.md default, `/brain2/meta/fromto-format.md` verbatim override, exit-append mandates deleted** — `/vsss` § fromto channels told Claude to write ONLY live questions to fromClaude (§ Question format: "questions and blocking asks only — no progress notes, no FYIs"), then § At exit and the closing paragraph of § Reporting back at exit mandated appending the FULL exit report to the same file — a standing contradiction that produced recurring "Session report" sections in fromClaude and forced Martin to re-explain the format to every model (`/brain2/andeye/Money&I-Q&A-archive.md` "Session reports moved out of fromClaude, 2026-08-21"). New `### fromto format` subsection (between § The three files and § Question format) defines the minimal default template once, states the rules (one ordered list and nothing else, action points only, contiguous from 1, no session report, information appears only where it answers a question the user asked), and replaces both exit-append mandates with exactly one appended line (`Session log: <path> — <N> commits, <pushed|not pushed>.`); the terminal report to the user in § Reporting back at exit is untouched. `/brain2/meta/fromto-format.md` written with the same default (`state: authored`, `authorised:` empty) so Martin can edit the format for every project by editing one note; `/vsss` reads it at session start and treats its body as a verbatim override. vsss.md net growth held to 2 words (4955 → 4957) against the 73172fb baseline to keep task_028's pinned `vs+vss+vsss <= 12700` total-word gate green (12698). Shipped via `/vs` task_029.
+ 
+ - [x] **smoke-test.py: installer sandbox pins `CLAUDE_CONFIG_DIR`; task_028's frozen-baseline gates dropped from the permanent suite** — `_isolate_extras_env` redirected HOME but not `CLAUDE_CONFIG_DIR`, and the installer's `DEST_ROOT` prefers the latter (set ambiently in every vibe container), so any test running `install-claude-extras.sh` without its own sandbox rewrote the LIVE `~/.claude/CLAUDE.md` managed block with fixture gates (observed mid-session 2026-09-02: shared-repos fragment injected, brain2 fragment dropped). Now pinned to the scratch HOME unless the caller sandboxes it; verified by mtime that a full suite run leaves the live file untouched. Also removed two cycle-time assertions the task_028 Tester had left in the permanent suite — a scope lock diffing the whole tree against the fixed sha c68707d, and byte-identity of ten fragments against that sha — both of which fail on the first unrelated commit (the allowlist commit tripped the scope lock immediately); the deleted-filename checks stay. Follow-up 2c6fb1a: task_027's AC4 idempotence check compared two managed-block writes byte-for-byte although the block carries a seconds-resolution `Generated by vibe … at` line, so it flaked whenever the runs straddled a second (seen under a 6-minute suite run); that one line is now normalised before comparing. Follow-up after task_029: the task_028 word ceilings (fragments ≤6,160; vs+vss+vsss ≤12,700) were 1-word-margin pins on living documents — raised to budgets with headroom (≤6,400 / ≤12,900, still far below the pre-merge 8,060 / 13,062) so the next skill edit is not a word-golf exercise; the § fromto format purpose line got a real sentence with the room.
+diff --git a/TODO.md b/TODO.md
+index f7fa6dd..960719c 100644
+--- a/TODO.md
++++ b/TODO.md
+@@ -64,6 +64,8 @@ Two vibe-wide behaviour changes shipped and took effect on this rebuild — surf
+ 
+ ## Open
+ 
++- [ ] **task_030: site everyday-launch hero deck** (/vsss 2026-09-02 iter 3) — Launch chip becomes the everyday reused-container launch; new `First time` (PAT + image build) and `Once a quarter` (`vibe pat`) chips; site-check launch guards rewritten. Spec: `.vs/spec.md`.
++
+ 
+ 
+ - [x] **smoke-test: isolate HOME/GIT_CONFIG_GLOBAL in every INSTALL_EXTRAS invocation** SHIPPED 2026-08-30 (see CHANGELOG) — (2026-08-30, security-review finding on the ssh-marker pass) — 30+ pre-existing tests run the real installer with the inherited HOME, so each smoke run leaves the machine's global `core.hooksPath` pointing at a deleted TemporaryDirectory — git then silently runs NO hooks (content-guard scanners included) until the next container start re-runs the installer. The new `_ssh_marker_result` helper does it right (`HOME`+`GIT_CONFIG_GLOBAL` into the fixture tree, `VIBE_AUTO_GITIGNORE=0`); sweep the same three env lines across the other call sites (grep `bash", str(INSTALL_EXTRAS)`), ideally via one shared env-builder helper.
+diff --git a/site/src/content/home.md b/site/src/content/home.md
+index 4e32861..51b34c6 100644
+--- a/site/src/content/home.md
++++ b/site/src/content/home.md
+@@ -36,24 +36,54 @@ journey:
+           label: Launch
+           desc: one command, from any project folder
+           checklist:
+-            - finds your project and its GitHub remote, then asks once for a fine-grained PAT – scoped to that one repo
+-            - builds the sandboxed container image (first launch only – reused in seconds after that)
+-            - announces the session – project, repo, hooks, extras – the blast radius on one screen
++            - finds your project and its GitHub remote, and reuses the PAT you set once
+             - brings up the firewall and proves it – outbound on a short allowlist, verified before work starts
+             - signs Claude Code in with your Claude subscription – no API key
++            - ready in seconds – the container's already built, the PAT's already on file
+           lines:
+             - { cmd: true, sh: true, text: "cd yourproject && vibe" }
+-            - { role: vibe, text: "No GitHub token found for you/yourproject – opening GitHub: Repository access → Only select repositories → yourproject" }
+-            - { role: vibe, text: "✓ Token saved – you won't be asked again for this repo.", step: 1 }
+-            - { role: vibe, text: "Building vibe container image (claude-code=latest)...", step: 2 }
+             - { role: vibe, text: "🚀 vibe session starting" }
+             - { role: vibe, text: "   project : yourproject" }
+-            - { role: vibe, text: "   github  : you/yourproject", step: 3 }
++            - { role: vibe, text: "   path    : ~/code/yourproject" }
++            - { role: vibe, text: "   github  : you/yourproject", step: 1 }
+             - { role: vibe, text: "   hooks   : tool-call guards + idle bell" }
+             - { role: vibe, text: "   extras  : /diet · /feast · /vs · shellcheck-fixer · security-review" }
+-            - { role: guard, text: "Firewall verification passed - unable to reach https://example.com as expected", step: 4 }
+-            - { role: claude, text: "signed in with your Claude subscription – no API key anywhere", step: 5 }
+-            - { role: claude, text: "ready – what shall we build?" }
++            - { role: guard, text: "Firewall verification passed - unable to reach https://example.com as expected", step: 2 }
++            - { role: claude, tone: note, text: "already signed in with your Claude subscription – nothing to re-enter", step: 3 }
++            - { role: claude, text: "ready – what shall we build?", step: 4 }
++    - label: First time
++      steps:
++        - id: first-launch
++          cmd: vibe
++          label: First launch
++          desc: once per repo, not every day
++          checklist:
++            - detects your project's GitHub remote, then asks once for a fine-grained PAT – scoped to that one repo
++            - builds the sandboxed container image (first launch only – reused in seconds after that)
++            - saves the token and reuses the image, so every launch after this one is instant
++          lines:
++            - { cmd: true, sh: true, text: "cd yourproject && vibe" }
++            - { role: vibe, text: "No GitHub token found for you/yourproject – opening GitHub: Repository access → Only select repositories → yourproject" }
++            - { role: vibe, text: "✓ Token saved – you won't be asked again for this repo.", step: 1 }
++            - { role: vibe, text: "Building vibe container image (claude-code=latest)...", step: 2 }
++            - { role: claude, text: "next launch of this repo skips both steps – ready in seconds", step: 3 }
++    - label: Once a quarter
++      steps:
++        - id: pat
++          cmd: vibe pat
++          label: Rotate the PAT
++          desc: once every 90 days, in seconds
++          checklist:
++            - finds the repo and rotates its stored token in place – nothing else to update
++            - same advice as first launch – set an expiry, and 90 days is a good default
++            - takes effect on the next vibe launch – no rebuild needed
++          lines:
++            - { cmd: true, sh: true, text: "vibe pat" }
++            - { role: vibe, text: "Repo: you/yourproject" }
++            - { role: vibe, text: "stored token found — it will be replaced", step: 1 }
++            - { role: vibe, text: "https://github.com/settings/personal-access-tokens" }
++            - { role: vibe, text: "set an expiry on the new token – 90 days is a good default", step: 2 }
++            - { role: vibe, text: "✓ Token saved for you/yourproject. Takes effect on the next vibe launch (no rebuild needed).", step: 3 }
+     - label: Build
+       steps:
+         - id: vs
