@@ -94,7 +94,7 @@
   "id": "task_014",
   "description": "Per-project Claude projects/ bind: each host project gets its own /home/node/.claude/projects/ inside the container so vibe X --continue scopes by project, not globally",
   "implementation_status": "pending",
-  "test_status": "pending",
+  "test_status": "passing",
   "assigned_to": "planner",
   "mode": "rigorous",
   "last_modified": "2026-04-29T00:00:00Z"
@@ -193,5 +193,14 @@
   "assigned_to": "generator",
   "mode": "rigorous",
   "last_modified": "2026-07-22T01:24:51Z"
+ },
+ {
+  "id": "task_028",
+  "description": "CLAUDE.md fragment merges (learnings trilogy; memory+history; content-guard trim) + single --fable-subagents definition in vs.md with vss/vsss pointers; >=1,900 words off every session's context",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-09-02T17:55:00Z"
  }
 ]

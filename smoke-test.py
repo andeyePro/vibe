@@ -37,12 +37,12 @@ VIBE_COPY_WATCHER = REPO / "vibe-copy-watcher.sh"
 WEB_RESEARCH_MD = REPO / "devcontainer" / "claude-md" / "web-research.md"
 SSH_DISCIPLINE_MD = REPO / "devcontainer" / "claude-md" / "ssh-discipline.md"
 BRAIN2_MD = REPO / "devcontainer" / "claude-md" / "brain2.md"
-FEEDBACK_AUTO_PROMOTE_MD = REPO / "devcontainer" / "claude-md" / "feedback-auto-promote.md"
+LEARNINGS_MD = REPO / "devcontainer" / "claude-md" / "learnings.md"
 REPO_MD = REPO / "devcontainer" / "commands" / "repo.md"
 SHARED_REPOS_MD = REPO / "devcontainer" / "claude-md" / "shared-repos.md"
 TODO_CHANGELOG_MD = REPO / "devcontainer" / "claude-md" / "todo-changelog.md"
 PROJECT_HYGIENE_MD = REPO / "devcontainer" / "claude-md" / "project-hygiene.md"
-CONVERSATION_HISTORY_MD = REPO / "devcontainer" / "claude-md" / "conversation-history.md"
+AUTO_MEMORY_SCOPE_MD = REPO / "devcontainer" / "claude-md" / "auto-memory-scope.md"
 CHANGELOG_MD = REPO / "CHANGELOG.md"
 SECURITY_MD = REPO / "SECURITY.md"
 BUG_TEMPLATE = REPO / ".github" / "ISSUE_TEMPLATE" / "bug_report.md"
@@ -4024,7 +4024,8 @@ def test_clipboard_drain_on_exit() -> None:
 GUARD_FS = REPO / "devcontainer" / "guard-fs.sh"
 GUARD_BASH = REPO / "devcontainer" / "guard-bash.sh"
 LEARN_MD = REPO / "devcontainer" / "commands" / "learn.md"
-LEARN_HOOK_MD = REPO / "devcontainer" / "claude-md" / "learn-hook.md"
+# task_028 merged the standalone hook fragment into learnings.md.
+LEARN_HOOK_RULES_MD = REPO / "devcontainer" / "claude-md" / "learnings.md"
 
 # Pre-check: jq and bash available on host (needed for hook script tests).
 _HAS_JQ = subprocess.run(["which", "jq"], capture_output=True).returncode == 0
@@ -4450,12 +4451,14 @@ def test_task009_learn_md_exists() -> None:
 
 
 def test_task009_learn_hook_md_exists() -> None:
-    """AC7: claude-md/learn-hook.md exists with sentinel phrases."""
-    print("\n[task_009/AC7: claude-md/learn-hook.md]")
-    check("[task009/AC7] learn-hook.md exists", LEARN_HOOK_MD.exists(), str(LEARN_HOOK_MD))
-    if not LEARN_HOOK_MD.exists():
+    """AC7: the /learnings write-confirm hook rules ship as a CLAUDE.md
+    fragment with sentinel phrases. task_028 merged the standalone hook
+    fragment into claude-md/learnings.md, so the sentinels are pinned there."""
+    print("\n[task_009/AC7: hook rules in claude-md/learnings.md]")
+    check("[task009/AC7] host fragment exists", LEARN_HOOK_RULES_MD.exists(), str(LEARN_HOOK_RULES_MD))
+    if not LEARN_HOOK_RULES_MD.exists():
         return
-    content = LEARN_HOOK_MD.read_text()
+    content = LEARN_HOOK_RULES_MD.read_text()
     non_blank = sum(1 for ln in content.splitlines() if ln.strip())
     check("[task009/AC7] >= 30 non-blank lines", non_blank >= 30,
           f"non_blank={non_blank}")
@@ -4476,7 +4479,7 @@ def test_learn_docs_no_host_stage_all_footgun() -> None:
     and any manual fallback must use a literal placeholder path + a specific
     filename, never the container var and never `git add .`."""
     print("\n[regression: /learn docs have no host stage-all footgun]")
-    for path in (LEARN_MD, LEARN_HOOK_MD):
+    for path in (LEARN_MD, LEARN_HOOK_RULES_MD):
         if not path.exists():
             check(f"[learn-footgun] {path.name} exists", False, str(path))
             continue
@@ -5862,17 +5865,17 @@ def test_install_extras_ensures_project_gitignore() -> None:
 
 
 def test_feedback_auto_promote_fragment() -> None:
-    """devcontainer/claude-md/feedback-auto-promote.md spec'd 2026-05-07.
-    Behavioral fragment instructing Claude when to propose /learnings
-    promotion after saving a feedback memory. A regression dropping the
-    fragment, the IS/IS-NOT list, or the opt-out hook would silently lose
-    the cross-repo behavioral propagation channel."""
-    print("\n[feedback-auto-promote: fragment shape]")
-    check("[auto-promote] fragment file exists",
-          FEEDBACK_AUTO_PROMOTE_MD.exists(), str(FEEDBACK_AUTO_PROMOTE_MD))
-    if not FEEDBACK_AUTO_PROMOTE_MD.exists():
+    """Auto-promotion rules spec'd 2026-05-07 (shipped as their own fragment
+    until task_028 merged them into claude-md/learnings.md). Behavioral rules
+    for when to propose /learnings promotion after saving a feedback memory.
+    A regression dropping them, the IS/IS-NOT list, or the opt-out hook would
+    silently lose the cross-repo behavioral propagation channel."""
+    print("\n[auto-promote rules (in learnings.md): shape]")
+    check("[auto-promote] host fragment file exists",
+          LEARNINGS_MD.exists(), str(LEARNINGS_MD))
+    if not LEARNINGS_MD.exists():
         return
-    content = FEEDBACK_AUTO_PROMOTE_MD.read_text()
+    content = LEARNINGS_MD.read_text()
     check("[auto-promote] § When to propose promotion present",
           "When to propose promotion" in content, "")
     check("[auto-promote] IS/NOT examples present",
@@ -5937,45 +5940,57 @@ def test_fable_subagents_flag_docs() -> None:
     results"). Guards the consent semantics: per-invocation pre-auth only,
     task-class routing preserved (never mechanical roles), the no-flag
     ask-gate unchanged, /vsss propagation + audit note, and the explicit
-    distinction from the vibe-launcher --fable (chair-model-only) flag."""
+    distinction from the vibe-launcher --fable (chair-model-only) flag.
+    task_028: the semantics are defined ONCE in vs.md \u00a7 Model economy;
+    vss.md and vsss.md must point at it rather than restate it."""
     print("\n[/vs+/vss+/vsss: --fable-subagents standing pre-auth flag]")
     vs = VS_MD.read_text()
+    # task_028: the grant is defined ONCE, in vs.md § Model economy
+    # (### Fable grant); vss.md and vsss.md carry pointers, not restatements.
     check("[fable-flag] vs.md documents --fable-subagents",
           "`/vs --fable-subagents " in vs, "")
+    check("[fable-flag] vs.md: single definition lives in § Model economy",
+          "### Fable grant (`--fable-subagents`)" in vs, "")
     check("[fable-flag] vs.md: Model plan records the grant",
           "Fable rung: pre-authorised (--fable-subagents)" in vs, "")
     check("[fable-flag] vs.md: never mechanical roles",
           "NEVER Fable for mechanical roles" in vs, "")
+    check("[fable-flag] vs.md: permits, never forces",
+          "permits, never forces" in vs, "")
     check("[fable-flag] vs.md: permission, not blanket routing",
-          "the flag buys permission, not blanket routing" in vs, "")
+          "permission, not routing" in vs, "")
     check("[fable-flag] vs.md: without it the ask-gate is unchanged",
-          "Without it, the ask-before-Fable gate is unchanged" in vs, "")
+          "the ask-before-Fable gate is unchanged" in vs, "")
     check("[fable-flag] vs.md: ladder honours the standing grant",
-          "including a standing `--fable-subagents` grant" in vs, "")
+          "the ladder MAY take that rung on capability-fails without a fresh ask" in vs, "")
     check("[fable-flag] vs.md: distinct from vibe --fable launcher flag",
           "sets only the chair/session model and authorises no subagent spend" in vs, "")
+    check("[fable-flag] vs.md: alias documented",
+          "(alias `--fable`)" in vs, "")
+    check("[fable-flag] vs.md: --fable-gen forces the start it pre-authorises",
+          "`--fable-gen` forces a Fable" in vs, "")
+    check("[fable-flag] vs.md: Step-2 point-of-use honours the flag",
+          "Honor `--gen` / `--fable-gen` / `--fable-subagents`" in vs, "")
     vss = (REPO / "devcontainer" / "commands" / "vss.md").read_text()
     check("[fable-flag] vss.md: hard-escalate carve-out names the flag",
-          "--fable-subagents" in vss and "per-invocation consent, not a default" in vss, "")
+          "--fable-subagents" in vss and "Credit-billed model dispatch" in vss, "")
+    check("[fable-flag] vss.md: planner-brief carve-out present",
+          "UNLESS this invocation carries `--fable-subagents`" in vss, "")
+    check("[fable-flag] vss.md: threads the grant into whatever tool it picks",
+          "threaded into whatever tool /vss picks" in vss, "")
+    check("[fable-flag] vss.md: points at the single definition, never restates it",
+          all("/vs \u00a7 Model economy" in ln
+              for ln in vss.splitlines() if "--fable-subagents" in ln), "")
     vsss = (REPO / "devcontainer" / "commands" / "vsss.md").read_text()
     check("[fable-flag] vsss.md: flag documented with alias",
           "`/vsss --fable-subagents <args>` (alias `--fable`)" in vsss, "")
     check("[fable-flag] vsss.md: propagates into every wrapped /vss",
-          "propagated into EVERY wrapped `/vss` iteration" in vsss, "")
+          "propagated into every wrapped `/vss` iteration" in vsss, "")
     check("[fable-flag] vsss.md: session-audit recording required",
-          "Record the grant in the session file" in vsss, "")
-    check("[fable-flag] vsss.md: distinct from vibe --fable",
-          "NOT the same as `vibe --fable`" in vsss, "")
-    check("[fable-flag] vs.md: alias documented, does not imply --fable-gen",
-          "(alias `--fable`)" in vs and "does NOT imply `--fable-gen`" in vs, "")
-    check("[fable-flag] vs.md: Step-2 point-of-use honours the flag",
-          "Honor `--gen` / `--fable-gen` / `--fable-subagents` if passed" in vs, "")
-    check("[fable-flag] vss.md: planner-brief carve-out present",
-          "UNLESS this /vss invocation carries `--fable-subagents`" in vss, "")
-    check("[fable-flag] vss.md: threads into whatever tool it picks",
-          "threads into whatever tool it picks" in vss, "")
-    check("[fable-flag] vss.md: launcher distinction pinned",
-          "chair model only, no subagent authorisation" in vss, "")
+          "Record it in the session file" in vsss, "")
+    check("[fable-flag] vsss.md: points at the single definition",
+          all("/vs \u00a7 Model economy" in ln
+              for ln in vsss.splitlines() if "--fable-subagents" in ln), "")
     check("[fable-flag] vsss.md: grant persists across auto-resume relaunches",
           "The grant PERSISTS across auto-resume relaunches" in vsss, "")
 
@@ -6095,17 +6110,18 @@ def test_vss_md_audit_trail_and_push_policy() -> None:
 
 
 def test_conversation_history_fragment() -> None:
-    """devcontainer/claude-md/conversation-history.md teaches Claude to search
+    """Transcript-search rules (their own fragment until task_028 merged them
+    into claude-md/auto-memory-scope.md) teach Claude to search
     ~/.claude/projects/<slug>/*.jsonl transcripts when memory misses a user
-    reference to past conversation. Regression dropping the fragment, the
-    JSONL path, the schema crib, or the jq recipes silently breaks the
-    "search before saying I have no record" behavior."""
-    print("\n[conversation-history: fragment shape]")
-    check("[conv-history] fragment file exists",
-          CONVERSATION_HISTORY_MD.exists(), str(CONVERSATION_HISTORY_MD))
-    if not CONVERSATION_HISTORY_MD.exists():
+    reference to past conversation. Regression dropping them, the JSONL path,
+    the schema crib, or the jq recipes silently breaks the "search before
+    saying I have no record" behavior."""
+    print("\n[transcript search (in auto-memory-scope.md): shape]")
+    check("[conv-history] host fragment file exists",
+          AUTO_MEMORY_SCOPE_MD.exists(), str(AUTO_MEMORY_SCOPE_MD))
+    if not AUTO_MEMORY_SCOPE_MD.exists():
         return
-    content = CONVERSATION_HISTORY_MD.read_text()
+    content = AUTO_MEMORY_SCOPE_MD.read_text()
     check("[conv-history] names the JSONL path glob",
           "~/.claude/projects/" in content and ".jsonl" in content, "")
     check("[conv-history] names the -workspace slug",
@@ -9863,6 +9879,299 @@ def test_workspace_is_the_repo_fragment() -> None:
     dc = (REPO / "devcontainer" / "devcontainer.json").read_text()
     check("[ws-repo] devcontainer.json still binds ${localWorkspaceFolder} to /workspace",
           "source=${localWorkspaceFolder},target=/workspace,type=bind" in dc, "")
+
+
+
+def test_task028_fragment_merges_and_fable_grant() -> None:
+    """task_028 AC1-AC10, AC12, AC13: fragment merges, word counts, sentinels, Fable grant."""
+    print("\n[task_028: CLAUDE.md fragment merges + single Fable-grant definition]")
+    
+    # AC1: Exactly 13 .md files in devcontainer/claude-md/
+    # Three deleted absent: learn-hook.md, feedback-auto-promote.md, conversation-history.md
+    # Three survivors present: learnings.md, auto-memory-scope.md, content-guard.md
+    # Ten untouched: web-research, ssh-discipline, brain2, shared-repos, harness-routing,
+    #                output-consolidation, project-hygiene, todo-changelog, vibe-cli, workspace-is-the-repo
+    claude_md_dir = REPO / "devcontainer" / "claude-md"
+    all_md_files = sorted([f.name for f in claude_md_dir.glob("*.md")])
+    check("[ac1] exactly 13 .md files in claude-md/", len(all_md_files) == 13, f"found {len(all_md_files)}")
+    
+    deleted_names = ["learn-hook.md", "feedback-auto-promote.md", "conversation-history.md"]
+    for name in deleted_names:
+        check(f"[ac1] {name} does not exist", not (claude_md_dir / name).exists(), "")
+    
+    required_names = ["learnings.md", "auto-memory-scope.md", "content-guard.md"]
+    for name in required_names:
+        check(f"[ac1] {name} exists", (claude_md_dir / name).exists(), "")
+    
+    expected_names = {
+        "web-research.md", "ssh-discipline.md", "brain2.md", "shared-repos.md",
+        "harness-routing.md", "output-consolidation.md", "project-hygiene.md",
+        "todo-changelog.md", "vibe-cli.md", "workspace-is-the-repo.md",
+        "learnings.md", "auto-memory-scope.md", "content-guard.md"
+    }
+    check("[ac1] all expected fragment names present", set(all_md_files) == expected_names,
+          f"diff: {set(all_md_files).symmetric_difference(expected_names)}")
+    
+    # AC2: Total words <= 6160
+    all_text = "".join((claude_md_dir / f).read_text() for f in all_md_files)
+    total_words = len(all_text.split())
+    check("[ac2] total fragment words <= 6160", total_words <= 6160, f"found {total_words}")
+    
+    # AC3: content-guard.md 400-600 words, contains "README.md" and "Content guard"
+    content_guard_text = (claude_md_dir / "content-guard.md").read_text()
+    cg_words = len(content_guard_text.split())
+    check("[ac3] content-guard.md word count 400-600", 400 <= cg_words <= 600, f"found {cg_words}")
+    check("[ac3] content-guard.md contains 'README.md'", "README.md" in content_guard_text, "")
+    check("[ac3] content-guard.md contains 'Content guard'", "Content guard" in content_guard_text, "")
+    
+    # AC4: Sentinel strings survive
+    learnings_text = (claude_md_dir / "learnings.md").read_text()
+    learnings_sentinels = [
+        "/learnings", "vibe learn --init", ".no-learn", "grep -r", 'vibe learn "',
+        "/learn", "permissionDecision", "ask", "realpath -m", "guard-fs.sh",
+        "guard-bash.sh", "bypass the hook", "VIBE_AUTO_PROMOTE", "Y / n / never-ask",
+        "YES:", "NO:", "cross-repo", "One prompt per", "vibe learn --push", "VIBE_LEARNING_PATH"
+    ]
+    for sentinel in learnings_sentinels:
+        check(f"[ac4] learnings.md contains '{sentinel}'", sentinel in learnings_text, "")
+    
+    auto_memory_text = (claude_md_dir / "auto-memory-scope.md").read_text()
+    auto_memory_sentinels = [
+        "task_014", "~/.vibe/projects/", "/home/node/.claude/projects/", "--continue",
+        "/learnings", "*.jsonl", "-workspace", "jq -r", 'type=="user"', 'type=="assistant"',
+        "tool_result", "thinking", "tool_use", "ls -t", "vibe-claude-config", "Do not duplicate"
+    ]
+    for sentinel in auto_memory_sentinels:
+        check(f"[ac4] auto-memory-scope.md contains '{sentinel}'", sentinel in auto_memory_text, "")
+    
+    cg_sentinels = [
+        "BLOCK", "WARN", "commit-identity", "users.noreply.github.com",
+        "VIBE_CONTENT_GUARD=off", "VIBE_ALLOW_COMMIT=1", "--no-verify",
+        ".vibe-content-guard-off", ".vibe-content-allow", "path-warn:",
+        "vibe audit", "--history", "--staged", "Co-Authored-By", "pre-push"
+    ]
+    for sentinel in cg_sentinels:
+        check(f"[ac4] content-guard.md contains '{sentinel}'", sentinel in content_guard_text, "")
+    
+    # AC5: code-check.py exits 0 (will be run at end with full suite)
+    # (This is checked when we run the full suite)
+    
+    # AC6: Sandboxed installer test
+    with tempfile.TemporaryDirectory() as td:
+        sandbox_env = {
+            **os.environ,
+            "HOME": td,
+            "CLAUDE_CONFIG_DIR": str(Path(td) / ".claude"),
+            "GIT_CONFIG_GLOBAL": str(Path(td) / ".gitconfig"),
+            "VIBE_AUTO_GITIGNORE": "0",
+            "VIBE_EXTRAS_SRC_ROOT": str(REPO / "devcontainer"),
+        }
+        r = run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(sandbox_env))
+        check("[ac6] installer exits 0", r.returncode == 0, r.stderr)
+        
+        claude_md = Path(td) / ".claude" / "CLAUDE.md"
+        if claude_md.exists():
+            installer_claude_md = claude_md.read_text()
+            check("[ac6] installer output contains learnings.md marker",
+                  "<!-- vibe-md: learnings.md -->" in installer_claude_md, "")
+            check("[ac6] installer output contains auto-memory-scope.md marker",
+                  "<!-- vibe-md: auto-memory-scope.md -->" in installer_claude_md, "")
+            check("[ac6] installer output contains content-guard.md marker",
+                  "<!-- vibe-md: content-guard.md -->" in installer_claude_md, "")
+            check("[ac6] installer output does not contain 'learn-hook.md'",
+                  "learn-hook.md" not in installer_claude_md, "")
+            check("[ac6] installer output does not contain 'feedback-auto-promote.md'",
+                  "feedback-auto-promote.md" not in installer_claude_md, "")
+            check("[ac6] installer output does not contain 'conversation-history.md'",
+                  "conversation-history.md" not in installer_claude_md, "")
+        else:
+            check("[ac6] installer creates CLAUDE.md", False, f"not found at {claude_md}")
+    
+    # AC7: Fable grant defined once in vs.md § Model economy
+    vs_text = VS_MD.read_text()
+    vs_lines = vs_text.split('\n')
+    
+    # Find "Fable grant" heading in vs.md
+    fable_grant_idx = None
+    for i, line in enumerate(vs_lines):
+        if "Fable grant" in line and line.startswith("#"):
+            fable_grant_idx = i
+            break
+    check("[ac7] vs.md has heading with 'Fable grant'", fable_grant_idx is not None, "")
+    
+    if fable_grant_idx is not None:
+        # Find next ## heading
+        next_heading_idx = None
+        for i in range(fable_grant_idx + 1, len(vs_lines)):
+            if vs_lines[i].startswith("## "):
+                next_heading_idx = i
+                break
+        if next_heading_idx is None:
+            next_heading_idx = len(vs_lines)
+        
+        # Check sentinels in section
+        section_text = "\n".join(vs_lines[fable_grant_idx:next_heading_idx])
+        required_in_section = [
+            "--fable-subagents", "--fable", "permits", "never forces",
+            "mechanical roles", "vibe --fable", "chair"
+        ]
+        for sentinel in required_in_section:
+            check(f"[ac7] vs.md § Model economy contains '{sentinel}'",
+                  sentinel in section_text, "")
+    
+    # Check vss.md and vsss.md: every line with --fable-subagents also has /vs § Model economy
+    vss_text = VSS_MD.read_text()
+    vss_lines = vss_text.split('\n')
+    vss_fable_count = 0
+    for line in vss_lines:
+        if "--fable-subagents" in line:
+            vss_fable_count += 1
+            check(f"[ac7] vss.md line with --fable-subagents also has '/vs § Model economy'",
+                  "/vs § Model economy" in line, f"line: {line[:80]}")
+    check("[ac7] vss.md --fable-subagents count <= 3", vss_fable_count <= 3, f"found {vss_fable_count}")
+    
+    vsss_text = VSSS_MD.read_text()
+    vsss_lines = vsss_text.split('\n')
+    vsss_fable_count = 0
+    for line in vsss_lines:
+        if "--fable-subagents" in line:
+            vsss_fable_count += 1
+            check(f"[ac7] vsss.md line with --fable-subagents also has '/vs § Model economy'",
+                  "/vs § Model economy" in line, f"line: {line[:80]}")
+    check("[ac7] vsss.md --fable-subagents count <= 3", vsss_fable_count <= 3, f"found {vsss_fable_count}")
+    
+    # Check forbidden phrases occur zero times in vss and vsss
+    forbidden_in_vss_vsss = [
+        "never forces", "mechanical roles", "sets only the chair",
+        "chair model only", "authorises no subagent spend"
+    ]
+    for phrase in forbidden_in_vss_vsss:
+        vss_count = vss_text.count(phrase)
+        vsss_count = vsss_text.count(phrase)
+        check(f"[ac7] vss.md has zero '{phrase}'", vss_count == 0, f"found {vss_count}")
+        check(f"[ac7] vsss.md has zero '{phrase}'", vsss_count == 0, f"found {vsss_count}")
+    
+    # Check vs.md § Flags entry for --fable-subagents is <= 40 words and contains § Model economy
+    flags_section_idx = None
+    for i, line in enumerate(vs_lines):
+        if line.startswith("## Flags"):
+            flags_section_idx = i
+            break
+    check("[ac7] vs.md has '## Flags' section", flags_section_idx is not None, "")
+    
+    if flags_section_idx is not None:
+        fable_flag_line = None
+        for i in range(flags_section_idx, len(vs_lines)):
+            if vs_lines[i].startswith("- `") and "--fable-subagents" in vs_lines[i]:
+                fable_flag_line = vs_lines[i]
+                break
+        check("[ac7] vs.md Flags has --fable-subagents bullet", fable_flag_line is not None, "")
+        
+        if fable_flag_line:
+            words = len(fable_flag_line.split())
+            check("[ac7] vs.md --fable-subagents flag line <= 40 words", words <= 40, f"found {words}")
+            check("[ac7] vs.md --fable-subagents flag line contains '§ Model economy'",
+                  "§ Model economy" in fable_flag_line, f"line: {fable_flag_line[:80]}")
+    
+    # AC8: vs.md+vss.md+vsss.md total words <= 12700
+    vs_vss_vsss_text = vs_text + vss_text + vsss_text
+    vs_vss_vsss_words = len(vs_vss_vsss_text.split())
+    check("[ac8] vs+vss+vsss total words <= 12700", vs_vss_vsss_words <= 12700, f"found {vs_vss_vsss_words}")
+    
+    # AC9: grep deleted filenames - only permitted in CHANGELOG.md and test names/labels in smoke-test.py
+    deleted_filenames = ["learn-hook.md", "feedback-auto-promote.md", "conversation-history.md"]
+    search_files = [
+        REPO / "README.md",
+        REPO / "ONBOARDING.md",
+        REPO / "CONTRIBUTING.md",
+        REPO / "CLAUDE.md",
+        REPO / "MANUAL-TESTS.md",
+        REPO / "CHANGELOG.md"
+    ]
+    
+    # For code files, check in whole tree
+    for deleted in deleted_filenames:
+        # Check if it appears in README, ONBOARDING, CONTRIBUTING, CLAUDE, MANUAL-TESTS
+        for search_file in search_files:
+            if search_file == REPO / "CHANGELOG.md":
+                continue  # CHANGELOG is allowed
+            if search_file.exists():
+                content = search_file.read_text()
+                if deleted in content:
+                    check(f"[ac9] {search_file.name} does not mention {deleted}",
+                          False, f"found in {search_file.name}")
+    
+    # Check devcontainer/ and smoke-test.py for deleted filenames
+    # In devcontainer, they should not appear
+    devcontainer_path = REPO / "devcontainer"
+    for root, dirs, files in __import__('os').walk(devcontainer_path):
+        for fname in files:
+            if fname.endswith(('.sh', '.md', '.json')):
+                fpath = Path(root) / fname
+                try:
+                    content = fpath.read_text()
+                    for deleted in deleted_filenames:
+                        check(f"[ac9] {fpath.relative_to(REPO)} does not mention {deleted}",
+                              deleted not in content, f"found in {fpath.relative_to(REPO)}")
+                except:
+                    pass
+    
+    # For smoke-test.py, deleted names are allowed in test function context
+    # (AC9 permits mentions in test functions and check labels)
+    
+    # AC10: Scope lock - git diff from baseline
+    baseline_commit = "c68707d"
+    r_diff = run(["git", "diff", "--name-only", baseline_commit], cwd=REPO)
+    diff_files = set(r_diff.stdout.strip().split('\n')) if r_diff.stdout.strip() else set()
+    
+    # Also check untracked files
+    r_untracked = run(["git", "ls-files", "--others", "--exclude-standard"], cwd=REPO)
+    untracked_files = set(r_untracked.stdout.strip().split('\n')) if r_untracked.stdout.strip() else set()
+    
+    all_changed = diff_files | untracked_files
+    all_changed.discard('')  # Remove empty strings
+    
+    allowed_paths = {
+        "devcontainer/claude-md/", "devcontainer/commands/vs.md", 
+        "devcontainer/commands/vss.md", "devcontainer/commands/vsss.md",
+        "smoke-test.py", "CLAUDE.md", "README.md", "ONBOARDING.md",
+        "MANUAL-TESTS.md", "TODO.md", "CHANGELOG.md", ".vs/", ".vss/"
+    }
+    
+    for changed_file in all_changed:
+        allowed = any(changed_file.startswith(p) for p in allowed_paths)
+        check(f"[ac10] {changed_file} is within allowed scope",
+              allowed, f"changed file outside scope: {changed_file}")
+    
+    # AC12: Word count floors
+    learnings_words = len(learnings_text.split())
+    auto_memory_words = len(auto_memory_text.split())
+    check("[ac12] learnings.md >= 650 words", learnings_words >= 650, f"found {learnings_words}")
+    check("[ac12] auto-memory-scope.md >= 450 words", auto_memory_words >= 450, f"found {auto_memory_words}")
+    
+    # AC13: Ten untouched fragments byte-identical to baseline
+    untouched_fragments = [
+        "web-research.md", "ssh-discipline.md", "brain2.md", "shared-repos.md",
+        "harness-routing.md", "output-consolidation.md", "project-hygiene.md",
+        "todo-changelog.md", "vibe-cli.md", "workspace-is-the-repo.md"
+    ]
+    
+    for frag_name in untouched_fragments:
+        frag_path = claude_md_dir / frag_name
+        current_content = frag_path.read_text()
+        
+        # Get content from baseline commit
+        r_show = run(["git", "show", f"{baseline_commit}:devcontainer/claude-md/{frag_name}"], cwd=REPO)
+        if r_show.returncode == 0:
+            baseline_content = r_show.stdout
+            check(f"[ac13] {frag_name} is byte-identical to baseline",
+                  current_content == baseline_content, "")
+        
+        # Check no deleted filenames appear
+        for deleted in deleted_filenames:
+            check(f"[ac13] {frag_name} does not contain '{deleted}'",
+                  deleted not in current_content, "")
+
 
 
 def test_task019_ac16_audit_history_reports_warn_pii() -> None:
@@ -13779,6 +14088,7 @@ def main() -> int:
     test_task019_ac13_shellcheck_passes()
     test_task019_ac15_content_guard_md_exists()
     test_workspace_is_the_repo_fragment()
+    test_task028_fragment_merges_and_fable_grant()
     test_task019_ac16_audit_history_reports_warn_pii()
     test_task019_ac17_new_branch_push_blocks_only_block_tier()
     test_prepush_no_walk_ignores_already_pushed_history()

@@ -4,7 +4,7 @@ description: Adversarial agentic harness — Planner + Evaluator (session model)
 
 # /vs — adversarial harness
 
-You (top-level, whatever model this session launched on — Opus by default, Fable 5 via `vibe --fable` for genuinely huge/ambiguous tasks) play two roles across the run: **Planner** (Step 1–2, plus revision in Step 3) and **Evaluator** (Step 6–7). Between them, you dispatch independent subagents: a Sonnet **Spec Critic** that audits the spec before any code runs, a **Generator** that writes the feature (tier per the Model plan, Sonnet default), and — depending on mode — either a Haiku 4.5 **Tester** (default rigorous mode) or a Sonnet **Reviewer** (`--fuzzy` mode). Generator never sees Tester's / Reviewer's output; Tester / Reviewer never sees Generator's report. That separation is the point.
+You (top-level, whatever model this session launched on — Opus by default, Fable 5 via `vibe --fable`) play two roles: **Planner** (Step 1–2, plus revision in Step 3) and **Evaluator** (Step 6–7). Between them, you dispatch independent subagents: a Sonnet **Spec Critic** that audits the spec before any code runs, a **Generator** that writes the feature (tier per the Model plan, Sonnet default), and — depending on mode — either a Haiku 4.5 **Tester** (default rigorous mode) or a Sonnet **Reviewer** (`--fuzzy` mode). Generator never sees Tester's / Reviewer's output; Tester / Reviewer never sees Generator's report. That separation is the point.
 
 Model choice is part of the plan, not a constant — see § Model economy. Always pass `model:` explicitly in every `Agent(...)` dispatch: per-agent `model:` frontmatter is broken upstream (claude-code issue #44385), so the dispatch parameter is the only reliable routing.
 
@@ -38,39 +38,43 @@ Claude Code's welcome banner suggests creating Software Architect, Code Writer, 
 
 Two principles (Martin, 2026-07-04):
 
-- **Route by task class, not role prestige.** Fable 5's edge concentrates in long-horizon, complex work — big well-specified builds, ambiguous multi-cycle tasks. On small scoped calls Opus is near-parity and credits buy nothing. The manager keeps expensive models away from admin.
-- **Subscription models everywhere by default.** Credit-billed models (Fable 5 from 8 Jul 2026) run only with explicit per-task user consent, per `CLAUDE.md § Non-goals`.
+- **Route by task class, not role prestige.** Fable 5's edge is long-horizon complex work; on small scoped calls Opus is near-parity and credits buy nothing.
+- **Subscription models by default.** Credit-billed models run only with explicit per-task user consent (`CLAUDE.md § Non-goals`).
 
 ### Role defaults
 
 | Role | Default | Why |
 | --- | --- | --- |
-| Planner + Evaluator | session model (Opus chair normally; `vibe --fable` only for huge/ambiguous tasks) | judgment interleaved with admin — mid-tier chair, expensive consultants |
+| Planner + Evaluator | session model (Opus chair; `vibe --fable` only for huge/ambiguous tasks) | judgment interleaved with admin — mid-tier chair, expensive consultants |
 | Spec Critic | sonnet | adversarial reading, scoped |
 | Generator | sonnet, tier per Model plan | bulk tokens — cheapest tier that passes |
 | Tester | haiku | mechanical test-writing |
 | Reviewer (`--fuzzy`) | sonnet | judgment from a diff |
-| Panellists (`--panel`) | sonnet ×N (default 3) | blind fan-out of the review role; the upstream pattern runs all-Opus — deliberately re-tiered, N Sonnets beat 1 Opus here because the mechanism's value is INDEPENDENCE, not depth; one Opus depth-probe is the chair's optional extra on correlated consensus |
+| Panellists (`--panel`) | sonnet ×N (default 3) | blind fan-out of the review role; deliberately re-tiered from the upstream all-Opus pattern — N Sonnets beat 1 Opus because the value is INDEPENDENCE, not depth; one Opus depth-probe is the chair's optional extra on correlated consensus |
 
 ### Model plan (lives in spec.md)
 
-Step 2's spec includes a **Model plan**: Planner estimates task difficulty and proposes a starting tier and escalation ceiling per role — e.g. `Generator: sonnet, ceiling opus; Fable rung: not pre-authorised`. The user approves it with the spec, which is also the moment they pre-authorise or withhold the credit-billed rung for this task. **Absent an explicit statement, the Fable rung is NOT pre-authorised.** A hard task should start at the tier the difficulty estimate demands — don't burn two cycles proving Sonnet can't do it.
+Step 2's spec includes a **Model plan**: starting tier and escalation ceiling per role — e.g. `Generator: sonnet, ceiling opus; Fable rung: not pre-authorised`. Approving the spec pre-authorises or withholds the credit-billed rung. **Absent an explicit statement, the Fable rung is NOT pre-authorised.** Start at the tier the difficulty demands — don't burn cycles proving Sonnet can't.
+
+### Fable grant (`--fable-subagents`)
+
+`/vs --fable-subagents <prompt>` (alias `--fable`) defines the credit-billed grant: it **permits, never forces**. The Model plan records `Fable rung: pre-authorised (--fable-subagents)`; the Planner MAY start the Generator at Fable when difficulty demands it, and the ladder MAY take that rung on capability-fails without a fresh ask. Task-class routing still governs: NEVER Fable for mechanical roles (Tester, Spec Critic, cost admin), nor scoped small generations where Opus is near-parity — permission, not routing. Without the flag the ask-before-Fable gate is unchanged. `--fable-gen` forces a Fable start and still quotes estimated credits. Distinct from the `vibe --fable` LAUNCHER flag, which sets only the chair/session model and authorises no subagent spend. `/vss` and `/vsss` thread this grant through.
 
 ### Escalation ladder (capability-gated)
 
-Tier bumps happen on the Step-7 fail path, and ONLY when the Evaluator diagnoses a **capability failure** — reasonable approach, execution fell short. Spec ambiguity, brittle tests, scope creep, and wrong-approach failures do NOT escalate (they route to spec revision / plateau handling as before — a model bump can't fix a bad spec).
+Tier bumps happen on the Step-7 fail path, and ONLY when the Evaluator diagnoses a **capability failure** — reasonable approach, execution fell short. Spec ambiguity, brittle tests, scope creep and wrong-approach failures do NOT escalate; they route to spec revision / plateau handling — a model bump can't fix a bad spec.
 
-- **Generator**: sonnet → opus after 2 consecutive capability-fails → **Fable 5 on the locked spec**, only with user consent (Model-plan pre-auth — including a standing `--fable-subagents` grant — or a fresh ask quoting est. credits). The Fable rung re-dispatches the *Generator*, not the chair: compact brief (spec + failure history + repo access), fresh context — Fable's one-shot strength on well-specified builds at minimum credit spend.
+- **Generator**: sonnet → opus after 2 consecutive capability-fails → **Fable 5 on the locked spec**, only with user consent (§ Fable grant). That rung re-dispatches the *Generator*, not the chair: compact brief, fresh context.
 - **Tester**: haiku → sonnet when the Evaluator flags test *quality* (shallow tests, ACs unmapped) rather than test results.
 - No de-escalation mid-task; new tasks start back at defaults.
 
-Log every escalation in `.vs/progress.md` (`escalated generator sonnet→opus: <one-line diagnosis>`) and, under `--cost`, in `cost.json`. Record the tier that finally passed in the pass verdict — over time that calibrates Planner's starting-tier estimates.
+Log every escalation in `.vs/progress.md` (`escalated generator sonnet→opus: <diagnosis>`) and, under `--cost`, in `cost.json`. Record the tier that finally passed in the pass verdict — that calibrates Planner's starting-tier estimates.
 
 ## Flags
 
 - `/vs --gen <haiku|sonnet|opus> <prompt>` — override the Generator's starting tier for this run.
-- `/vs --fable-gen <prompt>` — pre-authorise the Fable rung AND start the Generator there. The user is explicitly spending credits; still quote the estimated credit cost in the spec-approval message.
-- `/vs --fable-subagents <prompt>` (alias `--fable`) — pre-authorise the credit-billed Fable rung for this invocation WITHOUT forcing it (the alias does NOT imply `--fable-gen` — it grants permission, it never forces a Fable start): the Model plan records `Fable rung: pre-authorised (--fable-subagents)`, the Planner MAY start the Generator at Fable when the difficulty estimate genuinely demands it (huge/ambiguous well-specified builds), and the escalation ladder may take the Fable rung on capability-fails without a fresh ask. Task-class routing still governs: NEVER Fable for mechanical roles (Tester, Spec Critic, cost admin) or for scoped small generations where Opus is near-parity — the flag buys permission, not blanket routing. Without it, the ask-before-Fable gate is unchanged. Distinct from the `vibe --fable` LAUNCHER flag, which sets only the chair/session model and authorises no subagent spend.
+- `/vs --fable-gen <prompt>` — force a Fable Generator start (§ Model economy).
+- `/vs --fable-subagents <prompt>` (alias `--fable`) — pre-authorise the Fable rung without forcing it. Full semantics: § Model economy.
 - `/vs --max N <prompt>` — override the cycle ceiling. Default is whatever Planner proposes.
 - `/vs --fuzzy <prompt>` — run in fuzzy mode (Reviewer replaces Tester). Combinable with `--max`.
 - `/vs --panel [N] <prompt>` — fan the review out to N blind, independent panellists (default 3; keep it odd; Sonnet tier). In `--fuzzy` mode the panel REPLACES the single Reviewer; in rigorous mode it ADDS a judgment layer beside the Tester (the mechanical test gate still governs pass/fail — a green suite with a dissenting panel is a chair adjudication, not an automatic pass). See § Step 5c. Orthogonal to `--plain`/`--techy`/`--verbosity` (each panellist honours them) and to `--cost` (each panellist logs as `role: "panel_reviewer"`). Panel disagreement is a spec/approach signal, NOT a capability signal — it never triggers the escalation ladder by itself.
@@ -192,9 +196,7 @@ Write a first draft of `.vs/spec.md` with:
   - Rigorous: the detected/proposed test directory or file. Tester writes tests here. **Once Tester commits, tests are immutable — Generator cannot edit them.**
   - Fuzzy: a short bulleted list of what Reviewer should scrutinize hardest (e.g. "secret-handling paths", "error-swallowing silence"). No immutability rule because there's no test file.
 - **Proposed budget** — `N cycles` with a one-line rationale. If user passed `--max`, honor that.
-- **Model plan** — starting tier + escalation ceiling per role, with a one-line difficulty rationale, and an explicit `Fable rung: pre-authorised / not pre-authorised` line (see § Model economy). Honor `--gen` / `--fable-gen` / `--fable-subagents` if passed — the last records `Fable rung: pre-authorised (--fable-subagents)` and permits (never forces) a Fable Generator start when the difficulty estimate demands it.
-
-Honor `--fable-subagents` at spec-writing time: record `Fable rung: pre-authorised (--fable-subagents)` in the Model plan, and start the Generator at Fable only when the difficulty estimate genuinely demands it.
+- **Model plan** — tier + ceiling per role, a difficulty rationale, and an explicit `Fable rung: pre-authorised / not pre-authorised` line. Honor `--gen` / `--fable-gen` / `--fable-subagents` per § Model economy.
 
 Rigorous mode detects the repo's test convention (`tests/`, `test/`, `__tests__/`, `spec/`); if none, proposes `tests/`. Fuzzy mode skips this step.
 
@@ -234,7 +236,7 @@ On `pass` (by any rule path): append task to `TODO.md` Open, show final spec + `
 
 ## Step 4 — Generate (Generator subagent — tier per Model plan)
 
-Spawn `Agent(subagent_type: "general-purpose", model: "<Model plan tier>")` — `"sonnet"` unless the Model plan or the escalation ladder says otherwise; `"fable"` only when that rung is user-authorised:
+Spawn `Agent(subagent_type: "general-purpose", model: "<Model plan tier>")` — `"sonnet"` unless the Model plan or ladder says otherwise; `"fable"` only when that rung is user-authorised:
 
 - Read `.vs/spec.md`. Source of truth.
 - Follow `superpowers:test-driven-development` when implementing against testable ACs — scratch red/green tests under `.vs/cycle-<N>/scratch-tests/` (gitignored with the rest of cycle-N; the spec's test directory stays Tester-only and immutable). Use `superpowers:systematic-debugging` on any bug-shaped AC before proposing a fix.
@@ -387,7 +389,7 @@ cost: <N> cycles, <M> subagent calls, wall <Ts>
   Fable  (subagent): <F> tokens ≈ $<X>   (only if the Fable rung ran — credits)
   Chair  (planner + evaluator, <model>): <C> tokens
 ```
-Tiers stay on separate lines because their real per-token costs differ; aggregating hides that. Fable is the only line that is money rather than quota — always show its $ estimate.
+Tiers stay on separate lines because per-token costs differ; aggregating hides that. Fable is money rather than quota — always show its $ estimate.
 
 No dollar estimates — Pro/Max is flat-rate; tokens are a rate-limit-pressure proxy, not money. If a future Anthropic billing model makes per-token cost meaningful for subscribers, revisit.
 
@@ -407,7 +409,7 @@ Superpowers is complementary discipline, not a rival harness — `/vs` supplies 
 
 ## Rules
 
-- **Ask before credits** — no credit-billed dispatch (Fable 5 from 8 Jul 2026), ever, without user consent: Model-plan pre-authorisation or a fresh ask quoting estimated credits. Inherited by `/vss` / `/vsss` as a hard-escalate item.
+- **Ask before credits** — no credit-billed dispatch without user consent (§ Model economy). Inherited by `/vss` / `/vsss` as a hard-escalate item.
 - **Immutable tests (rigorous only)** — once Tester lands tests, nobody edits or removes them. If acceptance criteria change, Planner writes a revised spec and restarts cycle 1. Does not apply in fuzzy mode (no tests).
 - **Status-field mutations only** on `tasks.json`. No unstructured edits.
 - **Fresh subagents per cycle** — context reset over compaction. Continuity via `.vs/` files only.

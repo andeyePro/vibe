@@ -46,3 +46,8 @@ TESTKEY0001testkey0002zz
 # real leaked PII.
 path-warn:.vs/*
 path-warn:smoke-test.py
+# task_028: content-guard.md's own list of the GitHub-noreply-class addresses
+# and vibe's placeholder identity, reflowed onto two lines by the fragment
+# merge (the pre-merge single line was covered by the built-in exemptions).
+^  \(`\*@users\.noreply\.github\.com`, `noreply@github\.com`,$
+^  `noreply@anthropic\.com`, vibe's `placeholder@vibe\.local`\) fires: a real$

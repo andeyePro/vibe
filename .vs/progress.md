@@ -488,3 +488,10 @@ Verdict: PASS. Committing as `/vs cycle 1: pass`. Not pushed.
 - security-review: CLEAR. Two LOW polish items applied by chair (mktemp for the note's temp file; guard on the _usage_text capture) + suite re-run green.
 - detect_github_repo verified against the pinned URL table; _usage_text sourcing-safe; brain2 note writer fail-soft per-op guarded; fragment rides the fragment glob unconditionally.
 - Generator tier that passed: sonnet (cycle 1 fail was spec-class — frozen-test wording conflict — not capability). Tester: haiku throughout.
+
+## task_028 cycle 1 — Evaluator: PASS
+- Mechanical gate: Tester (haiku) 289/289 task_028 checks green inside a full green suite; regressions none; code-check clean. Chair re-ran `python3 smoke-test.py` + `python3 code-check.py` independently: green.
+- AC11 rule inventory (chair, from `git show c68707d:` originals): every imperative rule in learn-hook, feedback-auto-promote, conversation-history and the long content-guard survives in the merged text; only rationale/"why this rule exists" prose was cut, and README's `### Content guard` is named for the delegated rationale. vsss.md's persists-across-relaunch grant clause intact.
+- Numbers: fragments 8,060 → 6,149 words (−1,911 ≈ 2.6k tokens per session); vs+vss+vsss 13,062 → 12,696 (−366).
+- Sanctioned deviations: (a) Generator rewrote pre-existing `test_fable_subagents_flag_docs`, which asserted the exact vss.md phrase AC7 forbids — spec-class conflict, intent preserved, accepted; (b) `/vsss --sessions X` bullet compressed to a pointer at § Auto-resume across halts (untouched) to reach AC8 — no rule lost, accepted.
+- Generator tier that passed: opus (cycle 1). Tester: haiku. Fable rung pre-authorised, not used.
