@@ -224,11 +224,11 @@
   {
     "id": "task_031",
     "description": "smoke-test.py split into smoke/ modules <=1,500 lines, unchanged entrypoint; .vs/review-focus.md; policy in CLAUDE.md (worktree task031)",
-    "implementation_status": "in_progress",
-    "test_status": "pending",
+    "implementation_status": "complete",
+    "test_status": "passing",
     "assigned_to": "generator",
     "mode": "rigorous",
-    "last_modified": "2026-09-02T20:45:31Z"
+    "last_modified": "2026-09-02T21:06:35Z"
   },
   {
     "id": "task_032",

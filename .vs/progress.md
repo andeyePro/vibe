@@ -506,3 +506,8 @@ Verdict: PASS. Committing as `/vs cycle 1: pass`. Not pushed.
 - Mechanical gate: Tester (sonnet) rewrote site-check's launch guards into chip-scoped everyday-launch / first-launch / pat guards (+8 guards, attribute-agnostic helpers for Astro's data-astro-cid injection), chips === 13, contiguous-step check; `npm run check` 41/41. Chair re-ran `npm run check`: green.
 - Diff read: Launch chip is the everyday reused-container launch (banner in launcher order incl. the new `path    :` line, firewall pin, sign-in as a tone line, ready); First time chip carries the PAT + build lines verbatim; Once a quarter chip's `vibe pat` lines match the launcher byte-for-byte (vibe:414,455,459,463,490). Nothing on any chip claims what the launcher does not print. index.astro untouched.
 - Generator tier that passed: sonnet (cycle 1). Tester: sonnet. Fable rung pre-authorised, not used.
+
+## task_031 — direct-edit executor (sonnet, worktree task031): MERGED be9ad27 (+ d3c50df)
+- smoke-test.py → 28-line entry + smoke/_core.py + 11 checks_NN parts (≤1,201 lines) + runner.py; AST-identical bodies, identical ✓/✗ lines and rc before/after, 487/487 importable. `.vs/review-focus.md` + CLAUDE.md § Testing policy.
+- Merge-step suite on main: one failure — the task010 AC19 meta-check grepped the entry file for its own function; now searches the package (d3c50df). Re-run of that check green; the three worktree-only failures (install.sh `.git`-directory detection) did not occur on main.
+- Content guard: the scanner's own test corpus moved into new files → BLOCK on fake keys; allowlisted per literal + `path-warn:smoke/*`.
