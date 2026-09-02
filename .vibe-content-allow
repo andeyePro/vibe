@@ -51,3 +51,17 @@ path-warn:smoke-test.py
 # merge (the pre-merge single line was covered by the built-in exemptions).
 ^  \(`\*@users\.noreply\.github\.com`, `noreply@github\.com`,$
 ^  `noreply@anthropic\.com`, vibe's `placeholder@vibe\.local`\) fires: a real$
+# task_031: smoke-test.py split into smoke/ — the scanner's own test corpus
+# (TASK022_CORPUS and friends: obviously fake sk-ABCDEF…, AKIAABCD…, the
+# bare PRIVATE KEY header, base64 "base64token") moved into new files, so
+# git presents them as freshly-added lines and BLOCK fires on fixtures that
+# were already tracked in smoke-test.py. Whole-line ERE entries, one per
+# fixture literal, plus WARN-tier relief for the package like smoke-test.py.
+.*sk-ABCDEFGHIJKLMNOPQRSTUVWX end.*
+.*AKIAABCD1234EFGH5678.*
+^\s*\("-----BEGIN OPENSSH PRIVATE( KEY)?-----", \[\("BLOCK", "private-key"\)\]\),$
+.*ABCDEFGHIJKLMNOPQRSTUVWX1234.*
+.*MyPaSsWoRd: abcdefghijklmnopqrstuvwxyz1234.*
+.*BEARER=YmFzZTY0dG9rZW4=.*
+.*myorg/secret=/real/registered/path.*
+path-warn:smoke/*

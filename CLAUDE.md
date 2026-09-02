@@ -19,9 +19,10 @@ If a user pointed you at this file and asked you to take them through vibe onboa
 ## Testing
 
 - `python3 code-check.py` — shellcheck over `vibe` + all `.sh` files. Fast. Run on every change. Add `--json` for machine-readable output (single JSON object on stdout: `tool`, `shellcheck_version`, `files_checked`, `findings`, `summary`).
-- `python3 smoke-test.py` — host-side black-box tests (no docker, no network). Fast. Covers `--help`, write-env-hint block management, token helpers.
+- `python3 smoke-test.py` — host-side black-box tests (no docker, no network). Covers `--help`, write-env-hint block management, token helpers, and 480+ more `test_*` functions; a full run takes several minutes. `smoke-test.py` is a thin entrypoint over the `smoke/` package: `smoke/_core.py` (shared imports/constants/helpers/`FAILURES`), `smoke/checks_NN_<theme>.py` (~11 files, each ≤1,500 lines, grouped by theme), `smoke/runner.py` (`main()`). Add new tests to the thematic `checks_NN` part they belong with — keep every part ≤1,500 lines, split into a new part before crossing that line.
 - `cd site && npm run check` — builds the vibe.andeye.com page and runs `site-check.mjs` post-build assertions (CTA hrefs, journey deck integrity, copy-accuracy guards, no raw emails). Run on any `site/` change.
 - `MANUAL-TESTS.md` — end-to-end checklist for container lifecycle behaviour (auto-rebuild, partial-fail retry, SSH, bind mounts). Run before shipping changes that touch the Dockerfile, devcontainer.json, postStartCommand, or the vibe launcher.
+- Review-size policy and the hot files that always get `/code-review high` before merge: `.vs/review-focus.md`.
 
 ## On session start: surface Martin's review pile
 
