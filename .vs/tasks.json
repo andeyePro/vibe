@@ -220,5 +220,32 @@
     "assigned_to": "generator",
     "mode": "rigorous",
     "last_modified": "2026-09-02T20:05:10Z"
+  },
+  {
+    "id": "task_031",
+    "description": "smoke-test.py split into smoke/ modules <=1,500 lines, unchanged entrypoint; .vs/review-focus.md; policy in CLAUDE.md (worktree task031)",
+    "implementation_status": "in_progress",
+    "test_status": "pending",
+    "assigned_to": "generator",
+    "mode": "rigorous",
+    "last_modified": "2026-09-02T20:45:31Z"
+  },
+  {
+    "id": "task_032",
+    "description": "asciinema pipeline: real-session cast replay via asciinema-player driving the 13 deck chips; record.md, scrub.mjs, placeholder cast, site-check fidelity over the cast",
+    "implementation_status": "pending",
+    "test_status": "pending",
+    "assigned_to": "generator",
+    "mode": "rigorous",
+    "last_modified": "2026-09-02T20:45:31Z"
+  },
+  {
+    "id": "task_033",
+    "description": "/wide parallelism mode + /narrow + --wide on /vs,/vss,/vsss (worktree task033)",
+    "implementation_status": "pending",
+    "test_status": "pending",
+    "assigned_to": "generator",
+    "mode": "rigorous",
+    "last_modified": "2026-09-02T20:45:31Z"
   }
 ]
