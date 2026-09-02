@@ -30,6 +30,147 @@ fail_closed() {
 GH_META_URL="${GH_META_URL:-https://api.github.com/meta}"
 GH_FETCH_ATTEMPTS="${GH_FETCH_ATTEMPTS:-6}"
 GH_FETCH_BACKOFF="${GH_FETCH_BACKOFF:-2}"
+# Last good /meta body. Lives in a ROOT-OWNED 0700 directory inside the
+# persistent ~node/.claude volume (this script runs as root under sudo with
+# env_reset, so $HOME/$CLAUDE_CONFIG_DIR are root's and unusable): it must
+# survive container recreation — which is exactly when the fetch runs — yet an
+# unprivileged in-container process must not be able to plant it, because a
+# planted cache would become root-built firewall input. Read-side ownership and
+# mode checks below make a substituted (node-owned) directory or file invisible.
+# Why at all: the anonymous 60/h /meta limit for the Mac's public IP was
+# exhausted by a day of container starts (2026-09-02) and every launch then
+# failed closed with no egress; stale-but-genuine GitHub ranges beat that.
+GH_META_CACHE="${GH_META_CACHE:-/home/node/.claude/vibe-firewall/gh-meta-cache.json}"
+GH_META_CACHE_MAX_AGE="${GH_META_CACHE_MAX_AGE:-604800}"   # 7 days, seconds
+# Token for the /meta fetch: authenticated requests get 5,000/h per token, the
+# anonymous limit is 60/h per IP shared by every container on the machine.
+# postStartCommand pipes $GITHUB_TOKEN on STDIN (sudo's env_reset drops env and
+# argv is world-readable via /proc); manual/sourced runs may use $GITHUB_TOKEN.
+# It is attached only to api.github.com (never to an overridden GH_META_URL)
+# and only via a curl config on stdin — never argv, never a log line.
+GH_META_TOKEN="${GITHUB_TOKEN:-}"
+_gh_meta_token_from_stdin() {
+    local tok=""
+    if [ ! -t 0 ]; then
+        IFS= read -r -t 2 tok 2>/dev/null || true
+    fi
+    if [ -n "$tok" ]; then GH_META_TOKEN="$tok"; fi
+    return 0
+}
+# _gh_meta_open_dir <dir>: opens the cache directory ONCE in THIS shell and
+# leaves the fd in GH_META_FD (not printed: a $(...) capture would open it in
+# a subshell and close it again on return).
+# All later checks and I/O go through /proc/self/fd/<fd>/..., so the
+# directory that was validated is the directory that is used — an
+# unprivileged owner of the PARENT (node owns ~/.claude) cannot rename the
+# root-owned directory away and substitute a symlink between check and use.
+# The directory must be a real directory owned by the uid running this
+# script (root in production), mode 0700, and not a symlink.
+GH_META_FD=""
+_gh_meta_open_dir() {
+    local dir="$1" fd
+    GH_META_FD=""
+    [ ! -L "$dir" ] && [ -d "$dir" ] || return 1
+    exec {fd}<"$dir" || return 1
+    # -L: stat the directory the fd refers to, not the /proc magic link itself
+    # (which always reports the running uid and mode 500).
+    if [ "$(stat -L -c %u "/proc/self/fd/$fd" 2>/dev/null)" = "$(id -u)" ] \
+       && [ "$(stat -L -c %a "/proc/self/fd/$fd" 2>/dev/null)" = "700" ]; then
+        GH_META_FD="$fd"
+        return 0
+    fi
+    exec {fd}<&-
+    return 1
+}
+
+# _gh_meta_cache_write <body>: best effort, never fails the boot. Creates the
+# 0700 directory (no -p: its parent, the volume root, must already exist),
+# then writes through mktemp INSIDE the opened directory handle and renames
+# within it, so no path component can be swapped underneath root.
+_gh_meta_cache_write() {
+    local dir fd tmp base; dir=$(dirname "$GH_META_CACHE"); base=$(basename "$GH_META_CACHE")
+    if [ ! -e "$dir" ] && [ ! -L "$dir" ]; then mkdir -m 0700 "$dir" 2>/dev/null || return 0; fi
+    if ! _gh_meta_open_dir "$dir"; then
+        echo "WARNING: GitHub meta cache directory $dir exists but is not a $(id -un)-owned 0700 directory - not caching" >&2
+        return 0
+    fi
+    fd="$GH_META_FD"
+    tmp=$(mktemp "/proc/self/fd/$fd/.gh-meta.XXXXXX" 2>/dev/null) || { exec {fd}<&-; return 0; }
+    if printf '%s' "$1" > "$tmp" 2>/dev/null && chmod 0600 "$tmp" 2>/dev/null \
+       && mv -f "$tmp" "/proc/self/fd/$fd/$base" 2>/dev/null; then
+        :
+    else
+        rm -f "$tmp" 2>/dev/null || true
+    fi
+    exec {fd}<&-
+    return 0
+}
+
+# _gh_meta_cache_read: prints the cached body iff the directory opens clean
+# (above), the file inside that handle is a regular non-symlink owned by this
+# uid with mode 0600, is younger than GH_META_CACHE_MAX_AGE, and — read ONCE
+# into a variable so validated bytes are served bytes — carries .web/.api/.git
+# whose every IPv4 entry passes _public_ipv4_cidr.
+_gh_meta_cache_read() {
+    local dir fd f body now mtime age; dir=$(dirname "$GH_META_CACHE")
+    _gh_meta_open_dir "$dir" || return 1
+    fd="$GH_META_FD"
+    f="/proc/self/fd/$fd/$(basename "$GH_META_CACHE")"
+    if [ -L "$f" ] || [ ! -f "$f" ] \
+       || [ "$(stat -c %u "$f" 2>/dev/null)" != "$(id -u)" ] \
+       || [ "$(stat -c %a "$f" 2>/dev/null)" != "600" ]; then
+        exec {fd}<&-; return 1
+    fi
+    now=$(date +%s); mtime=$(stat -c %Y "$f" 2>/dev/null) || { exec {fd}<&-; return 1; }
+    age=$(( now - mtime ))
+    body=$(cat "$f" 2>/dev/null) || body=""
+    exec {fd}<&-
+    [ "$age" -ge 0 ] && [ "$age" -le "$GH_META_CACHE_MAX_AGE" ] || return 1
+    _gh_meta_body_ok "$body" || return 1
+    printf '%s' "$body"
+    return 0
+}
+
+# _gh_meta_body_ok <body>: the shape check AND every IPv4 CIDR public — used
+# before caching too, so a body with one bad range never gets persisted and
+# re-served (which would fail every later boot closed for the cache lifetime).
+_gh_meta_body_ok() {
+    local c
+    [ -n "$1" ] || return 1
+    printf '%s' "$1" | jq -e '.web and .api and .git' >/dev/null 2>&1 || return 1
+    while IFS= read -r c; do
+        [ -n "$c" ] || continue
+        case "$c" in *:*) continue ;; esac   # IPv6 entries are dropped by aggregate below
+        _public_ipv4_cidr "$c" || return 1
+    done < <(printf '%s' "$1" | jq -r '(.web + .api + .git)[]' 2>/dev/null)
+    return 0
+}
+
+# _public_ipv4_cidr <a.b.c.d/p>: shape AND range. Rejects prefixes shorter than
+# /16 (GitHub's real /meta ranges are /20, /22 and /32 as of 2026-09) and every
+# non-public or special-purpose block (0/8, 10/8, 100.64/10, 127/8, 169.254/16,
+# 172.16/12, 192.0.0/24, 192.0.2/24, 192.168/16, 198.18/15 — OrbStack's host
+# side lives in 198.19.x — 198.51.100/24, 203.0.113/24, 224/3). Anything else
+# reaching ipset would mean a poisoned source, and the caller exits 1.
+_public_ipv4_cidr() {
+    [[ "$1" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})/([0-9]{1,2})$ ]] || return 1
+    local a=${BASH_REMATCH[1]} b=${BASH_REMATCH[2]} c=${BASH_REMATCH[3]} d=${BASH_REMATCH[4]} p=${BASH_REMATCH[5]}
+    [ "$a" -le 255 ] && [ "$b" -le 255 ] && [ "$c" -le 255 ] && [ "$d" -le 255 ] || return 1
+    [ "$p" -ge 16 ] && [ "$p" -le 32 ] || return 1
+    [ "$a" -eq 0 ] && return 1
+    [ "$a" -eq 10 ] && return 1
+    [ "$a" -eq 127 ] && return 1
+    [ "$a" -ge 224 ] && return 1
+    [ "$a" -eq 100 ] && [ "$b" -ge 64 ] && [ "$b" -le 127 ] && return 1
+    [ "$a" -eq 169 ] && [ "$b" -eq 254 ] && return 1
+    [ "$a" -eq 172 ] && [ "$b" -ge 16 ] && [ "$b" -le 31 ] && return 1
+    [ "$a" -eq 192 ] && [ "$b" -eq 168 ] && return 1
+    [ "$a" -eq 192 ] && [ "$b" -eq 0 ] && { [ "$c" -eq 0 ] || [ "$c" -eq 2 ]; } && return 1
+    [ "$a" -eq 198 ] && { [ "$b" -eq 18 ] || [ "$b" -eq 19 ]; } && return 1
+    [ "$a" -eq 198 ] && [ "$b" -eq 51 ] && [ "$c" -eq 100 ] && return 1
+    [ "$a" -eq 203 ] && [ "$b" -eq 0 ] && [ "$c" -eq 113 ] && return 1
+    return 0
+}
 
 # Fetch GitHub's published IP ranges, retrying a transient failure.
 #
@@ -53,17 +194,47 @@ GH_FETCH_BACKOFF="${GH_FETCH_BACKOFF:-2}"
 # JSON, proxy error page and half-ready-network garbage all look identical
 # without it.
 # Prints the response body on stdout; returns 1 if every attempt failed.
+
 fetch_gh_ranges() {
-    local attempt=1 body="" snippet=""
+    local attempt=1 resp="" body="" code="" snippet="" tok="$GH_META_TOKEN"
+    case "$GH_META_URL" in
+        https://api.github.com/*) ;;
+        *) tok="" ;;   # never send the token anywhere but GitHub's API host
+    esac
     while [ "$attempt" -le "$GH_FETCH_ATTEMPTS" ]; do
-        body=$(curl -s --connect-timeout 5 --max-time 20 "$GH_META_URL") || body=""
-        if [ -n "$body" ] && echo "$body" | jq -e '.web and .api and .git' >/dev/null 2>&1; then
+        if [ -n "$tok" ]; then
+            resp=$(printf 'header = "Authorization: Bearer %s"\n' "$tok" \
+                   | curl -s --connect-timeout 5 --max-time 20 -H "Accept: application/vnd.github+json" \
+                          -K - -w '\n%{http_code}' "$GH_META_URL") || resp=""
+        else
+            resp=$(curl -s --connect-timeout 5 --max-time 20 -H "Accept: application/vnd.github+json" \
+                        -w '\n%{http_code}' "$GH_META_URL") || resp=""
+        fi
+        # curl -w appends the status as a final line; a stub/proxy that omits it
+        # leaves code empty and the body is judged on content alone.
+        code="${resp##*$'\n'}"
+        if [[ "$code" =~ ^[0-9]{3}$ ]]; then body="${resp%$'\n'*}"; else body="$resp"; code=""; fi
+        if _gh_meta_body_ok "$body"; then
+            _gh_meta_cache_write "$body"
             printf '%s' "$body"
             return 0
         fi
         if [ -n "$body" ]; then
-            snippet=$(printf '%s' "$body" | tr -d '\n\r' | tr -c '[:print:]' '.' | head -c 160)
-            echo "WARNING: GitHub meta attempt $attempt/$GH_FETCH_ATTEMPTS returned an unusable response - retrying (body starts: ${snippet})" >&2
+            # Slice BEFORE piping: an oversized body through `head -c` would
+            # SIGPIPE `tr` and, under pipefail, abort the script (rc 141) before
+            # the cache fallback below could run.
+            snippet=$(printf '%s' "${body:0:160}" | tr -d '\n\r' | tr -c '[:print:]' '.')
+            if [ "$code" = "429" ] || { { [ "$code" = "403" ] || [ -z "$code" ]; } && [[ "$body" == *"rate limit exceeded"* ]]; }; then
+                # Retrying inside the same hour cannot succeed; go straight to
+                # the cache instead of burning ~30s of boot on backoff.
+                echo "WARNING: GitHub meta attempt $attempt/$GH_FETCH_ATTEMPTS is rate-limited - not retrying (body starts: ${snippet})" >&2
+                break
+            elif [ -n "$tok" ] && { [ "$code" = "401" ] || [[ "$body" == *"Bad credentials"* ]]; }; then
+                echo "WARNING: GitHub meta attempt $attempt/$GH_FETCH_ATTEMPTS rejected the token - retrying anonymously" >&2
+                tok=""
+            else
+                echo "WARNING: GitHub meta attempt $attempt/$GH_FETCH_ATTEMPTS returned an unusable response - retrying (body starts: ${snippet})" >&2
+            fi
         else
             echo "WARNING: GitHub meta attempt $attempt/$GH_FETCH_ATTEMPTS could not fetch $GH_META_URL - retrying" >&2
         fi
@@ -72,6 +243,11 @@ fetch_gh_ranges() {
         fi
         attempt=$(( attempt + 1 ))
     done
+    if body=$(_gh_meta_cache_read); then
+        echo "WARNING: GitHub meta unreachable - using the cached IP ranges at $GH_META_CACHE (last fetched $(date -u -r "$GH_META_CACHE" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown))" >&2
+        printf '%s' "$body"
+        return 0
+    fi
     return 1
 }
 
@@ -124,6 +300,11 @@ if [ -n "${VIBE_FIREWALL_SOURCE_ONLY:-}" ]; then
 fi
 
 trap fail_closed EXIT
+
+# Read the postStart-piped token only now, with the fail-closed trap armed.
+if [ -z "${VIBE_FIREWALL_SOURCE_ONLY:-}" ]; then
+    _gh_meta_token_from_stdin
+fi
 
 # 1. Extract Docker DNS info BEFORE any flushing
 DOCKER_DNS_RULES=$(iptables-save -t nat | grep "127\.0\.0\.11" || true)
@@ -179,8 +360,9 @@ iptables -A OUTPUT -o lo -j ACCEPT
 ipset create allowed-domains hash:net
 
 # Fetch GitHub meta information and aggregate + add their IP ranges.
-# fetch_gh_ranges retries and validates; a hard failure here is genuine (not a
-# blip) and must stay fatal, so the trap locks the container down.
+# fetch_gh_ranges retries, validates, and falls back to the last good cached
+# body; a hard failure here (no fetch AND no cache) is genuine and stays
+# fatal, so the trap locks the container down.
 echo "Fetching GitHub IP ranges..."
 if ! gh_ranges=$(fetch_gh_ranges); then
     echo "ERROR: Failed to fetch usable GitHub IP ranges after $GH_FETCH_ATTEMPTS attempts"
@@ -189,8 +371,9 @@ fi
 
 echo "Processing GitHub IPs..."
 while read -r cidr; do
-    if [[ ! "$cidr" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}$ ]]; then
-        echo "ERROR: Invalid CIDR range from GitHub meta: $cidr"
+    if ! _public_ipv4_cidr "$cidr"; then
+        echo "ERROR: Invalid or non-public CIDR range from GitHub meta: $cidr"
+        rm -f "$GH_META_CACHE" 2>/dev/null || true   # never re-serve a body that failed here
         exit 1
     fi
     echo "Adding GitHub range $cidr"

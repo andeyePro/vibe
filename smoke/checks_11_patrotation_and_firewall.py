@@ -650,6 +650,99 @@ def test_task028_ac3_all_attempts_fail_returns_nonzero() -> None:
         check("stopped at the attempt cap", calls == 3, f"calls={calls}")
 
 
+def test_gh_meta_rate_limit_and_cache_fallback() -> None:
+    """2026-09-02: the anonymous /meta limit was exhausted by a day of container
+    starts and every launch failed closed. fetch_gh_ranges now (a) sends the
+    container's PAT, (b) stops retrying on a rate-limit body, (c) caches the
+    last good body and (d) serves the cache when the fetch fails; (e) with no
+    cache the fail-closed path is unchanged."""
+    print("\n[gh-meta: rate-limit fast path, PAT auth, cached-ranges fallback]")
+    rate_limited = '{"message":"API rate limit exceeded for 203.0.113.1. (But here is the good news)"}'
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        cache = tmp / "cache" / "gh-meta-cache.json"
+        base_env = {"GH_META_CACHE": str(cache)}
+        # (b)+(e): rate-limit body -> exactly one call, RC=1 without a cache
+        log = tmp / "curl.log"; log.write_text("")
+        env = {**os.environ, "PATH": _fw_stub_curl(tmp, script_body=f"echo '{rate_limited}'"),
+               "STUB_LOG": str(log), "VIBE_FIREWALL_SOURCE_ONLY": "1", "GH_FETCH_BACKOFF": "0",
+               "GH_FETCH_ATTEMPTS": "3", **base_env}
+        r = run(["bash", "-c", f"source {shlex.quote(str(INIT_FIREWALL))}\n"
+                 'if ! fetch_gh_ranges >/dev/null; then echo "RC=1"; else echo "RC=0"; fi'], env=env)
+        calls = len([ln for ln in log.read_text().splitlines() if ln.strip()])
+        check("[gh-meta] rate-limited body stops after ONE attempt", calls == 1, f"calls={calls}")
+        check("[gh-meta] no cache -> still fails (fail-closed path unchanged)", "RC=1" in r.stdout, r.stdout[:300])
+        check("[gh-meta] rate-limit warning names the condition", "rate-limited" in r.stderr, r.stderr[:300])
+        # (c): a good fetch writes the cache
+        log.write_text("")
+        env["PATH"] = _fw_stub_curl(tmp, script_body=f"echo '{_FW_GOOD_JSON}'")
+        r = run(["bash", "-c", f"source {shlex.quote(str(INIT_FIREWALL))}\nfetch_gh_ranges >/dev/null; echo RC=$?"], env=env)
+        check("[gh-meta] good fetch succeeds", "RC=0" in r.stdout, r.stdout[:200])
+        check("[gh-meta] good fetch writes the cache", cache.is_file() and json.loads(cache.read_text())["web"] == ["1.2.3.0/24"], str(cache))
+        # (d): fetch fails (curl rc 28) -> cache served, RC=0, body == cache
+        log.write_text("")
+        env["PATH"] = _fw_stub_curl(tmp, script_body="exit 28")
+        r = run(["bash", "-c", f"source {shlex.quote(str(INIT_FIREWALL))}\nfetch_gh_ranges; echo; echo RC=$?"], env=env)
+        check("[gh-meta] cache served when every attempt fails", "RC=0" in r.stdout and '"1.2.3.0/24"' in r.stdout, r.stdout[:300])
+        check("[gh-meta] cache fallback is announced on stderr", "cached IP ranges" in r.stderr, r.stderr[:300])
+        # corrupt cache -> not served
+        cache.write_text("not json")
+        r = run(["bash", "-c", f"source {shlex.quote(str(INIT_FIREWALL))}\n"
+                 'if ! fetch_gh_ranges >/dev/null; then echo "RC=1"; else echo "RC=0"; fi'], env=env)
+        check("[gh-meta] a corrupt cache is ignored (fails closed)", "RC=1" in r.stdout, r.stdout[:300])
+        # (a): the PAT rides along as a bearer header; absent when unset
+        argslog = tmp / "args.log"; argslog.write_text("")
+        # The stub records argv AND stdin (curl -K - reads its config there).
+        # Only drain stdin when curl was given `-K -` (config on stdin) — an
+        # unconditional `cat` would block on an inherited, never-closed stdin.
+        body = (f"echo \"ARGV: $@\" >> {shlex.quote(str(argslog))}\n"
+                f"case \" $* \" in *' -K '*) cat >> {shlex.quote(str(argslog))};; esac\necho '{_FW_GOOD_JSON}'")
+        env["PATH"] = _fw_stub_curl(tmp, script_body=body); env["GITHUB_TOKEN"] = "ghp_fixture_not_a_real_token"
+        run(["bash", "-c", f"source {shlex.quote(str(INIT_FIREWALL))}\nfetch_gh_ranges >/dev/null"], env=env)
+        rec = argslog.read_text()
+        check("[gh-meta] PAT sent as Authorization: Bearer via curl config on stdin",
+              'header = "Authorization: Bearer ghp_fixture_not_a_real_token"' in rec, rec[:400])
+        check("[gh-meta] PAT never appears in curl's argv", "ghp_fixture_not_a_real_token" not in [ln for ln in rec.splitlines() if ln.startswith("ARGV:")].__str__(), rec[:400])
+        argslog.write_text("")
+        env["GH_META_URL"] = "https://evil.example/meta"
+        run(["bash", "-c", f"source {shlex.quote(str(INIT_FIREWALL))}\nfetch_gh_ranges >/dev/null"], env=env)
+        check("[gh-meta] token withheld when GH_META_URL is not api.github.com", "ghp_fixture" not in argslog.read_text(), argslog.read_text()[:300])
+        env.pop("GH_META_URL", None); argslog.write_text(""); env.pop("GITHUB_TOKEN", None)
+        run(["bash", "-c", f"source {shlex.quote(str(INIT_FIREWALL))}\nfetch_gh_ranges >/dev/null"], env=env)
+        check("[gh-meta] no Authorization header without a token", "Authorization" not in argslog.read_text(), argslog.read_text()[:300])
+        # stdin token path used by postStartCommand (printf token | sudo init-firewall.sh)
+        r = run(["bash", "-c", f"source {shlex.quote(str(INIT_FIREWALL))}\nprintf 'ghp_from_stdin' | {{ _gh_meta_token_from_stdin; echo \"TOK=$GH_META_TOKEN\"; }}"], env=env)
+        check("[gh-meta] token read from stdin when piped", "TOK=ghp_from_stdin" in r.stdout, r.stdout[:200] + r.stderr[:200])
+        # cache hygiene: wrong dir mode, symlinked file, stale file are all ignored
+        cache.parent.mkdir(parents=True, exist_ok=True); cache.parent.chmod(0o700)
+        cache.write_text(_FW_GOOD_JSON); cache.chmod(0o600)
+        env["PATH"] = _fw_stub_curl(tmp, script_body="exit 28")
+        probe = 'if ! fetch_gh_ranges >/dev/null; then echo "RC=1"; else echo "RC=0"; fi'
+        r = run(["bash", "-c", f"source {shlex.quote(str(INIT_FIREWALL))}\n{probe}"], env=env)
+        check("[gh-meta] well-owned 0700 dir + 0600 file is served", "RC=0" in r.stdout, r.stdout[:200])
+        cache.parent.chmod(0o755)
+        r = run(["bash", "-c", f"source {shlex.quote(str(INIT_FIREWALL))}\n{probe}"], env=env)
+        check("[gh-meta] cache dir not 0700 -> ignored", "RC=1" in r.stdout, r.stdout[:200])
+        cache.parent.chmod(0o700); cache.chmod(0o644)
+        r = run(["bash", "-c", f"source {shlex.quote(str(INIT_FIREWALL))}\n{probe}"], env=env)
+        check("[gh-meta] cache file not 0600 -> ignored", "RC=1" in r.stdout, r.stdout[:200])
+        cache.chmod(0o600); real = tmp / "elsewhere.json"; real.write_text(_FW_GOOD_JSON); real.chmod(0o600)
+        cache.unlink(); cache.symlink_to(real)
+        r = run(["bash", "-c", f"source {shlex.quote(str(INIT_FIREWALL))}\n{probe}"], env=env)
+        check("[gh-meta] symlinked cache file -> ignored", "RC=1" in r.stdout, r.stdout[:200])
+        cache.unlink(); cache.write_text(_FW_GOOD_JSON); cache.chmod(0o600)
+        os.utime(cache, (1, 1))  # epoch 1970: far older than the 30-day limit
+        r = run(["bash", "-c", f"source {shlex.quote(str(INIT_FIREWALL))}\n{probe}"], env=env)
+        check("[gh-meta] cache older than the max age -> ignored", "RC=1" in r.stdout, r.stdout[:200])
+        # public-CIDR validator
+        good = ["140.82.112.0/20", "192.30.252.0/22", "185.199.108.0/22", "20.201.28.151/32"]
+        bad = ["0.0.0.0/0", "10.0.0.0/8", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16", "224.0.0.0/4", "100.64.0.0/10", "8.0.0.0/7", "256.1.1.1/24", "1.2.3.4", "9.0.0.0/8", "11.0.0.0/12", "192.0.2.0/24", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24"]
+        script = f"source {shlex.quote(str(INIT_FIREWALL))}\nfor c in {' '.join(good)}; do _public_ipv4_cidr \"$c\" && echo \"OK $c\"; done\nfor c in {' '.join(bad)}; do _public_ipv4_cidr \"$c\" || echo \"REJ $c\"; done"
+        r = run(["bash", "-c", script], env=env)
+        for c in good: check(f"[gh-meta] validator accepts {c}", f"OK {c}" in r.stdout, r.stdout[:400])
+        for c in bad: check(f"[gh-meta] validator rejects {c}", f"REJ {c}" in r.stdout, r.stdout[:400])
+
+
 def test_task028_ac4_no_needless_retry_on_first_success() -> None:
     """A healthy fetch costs exactly one call -- no added boot latency."""
     print("\n[task_028 AC4: clean path unchanged]")
@@ -663,20 +756,23 @@ def test_task028_ac4_no_needless_retry_on_first_success() -> None:
 
 
 def test_task028_ac5_unusable_body_is_retried() -> None:
-    """A rate-limit body parses as JSON but lacks .web/.api/.git -- retry it."""
+    """An error body parses as JSON but lacks .web/.api/.git -- retry it.
+    (A RATE-LIMIT body is deliberately NOT retried any more — see
+    test_gh_meta_rate_limit_and_cache_fallback — so the fixture here is a
+    generic server-error JSON, the half-ready-network case.)"""
     print("\n[task_028 AC5: unusable response retried, not accepted]")
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
-        rate_limited = '{"message":"API rate limit exceeded"}'
-        body = (f'if [ "$n" -lt 2 ]; then echo \'{rate_limited}\'; exit 0; fi\n'
+        unusable = '{"message":"Server Error"}'
+        body = (f'if [ "$n" -lt 2 ]; then echo \'{unusable}\'; exit 0; fi\n'
                 f"echo '{_FW_GOOD_JSON}'")
         r, calls = _fw_run(tmp, body, 'fetch_gh_ranges; echo "RC=$?"')
-        check("does not accept the rate-limit body",
-              "rate limit" not in r.stdout, r.stdout[:400])
+        check("does not accept the unusable body",
+              "Server Error" not in r.stdout, r.stdout[:400])
         check("retries to a good response", "RC=0" in r.stdout, r.stdout[:400])
         check("made 2 attempts", calls == 2, f"calls={calls}")
         check("warning logs a snippet of the unusable body",
-              "body starts:" in r.stderr and "rate limit exceeded" in r.stderr,
+              "body starts:" in r.stderr and "Server Error" in r.stderr,
               r.stderr[:400])
 
 
