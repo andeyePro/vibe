@@ -6,6 +6,8 @@ A security issue in vibe is anything that breaks one of those backstops.
 
 One data-location note: per-project session history and auto-memory live on the host at `~/.vibe/projects/<sha1-of-project-path>/` (chmod 700, like `~/.vibe/tokens`), not in a Docker volume. Session transcripts can quote secret material seen in-session, so that tree is included in whatever host-side backup/sync/indexing covers your home directory — treat it accordingly.
 
+One fail-closed fallback note: if the live fetch of GitHub's published IP ranges fails at container start, `init-firewall.sh` boots on the last good copy instead of failing closed outright, but only from a narrowly-trusted cache — a root-owned 0700 directory inside the persistent volume, holding a 0600 uid-owned non-symlink file younger than 7 days, re-validated on read (`.web`/`.api`/`.git` shape, every IPv4 range public with a /16 floor) so an unprivileged in-container process can't plant firewall input. The PAT used for the authenticated fetch (5,000/h vs. the shared 60/h anonymous limit) is read from stdin only, never argv or env. No live fetch and no valid cache still fails closed.
+
 ## In scope
 
 - Firewall bypass — reaching a non-allowlisted host from inside the container, or a change that leaves egress open on error instead of failing closed.

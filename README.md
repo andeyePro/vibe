@@ -162,7 +162,7 @@ Every launch also auto-refreshes `<brain2>/meta/vibe-operation.md` (fail-soft �
 
 ## Security model
 
-- **Network:** iptables firewall allows only an allowlist of hosts a coding session needs (GitHub, npm, Anthropic, VS Code marketplace, a few opt-in extras — the list is `devcontainer/init-firewall.sh`), plus DNS and outbound SSH.
+- **Network:** iptables firewall allows only an allowlist of hosts a coding session needs (GitHub, npm, Anthropic, VS Code marketplace, a few opt-in extras — the list is `devcontainer/init-firewall.sh`), plus DNS and outbound SSH. If the boot-time fetch of GitHub's IP ranges fails, the firewall falls back to a re-validated, root-owned cached copy (max 7 days old) rather than failing closed outright; no fetch and no valid cache still fails closed.
 - **GitHub:** every fine-grained PAT stays scoped to a single repo. A container's blast radius is exactly the repos in its launch header — the project repo, plus any private repos it declares in `.vibe-repos` and mounts under `/repos/*` (read-only by default; `--rw` intents are lock-refereed) — each reached via its own single-repo token (routed by `credential.useHttpPath`), never a multi-repo token. If Claude goes rogue, it can only touch those announced repos.
 - **Host FS:** only the project folder, `~/.ssh` (ro), and `~/.gitconfig` (ro) are mounted in.
 - **Claude Pro credentials:** in a named Docker volume (`vibe-claude-config`), not bind-mounted from the host — a compromised container can't leak host credentials unless the firewall is breached.

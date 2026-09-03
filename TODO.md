@@ -8,6 +8,8 @@ Markers: `[ ]` open · `[!]` failed/abandoned (note what was tried) · a `Martin
 
 **This section is the boot-time checklist Martin reviews when he comes back to vibe.** Items here are blocked on Martin's hands or judgement and CANNOT be progressed autonomously. CLAUDE.md instructs Claude to surface this section on every session start — if you're reading this as Claude, list the unticked items in your opening response and offer to walk Martin through them.
 
+- [ ] **Martin-gated: cut v0.2.0** — per `RELEASING.md`, everything shipped since 0.1.0 (`VERSION` unchanged) lands in the minor slot: `/wide` parallelism mode, Linux host support, the `vibe pat` rotation UX added to the demo deck, the asciinema demo pipeline, and the init-firewall cached-ranges fallback. Tag/push/`gh release create` are host-only steps (the container never pushes) and should follow Martin's review of the currently unpushed local commit batch — don't bump `VERSION` or tag from in-container.
+
 ### ⇒ START HERE after the 2026-07-16 rebuild (content-guard + OP-opt-in shipped)
 
 - [ ] **Martin-gated: review + push the 2026-08-28 agent-team batch (5 local commits)** — site demo fidelity rework (pushing `main` DEPLOYS vibe.andeye.com via CF Pages — eyeball the demo first: `cd site && npm run dev`), task_014 per-project history bind (first launch after this recreates each project's container once and shadows pre-upgrade history — see Test 42), firewall must-have tier, `/zotero` write deny, `/learn --review`. All suites green + Fable security-review clean (its MEDIUM + 2 LOW findings fixed pre-commit) at commit time.

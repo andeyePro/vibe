@@ -23,9 +23,13 @@ python3 code-check.py    # shellcheck over vibe + every .sh
 python3 smoke-test.py    # host-side black-box tests
 ```
 
+If your change touches anything under `site/`, also run `cd site && npm run check` (builds the vibe.andeye.com page and runs `site-check.mjs`'s post-build assertions).
+
+For a background/detached invocation, run `python3 smoke-test.py < /dev/null` instead — a child process left reading an open-but-never-written stdin can hang forever otherwise.
+
 Both must pass. If your change touches the Dockerfile, `devcontainer.json`, `postStartCommand`, or the launcher's container lifecycle, also walk the relevant section of `MANUAL-TESTS.md` — those paths need a real Docker daemon and can't be covered by the smoke suite.
 
-Tests and docs are part of "done", not a follow-up. New behaviour ships with a smoke test (or a MANUAL-TESTS entry if it needs docker) and its doc update in the same PR.
+Tests and docs are part of "done", not a follow-up. New behaviour ships with a smoke test (or a MANUAL-TESTS entry if it needs docker) and its doc update in the same PR. `smoke-test.py` is a thin entrypoint over the `smoke/` package: `smoke/_core.py` (shared imports/constants/helpers), `smoke/checks_NN_<theme>.py` (one file per theme, each kept ≤1,500 lines — split into a new part before crossing that line), and `smoke/runner.py` (`main()`). Add a new test to the thematic `checks_NN` part it belongs with, not to a new top-level file. `.vs/review-focus.md` lists the hot files that always get `/code-review high` before merge.
 
 ## Backlog and history
 
