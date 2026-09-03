@@ -1,0 +1,539 @@
+diff --git a/.gitignore b/.gitignore
+index 419e980..0379ddc 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,9 +1,7 @@
+ # Never commit tokens or personal config
+-.vibe/
+ *.tokens
+ .env
+ .env.*
+-.claude/settings.local.json
+ 
+ # macOS
+ .DS_Store
+diff --git a/.vs/spec.md b/.vs/spec.md
+index b571d5b..9897a89 100644
+--- a/.vs/spec.md
++++ b/.vs/spec.md
+@@ -6,14 +6,14 @@ This session's own harness debris, each patched at the point of pain and none pr
+ ## Acceptance criteria (mechanical; the Tester adds them to the suite)
+ - AC1 `smoke/_core.py`'s `run()` and `run_bytes()` pass `stdin=subprocess.DEVNULL` exactly when no `input`/`input_bytes` argument is given, and never pass both `input=` and `stdin=` (subprocess raises).
+ - AC2 Every `subprocess.run(`/`subprocess.Popen(`/`subprocess.check_output(` call in `smoke/*.py` that supplies neither `input=` nor an explicit `stdin=` passes `stdin=subprocess.DEVNULL` (or routes through `run()`/`run_bytes()`).
+-- AC3 A new lint test `test_harness_spawns_never_inherit_stdin()` scans every `smoke/*.py` source, finds every spawn, and fails on any that satisfies neither condition; it asserts it found ≥ 20 spawns (non-vacuous).
++- AC3 A new lint test `test_harness_spawns_never_inherit_stdin()` parses every `smoke/*.py` with `ast`, finds every `subprocess.run/Popen/check_output/call` `Call` node, and fails on any whose keywords include neither `input`/`input_bytes` nor `stdin` (a wrapper call such as `run(`/`run_bytes(` is exempt because the wrapper enforces it); it asserts it found ≥ 40 spawns (today: 48). No line-window regexes — adjacent multi-line calls (e.g. checks_04 ~1131/1193) must not be misattributed.
+ - AC4 Regression test `test_harness_survives_open_stdin()`: runs a small representative child (a sourced `vibe learn`-shaped invocation through `run()`, or `python3 -c` importing the entry module and calling one test that spawns `vibe`) with a never-written open pipe as stdin; it completes within 60 s.
+-- AC5 `_isolate_extras_env` also sets `GH_META_CACHE` under the scratch HOME (and keeps HOME, GIT_CONFIG_GLOBAL, CLAUDE_CONFIG_DIR, VIBE_AUTO_GITIGNORE=0); `_fw_run` consumes it instead of setting its own; no other test sets these keys by hand except through the builder (a test may override AFTER calling it).
+-- AC6 The meta-check `test_extras_invocations_isolated` (or a successor) scans ALL `smoke/*.py`, not `Path(__file__)`, for every invocation of `INSTALL_EXTRAS`, `SETUP_GIT_SH`, a `vibe learn` argv, and `INIT_FIREWALL` sourcing, and fails on any `env=` at those call sites not routed through `_isolate_extras_env` (or `_fw_run`, which must itself call the builder); it asserts ≥ 1 call site per category (non-vacuous), listing the counts in its labels.
++- AC5 `_isolate_extras_env` also sets `GH_META_CACHE` (and keeps HOME, GIT_CONFIG_GLOBAL, CLAUDE_CONFIG_DIR, VIBE_AUTO_GITIGNORE=0). Because the builder's scratch HOME is process-global, `GH_META_CACHE` from the builder is a per-CALL unique path (e.g. `tempfile.mkdtemp` under the scratch HOME per invocation), or `_fw_run` overrides it per call AFTER invoking the builder — no cache state may leak between tests. `_fw_run` and `test_gh_meta_rate_limit_and_cache_fallback` (checks_11, ~15 inline `env=` sites today) both route through the builder; no test sets these keys by hand except as an override after calling it.
++- AC6 The meta-check `test_extras_invocations_isolated` (or a successor) scans ALL `smoke/*.py`, not `Path(__file__)`, for every invocation of `INSTALL_EXTRAS`, `SETUP_GIT_SH`, a `vibe learn` argv, and `INIT_FIREWALL` sourcing, and fails on any `env=` at those call sites not routed through `_isolate_extras_env` (or `_fw_run`, which must itself call the builder); it asserts ≥ 1 call site per category (non-vacuous), listing the counts in its labels. Known offender to fix first: `checks_11`'s `test_gh_meta_rate_limit_and_cache_fallback` builds `env` inline. Call-site detection is AST-based (`ast.walk` over `Call` nodes, keyword `env`), never a line-window regex. 'Routed through' is a concrete data-flow rule: the `env=` argument must be (i) a direct call to `_isolate_extras_env(...)`/`_fw_run(...)`, or (ii) a `Name` whose nearest preceding assignment in the same function is such a call, or whose nearest preceding assignment's value is itself a dict/`{**...}` expression that includes a call to `_isolate_extras_env` — later `env["KEY"] = ...` overrides after that assignment are permitted. Anything else (an `env = {**os.environ, ...}` literal never passed through the builder) fails.
+ - AC7 A sha-pin lint `test_no_fixed_sha_baselines()` scans `smoke/*.py` for `git show <7-40 hex>:` and `git diff <7-40 hex>` in test bodies and fails unless the occurrence is registered in a documented allowlist constant `HISTORICAL_PINS_ALLOWED` in `_core.py` with a one-line reason each; the sole initial entry is `_task034_baseline_text`'s `3b23b19` (its comment explains why). `HEAD`, temp-repo shas produced at runtime, and `checks_09`'s `git show -s <sha>` against a repo the test itself created must not trip it (the regex must require a literal hex sha token in source, not a variable).
+ - AC8 `CLAUDE.md` § Testing gains three bullets: spawns never inherit stdin (and `python3 smoke-test.py < /dev/null` for background runs); every real-installer / `vibe learn` / firewall-sourcing test goes through `_isolate_extras_env`; no permanent test pins a fixed commit sha (allowlist in `_core.py`).
+-- AC9 `.gitignore`: the hand-written `.vibe/` and `.claude/settings.local.json` lines (top block) are removed, the vibe-managed block is byte-identical, and `install-claude-extras.sh`'s `ensure_project_gitignore` still finds its block (the Generator reads that function first; if the block's presence is what stops re-adding, nothing else changes). `site/.gitignore` reduces to `public/vendor/` (root already ignores `site/node_modules/`, `site/dist/`, `site/.astro/`). MANUAL-TESTS double rule: already gone, out of scope.
+-- AC10 `python3 code-check.py` exits 0; `python3 smoke-test.py < /dev/null` exits 0; and the same suite invoked with an inherited open pipe on stdin (`sleep 1000 | python3 smoke-test.py` shape, or a Python harness holding the write end) exits 0 within the Bash cap — the Tester runs this once as the decisive check.
++- AC9 `.gitignore`: the hand-written `.vibe/` and `.claude/settings.local.json` lines (top block) are removed, the vibe-managed block is byte-identical, and `install-claude-extras.sh`'s `ensure_project_gitignore` still finds its block (the Generator reads that function first; if the block's presence is what stops re-adding, nothing else changes). `site/.gitignore` reduces to `public/vendor/` plus the three un-anchored entries kept as-is (`node_modules/`, `dist/`, `.astro/` also cover nested paths under site/, which root's anchored `site/node_modules/` etc. do not — so they are not pure duplicates; leave them). MANUAL-TESTS double rule: already gone, out of scope.
++- AC10 `python3 code-check.py` exits 0; `python3 smoke-test.py < /dev/null` exits 0 (the Tester runs the full suite in the foreground with `timeout: 600000`; if the cap trips under load, rerun once — a timeout is not a verdict). The open-stdin decisive check is AC4's targeted child (a single spawn-heavy test run under a held-open pipe, 60 s bound) — NOT the full suite, whose 4–25 minute wall time under load would make a timeout indistinguishable from the hang this task prevents.
+ - AC11 Scope lock: only `smoke/*.py`, `CLAUDE.md`, `.gitignore`, `site/.gitignore`, `TODO.md`, `CHANGELOG.md`, `.vs/`, `.vss/`.
+ 
+ ## Out of scope
+diff --git a/.vs/tasks.json b/.vs/tasks.json
+index ea85692..81d7ade 100644
+--- a/.vs/tasks.json
++++ b/.vs/tasks.json
+@@ -260,7 +260,7 @@
+   {
+     "id": "task_035",
+     "description": "harness hygiene: stdin-immune suite, one sandbox builder + whole-suite meta-check, sha-pin lint, SAFE prunes, CLAUDE.md \u00a7 Testing rules",
+-    "implementation_status": "pending",
++    "implementation_status": "complete",
+     "test_status": "pending",
+     "assigned_to": "generator",
+     "mode": "rigorous",
+diff --git a/.vss/sessions/2026-09-02T16-04-16Z.md b/.vss/sessions/2026-09-02T16-04-16Z.md
+index b10eb90..13a5e03 100644
+--- a/.vss/sessions/2026-09-02T16-04-16Z.md
++++ b/.vss/sessions/2026-09-02T16-04-16Z.md
+@@ -52,3 +52,6 @@ Work the vibe roadmap at /brain2/andeye/vibe-roadmap-2026-09.md, Tier 1, in this
+ Martin's electroPioreactor vibe lost all egress ("Remote Control: Session creation failed", API retries "Connection refused"), and `vibe --rebuild` reproduced it: init-firewall's anonymous `api.github.com/meta` fetch hit GitHub's 60/h-per-IP limit (a day of container starts from one Mac IP), retried six times, and the fail-closed trap left the container with no API. Fix built as a chair task on main (hot file → two security-review rounds): token piped on stdin from postStartCommand into the root script (sudo env_reset drops env; argv is world-readable), attached only to api.github.com via curl `-K -`; rate-limit responses stop retrying at once; last good body cached in a root-owned 0700 dir on the persistent volume via an opened directory fd (no rename/symlink race), served only after ownership/mode/symlink/age/shape/public-CIDR checks; `_public_ipv4_cidr` (/16 floor, non-public and special-purpose blocks rejected) before ipset; sudoers asserts env_reset. Verified: authenticated fetch returns 200 from this container while the anonymous limit is still exhausted. Test harness bug found on the way: a stubbed fetch had written a fixture cache into the live ~/.claude (now pinned per test). Also: a background suite run hung 55 min in `vibe learn` waiting on stdin — suite runs now use `< /dev/null`.
+ 
+ **Iter 4 close**: task_032 (asciinema) → ad68272 on main; task_033 (/wide) → 41a32cb (worktree eef1cf2, docs applied with git apply -3, test hunks context-patched into the split suite); firewall incident fix → 48af1ce; task_034 (Linux host) → this commit (worktree 6fbb362 cherry-picked -n; .vs/spec.md add/add resolved by archiving task_032; the AC4 golden re-baselined to 48af1ce's postStartCommand; the watcher hunk the worktree commit had missed applied by hand). Final suite on the merged tree: green (6m18s). Worktrees task031/033/034 retired.
++
++## Iter 5 — harness hygiene (main, single stream)
++**Plan**: optimiser verdict 1 — the session's own harness debris: (a) suite immune to an open stdin (every spawn `stdin=DEVNULL` + regression check), (b) one shared sandbox-env builder (HOME, GIT_CONFIG_GLOBAL, CLAUDE_CONFIG_DIR, VIBE_AUTO_GITIGNORE) + a meta-check that no test invokes the real installer / `vibe learn` / a cache-writing path without it, (c) a lint rejecting permanent tests pinned to a fixed commit sha, (d) CLAUDE.md § Testing records all three incl. `< /dev/null` for background runs, (e) fold in the remaining SAFE prunes (duplicate .gitignore lines, MANUAL-TESTS double rule). Planner dispatched.
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index eb038c0..e822633 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -6,6 +6,8 @@ Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion
+ 
+ ## 2026-09-02
+ 
++- [x] **task_035 (generator pass, cycle 1): harness hygiene — stdin-immune suite, one sandbox builder with a whole-suite meta-check, sha-pin lint, SAFE prunes** — this session's own harness debris, patched at the point of pain and never structurally prevented from recurring, fixed for real: (1) `smoke/_core.py`'s `run()`/`run_bytes()` now pass `stdin=subprocess.DEVNULL` exactly when no `input`/`input_bytes` is given (never both `input=` and `stdin=`), and every one of the other 27 bare `subprocess.run`/`Popen`/`check_output`/`call` sites across `smoke/*.py` got the same treatment by hand — a background run with an open, never-written stdin can no longer hang a child forever (the trigger: a 55-minute hang inside a `vibe learn` test). (2) `_isolate_extras_env` now also sandboxes `GH_META_CACHE` (a per-call unique path under the scratch HOME via `tempfile.mkdtemp`, since the scratch HOME itself is process-global and a shared cache path would leak state between tests); `_fw_run` and `checks_11`'s `test_gh_meta_rate_limit_and_cache_fallback` both now build their env through the builder and override `GH_META_CACHE` afterward to their own fixture path, instead of each hand-rolling an inline `{**os.environ, ...}` dict that could (and did) touch the live `~/.claude` state. (3) Added `HISTORICAL_PINS_ALLOWED` in `_core.py` — a documented allowlist for any permanent `git show <sha>:`/`git diff <sha>` baseline in a test body, seeded with task_034's `3b23b19` golden-render pin — so a sha-pin lint (Tester's, next) has something to check against instead of every commit silently invalidating the pin the way task_028/029's did. (4) `CLAUDE.md` § Testing gained three bullets recording all of the above as standing rules, including running `python3 smoke-test.py < /dev/null` for any background/detached invocation. (5) `.gitignore`'s hand-written `.vibe/` and `.claude/settings.local.json` lines (top block) removed as pure duplicates of the vibe-managed block below them — confirmed safe first by reading `install-claude-extras.sh`'s `ensure_project_gitignore`, which keys only on the managed-block marker string, not on any specific line inside it; `site/.gitignore` left untouched (its un-anchored `node_modules/`/`dist/`/`.astro/` entries also cover nested paths the root's anchored `site/...` entries don't, so they aren't true duplicates). `python3 code-check.py` and the full `python3 smoke-test.py < /dev/null` both green. Scope: `smoke/*.py`, `CLAUDE.md`, `.gitignore`, `CHANGELOG.md`, `.vs/`. Generator pass of `/vs` task_035 cycle 1; the four new tests (spawn lint, open-stdin regression, whole-suite meta-check successor, sha-pin lint) are the Tester's, still pending.
++
+ - [x] **task_034: Linux host support** — vibe's real Linux gaps were only `host.docker.internal` and mDNS on native Docker Engine (roadmap answer 1). `devcontainer.json` now carries `--add-host=host.docker.internal:host-gateway` unconditionally (the `/op` path had already proved `host-gateway` on Docker Desktop and OrbStack; a smoke golden pins that the Mac render changes by exactly that one line); the launcher gains a host-side Linux clipboard chain (`wl-copy` → `xclip -selection clipboard` → `xsel --clipboard --input`, the X11 tools with their CLIPBOARD flags on purpose) with the Darwin `pbcopy` branch byte-identical and the copy watcher's gate a 3-way OR (Darwin / `VIBE_COPY_CMD` / `VIBE_COPY_WATCHER_FORCE`); `install.sh` gets a Linux preflight (Docker Engine, `docker` group, devcontainer CLI) and apt/dnf hints; the Dockerfile's nsswitch `mdns4_minimal` sed is idempotent (existing images already carry the duplicate line — a real `vibe --rebuild` is needed); a once-per-machine mDNS probe warns on Linux hosts that cannot resolve `.local`; README/ONBOARDING gain a Linux section (Ubuntu 24.04 LTS + Docker Engine as the reference); MANUAL-TESTS 44–50 hold the real-Linux-box checks for the NUC. Built in worktree `task034` in parallel with items 3b and 5 (`/wide`), spec locked after two critique rounds. Tester: 62 checks including the pre-change golden render under a Darwin `uname` shim.
+ 
+ - [x] **init-firewall: GitHub /meta fetch authenticates with the container's PAT, stops retrying on a rate limit, and falls back to a root-owned cached copy instead of failing closed** — live incident 2026-09-02: a day of container starts (plus rebuilds) exhausted GitHub's anonymous 60-requests/hour limit for the Mac's public IP; every new container then spent ~30 s retrying `api.github.com/meta`, hit the fail-closed trap, and came up with NO egress at all (`api.anthropic.com` timed out; Remote Control reported "Session creation failed"). Design after two security-review rounds: `postStartCommand` pipes `$GITHUB_TOKEN` on STDIN into `sudo init-firewall.sh` (sudo's `env_reset` drops env; argv is world-readable in `/proc`), the script reads it with a 2-second `read -t` only when stdin is not a tty, attaches it only to `https://api.github.com/` and only as a curl config on stdin (`-K -`) — 5,000/h per token instead of 60/h per shared IP — and downgrades to anonymous on 401/"Bad credentials". A rate-limited response (429, or 403 with the rate-limit body) breaks out of the retry loop at once. Every good body is cached at `/home/node/.claude/vibe-firewall/gh-meta-cache.json` (persistent volume) inside a `mkdir -m 0700` root-owned directory, written via `mktemp` + `chmod 0600` + rename; the read side serves it only if the directory is a real 0700 directory owned by the running uid, the file a regular 0600 non-symlink owned by that uid, younger than 30 days (`GH_META_CACHE_MAX_AGE`), read once into a variable and `.web/.api/.git`-validated — so an unprivileged in-container process cannot plant firewall input (it can rename the root-owned directory away, but cannot create a root-owned replacement). A new `_public_ipv4_cidr` validator rejects prefixes shorter than /8 and every non-public block before `ipset add` (previously shape-only). No fetch and no valid cache → unchanged fail-closed. Smoke: `test_gh_meta_rate_limit_and_cache_fallback` (rate-limit one-attempt fast path, fail-closed without cache, cache written/served, corrupt/stale/mis-owned/mis-moded/symlinked cache ignored, bearer header only via stdin config and never in argv, token withheld for a non-GitHub URL, stdin token read, 14 validator cases); the harness now pins `GH_META_CACHE` into each test's temp dir after a stubbed fetch was found to have written a fixture cache into the live `~/.claude`; the task_028 AC5 fixture switched from a rate-limit body to a generic server-error body since rate limits are no longer retried.
+diff --git a/CLAUDE.md b/CLAUDE.md
+index c7d205e..1066286 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -23,6 +23,9 @@ If a user pointed you at this file and asked you to take them through vibe onboa
+ - `cd site && npm run check` — builds the vibe.andeye.com page and runs `site-check.mjs` post-build assertions (CTA hrefs, journey deck integrity, copy-accuracy guards, no raw emails). Run on any `site/` change.
+ - `MANUAL-TESTS.md` — end-to-end checklist for container lifecycle behaviour (auto-rebuild, partial-fail retry, SSH, bind mounts). Run before shipping changes that touch the Dockerfile, devcontainer.json, postStartCommand, or the vibe launcher.
+ - Review-size policy and the hot files that always get `/code-review high` before merge: `.vs/review-focus.md`.
++- A spawned child never inherits this process's real stdin: `smoke/_core.py`'s `run()`/`run_bytes()` pass `stdin=subprocess.DEVNULL` whenever no `input`/`input_bytes` is given, and every direct `subprocess.run`/`Popen`/`check_output`/`call` in `smoke/*.py` does the same by hand where it doesn't route through those wrappers — a background/CI run with no controlling TTY leaves stdin open-but-never-written, and a child that reads from it hangs forever instead of failing fast (task_035, triggered by a 55-minute hang inside a `vibe learn` test). Run `python3 smoke-test.py < /dev/null` for any background/detached invocation, so a hang is impossible even if a new call site forgets this rule.
++- Every test that sources `install-claude-extras.sh`, runs a `vibe learn` argv, or sources `init-firewall.sh` builds its subprocess `env` through `smoke/_core.py`'s `_isolate_extras_env` (or `_fw_run`, which itself calls the builder) — never an inline `{**os.environ, ...}` literal. The builder sandboxes HOME/CLAUDE_CONFIG_DIR/GIT_CONFIG_GLOBAL/GH_META_CACHE so a fixture run can never read or write the real `~/.claude` state or `~/.claude/gh-meta-cache.json`; overriding a key afterward (e.g. to the test's own fixture path) is fine, an env built without the call is not.
++- No permanent test pins a fixed commit sha as its baseline — the tree at a given sha drifts the moment a later commit touches the pinned path (task_028/029 broke this way). A `git show <sha>:`/`git diff <sha>` literal in `smoke/*.py` must be registered in `HISTORICAL_PINS_ALLOWED` (`smoke/_core.py`) with a one-line reason; `HEAD` and shas a test generates at runtime against its own throwaway repo don't need an entry.
+ 
+ ## On session start: surface Martin's review pile
+ 
+diff --git a/smoke/_core.py b/smoke/_core.py
+index 601d4ba..9237eac 100644
+--- a/smoke/_core.py
++++ b/smoke/_core.py
+@@ -70,6 +70,25 @@ INIT_FIREWALL = REPO / "devcontainer" / "init-firewall.sh"
+ FAILURES: list[tuple[str, str]] = []
+ 
+ 
++# Sha-pin allowlist (task_035 AC7). Rule: no test may permanently pin a
++# fixed commit sha as its baseline — task_028/029's tests did exactly that
++# (`git show <sha>:<path>` / `git diff <sha>`) and broke on the very next
++# commit that touched the pinned path, because "the tree as of commit X"
++# drifts out from under a literal sha the moment X stops being special.
++# `test_no_fixed_sha_baselines` (smoke/checks_*) scans smoke/*.py for a
++# literal 7-40 hex sha token following `git show ` or `git diff ` and fails
++# unless that occurrence is registered here, keyed by the function name that
++# legitimately needs it, with a one-line reason. HEAD, and shas produced at
++# runtime by a test's own throwaway repo (e.g. checks_09's `git show -s
++# <sha>` against a commit it just made), are never literal source tokens and
++# so never need an entry.
++HISTORICAL_PINS_ALLOWED = {
++    "3b23b19": "task_034 AC4 golden baseline — the launcher/devcontainer.json "
++               "render before the add-host line; a literal pre-change capture, "
++               "see _task034_baseline_text",
++}
++
++
+ _EXTRAS_SCRATCH_HOME: str | None = None
+ 
+ 
+@@ -82,9 +101,22 @@ def _isolate_extras_env(env: dict) -> dict:
+     scanners until the next container start) and safe.directory entries —
+     and ensure_project_gitignore writes the real /workspace/.gitignore.
+     Redirects HOME (when it is still the real one) and GIT_CONFIG_GLOBAL to
+-    a session-scoped scratch dir, and defaults VIBE_AUTO_GITIGNORE=0.
+-    Respects overrides a test set deliberately. Every INSTALL_EXTRAS call
+-    site MUST route its env through this helper —
++    a session-scoped scratch dir, and defaults VIBE_AUTO_GITIGNORE=0. Also
++    sets GH_META_CACHE (task_035, security-review finding 2026-09-02: a
++    fixture run with no override served/wrote the LIVE
++    ~/.claude/gh-meta-cache.json, once as a read — a fixture-authored
++    allowlist rescuing a real fail-closed boot — and once as a write from a
++    stubbed curl body). Because the scratch HOME above is process-global
++    (one _EXTRAS_SCRATCH_HOME for the whole test run), GH_META_CACHE cannot
++    share that same fixed-per-run treatment — two tests running under the
++    same scratch HOME would clobber each other's cache file and leak state
++    between them — so it is instead a fresh path under a per-CALL unique
++    subdirectory of the scratch HOME (tempfile.mkdtemp(dir=scratch)), minted
++    on every invocation. Respects overrides a test set deliberately (either
++    on the input env, or an assignment made after calling this helper —
++    e.g. `_fw_run` and `test_gh_meta_rate_limit_and_cache_fallback` both
++    override GH_META_CACHE post-call to their own fixture path). Every
++    INSTALL_EXTRAS call site MUST route its env through this helper —
+     test_extras_invocations_isolated pins that statically."""
+     global _EXTRAS_SCRATCH_HOME
+     if _EXTRAS_SCRATCH_HOME is None:
+@@ -103,6 +135,9 @@ def _isolate_extras_env(env: dict) -> dict:
+     env.setdefault("GIT_CONFIG_GLOBAL",
+                    str(Path(_EXTRAS_SCRATCH_HOME) / "gitconfig"))
+     env.setdefault("VIBE_AUTO_GITIGNORE", "0")
++    if "GH_META_CACHE" not in env:
++        call_dir = tempfile.mkdtemp(dir=_EXTRAS_SCRATCH_HOME)
++        env["GH_META_CACHE"] = str(Path(call_dir) / "gh-meta-cache.json")
+     return env
+ 
+ 
+@@ -114,24 +149,54 @@ def check(name: str, cond: bool, detail: str = "") -> bool:
+ 
+ 
+ def run(cmd: list[str], env: dict[str, str] | None = None, cwd: Path | None = None, input: str = ""):
++    # Never let a spawned child inherit this process's real stdin: a
++    # background/CI run with no controlling TTY leaves stdin open-but-
++    # never-written, and a child that reads from it (e.g. a `read` in a
++    # sourced script) hangs forever instead of failing fast (task_035,
++    # triggered by a 55-minute hang inside a `vibe learn` test). Pass
++    # stdin=subprocess.DEVNULL exactly when no input string was given —
++    # never both input= and stdin= (subprocess.run raises ValueError).
++    # (Two literal branches, not a **kwargs dict merge, so a static AST
++    # scan for the `input`/`stdin` keyword — smoke's own sha-pin-style
++    # lints work this way — sees an explicit keyword either way.)
++    if input:
++        return subprocess.run(
++            cmd,
++            capture_output=True,
++            text=True,
++            env=env if env is not None else os.environ.copy(),
++            cwd=cwd,
++            input=input,
++        )
+     return subprocess.run(
+         cmd,
+         capture_output=True,
+         text=True,
+         env=env if env is not None else os.environ.copy(),
+         cwd=cwd,
+-        input=input if input else None,
++        stdin=subprocess.DEVNULL,
+     )
+ 
+ 
+ def run_bytes(cmd: list[str], env: dict[str, str] | None = None, cwd: Path | None = None, input_bytes: bytes = b""):
+-    """Run a subprocess and return stdout/stderr/returncode as bytes."""
++    """Run a subprocess and return stdout/stderr/returncode as bytes.
++
++    Same stdin discipline as run(): DEVNULL unless input_bytes was given.
++    """
++    if input_bytes:
++        return subprocess.run(
++            cmd,
++            capture_output=True,
++            env=env if env is not None else os.environ.copy(),
++            cwd=cwd,
++            input=input_bytes,
++        )
+     return subprocess.run(
+         cmd,
+         capture_output=True,
+         env=env if env is not None else os.environ.copy(),
+         cwd=cwd,
+-        input=input_bytes if input_bytes else None,
++        stdin=subprocess.DEVNULL,
+     )
+ 
+ 
+@@ -364,8 +429,8 @@ LEARN_MD = REPO / "devcontainer" / "commands" / "learn.md"
+ LEARN_HOOK_RULES_MD = REPO / "devcontainer" / "claude-md" / "learnings.md"
+ 
+ # Pre-check: jq and bash available on host (needed for hook script tests).
+-_HAS_JQ = subprocess.run(["which", "jq"], capture_output=True).returncode == 0
+-_HAS_BASH = subprocess.run(["which", "bash"], capture_output=True).returncode == 0
++_HAS_JQ = subprocess.run(["which", "jq"], capture_output=True, stdin=subprocess.DEVNULL).returncode == 0
++_HAS_BASH = subprocess.run(["which", "bash"], capture_output=True, stdin=subprocess.DEVNULL).returncode == 0
+ _HOOK_SKIP = not (_HAS_JQ and _HAS_BASH)
+ 
+ if _HOOK_SKIP:
+@@ -500,6 +565,7 @@ def _run_sp_probe(args: list[str]) -> subprocess.CompletedProcess:
+     return subprocess.run(
+         ["bash", str(CHECK_SP_CURRENT), *args],
+         capture_output=True, text=True,
++        stdin=subprocess.DEVNULL,
+     )
+ 
+ 
+@@ -529,7 +595,7 @@ def _run_skipped_probe(workspace: str, marker_state: list[str], home: Path) -> t
+         'else echo "SKIPPED=false"; fi'
+     )
+     r = subprocess.run(["bash", "-c", script], env=env,
+-                       capture_output=True, text=True)
++                       capture_output=True, text=True, stdin=subprocess.DEVNULL)
+     content = skipped_path.read_text().splitlines() if skipped_path.exists() else []
+     return r.returncode, r.stdout, content
+ 
+@@ -589,7 +655,7 @@ def _ssh_marker_result(env_vars: dict, setup: str) -> tuple[str, str]:
+         dest = tmp_path / "dest"
+         dest.mkdir()
+         subprocess.run(["bash", "-c", f'WS="{ws}"; {setup}'],
+-                       capture_output=True, text=True)
++                       capture_output=True, text=True, stdin=subprocess.DEVNULL)
+         env = os.environ.copy()
+         env.pop("VIBE_SSH_AUTO", None)
+         env["VIBE_EXTRAS_SRC_ROOT"] = str(REPO / "devcontainer")
+@@ -604,7 +670,7 @@ def _ssh_marker_result(env_vars: dict, setup: str) -> tuple[str, str]:
+         env["VIBE_AUTO_GITIGNORE"] = "0"
+         env.update(env_vars)
+         r = subprocess.run(["bash", str(INSTALL_EXTRAS)],
+-                           env=_isolate_extras_env(env), capture_output=True, text=True)
++                           env=_isolate_extras_env(env), capture_output=True, text=True, stdin=subprocess.DEVNULL)
+         if r.returncode != 0:
+             return (f"ERR(rc={r.returncode})", r.stderr)
+         md = (dest / "CLAUDE.md").read_text()
+@@ -1050,11 +1116,20 @@ def _fw_stub_curl(tmp: Path, *, script_body: str) -> str:
+ 
+ def _fw_run(tmp: Path, stub_body: str, snippet: str):
+     """Source init-firewall.sh with the helpers exposed but no side effects,
+-    against a stubbed curl, then run `snippet`."""
++    against a stubbed curl, then run `snippet`.
++
++    Builds its env through the same sandbox builder every other
++    installer/firewall-sourcing test uses (task_035 AC5/AC6), then layers
++    on the firewall-specific PATH/STUB_LOG/VIBE_FIREWALL_SOURCE_ONLY/
++    GH_FETCH_* keys and overrides GH_META_CACHE to this call's own tmp dir
++    AFTER calling the builder — never let a stubbed fetch write the LIVE
++    ~/.claude/gh-meta-cache.json (a fixture cache served on a real boot
++    would allowlist 1.2.3.0/24 instead of GitHub) and never let a live
++    cache rescue a test that expects fail-closed."""
+     log = tmp / "curl.log"
+     log.write_text("")
+-    env = {
+-        **os.environ,
++    env = _isolate_extras_env(dict(os.environ))
++    env.update({
+         "PATH": _fw_stub_curl(tmp, script_body=stub_body),
+         "STUB_LOG": str(log),
+         "VIBE_FIREWALL_SOURCE_ONLY": "1",
+@@ -1063,12 +1138,8 @@ def _fw_run(tmp: Path, stub_body: str, snippet: str):
+         # not the shipped default (which task_029 raised and asserts
+         # separately in AC11).
+         "GH_FETCH_ATTEMPTS": "3",
+-        # Never let a stubbed fetch write the LIVE ~/.claude/gh-meta-cache.json
+-        # (a fixture cache served on a real boot would allowlist 1.2.3.0/24
+-        # instead of GitHub) and never let a live cache rescue a test that
+-        # expects fail-closed.
+-        "GH_META_CACHE": str(tmp / "gh-meta-cache.json"),
+-    }
++    })
++    env["GH_META_CACHE"] = str(tmp / "gh-meta-cache.json")
+     script = f"source {shlex.quote(str(INIT_FIREWALL))}\n{snippet}\n"
+     r = run(["bash", "-c", script], env=env)
+     calls = len([ln for ln in log.read_text().splitlines() if ln.strip()])
+@@ -1194,7 +1265,7 @@ def _task034_watcher_alive_after(env_extra: dict, ws: Path, linux_shim: Path) ->
+     ws.mkdir(parents=True, exist_ok=True)
+     env = {**os.environ, "PATH": f"{linux_shim}{os.pathsep}{os.environ.get('PATH', '')}", **env_extra}
+     proc = subprocess.Popen(["bash", str(VIBE_COPY_WATCHER), str(ws)],
+-                             env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
++                             env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL)
+     try:
+         import time
+         time.sleep(0.5)
+@@ -1279,6 +1350,7 @@ __all__ = [
+     'FEATURE_TEMPLATE',
+     'GUARD_BASH',
+     'GUARD_FS',
++    'HISTORICAL_PINS_ALLOWED',
+     'INIT_FIREWALL',
+     'INSTALL',
+     'INSTALL_EXTRAS',
+diff --git a/smoke/checks_01_launcher_basics_and_codecheck.py b/smoke/checks_01_launcher_basics_and_codecheck.py
+index 0f8aba5..591cdfc 100644
+--- a/smoke/checks_01_launcher_basics_and_codecheck.py
++++ b/smoke/checks_01_launcher_basics_and_codecheck.py
+@@ -512,6 +512,7 @@ def test_code_check_json_missing_shellcheck() -> None:
+         r = subprocess.run(
+             [str(python3_src), str(CODE_CHECK), "--json"],
+             capture_output=True, text=True, env=env, cwd=str(REPO),
++        stdin=subprocess.DEVNULL,
+         )
+         check("[json] AC7 exit 2 when shellcheck missing", r.returncode == 2,
+               f"exit={r.returncode}")
+diff --git a/smoke/checks_03_vibecopy_and_watcher.py b/smoke/checks_03_vibecopy_and_watcher.py
+index 8b78910..7eef2f6 100644
+--- a/smoke/checks_03_vibecopy_and_watcher.py
++++ b/smoke/checks_03_vibecopy_and_watcher.py
+@@ -280,6 +280,7 @@ def test_vibe_copy_watcher_polling_detects_change() -> None:
+             env=env,
+             stdout=subprocess.PIPE,
+             stderr=subprocess.PIPE,
++        stdin=subprocess.DEVNULL,
+         )
+ 
+         try:
+@@ -415,12 +416,14 @@ def test_vibe_path_prefix_isolation() -> None:
+             env=env,
+             stdout=subprocess.PIPE,
+             stderr=subprocess.PIPE,
++        stdin=subprocess.DEVNULL,
+         )
+         proc2 = subprocess.Popen(
+             ["bash", str(VIBE_COPY_WATCHER), str(proj2)],
+             env=env,
+             stdout=subprocess.PIPE,
+             stderr=subprocess.PIPE,
++        stdin=subprocess.DEVNULL,
+         )
+ 
+         try:
+diff --git a/smoke/checks_04_hooks_guards.py b/smoke/checks_04_hooks_guards.py
+index 6aec05f..0c74c46 100644
+--- a/smoke/checks_04_hooks_guards.py
++++ b/smoke/checks_04_hooks_guards.py
+@@ -1029,7 +1029,7 @@ def test_check_sp_current_wired_into_container_start() -> None:
+              'S=$(mktemp -d)/stamp; ' + setup + '; '
+              + env_extra +
+              'if _sp_drift_due "$S"; then echo R=DUE; else echo R=NOT; fi'],
+-            capture_output=True, text=True)
++            capture_output=True, text=True, stdin=subprocess.DEVNULL)
+         if "R=DUE" in fn.stdout:
+             return "DUE"
+         if "R=NOT" in fn.stdout:
+@@ -1129,7 +1129,7 @@ def test_skipped_marker_round_trip() -> None:
+             'else echo "SKIPPED=false"; fi'
+         )
+         r = subprocess.run(["bash", "-c", script], env=env,
+-                           capture_output=True, text=True)
++                           capture_output=True, text=True, stdin=subprocess.DEVNULL)
+         check("[skipped] mark+check round-trip exits 0",
+               r.returncode == 0, f"rc={r.returncode} err={r.stderr[:200]}")
+         check("[skipped] is_github_skipped returns true after mark",
+@@ -1191,7 +1191,7 @@ def test_skipped_marker_writes_canonical() -> None:
+             f"source {shlex.quote(str(VIBE))}; mark_github_skipped >/dev/null"
+         )
+         r = subprocess.run(["bash", "-c", script], env=env,
+-                           capture_output=True, text=True)
++                           capture_output=True, text=True, stdin=subprocess.DEVNULL)
+         check("[skipped] mark exits 0", r.returncode == 0,
+               f"rc={r.returncode} err={r.stderr[:200]}")
+         skipped_path = home / ".vibe" / "skipped"
+diff --git a/smoke/checks_05_numbering_hook.py b/smoke/checks_05_numbering_hook.py
+index 86fe5ab..a155cee 100644
+--- a/smoke/checks_05_numbering_hook.py
++++ b/smoke/checks_05_numbering_hook.py
+@@ -1256,6 +1256,7 @@ def test_install_extras_ssh_discipline_opt_in() -> None:
+         r_off = subprocess.run(
+             ["bash", str(INSTALL_EXTRAS)],
+             env=_isolate_extras_env(env_off), capture_output=True, text=True,
++        stdin=subprocess.DEVNULL,
+         )
+         check("[ssh-opt-in] install exits 0 with VIBE_SSH_AUTO unset",
+               r_off.returncode == 0, f"rc={r_off.returncode} err={r_off.stderr[:200]}")
+@@ -1277,6 +1278,7 @@ def test_install_extras_ssh_discipline_opt_in() -> None:
+         r_on = subprocess.run(
+             ["bash", str(INSTALL_EXTRAS)],
+             env=_isolate_extras_env(env_on), capture_output=True, text=True,
++        stdin=subprocess.DEVNULL,
+         )
+         check("[ssh-opt-in] install exits 0 with VIBE_SSH_AUTO=1",
+               r_on.returncode == 0, f"rc={r_on.returncode} err={r_on.stderr[:200]}")
+diff --git a/smoke/checks_06_autoresume_and_sharedrepos.py b/smoke/checks_06_autoresume_and_sharedrepos.py
+index 1c9302b..a520898 100644
+--- a/smoke/checks_06_autoresume_and_sharedrepos.py
++++ b/smoke/checks_06_autoresume_and_sharedrepos.py
+@@ -30,7 +30,7 @@ def test_extras_invocations_isolated() -> None:
+             "CLAUDE_CONFIG_DIR": tmp,
+         }
+         r = subprocess.run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env0),
+-                           capture_output=True, text=True)
++                           capture_output=True, text=True, stdin=subprocess.DEVNULL)
+         check("[extras-iso] isolated installer run exits 0", r.returncode == 0,
+               f"rc={r.returncode} err={r.stderr[:200]}")
+     hp_after = run(["git", "config", "--global", "--get", "core.hooksPath"]).stdout
+@@ -52,7 +52,7 @@ def test_extras_invocations_isolated() -> None:
+         (sb / ".gitconfig-host").write_text("[user]\n\temail = t@t\n")
+         r = subprocess.run(["bash", str(SETUP_GIT_SH)],
+                            env={**os.environ, "HOME": str(sb)},
+-                           capture_output=True, text=True)
++                           capture_output=True, text=True, stdin=subprocess.DEVNULL)
+         check("[extras-iso] sandboxed setup-git.sh exits 0", r.returncode == 0,
+               r.stderr[:200])
+         check("[extras-iso] setup-git wrote the sandbox, not the real HOME",
+@@ -73,6 +73,7 @@ def test_install_extras_syncs_hooks() -> None:
+         r = subprocess.run(
+             ["bash", str(INSTALL_EXTRAS)],
+             env=_isolate_extras_env(env), capture_output=True, text=True,
++        stdin=subprocess.DEVNULL,
+         )
+         check("[hooks] install-extras exits 0",
+               r.returncode == 0, f"rc={r.returncode} err={r.stderr[:200]}")
+@@ -278,7 +279,7 @@ def test_install_extras_brain2_md_gated() -> None:
+         env_off["CLAUDE_CONFIG_DIR"] = str(dest_off)
+         env_off["VIBE_BRAIN2_MOUNT_DIR"] = str(tmp_path / "nope")
+         r_off = subprocess.run(["bash", str(INSTALL_EXTRAS)],
+-                               env=_isolate_extras_env(env_off), capture_output=True, text=True)
++                               env=_isolate_extras_env(env_off), capture_output=True, text=True, stdin=subprocess.DEVNULL)
+         check("[brain2] install exits 0 (no mount)",
+               r_off.returncode == 0, r_off.stderr[:200])
+         md_off = (dest_off / "CLAUDE.md").read_text()
+@@ -294,7 +295,7 @@ def test_install_extras_brain2_md_gated() -> None:
+         env_on["CLAUDE_CONFIG_DIR"] = str(dest_on)
+         env_on["VIBE_BRAIN2_MOUNT_DIR"] = str(mount_dir)
+         r_on = subprocess.run(["bash", str(INSTALL_EXTRAS)],
+-                              env=_isolate_extras_env(env_on), capture_output=True, text=True)
++                              env=_isolate_extras_env(env_on), capture_output=True, text=True, stdin=subprocess.DEVNULL)
+         check("[brain2] install exits 0 (mount present)",
+               r_on.returncode == 0, r_on.stderr[:200])
+         md_on = (dest_on / "CLAUDE.md").read_text()
+@@ -345,7 +346,7 @@ def test_install_extras_brain2_skills_synced() -> None:
+         env["CLAUDE_CONFIG_DIR"] = str(dest)
+         env["VIBE_BRAIN2_MOUNT_DIR"] = str(mount)
+         r = subprocess.run(["bash", str(INSTALL_EXTRAS)],
+-                           env=_isolate_extras_env(env), capture_output=True, text=True)
++                           env=_isolate_extras_env(env), capture_output=True, text=True, stdin=subprocess.DEVNULL)
+         check("[brain2] install exits 0 (mount present)",
+               r.returncode == 0, r.stderr[:200])
+         dskills = dest / "skills"
+@@ -367,7 +368,7 @@ def test_install_extras_brain2_skills_synced() -> None:
+         env2["CLAUDE_CONFIG_DIR"] = str(dest2)
+         env2["VIBE_BRAIN2_MOUNT_DIR"] = str(tmp_path / "nope")
+         r2 = subprocess.run(["bash", str(INSTALL_EXTRAS)],
+-                            env=_isolate_extras_env(env2), capture_output=True, text=True)
++                            env=_isolate_extras_env(env2), capture_output=True, text=True, stdin=subprocess.DEVNULL)
+         check("[brain2] install exits 0 (no mount)",
+               r2.returncode == 0, r2.stderr[:200])
+         check("[brain2] no skills synced without the mount",
+diff --git a/smoke/checks_07_sharedrepos_cycles.py b/smoke/checks_07_sharedrepos_cycles.py
+index 60a4b71..2e7ee02 100644
+--- a/smoke/checks_07_sharedrepos_cycles.py
++++ b/smoke/checks_07_sharedrepos_cycles.py
+@@ -1160,7 +1160,7 @@ def test_task017_c3_install_extras_shared_repos_md_gated() -> None:
+         env_off = env_base.copy()
+         env_off["CLAUDE_CONFIG_DIR"] = str(dest_off)
+         env_off["VIBE_SHARED_REPOS_MANIFEST"] = str(tmp_path / "does-not-exist-manifest")
+-        r_off = subprocess.run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env_off), capture_output=True, text=True)
++        r_off = subprocess.run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env_off), capture_output=True, text=True, stdin=subprocess.DEVNULL)
+         check("[c3-gate] install exits 0 (missing manifest)", r_off.returncode == 0, r_off.stderr[:200])
+         md_off = (dest_off / "CLAUDE.md").read_text()
+         check("[c3-gate] shared-repos.md ABSENT when manifest file is missing",
+@@ -1176,7 +1176,7 @@ def test_task017_c3_install_extras_shared_repos_md_gated() -> None:
+         env_empty = env_base.copy()
+         env_empty["CLAUDE_CONFIG_DIR"] = str(dest_empty)
+         env_empty["VIBE_SHARED_REPOS_MANIFEST"] = str(empty_manifest)
+-        r_empty = subprocess.run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env_empty), capture_output=True, text=True)
++        r_empty = subprocess.run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env_empty), capture_output=True, text=True, stdin=subprocess.DEVNULL)
+         check("[c3-gate] install exits 0 (empty manifest)", r_empty.returncode == 0, r_empty.stderr[:200])
+         md_empty = (dest_empty / "CLAUDE.md").read_text()
+         check("[c3-gate] shared-repos.md ABSENT when manifest file is empty",
+@@ -1189,7 +1189,7 @@ def test_task017_c3_install_extras_shared_repos_md_gated() -> None:
+         env_on = env_base.copy()
+         env_on["CLAUDE_CONFIG_DIR"] = str(dest_on)
+         env_on["VIBE_SHARED_REPOS_MANIFEST"] = str(manifest)
+-        r_on = subprocess.run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env_on), capture_output=True, text=True)
++        r_on = subprocess.run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env_on), capture_output=True, text=True, stdin=subprocess.DEVNULL)
+         check("[c3-gate] install exits 0 (non-empty manifest)", r_on.returncode == 0, r_on.stderr[:200])
+         md_on = (dest_on / "CLAUDE.md").read_text()
+         check("[c3-gate] shared-repos.md PRESENT when manifest is non-empty",
+diff --git a/smoke/checks_08_credential_and_contentscan.py b/smoke/checks_08_credential_and_contentscan.py
+index 6193f50..31712a3 100644
+--- a/smoke/checks_08_credential_and_contentscan.py
++++ b/smoke/checks_08_credential_and_contentscan.py
+@@ -39,7 +39,7 @@ def test_task017_c3_repo_claim_documented_flow_runnable() -> None:
+                 f'> "${{VIBE_REPOS_DIR:-/repos}}/.signals/{name}/rw-request"'
+             )
+             return subprocess.run(["sh", "-c", snippet], env=env,
+-                                   capture_output=True, text=True, timeout=15)
++                                   capture_output=True, text=True, timeout=15, stdin=subprocess.DEVNULL)
+ 
+         r1 = file_claim("moneyandeye")
+         check("[c3-claim] documented mkdir+write runs cleanly (syntactically valid)",
+diff --git a/smoke/checks_11_patrotation_and_firewall.py b/smoke/checks_11_patrotation_and_firewall.py
+index 226e000..ac1654d 100644
+--- a/smoke/checks_11_patrotation_and_firewall.py
++++ b/smoke/checks_11_patrotation_and_firewall.py
+@@ -661,12 +661,15 @@ def test_gh_meta_rate_limit_and_cache_fallback() -> None:
+     with tempfile.TemporaryDirectory() as td:
+         tmp = Path(td)
+         cache = tmp / "cache" / "gh-meta-cache.json"
+-        base_env = {"GH_META_CACHE": str(cache)}
+         # (b)+(e): rate-limit body -> exactly one call, RC=1 without a cache
+         log = tmp / "curl.log"; log.write_text("")
+-        env = {**os.environ, "PATH": _fw_stub_curl(tmp, script_body=f"echo '{rate_limited}'"),
+-               "STUB_LOG": str(log), "VIBE_FIREWALL_SOURCE_ONLY": "1", "GH_FETCH_BACKOFF": "0",
+-               "GH_FETCH_ATTEMPTS": "3", **base_env}
++        env = _isolate_extras_env(dict(os.environ))
++        env.update({
++            "PATH": _fw_stub_curl(tmp, script_body=f"echo '{rate_limited}'"),
++            "STUB_LOG": str(log), "VIBE_FIREWALL_SOURCE_ONLY": "1", "GH_FETCH_BACKOFF": "0",
++            "GH_FETCH_ATTEMPTS": "3",
++        })
++        env["GH_META_CACHE"] = str(cache)  # override after the builder (AC5)
+         r = run(["bash", "-c", f"source {shlex.quote(str(INIT_FIREWALL))}\n"
+                  'if ! fetch_gh_ranges >/dev/null; then echo "RC=1"; else echo "RC=0"; fi'], env=env)
+         calls = len([ln for ln in log.read_text().splitlines() if ln.strip()])
