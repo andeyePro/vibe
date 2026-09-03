@@ -153,7 +153,7 @@ const launchLinesJSON = JSON.stringify(linesFor('launch'));
 check('everyday-launch banner quotes the launcher, in its own field order (project/path/github/hooks/extras)',
   ['\u{1F680} vibe session starting', 'project : ', 'path    : ', 'github  : ',
    'hooks   : tool-call guards + idle bell',
-   'extras  : /diet · /feast · /vs · shellcheck-fixer · security-review']
+   'extras  : 12 commands (/vs /vss /vsss /wide /learn /budget …) · 5 agents']
     .every((s) => inBothIn(s, launchLines, launcher)));
 check('everyday-launch chip keeps the firewall verification pin, verbatim from init-firewall.sh',
   inBothIn('Firewall verification passed - unable to reach https://example.com as expected', launchLines, firewall));
@@ -197,7 +197,7 @@ check(`every chip's line "step" values are contiguous 1..checklist length (${chi
 check('launch banner fields are the launcher\'s own (project/github/hooks/extras)',
   ['\u{1F680} vibe session starting', 'project : ', 'github  : ',
    'hooks   : tool-call guards + idle bell',
-   'extras  : /diet · /feast · /vs · shellcheck-fixer · security-review']
+   'extras  : 12 commands (/vs /vss /vsss /wide /learn /budget …) · 5 agents']
     .every((s) => inBoth(s, launcher)));
 check('PAT wording quotes the launcher (Token saved / not asked again)',
   inBoth("Token saved - you won't be asked again for this repo", launcher));

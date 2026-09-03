@@ -47,7 +47,7 @@ journey:
             - { role: vibe, text: "   path    : ~/code/yourproject" }
             - { role: vibe, text: "   github  : you/yourproject", step: 1 }
             - { role: vibe, text: "   hooks   : tool-call guards + idle bell" }
-            - { role: vibe, text: "   extras  : /diet · /feast · /vs · shellcheck-fixer · security-review" }
+            - { role: vibe, text: "   extras  : 12 commands (/vs /vss /vsss /wide /learn /budget …) · 5 agents" }
             - { role: guard, text: "Firewall verification passed - unable to reach https://example.com as expected", step: 2 }
             - { role: claude, tone: note, text: "already signed in with your Claude subscription – nothing to re-enter", step: 3 }
             - { role: claude, text: "ready – what shall we build?", step: 4 }

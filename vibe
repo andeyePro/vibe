@@ -3760,7 +3760,7 @@ echo "     project : $PROJECT_NAME"
 echo "     path    : $WORKSPACE"
 [ -n "$GITHUB_REPO" ] && echo "     github  : $GITHUB_REPO"
 echo "     hooks   : tool-call guards + idle bell"
-echo "     extras  : /diet · /feast · /vs · shellcheck-fixer · security-review"
+echo "     extras  : 12 commands (/vs /vss /vsss /wide /learn /budget …) · 5 agents"
 # Learning banner: three states. Silent when never inited / globally off.
 # "excluded" confirms a project-level .no-learn to reassure the user the
 # opt-out took effect. Otherwise show visibility + library path.

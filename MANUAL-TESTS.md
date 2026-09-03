@@ -30,7 +30,7 @@ vibe
 - [ ] Displays: "🚀 vibe session starting"
 - [ ] Project path shown correctly
 - [ ] Banner includes `hooks : tool-call guards + idle bell`
-- [ ] Banner includes `extras : /diet · /feast · shellcheck-fixer · security-review`
+- [ ] Banner includes `extras  : 12 commands (/vs /vss /vsss /wide /learn /budget …) · 5 agents`
 - [ ] Container builds (first run only)
 - [ ] Claude Code launches in the container
 - [ ] Can interact with Claude Code
@@ -441,6 +441,11 @@ ls ~/.claude/commands/
 - [ ] `~/.claude/commands/vsss.md` exists
 - [ ] `~/.claude/commands/wide.md` exists
 - [ ] `~/.claude/commands/narrow.md` exists
+- [ ] `~/.claude/commands/budget.md` exists
+- [ ] `~/.claude/commands/repo.md` exists
+- [ ] `~/.claude/commands/c.md` exists
+- [ ] `~/.claude/commands/learn.md` exists
+- [ ] `~/.claude/commands/sp.md` exists
 
 Inside Claude Code:
 - [ ] Typing `/diet` lists the command with its description in the picker
@@ -855,23 +860,6 @@ declared `rw` in two different projects' `.vibe-repos`.
       and the lock release happen — hooks run in registration order, each
       individually guarded, so a refusing release cannot eat the flush and
       vice versa
-
----
-
-## Test Summary
-
-After completing all tests, check:
-
-- [ ] All help flags work
-- [ ] Workspace resolution works (current dir, by name, from VIBE_PROJECTS_DIR)
-- [ ] GitHub detection and token setup work
-- [ ] Container builds and launches correctly
-- [ ] Claude Code uses subscription auth (not API key)
-- [ ] Settings applied correctly (.claude/settings.local.json)
-- [ ] Token stored securely (chmod 600)
-- [ ] Can commit and push via GitHub token
-- [ ] SSH outbound works (if configured)
-- [ ] No credentials leaked to host/container boundary
 
 ---
 
@@ -1308,3 +1296,20 @@ Desktop's, so this is the check most likely to differ from the Mac.
 **Fail:** a missing mount, `/zotero` writable, history shared across projects,
 or permission-denied on `/brain2` writes (a uid-mapping problem: the host
 directory must be owned by, or group-writable to, the invoking user).
+
+---
+
+## Test Summary
+
+After completing all tests, check:
+
+- [ ] All help flags work
+- [ ] Workspace resolution works (current dir, by name, from VIBE_PROJECTS_DIR)
+- [ ] GitHub detection and token setup work
+- [ ] Container builds and launches correctly
+- [ ] Claude Code uses subscription auth (not API key)
+- [ ] Settings applied correctly (.claude/settings.local.json)
+- [ ] Token stored securely (chmod 600)
+- [ ] Can commit and push via GitHub token
+- [ ] SSH outbound works (if configured)
+- [ ] No credentials leaked to host/container boundary
