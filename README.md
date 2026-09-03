@@ -153,6 +153,13 @@ Every launch also auto-refreshes `<brain2>/meta/vibe-operation.md` (fail-soft �
 | `~/.vibe/skipped` | Projects opted out of GitHub |
 | `~/.vibe/learning.config` | Learning library location + visibility |
 
+## Uninstall
+
+- **Launcher**: remove the `~/bin/vibe` symlink. If you installed via `install.sh`'s curl path, also `rm -rf ~/.vibe-src` (the cloned source it symlinked into); if `~/bin/vibe` points at your own in-place dev clone, deleting that clone is enough — there's no separate `~/.vibe-src` to clean up.
+- **Credentials**: `rm -rf ~/.vibe` removes `~/.vibe/tokens` (your GitHub PATs and any `ZOTERO_API_KEY`/OpenProject creds) along with `~/.vibe/config`, `~/.vibe/repos`, `~/.vibe/skipped`, and `~/.vibe/learning.config`. This deletes the local copies only — it does not revoke anything GitHub-side, so also revoke the fine-grained PATs vibe created at [github.com/settings/personal-access-tokens](https://github.com/settings/personal-access-tokens).
+- **Docker**: containers aren't named `vibe-*` — they're built from one shared image and matched to a project by a devcontainer label, so `docker ps -a --filter ancestor=vibe-dev:latest -q | xargs -r docker rm -f` removes any that are still around, then `docker rmi vibe-dev:latest` drops the image. Two named volumes persist across every project: `vibe-claude-config` (your Claude Pro login and Claude Code history — deleting it logs you out of every vibe project) and `vibe-bash-history`. `docker volume rm vibe-claude-config vibe-bash-history` clears both if you want a clean slate.
+- **Left alone by the above**: `rm -rf ~/.vibe` takes `~/.vibe/config` with it (it's a file inside that directory, like tokens), but the optional `/learnings` library itself lives at whatever path `~/.vibe/learning.config` pointed to — a separate directory, untouched — remove it by hand if you want it gone too. Per-project `.vibe/` and `.claude/settings.local.json` inside each project folder are gitignored runtime files, not host-side state; they go away with the project folder itself.
+
 ## Security model
 
 - **Network:** iptables firewall allows only an allowlist of hosts a coding session needs (GitHub, npm, Anthropic, VS Code marketplace, a few opt-in extras — the list is `devcontainer/init-firewall.sh`), plus DNS and outbound SSH.

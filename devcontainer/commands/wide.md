@@ -37,7 +37,11 @@ Must stay serial:
 
 ## Chair discipline
 
-Discipline: one notification per completion; never poll agent status between dispatches. The chair does not end its turn while agents are running unless waiting for them is the only remaining action — if other unblocked work exists, do it while agents run. Dispatch every legally-concurrent batch as one message with multiple tool uses.
+Discipline: one notification per completion; never poll agent status between dispatches. The chair does not end its turn while agents are running unless waiting for them is the only remaining action — if other unblocked work exists, do it while agents run. Dispatch every legally-concurrent batch as one message with multiple tool uses. Every subagent brief the chair writes restates "never run_in_background" and "foreground with timeout: 600000" — a Tester ignored the doc-level rule in this session.
+
+## Merge step
+
+Lessons from a 2026-09-02 `--wide` merge: (1) a plain `rebase` can mis-apply (duplicated pick) — abort with `git rebase --abort`, then `git cherry-pick -n <sha>` onto main, resolving conflicts per file (CHANGELOG/TODO newest-first; chair-owned files rebuilt from HEAD plus the entry). (2) If a hot shared file was restructured underneath the worktree (e.g. `smoke-test.py` split into `smoke/` modules), re-home the worktree's hunks by context into the new layout and re-run the affected tests, rather than forcing the old shape back. Only if still conflicting, finish serially. (3) A Tester backgrounded its suite run and parked despite the doc rule — restate `never run_in_background` in every dispatch brief, not just the doc.
 
 ## Within-cycle clarification
 

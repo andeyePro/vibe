@@ -153,6 +153,10 @@ Check: they see the Claude Code prompt. Have them type a small request and watch
 - Come back to a project: `cd` there and run `vibe` again – it's fast after the first build.
 - Update vibe later: re-run the installer one-liner from step 6, or `git -C ~/.vibe-src pull`.
 
+### Second session onward
+
+Everyday use is just `cd project && vibe` — same command as step 7, every time. It starts a fresh Claude conversation by default; `vibe --continue` resumes the last one instead (README's Usage section covers both). The GitHub token from step 7 is reused automatically until it expires (90 days by default, at whatever the user chose when creating it) or is revoked; when that happens vibe notices and re-prompts on the next launch, or the user can rotate it ahead of time with `vibe pat` from that project's folder.
+
 ## When something goes wrong
 
 - The installer and `vibe` itself print actionable messages – read them to the user, they're written for this.
