@@ -39,7 +39,7 @@ def test_task017_c3_repo_claim_documented_flow_runnable() -> None:
                 f'> "${{VIBE_REPOS_DIR:-/repos}}/.signals/{name}/rw-request"'
             )
             return subprocess.run(["sh", "-c", snippet], env=env,
-                                   capture_output=True, text=True, timeout=15)
+                                   capture_output=True, text=True, timeout=15, stdin=subprocess.DEVNULL)
 
         r1 = file_claim("moneyandeye")
         check("[c3-claim] documented mkdir+write runs cleanly (syntactically valid)",
@@ -363,7 +363,7 @@ def test_task017_c4_ac17_setup_git_functional_in_sandbox_home() -> None:
     with tempfile.TemporaryDirectory() as td:
         sandbox_home = Path(td) / "home"
         sandbox_home.mkdir()
-        env = {**os.environ, "HOME": str(sandbox_home)}
+        env = _isolate_extras_env({**os.environ, "HOME": str(sandbox_home)})
         r = run(["bash", str(SETUP_GIT_SH)], env=env)
         check("[ac17] setup-git.sh exits 0 in a fresh sandbox HOME (no ~/.gitconfig-host present)",
               r.returncode == 0, r.stderr)
@@ -387,7 +387,17 @@ def test_setup_git_strips_host_credential_helpers() -> None:
         sandbox_home = Path(td) / "home"
         sandbox_home.mkdir()
         (sandbox_home / ".gitconfig-host").write_text(host_cfg)
-        env = {**os.environ, "HOME": str(sandbox_home)}
+        env = _isolate_extras_env({**os.environ, "HOME": str(sandbox_home)})
+        # setup-git.sh's `git config --global` writes are meant to land in
+        # this already-sandboxed $HOME/.gitconfig (copied from
+        # .gitconfig-host) — that's exactly what this test inspects. The
+        # builder's GIT_CONFIG_GLOBAL default would redirect every
+        # `--global` read/write (this script's and this test's) to an
+        # unrelated scratch file instead, so the host_cfg-seeded user.name
+        # would never show up there. Drop the override: HOME here is
+        # already a fresh sandbox, not the real one, so the builder's
+        # GIT_CONFIG_GLOBAL isolation isn't needed for safety in this test.
+        del env["GIT_CONFIG_GLOBAL"]
         r = run(["bash", str(SETUP_GIT_SH)], env=env)
         check("[cred-strip] setup-git.sh exits 0 with a gh/osxkeychain host config", r.returncode == 0, r.stderr)
         all_helpers = run(["git", "config", "--global", "--get-regexp", r"^credential\..*helper$"], env=env).stdout

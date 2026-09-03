@@ -1256,6 +1256,7 @@ def test_install_extras_ssh_discipline_opt_in() -> None:
         r_off = subprocess.run(
             ["bash", str(INSTALL_EXTRAS)],
             env=_isolate_extras_env(env_off), capture_output=True, text=True,
+        stdin=subprocess.DEVNULL,
         )
         check("[ssh-opt-in] install exits 0 with VIBE_SSH_AUTO unset",
               r_off.returncode == 0, f"rc={r_off.returncode} err={r_off.stderr[:200]}")
@@ -1277,6 +1278,7 @@ def test_install_extras_ssh_discipline_opt_in() -> None:
         r_on = subprocess.run(
             ["bash", str(INSTALL_EXTRAS)],
             env=_isolate_extras_env(env_on), capture_output=True, text=True,
+        stdin=subprocess.DEVNULL,
         )
         check("[ssh-opt-in] install exits 0 with VIBE_SSH_AUTO=1",
               r_on.returncode == 0, f"rc={r_on.returncode} err={r_on.stderr[:200]}")

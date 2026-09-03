@@ -1160,7 +1160,7 @@ def test_task017_c3_install_extras_shared_repos_md_gated() -> None:
         env_off = env_base.copy()
         env_off["CLAUDE_CONFIG_DIR"] = str(dest_off)
         env_off["VIBE_SHARED_REPOS_MANIFEST"] = str(tmp_path / "does-not-exist-manifest")
-        r_off = subprocess.run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env_off), capture_output=True, text=True)
+        r_off = subprocess.run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env_off), capture_output=True, text=True, stdin=subprocess.DEVNULL)
         check("[c3-gate] install exits 0 (missing manifest)", r_off.returncode == 0, r_off.stderr[:200])
         md_off = (dest_off / "CLAUDE.md").read_text()
         check("[c3-gate] shared-repos.md ABSENT when manifest file is missing",
@@ -1176,7 +1176,7 @@ def test_task017_c3_install_extras_shared_repos_md_gated() -> None:
         env_empty = env_base.copy()
         env_empty["CLAUDE_CONFIG_DIR"] = str(dest_empty)
         env_empty["VIBE_SHARED_REPOS_MANIFEST"] = str(empty_manifest)
-        r_empty = subprocess.run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env_empty), capture_output=True, text=True)
+        r_empty = subprocess.run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env_empty), capture_output=True, text=True, stdin=subprocess.DEVNULL)
         check("[c3-gate] install exits 0 (empty manifest)", r_empty.returncode == 0, r_empty.stderr[:200])
         md_empty = (dest_empty / "CLAUDE.md").read_text()
         check("[c3-gate] shared-repos.md ABSENT when manifest file is empty",
@@ -1189,7 +1189,7 @@ def test_task017_c3_install_extras_shared_repos_md_gated() -> None:
         env_on = env_base.copy()
         env_on["CLAUDE_CONFIG_DIR"] = str(dest_on)
         env_on["VIBE_SHARED_REPOS_MANIFEST"] = str(manifest)
-        r_on = subprocess.run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env_on), capture_output=True, text=True)
+        r_on = subprocess.run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env_on), capture_output=True, text=True, stdin=subprocess.DEVNULL)
         check("[c3-gate] install exits 0 (non-empty manifest)", r_on.returncode == 0, r_on.stderr[:200])
         md_on = (dest_on / "CLAUDE.md").read_text()
         check("[c3-gate] shared-repos.md PRESENT when manifest is non-empty",

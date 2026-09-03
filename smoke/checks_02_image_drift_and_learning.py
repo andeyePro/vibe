@@ -190,7 +190,7 @@ def test_learning_init_interactive() -> None:
         lib_path = home / "mylib"
         lib_path.mkdir()
         cfg = home / ".vibe" / "learning.config"
-        env = {**os.environ, "HOME": str(home)}
+        env = _isolate_extras_env({**os.environ, "HOME": str(home)})
         # Simulate user input: absolute path (no mkdir needed), private, no remote.
         input_str = f"{lib_path}\nprivate\n"
         r = run(
@@ -216,7 +216,7 @@ def test_learning_init_mkdir_offer() -> None:
     with tempfile.TemporaryDirectory() as td:
         home = Path(td)
         lib_path = home / "newlib"
-        env = {**os.environ, "HOME": str(home)}
+        env = _isolate_extras_env({**os.environ, "HOME": str(home)})
         # User provides non-existent path; say yes to mkdir; then private.
         input_str = f"{lib_path}\ny\nprivate\n"
         r = run(
@@ -238,7 +238,7 @@ def test_learning_init_reinit_path() -> None:
         lib1.mkdir()
         lib2.mkdir()
         cfg = home / ".vibe" / "learning.config"
-        env = {**os.environ, "HOME": str(home)}
+        env = _isolate_extras_env({**os.environ, "HOME": str(home)})
         # First init
         input_str = f"{lib1}\nprivate\n"
         r1 = run(["bash", str(VIBE), "learn", "--init"], env=env, input=input_str)
@@ -271,7 +271,7 @@ def test_learning_learn_without_init() -> None:
     print("\n[learning AC4: learn without init refusal]")
     with tempfile.TemporaryDirectory() as td:
         home = Path(td)
-        env = {**os.environ, "HOME": str(home)}
+        env = _isolate_extras_env({**os.environ, "HOME": str(home)})
         r = run(["bash", str(VIBE), "learn", "test"], env=env)
         check("[learn] AC4 learn without init exits 1", r.returncode == 1,
               f"exit={r.returncode} stderr={r.stderr}")
@@ -320,7 +320,7 @@ def test_learning_dispatch_no_docker_required() -> None:
         home = Path(td)
         lib = home / "lib"
         lib.mkdir()
-        env = {**os.environ, "HOME": str(home), "PATH": "/usr/bin:/bin"}
+        env = _isolate_extras_env({**os.environ, "HOME": str(home), "PATH": "/usr/bin:/bin"})
         # Run vibe learn --init with docker removed from PATH.
         # If it tries to call docker, this will fail. If it dispatches correctly, it works.
         input_str = f"{lib}\nprivate\n"
@@ -344,7 +344,7 @@ def test_learning_capture_confirm_flow() -> None:
             f'VIBE_LEARNING_VISIBILITY="private"\n'
             f'VIBE_LEARNING_GIT_REMOTE=""\n'
         )
-        env = {**os.environ, "HOME": str(home)}
+        env = _isolate_extras_env({**os.environ, "HOME": str(home)})
         # Run vibe learn with 'y' confirmation
         r = run(
             ["bash", str(VIBE), "learn", "test pattern"],
@@ -375,7 +375,7 @@ def test_learning_capture_eof_cancel() -> None:
             f'VIBE_LEARNING_VISIBILITY="private"\n'
             f'VIBE_LEARNING_GIT_REMOTE=""\n'
         )
-        env = {**os.environ, "HOME": str(home)}
+        env = _isolate_extras_env({**os.environ, "HOME": str(home)})
         # Empty input triggers EOF
         r = run(["bash", str(VIBE), "learn", "pattern"], env=env, input="")
         check("[learn] AC8 EOF exits 0", r.returncode == 0, r.stderr)
@@ -399,7 +399,7 @@ def test_learning_capture_confirm_yes_word() -> None:
             f'VIBE_LEARNING_VISIBILITY="private"\n'
             f'VIBE_LEARNING_GIT_REMOTE=""\n'
         )
-        env = {**os.environ, "HOME": str(home)}
+        env = _isolate_extras_env({**os.environ, "HOME": str(home)})
         r = run(["bash", str(VIBE), "learn", "yes-word pattern"], env=env, input="yes\n")
         check("[learn] confirm 'yes' exits 0", r.returncode == 0, r.stderr)
         files = list(lib.glob("*.md"))
@@ -421,7 +421,7 @@ def test_learning_capture_confirm_uppercase_y() -> None:
             f'VIBE_LEARNING_VISIBILITY="private"\n'
             f'VIBE_LEARNING_GIT_REMOTE=""\n'
         )
-        env = {**os.environ, "HOME": str(home)}
+        env = _isolate_extras_env({**os.environ, "HOME": str(home)})
         r = run(["bash", str(VIBE), "learn", "uppercase-Y pattern"], env=env, input="Y\n")
         check("[learn] confirm 'Y' exits 0", r.returncode == 0, r.stderr)
         files = list(lib.glob("*.md"))
@@ -443,7 +443,7 @@ def test_learning_capture_confirm_uppercase_yes() -> None:
             f'VIBE_LEARNING_VISIBILITY="private"\n'
             f'VIBE_LEARNING_GIT_REMOTE=""\n'
         )
-        env = {**os.environ, "HOME": str(home)}
+        env = _isolate_extras_env({**os.environ, "HOME": str(home)})
         r = run(["bash", str(VIBE), "learn", "uppercase-YES pattern"], env=env, input="YES\n")
         check("[learn] confirm 'YES' exits 0", r.returncode == 0, r.stderr)
         files = list(lib.glob("*.md"))
@@ -480,7 +480,7 @@ def test_learning_capture_confirm_no() -> None:
             f'VIBE_LEARNING_VISIBILITY="private"\n'
             f'VIBE_LEARNING_GIT_REMOTE=""\n'
         )
-        env = {**os.environ, "HOME": str(home)}
+        env = _isolate_extras_env({**os.environ, "HOME": str(home)})
         r = run(["bash", str(VIBE), "learn", "pattern"], env=env, input="n\n")
         check("[learn] AC8 confirm 'n' exits 0", r.returncode == 0, r.stderr)
         files = list(lib.glob("*.md"))
@@ -502,7 +502,7 @@ def test_learning_public_mode_push_prompt() -> None:
             f'VIBE_LEARNING_VISIBILITY="public"\n'
             f'VIBE_LEARNING_GIT_REMOTE="origin"\n'
         )
-        env = {**os.environ, "HOME": str(home)}
+        env = _isolate_extras_env({**os.environ, "HOME": str(home)})
         # Confirm capture + push (will fail because lib is not a git repo, but entry saved locally)
         r = run(
             ["bash", str(VIBE), "learn", "test pattern"],
@@ -533,7 +533,7 @@ def test_learning_public_mode_git_failure_survives() -> None:
             f'VIBE_LEARNING_VISIBILITY="public"\n'
             f'VIBE_LEARNING_GIT_REMOTE="origin"\n'
         )
-        env = {**os.environ, "HOME": str(home)}
+        env = _isolate_extras_env({**os.environ, "HOME": str(home)})
         # git will fail because lib is not a git repo
         r = run(
             ["bash", str(VIBE), "learn", "pattern"],
@@ -561,7 +561,7 @@ def test_learning_private_mode_no_git() -> None:
             f'VIBE_LEARNING_VISIBILITY="private"\n'
             f'VIBE_LEARNING_GIT_REMOTE=""\n'
         )
-        env = {**os.environ, "HOME": str(home)}
+        env = _isolate_extras_env({**os.environ, "HOME": str(home)})
         # Use a fake git that records calls
         fake_git_dir = home / "fake-bin"
         fake_git_dir.mkdir()
@@ -605,7 +605,7 @@ def test_learning_marker_blocks_capture() -> None:
         proj = home / "project"
         proj.mkdir()
         (proj / ".vibe-no-learn").write_text("")
-        env = {**os.environ, "HOME": str(home)}
+        env = _isolate_extras_env({**os.environ, "HOME": str(home)})
         r = run(
             ["bash", str(VIBE), "learn", "pattern"],
             env=env,
@@ -636,7 +636,7 @@ def test_learning_marker_walk_stops_at_home() -> None:
         parent = home.parent
         (parent / ".vibe-no-learn").write_text("")
         try:
-            env = {**os.environ, "HOME": str(home)}
+            env = _isolate_extras_env({**os.environ, "HOME": str(home)})
             r = run(
                 ["bash", str(VIBE), "learn", "pattern"],
                 env=env,
@@ -662,7 +662,7 @@ def test_learning_home_unset_fails_safe() -> None:
             f'VIBE_LEARNING_VISIBILITY="private"\n'
             f'VIBE_LEARNING_GIT_REMOTE=""\n'
         )
-        env = {**os.environ}
+        env = _isolate_extras_env({**os.environ})
         # Unset HOME
         if "HOME" in env:
             del env["HOME"]
@@ -722,7 +722,7 @@ def test_learning_chmod_600_verified() -> None:
         lib = home / "lib"
         lib.mkdir()
         cfg = home / ".vibe" / "learning.config"
-        env = {**os.environ, "HOME": str(home)}
+        env = _isolate_extras_env({**os.environ, "HOME": str(home)})
         input_str = f"{lib}\nprivate\n"
         r = run(
             ["bash", str(VIBE), "learn", "--init"],
@@ -836,7 +836,7 @@ def test_learning_short_marker_blocks() -> None:
         _learning_optin_config(home, lib)
         proj = home / "project"; proj.mkdir()
         (proj / ".no-learn").write_text("")
-        env = {**os.environ, "HOME": str(home)}
+        env = _isolate_extras_env({**os.environ, "HOME": str(home)})
         r = run(["bash", str(VIBE), "learn", "pattern"], env=env, input="y\n", cwd=proj)
         check("[learn] short .no-learn marker blocks capture",
               r.returncode == 1, f"exit={r.returncode} stderr={r.stderr}")
@@ -850,7 +850,7 @@ def test_learning_exclude_creates_marker() -> None:
         lib = home / "lib"; lib.mkdir()
         _learning_optin_config(home, lib)
         proj = home / "project"; proj.mkdir()
-        env = {**os.environ, "HOME": str(home)}
+        env = _isolate_extras_env({**os.environ, "HOME": str(home)})
         r = run(["bash", str(VIBE), "learn", "--exclude"], env=env, cwd=proj)
         check("[learn] --exclude exits 0", r.returncode == 0, r.stderr)
         check("[learn] --exclude creates .no-learn", (proj / ".no-learn").exists())
@@ -871,7 +871,7 @@ def test_learning_include_removes_marker() -> None:
         proj = home / "project"; proj.mkdir()
         (proj / ".no-learn").write_text("")
         (proj / ".vibe-no-learn").write_text("")  # legacy marker too
-        env = {**os.environ, "HOME": str(home)}
+        env = _isolate_extras_env({**os.environ, "HOME": str(home)})
         r = run(["bash", str(VIBE), "learn", "--include"], env=env, cwd=proj)
         check("[learn] --include exits 0", r.returncode == 0, r.stderr)
         check("[learn] --include removes .no-learn", not (proj / ".no-learn").exists())
@@ -891,7 +891,7 @@ def test_learning_exclude_refuses_in_home() -> None:
         home = Path(td)
         lib = home / "lib"; lib.mkdir()
         _learning_optin_config(home, lib)
-        env = {**os.environ, "HOME": str(home)}
+        env = _isolate_extras_env({**os.environ, "HOME": str(home)})
         r = run(["bash", str(VIBE), "learn", "--exclude"], env=env, cwd=home)
         check("[learn] --exclude refuses in $HOME", r.returncode == 1,
               f"exit={r.returncode} stderr={r.stderr}")
@@ -928,7 +928,7 @@ def test_learning_bare_learn_usage_says_host_only() -> None:
     """`vibe learn` (no args) emits usage that tells users to run on the host."""
     print("\n[learning bare-learn usage says host-only]")
     with tempfile.TemporaryDirectory() as td:
-        env = {**os.environ, "HOME": td}
+        env = _isolate_extras_env({**os.environ, "HOME": td})
         r = run(["bash", str(VIBE), "learn"], env=env)
     check("[learn] bare-learn exits 1", r.returncode == 1,
           f"exit={r.returncode} stderr={r.stderr[:400]}")

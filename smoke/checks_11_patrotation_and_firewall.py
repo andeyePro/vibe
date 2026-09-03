@@ -661,12 +661,15 @@ def test_gh_meta_rate_limit_and_cache_fallback() -> None:
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         cache = tmp / "cache" / "gh-meta-cache.json"
-        base_env = {"GH_META_CACHE": str(cache)}
         # (b)+(e): rate-limit body -> exactly one call, RC=1 without a cache
         log = tmp / "curl.log"; log.write_text("")
-        env = {**os.environ, "PATH": _fw_stub_curl(tmp, script_body=f"echo '{rate_limited}'"),
-               "STUB_LOG": str(log), "VIBE_FIREWALL_SOURCE_ONLY": "1", "GH_FETCH_BACKOFF": "0",
-               "GH_FETCH_ATTEMPTS": "3", **base_env}
+        env = _isolate_extras_env(dict(os.environ))
+        env.update({
+            "PATH": _fw_stub_curl(tmp, script_body=f"echo '{rate_limited}'"),
+            "STUB_LOG": str(log), "VIBE_FIREWALL_SOURCE_ONLY": "1", "GH_FETCH_BACKOFF": "0",
+            "GH_FETCH_ATTEMPTS": "3",
+        })
+        env["GH_META_CACHE"] = str(cache)  # override after the builder (AC5)
         r = run(["bash", "-c", f"source {shlex.quote(str(INIT_FIREWALL))}\n"
                  'if ! fetch_gh_ranges >/dev/null; then echo "RC=1"; else echo "RC=0"; fi'], env=env)
         calls = len([ln for ln in log.read_text().splitlines() if ln.strip()])

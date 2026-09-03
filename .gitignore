@@ -1,9 +1,7 @@
 # Never commit tokens or personal config
-.vibe/
 *.tokens
 .env
 .env.*
-.claude/settings.local.json
 
 # macOS
 .DS_Store

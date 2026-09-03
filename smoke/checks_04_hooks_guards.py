@@ -1029,7 +1029,7 @@ def test_check_sp_current_wired_into_container_start() -> None:
              'S=$(mktemp -d)/stamp; ' + setup + '; '
              + env_extra +
              'if _sp_drift_due "$S"; then echo R=DUE; else echo R=NOT; fi'],
-            capture_output=True, text=True)
+            capture_output=True, text=True, stdin=subprocess.DEVNULL)
         if "R=DUE" in fn.stdout:
             return "DUE"
         if "R=NOT" in fn.stdout:
@@ -1129,7 +1129,7 @@ def test_skipped_marker_round_trip() -> None:
             'else echo "SKIPPED=false"; fi'
         )
         r = subprocess.run(["bash", "-c", script], env=env,
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, stdin=subprocess.DEVNULL)
         check("[skipped] mark+check round-trip exits 0",
               r.returncode == 0, f"rc={r.returncode} err={r.stderr[:200]}")
         check("[skipped] is_github_skipped returns true after mark",
@@ -1191,7 +1191,7 @@ def test_skipped_marker_writes_canonical() -> None:
             f"source {shlex.quote(str(VIBE))}; mark_github_skipped >/dev/null"
         )
         r = subprocess.run(["bash", "-c", script], env=env,
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, stdin=subprocess.DEVNULL)
         check("[skipped] mark exits 0", r.returncode == 0,
               f"rc={r.returncode} err={r.stderr[:200]}")
         skipped_path = home / ".vibe" / "skipped"

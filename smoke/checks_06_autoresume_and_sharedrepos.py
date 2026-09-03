@@ -1,66 +1,14 @@
 from smoke._core import *  # noqa: F401,F403
 
 
-
-
-def test_extras_invocations_isolated() -> None:
-    """Every INSTALL_EXTRAS invocation must route its env through
-    _isolate_extras_env (security-review finding, 2026-08-30): the installer
-    writes global git config unconditionally, so an un-isolated call site
-    leaves the machine's core.hooksPath pointing at a deleted temp dir —
-    content-guard hooks silently detached until the next container start.
-    Static pin catches a future bare call site; the behavioural half runs
-    the installer once and asserts the real global git state is untouched."""
-    print("\n[extras-isolation: installer runs must not touch real git config]")
-    src = Path(__file__).read_text()
-    call_pat = re.compile(r'\["bash", str\(INSTALL_' + r'EXTRAS\)\],\s*env=(\w+|_isolate_extras_env)')
-    callers = call_pat.findall(src)
-    bare = [c for c in callers if c != "_isolate_extras_env"]
-    check("[extras-iso] no bare env= at any INSTALL_EXTRAS call site",
-          len(bare) == 0 and len(callers) > 0,
-          f"bare env names: {bare[:5]} (route through _isolate_extras_env)")
-    hp_before = run(["git", "config", "--global", "--get", "core.hooksPath"]).stdout
-    sd_before = run(["git", "config", "--global", "--get-all", "safe.directory"]).stdout
-    gitconfig = Path(os.environ.get("HOME", "/home/node")) / ".gitconfig"
-    bytes_before = gitconfig.read_bytes() if gitconfig.exists() else b""
-    with tempfile.TemporaryDirectory() as tmp:
-        env0 = {
-            **os.environ,
-            "VIBE_EXTRAS_SRC_ROOT": str(REPO / "devcontainer"),
-            "CLAUDE_CONFIG_DIR": tmp,
-        }
-        r = subprocess.run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env0),
-                           capture_output=True, text=True)
-        check("[extras-iso] isolated installer run exits 0", r.returncode == 0,
-              f"rc={r.returncode} err={r.stderr[:200]}")
-    hp_after = run(["git", "config", "--global", "--get", "core.hooksPath"]).stdout
-    sd_after = run(["git", "config", "--global", "--get-all", "safe.directory"]).stdout
-    bytes_after = gitconfig.read_bytes() if gitconfig.exists() else b""
-    check("[extras-iso] core.hooksPath unchanged", hp_before == hp_after,
-          f"{hp_before!r} -> {hp_after!r}")
-    check("[extras-iso] safe.directory unchanged", sd_before == sd_after,
-          f"{sd_before!r} -> {sd_after!r}")
-    check("[extras-iso] real ~/.gitconfig byte-identical", bytes_before == bytes_after,
-          "installer wrote the real global git config despite isolation")
-    # Same guard for setup-git.sh: its SRC/DST were once hardcoded to
-    # /home/node, so a "sandbox HOME" run still overwrote the REAL
-    # ~/.gitconfig via the .gitconfig-host cp (wiping core.hooksPath —
-    # content-guard detached). Run it sandboxed and assert no real change.
-    with tempfile.TemporaryDirectory() as td:
-        sb = Path(td) / "home"
-        sb.mkdir()
-        (sb / ".gitconfig-host").write_text("[user]\n\temail = t@t\n")
-        r = subprocess.run(["bash", str(SETUP_GIT_SH)],
-                           env={**os.environ, "HOME": str(sb)},
-                           capture_output=True, text=True)
-        check("[extras-iso] sandboxed setup-git.sh exits 0", r.returncode == 0,
-              r.stderr[:200])
-        check("[extras-iso] setup-git wrote the sandbox, not the real HOME",
-              (sb / ".gitconfig").exists(), "sandbox .gitconfig missing")
-    bytes_after2 = gitconfig.read_bytes() if gitconfig.exists() else b""
-    check("[extras-iso] real ~/.gitconfig survives sandboxed setup-git.sh",
-          bytes_before == bytes_after2,
-          "setup-git.sh still writes a hardcoded /home/node path")
+# test_extras_invocations_isolated moved to smoke/checks_12_harness_lints.py
+# (task_035 AC6 successor): the old version here only scanned
+# Path(__file__) — this file alone — via a line regex, so it could never see
+# an unrouted env= at an INSTALL_EXTRAS/SETUP_GIT_SH/INIT_FIREWALL/vibe-learn
+# call site in any OTHER smoke/*.py part. The successor scans every part
+# with an AST-based data-flow rule instead. Rehomed rather than left here
+# because the new AST scan plus its four categories would have pushed this
+# already-1,200-line file past the 1,500-line cap in CLAUDE.md § Testing.
 
 
 def test_install_extras_syncs_hooks() -> None:
@@ -73,6 +21,7 @@ def test_install_extras_syncs_hooks() -> None:
         r = subprocess.run(
             ["bash", str(INSTALL_EXTRAS)],
             env=_isolate_extras_env(env), capture_output=True, text=True,
+        stdin=subprocess.DEVNULL,
         )
         check("[hooks] install-extras exits 0",
               r.returncode == 0, f"rc={r.returncode} err={r.stderr[:200]}")
@@ -278,7 +227,7 @@ def test_install_extras_brain2_md_gated() -> None:
         env_off["CLAUDE_CONFIG_DIR"] = str(dest_off)
         env_off["VIBE_BRAIN2_MOUNT_DIR"] = str(tmp_path / "nope")
         r_off = subprocess.run(["bash", str(INSTALL_EXTRAS)],
-                               env=_isolate_extras_env(env_off), capture_output=True, text=True)
+                               env=_isolate_extras_env(env_off), capture_output=True, text=True, stdin=subprocess.DEVNULL)
         check("[brain2] install exits 0 (no mount)",
               r_off.returncode == 0, r_off.stderr[:200])
         md_off = (dest_off / "CLAUDE.md").read_text()
@@ -294,7 +243,7 @@ def test_install_extras_brain2_md_gated() -> None:
         env_on["CLAUDE_CONFIG_DIR"] = str(dest_on)
         env_on["VIBE_BRAIN2_MOUNT_DIR"] = str(mount_dir)
         r_on = subprocess.run(["bash", str(INSTALL_EXTRAS)],
-                              env=_isolate_extras_env(env_on), capture_output=True, text=True)
+                              env=_isolate_extras_env(env_on), capture_output=True, text=True, stdin=subprocess.DEVNULL)
         check("[brain2] install exits 0 (mount present)",
               r_on.returncode == 0, r_on.stderr[:200])
         md_on = (dest_on / "CLAUDE.md").read_text()
@@ -345,7 +294,7 @@ def test_install_extras_brain2_skills_synced() -> None:
         env["CLAUDE_CONFIG_DIR"] = str(dest)
         env["VIBE_BRAIN2_MOUNT_DIR"] = str(mount)
         r = subprocess.run(["bash", str(INSTALL_EXTRAS)],
-                           env=_isolate_extras_env(env), capture_output=True, text=True)
+                           env=_isolate_extras_env(env), capture_output=True, text=True, stdin=subprocess.DEVNULL)
         check("[brain2] install exits 0 (mount present)",
               r.returncode == 0, r.stderr[:200])
         dskills = dest / "skills"
@@ -367,7 +316,7 @@ def test_install_extras_brain2_skills_synced() -> None:
         env2["CLAUDE_CONFIG_DIR"] = str(dest2)
         env2["VIBE_BRAIN2_MOUNT_DIR"] = str(tmp_path / "nope")
         r2 = subprocess.run(["bash", str(INSTALL_EXTRAS)],
-                            env=_isolate_extras_env(env2), capture_output=True, text=True)
+                            env=_isolate_extras_env(env2), capture_output=True, text=True, stdin=subprocess.DEVNULL)
         check("[brain2] install exits 0 (no mount)",
               r2.returncode == 0, r2.stderr[:200])
         check("[brain2] no skills synced without the mount",

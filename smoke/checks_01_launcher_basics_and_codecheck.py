@@ -512,6 +512,7 @@ def test_code_check_json_missing_shellcheck() -> None:
         r = subprocess.run(
             [str(python3_src), str(CODE_CHECK), "--json"],
             capture_output=True, text=True, env=env, cwd=str(REPO),
+        stdin=subprocess.DEVNULL,
         )
         check("[json] AC7 exit 2 when shellcheck missing", r.returncode == 2,
               f"exit={r.returncode}")

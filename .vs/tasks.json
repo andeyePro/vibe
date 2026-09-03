@@ -260,10 +260,10 @@
   {
     "id": "task_035",
     "description": "harness hygiene: stdin-immune suite, one sandbox builder + whole-suite meta-check, sha-pin lint, SAFE prunes, CLAUDE.md \u00a7 Testing rules",
-    "implementation_status": "pending",
-    "test_status": "pending",
+    "implementation_status": "complete",
+    "test_status": "passing",
     "assigned_to": "generator",
     "mode": "rigorous",
-    "last_modified": "2026-09-02T23:20:40Z"
+    "last_modified": "2026-09-03T00:27:35Z"
   }
 ]

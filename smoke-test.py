@@ -22,6 +22,7 @@ from smoke.checks_08_credential_and_contentscan import *
 from smoke.checks_09_openproject_and_scanner import *
 from smoke.checks_10_pathwarn_and_hunkdiff import *
 from smoke.checks_11_patrotation_and_firewall import *
+from smoke.checks_12_harness_lints import *
 from smoke.runner import main
 
 if __name__ == "__main__":

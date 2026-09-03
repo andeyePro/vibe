@@ -70,6 +70,25 @@ INIT_FIREWALL = REPO / "devcontainer" / "init-firewall.sh"
 FAILURES: list[tuple[str, str]] = []
 
 
+# Sha-pin allowlist (task_035 AC7). Rule: no test may permanently pin a
+# fixed commit sha as its baseline — task_028/029's tests did exactly that
+# (`git show <sha>:<path>` / `git diff <sha>`) and broke on the very next
+# commit that touched the pinned path, because "the tree as of commit X"
+# drifts out from under a literal sha the moment X stops being special.
+# `test_no_fixed_sha_baselines` (smoke/checks_*) scans smoke/*.py for a
+# literal 7-40 hex sha token following `git show ` or `git diff ` and fails
+# unless that occurrence is registered here, keyed by the function name that
+# legitimately needs it, with a one-line reason. HEAD, and shas produced at
+# runtime by a test's own throwaway repo (e.g. checks_09's `git show -s
+# <sha>` against a commit it just made), are never literal source tokens and
+# so never need an entry.
+HISTORICAL_PINS_ALLOWED = {
+    "3b23b19": "task_034 AC4 golden baseline — the launcher/devcontainer.json "
+               "render before the add-host line; a literal pre-change capture, "
+               "see _task034_baseline_text",
+}
+
+
 _EXTRAS_SCRATCH_HOME: str | None = None
 
 
@@ -82,9 +101,22 @@ def _isolate_extras_env(env: dict) -> dict:
     scanners until the next container start) and safe.directory entries —
     and ensure_project_gitignore writes the real /workspace/.gitignore.
     Redirects HOME (when it is still the real one) and GIT_CONFIG_GLOBAL to
-    a session-scoped scratch dir, and defaults VIBE_AUTO_GITIGNORE=0.
-    Respects overrides a test set deliberately. Every INSTALL_EXTRAS call
-    site MUST route its env through this helper —
+    a session-scoped scratch dir, and defaults VIBE_AUTO_GITIGNORE=0. Also
+    sets GH_META_CACHE (task_035, security-review finding 2026-09-02: a
+    fixture run with no override served/wrote the LIVE
+    ~/.claude/gh-meta-cache.json, once as a read — a fixture-authored
+    allowlist rescuing a real fail-closed boot — and once as a write from a
+    stubbed curl body). Because the scratch HOME above is process-global
+    (one _EXTRAS_SCRATCH_HOME for the whole test run), GH_META_CACHE cannot
+    share that same fixed-per-run treatment — two tests running under the
+    same scratch HOME would clobber each other's cache file and leak state
+    between them — so it is instead a fresh path under a per-CALL unique
+    subdirectory of the scratch HOME (tempfile.mkdtemp(dir=scratch)), minted
+    on every invocation. Respects overrides a test set deliberately (either
+    on the input env, or an assignment made after calling this helper —
+    e.g. `_fw_run` and `test_gh_meta_rate_limit_and_cache_fallback` both
+    override GH_META_CACHE post-call to their own fixture path). Every
+    INSTALL_EXTRAS call site MUST route its env through this helper —
     test_extras_invocations_isolated pins that statically."""
     global _EXTRAS_SCRATCH_HOME
     if _EXTRAS_SCRATCH_HOME is None:
@@ -103,6 +135,9 @@ def _isolate_extras_env(env: dict) -> dict:
     env.setdefault("GIT_CONFIG_GLOBAL",
                    str(Path(_EXTRAS_SCRATCH_HOME) / "gitconfig"))
     env.setdefault("VIBE_AUTO_GITIGNORE", "0")
+    if "GH_META_CACHE" not in env:
+        call_dir = tempfile.mkdtemp(dir=_EXTRAS_SCRATCH_HOME)
+        env["GH_META_CACHE"] = str(Path(call_dir) / "gh-meta-cache.json")
     return env
 
 
@@ -114,24 +149,54 @@ def check(name: str, cond: bool, detail: str = "") -> bool:
 
 
 def run(cmd: list[str], env: dict[str, str] | None = None, cwd: Path | None = None, input: str = ""):
+    # Never let a spawned child inherit this process's real stdin: a
+    # background/CI run with no controlling TTY leaves stdin open-but-
+    # never-written, and a child that reads from it (e.g. a `read` in a
+    # sourced script) hangs forever instead of failing fast (task_035,
+    # triggered by a 55-minute hang inside a `vibe learn` test). Pass
+    # stdin=subprocess.DEVNULL exactly when no input string was given —
+    # never both input= and stdin= (subprocess.run raises ValueError).
+    # (Two literal branches, not a **kwargs dict merge, so a static AST
+    # scan for the `input`/`stdin` keyword — smoke's own sha-pin-style
+    # lints work this way — sees an explicit keyword either way.)
+    if input:
+        return subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            env=env if env is not None else os.environ.copy(),
+            cwd=cwd,
+            input=input,
+        )
     return subprocess.run(
         cmd,
         capture_output=True,
         text=True,
         env=env if env is not None else os.environ.copy(),
         cwd=cwd,
-        input=input if input else None,
+        stdin=subprocess.DEVNULL,
     )
 
 
 def run_bytes(cmd: list[str], env: dict[str, str] | None = None, cwd: Path | None = None, input_bytes: bytes = b""):
-    """Run a subprocess and return stdout/stderr/returncode as bytes."""
+    """Run a subprocess and return stdout/stderr/returncode as bytes.
+
+    Same stdin discipline as run(): DEVNULL unless input_bytes was given.
+    """
+    if input_bytes:
+        return subprocess.run(
+            cmd,
+            capture_output=True,
+            env=env if env is not None else os.environ.copy(),
+            cwd=cwd,
+            input=input_bytes,
+        )
     return subprocess.run(
         cmd,
         capture_output=True,
         env=env if env is not None else os.environ.copy(),
         cwd=cwd,
-        input=input_bytes if input_bytes else None,
+        stdin=subprocess.DEVNULL,
     )
 
 
@@ -364,8 +429,8 @@ LEARN_MD = REPO / "devcontainer" / "commands" / "learn.md"
 LEARN_HOOK_RULES_MD = REPO / "devcontainer" / "claude-md" / "learnings.md"
 
 # Pre-check: jq and bash available on host (needed for hook script tests).
-_HAS_JQ = subprocess.run(["which", "jq"], capture_output=True).returncode == 0
-_HAS_BASH = subprocess.run(["which", "bash"], capture_output=True).returncode == 0
+_HAS_JQ = subprocess.run(["which", "jq"], capture_output=True, stdin=subprocess.DEVNULL).returncode == 0
+_HAS_BASH = subprocess.run(["which", "bash"], capture_output=True, stdin=subprocess.DEVNULL).returncode == 0
 _HOOK_SKIP = not (_HAS_JQ and _HAS_BASH)
 
 if _HOOK_SKIP:
@@ -500,6 +565,7 @@ def _run_sp_probe(args: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", str(CHECK_SP_CURRENT), *args],
         capture_output=True, text=True,
+        stdin=subprocess.DEVNULL,
     )
 
 
@@ -529,7 +595,7 @@ def _run_skipped_probe(workspace: str, marker_state: list[str], home: Path) -> t
         'else echo "SKIPPED=false"; fi'
     )
     r = subprocess.run(["bash", "-c", script], env=env,
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, stdin=subprocess.DEVNULL)
     content = skipped_path.read_text().splitlines() if skipped_path.exists() else []
     return r.returncode, r.stdout, content
 
@@ -589,7 +655,7 @@ def _ssh_marker_result(env_vars: dict, setup: str) -> tuple[str, str]:
         dest = tmp_path / "dest"
         dest.mkdir()
         subprocess.run(["bash", "-c", f'WS="{ws}"; {setup}'],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, stdin=subprocess.DEVNULL)
         env = os.environ.copy()
         env.pop("VIBE_SSH_AUTO", None)
         env["VIBE_EXTRAS_SRC_ROOT"] = str(REPO / "devcontainer")
@@ -604,7 +670,7 @@ def _ssh_marker_result(env_vars: dict, setup: str) -> tuple[str, str]:
         env["VIBE_AUTO_GITIGNORE"] = "0"
         env.update(env_vars)
         r = subprocess.run(["bash", str(INSTALL_EXTRAS)],
-                           env=_isolate_extras_env(env), capture_output=True, text=True)
+                           env=_isolate_extras_env(env), capture_output=True, text=True, stdin=subprocess.DEVNULL)
         if r.returncode != 0:
             return (f"ERR(rc={r.returncode})", r.stderr)
         md = (dest / "CLAUDE.md").read_text()
@@ -1050,11 +1116,20 @@ def _fw_stub_curl(tmp: Path, *, script_body: str) -> str:
 
 def _fw_run(tmp: Path, stub_body: str, snippet: str):
     """Source init-firewall.sh with the helpers exposed but no side effects,
-    against a stubbed curl, then run `snippet`."""
+    against a stubbed curl, then run `snippet`.
+
+    Builds its env through the same sandbox builder every other
+    installer/firewall-sourcing test uses (task_035 AC5/AC6), then layers
+    on the firewall-specific PATH/STUB_LOG/VIBE_FIREWALL_SOURCE_ONLY/
+    GH_FETCH_* keys and overrides GH_META_CACHE to this call's own tmp dir
+    AFTER calling the builder — never let a stubbed fetch write the LIVE
+    ~/.claude/gh-meta-cache.json (a fixture cache served on a real boot
+    would allowlist 1.2.3.0/24 instead of GitHub) and never let a live
+    cache rescue a test that expects fail-closed."""
     log = tmp / "curl.log"
     log.write_text("")
-    env = {
-        **os.environ,
+    env = _isolate_extras_env(dict(os.environ))
+    env.update({
         "PATH": _fw_stub_curl(tmp, script_body=stub_body),
         "STUB_LOG": str(log),
         "VIBE_FIREWALL_SOURCE_ONLY": "1",
@@ -1063,12 +1138,8 @@ def _fw_run(tmp: Path, stub_body: str, snippet: str):
         # not the shipped default (which task_029 raised and asserts
         # separately in AC11).
         "GH_FETCH_ATTEMPTS": "3",
-        # Never let a stubbed fetch write the LIVE ~/.claude/gh-meta-cache.json
-        # (a fixture cache served on a real boot would allowlist 1.2.3.0/24
-        # instead of GitHub) and never let a live cache rescue a test that
-        # expects fail-closed.
-        "GH_META_CACHE": str(tmp / "gh-meta-cache.json"),
-    }
+    })
+    env["GH_META_CACHE"] = str(tmp / "gh-meta-cache.json")
     script = f"source {shlex.quote(str(INIT_FIREWALL))}\n{snippet}\n"
     r = run(["bash", "-c", script], env=env)
     calls = len([ln for ln in log.read_text().splitlines() if ln.strip()])
@@ -1194,7 +1265,7 @@ def _task034_watcher_alive_after(env_extra: dict, ws: Path, linux_shim: Path) ->
     ws.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, "PATH": f"{linux_shim}{os.pathsep}{os.environ.get('PATH', '')}", **env_extra}
     proc = subprocess.Popen(["bash", str(VIBE_COPY_WATCHER), str(ws)],
-                             env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                             env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL)
     try:
         import time
         time.sleep(0.5)
@@ -1279,6 +1350,7 @@ __all__ = [
     'FEATURE_TEMPLATE',
     'GUARD_BASH',
     'GUARD_FS',
+    'HISTORICAL_PINS_ALLOWED',
     'INIT_FIREWALL',
     'INSTALL',
     'INSTALL_EXTRAS',

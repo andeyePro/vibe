@@ -10,6 +10,7 @@ from smoke.checks_08_credential_and_contentscan import *
 from smoke.checks_09_openproject_and_scanner import *
 from smoke.checks_10_pathwarn_and_hunkdiff import *
 from smoke.checks_11_patrotation_and_firewall import *
+from smoke.checks_12_harness_lints import *
 
 
 
@@ -554,6 +555,13 @@ def main() -> int:
     test_task014_bind_dir_created()
     test_task014_ac14_no_cksum_in_builder()
     test_task014_projects_bind_mount_drift()
+
+    # task_035: harness hygiene lints (smoke/checks_12_harness_lints.py)
+    test_harness_spawns_never_inherit_stdin()
+    test_harness_survives_open_stdin()
+    test_no_fixed_sha_baselines()
+    test_claude_md_testing_sentinels()
+    test_gitignore_managed_block_and_site_gitignore()
 
     print()
     if FAILURES:

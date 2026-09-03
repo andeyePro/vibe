@@ -280,6 +280,7 @@ def test_vibe_copy_watcher_polling_detects_change() -> None:
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+        stdin=subprocess.DEVNULL,
         )
 
         try:
@@ -415,12 +416,14 @@ def test_vibe_path_prefix_isolation() -> None:
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+        stdin=subprocess.DEVNULL,
         )
         proc2 = subprocess.Popen(
             ["bash", str(VIBE_COPY_WATCHER), str(proj2)],
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+        stdin=subprocess.DEVNULL,
         )
 
         try:
