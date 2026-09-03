@@ -66,6 +66,8 @@ Two vibe-wide behaviour changes shipped and took effect on this rebuild — surf
 
 ## Open
 
+- [ ] **Design drafts parked in `.vs/briefs/` (2026-09-02, /vsss run) — drafts, not for execution until Martin decides**: `roadmap-2026-09-02.md` (the ten-question brief behind the 2026-09 roadmap); `spec-draft-learning-capture.md` (automatic learning capture — adds a hook, so the safety floor makes it Martin's call; question T2 in `/brain2/andeye/vibe-fromClaude.md`); `spec-draft-language-profiles.md` (language-profile presets as child images; question T3 — which three profiles first); `spec-draft-linux-host.md` + two critiques (SHIPPED as task_034; kept as the record of the two critique rounds). Source items: roadmap Tier 2 in `/brain2/andeye/vibe-roadmap-2026-09.md`.
+
 - [ ] **Martin: existing repos won't gain the `.vibe-allow-ssh` gitignore line** — the fail-closed marker verification SHIPPED 2026-08-30 (see CHANGELOG; forge-resistance now mirrors task_020's OP marker), and `.vibe-allow-ssh` joined the managed gitignore block — but the block is add-once by design, so repos that already have it keep the old body. In projects using the marker (taskandeye, timeandeye), either add `.vibe-allow-ssh` to `.gitignore` by hand or delete the managed block and relaunch to regenerate it.
 
 - [ ] **Martin: verify Test 43 live (known_hosts seed for host.docker.internal)** — the `setup-ssh.sh` keyscan seed and the README § build-bridge write-up SHIPPED 2026-08-30 (see CHANGELOG); the seed can only be verified against real Docker + Remote Login — run MANUAL-TESTS Test 43 (both the pass path and the Remote-Login-off non-fatal path) before trusting an unattended Mac-build-bridge `/vsss` run.
