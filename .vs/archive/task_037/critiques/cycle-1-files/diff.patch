@@ -1,0 +1,246 @@
+diff --git a/.vs/tasks.json b/.vs/tasks.json
+index 337faf8..841c7bb 100644
+--- a/.vs/tasks.json
++++ b/.vs/tasks.json
+@@ -274,5 +274,14 @@
+     "assigned_to": "generator",
+     "mode": "rigorous",
+     "last_modified": "2026-09-04T03:00:00Z"
++  },
++  {
++    "id": "task_037",
++    "description": "/vs --TDD: mandatory red-first trail (.vs/cycle-N/tdd-trail.md) written by the Generator before implementing, cross-checked by the Tester; incompatible with --fuzzy; vss/vsss passthrough",
++    "implementation_status": "pending",
++    "test_status": "pending",
++    "assigned_to": "generator",
++    "mode": "rigorous",
++    "last_modified": "2026-09-04T02:46:33Z"
+   }
+ ]
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index b61c875..bc32956 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -6,6 +6,8 @@ Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion
+ 
+ ## 2026-09-04
+ 
++- [x] **`/vs --TDD`: mandatory red-first Generator trail, Tester-verified** (task_037) — Martin's queue item 3, harness half only (project-wide enforcement — a hook, a launcher session mode — stays the later Martin-gated step; the `vibe --TDD session mode` TODO entry now says so at its top). `devcontainer/commands/vs.md` gains a `§ Flags` bullet (`--TDD`, ≤45 words, names `red-first`, `tdd-trail.md`, incompatible with `--fuzzy`); a `§ Step 4` paragraph requiring the Generator to write `.vs/cycle-<N>/tdd-trail.md` BEFORE each implementing edit, one entry per acceptance criterion in the shape `AC<n> | test file | command | exit | failing assertion | written:` (a trail entry written after the implementation, or without a failing run, is a cycle fail); a `§ Step 5a` paragraph having the Tester cross-check the trail against `diff.patch` (every AC has an entry, the named test file exists under `scratch-tests/`, the assertion names the criterion, `command` names the same file as `test file`, `written:` vs the scratch file's mtime — a weak proxy, not proof) and an explicit carve-out of the independence rule (Tester reads `tdd-trail.md` + `diff.patch` under `--TDD`, only to check the trail, never the Generator's report); the Step 5a summary line is now "a 3-line summary (4 lines under `--TDD`: a `TDD trail:` line is appended)"; Step 3b's dangling `--TDD` (when implemented)` sentence is resolved (`--TDD` governs Step 4 and Step 5a only — the literal `(when implemented)` is gone from the file); `§ Rules` gains the independence carve-out on the `No cross-subagent context sharing` bullet and a new bullet refusing `--TDD` + `--fuzzy` combined with one line; `§ State directory` lists `cycle-N/tdd-trail.md` (red-first evidence); `§ Step 5c` notes panellists do not check the trail, the Tester does. `vss.md`'s `--spec-first` passthrough sentence now also names `--TDD`; `vsss.md § Session-budget capture` gains a `--TDD` passthrough bullet pointing at `/vs § Step 4`. Word-count pins in `smoke/checks_05_numbering_hook.py` and `smoke/checks_09_openproject_and_scanner.py` raised 14,000 → 14,300 (actual vs+vss+vsss total after this change: 14,166 words). `TODO.md` queue item 3 collapsed to a one-line pointer at this entry; the long `vibe --TDD session mode` entry gains the "harness half shipped" pointer at its top. Out of scope (per spec): any hook script, `settings.json`, a launcher flag, `.vibe/mode`, a CLAUDE.md directive — enforcement is Martin's later call. `python3 code-check.py` and the full `python3 smoke-test.py < /dev/null` both green. Scope: `devcontainer/commands/vs.md`, `devcontainer/commands/vss.md`, `devcontainer/commands/vsss.md`, `smoke/checks_05_numbering_hook.py`, `smoke/checks_09_openproject_and_scanner.py`, `smoke/checks_13_spec_first.py`, `smoke/runner.py`, `TODO.md`, `CHANGELOG.md`.
++
+ - [x] **`/vss` iteration 2: XAP engagement plan lifted out of TODO.md into `docs/xap/engagement-plan.md`** — Martin's priority-queue item 2 was "move XAP out of this repo, first step is a pointer": XAP ("eXplicit Attribution Protocol") is a separate standard Martin is drafting, tracked here only until it gets its own repo. New `docs/xap/engagement-plan.md` carries a short header (states XAP is separate from vibe, is staged to move once Martin creates its repo, dated 2026-09-04) followed by the eight-step campaign (i)-(viii), the 2026-05-18 move note, and the honest-realistic-ceiling paragraph — all lifted verbatim from the old TODO.md entry, no rewording, no new claims about vibe conforming to XAP, no SPEC.md/XAP.md/conformance tier added. `TODO.md`: priority-queue item 2 (line 73) and the long XAP entry further down (was lines 128-138, now line 129) both collapsed to one-line pointers at the new file; `## For Martin (review and decide)` § Design decisions gains `Create the XAP repository and confirm its owner` (andeyePro/XAP vs martincurrie/XAP — Martin's call, not autonomous). `/brain2/andeye/vibe-fromClaude.md` gains item 5 (T5) asking the same repo-owner question. No code changed. `python3 code-check.py` and the full `python3 smoke-test.py < /dev/null` both green. Scope: `docs/xap/engagement-plan.md` (new), `TODO.md`, `CHANGELOG.md`, `/brain2/andeye/vibe-fromClaude.md`.
+ 
+ - [x] **`--spec-first` for `/vs`, plus `/vs --approve` and passthrough in `/vss`/`/vsss`** (task_036) — Martin's queue item 1: the harness now writes the spec and STOPS for his approval before any Generator runs, resumable rather than only an in-session wait. `devcontainer/commands/vs.md` gains two `§ Flags` bullets (`--spec-first`, `--approve [<task-id>]`), a fork sentence in Step 3's `On pass` paragraph, a new `## Step 3b — Spec-first checkpoint` section (commits the spec + TODO entry + `tasks.json` `awaiting-approval`, prints the approve-with line, ends the run with no Generator; Martin's edits to `.vs/spec.md` ARE the approved version — never byte-identical, never re-critiqued, no cycle-1 restart because no cycle has run yet, except a credit-billed-tier edit still needs a fresh ask; `/vs --approve` flips to `in_progress` and continues from Step 4, defaulting to the newest `awaiting-approval` task and un-archiving it first), the four-value `implementation_status` enum, and a `§ Multi-task state convention` note that a parked-at-`awaiting-approval` spec is un-archived by `/vs --approve` before anything else. `devcontainer/commands/vss.md` threads `--spec-first` through next to the `--wide` passthrough (not an escalate trigger — the checkpoint IS the escalation) and gives both Mode A step 2 and Mode B's Step 4 close-out a branch: an `awaiting-approval` end leaves the TODO entry open with `(awaiting approval — /vs --approve <task-id>)` appended instead of ticking it. `devcontainer/commands/vsss.md` gains the `--spec-first` session-budget bullet, a "never blocks the loop" sentence (write the spec, post one action point, move on), a Consume-protocol step folding an `approve`/redirect reply into `/vs --approve <task-id>` or a spec-revision instruction, the verbatim fromClaude action-point wording, and a `Deferred` line format for an unresolved checkpoint at exit. Raised both frozen word-count pins (`smoke/checks_05_numbering_hook.py`, `smoke/checks_09_openproject_and_scanner.py`) from 13,500 to 14,000 words to make room (precedent: task_033's 12,900→13,500); combined vs+vss+vsss word count after this change is tracked in the Tester's report. `TODO.md` closes priority-queue item 1 and adds a follow-on item for the still-missing safety floor (a hook that actually blocks edits without an approved spec — needs Martin, out of scope for this task). README's `/vs` sections don't enumerate individual flags, so no README change. Out of scope (per spec): the PreToolUse enforcement hook itself, and `--TDD` (one sentence in Step 3b notes the stacking: spec gates first, `--TDD` governs Step 4 when it ships).
+diff --git a/TODO.md b/TODO.md
+index cf73b77..aaf2ffd 100644
+--- a/TODO.md
++++ b/TODO.md
+@@ -71,7 +71,7 @@ Two vibe-wide behaviour changes shipped and took effect on this rebuild — surf
+ Plain-English rule for this file from now on: every item explains itself; no thread tags, task ids or mode names without saying what they are.
+ 
+ - [ ] **2. XAP engagement plan** — lifted to `docs/xap/engagement-plan.md`, staged to move to its own repo; the repo creation and owner are Martin's (see For Martin).
+-- [ ] **3. `--TDD` mode for `/vs`** — forces test-first across a project via a hook that blocks edits to non-test files until a failing test exists. Third in the queue. (Adds a hook, so the run will ask Martin before installing it.)
++- [ ] **3. `--TDD` mode for `/vs`** — harness half shipped as `/vs --TDD` (task_037): red-first evidence trail, Tester-verified. Enforcement across a whole project (a hook, a launcher session mode) is the later Martin-gated step — see the `vibe --TDD session mode` entry below.
+ - [ ] **4. `--aux` model slot** — a provider-agnostic way to plug in a second, cheaper or greener model (GreenPT, a local Ollama model on the Mac, any OpenAI-compatible endpoint) for mechanical roles only: `/learn` embeddings and an optional extra reviewer/tester in `/vs`. Claude Code's own model is never replaced (that would break the subscription-only rule). Replaces the old GreenPT items. Fourth.
+ - [!] **vibepaste — parked, probably not needed** — it was a one-word Mac shell command to pull the last thing Claude wrote into the clipboard AFTER you exit vibe (a companion to the in-session `/c`). Martin (2026-09-04): select-to-copy in Claude Code has made pasting painless, so this is dropped unless the need returns. The two older vibepaste entries below stay as history.
+ - [ ] **5. Language profiles, in Martin's order: Swift first, then the Astro/React (Node) toolchain, then C++ (JS8Call), then Python, then Rust** — `vibe --profile <name>` builds a child image on top of the standard one with that toolchain pre-installed, so a Swift project's container can `swift build` without a bridge to the Mac (Swift on Linux builds Linux targets only; Apple-platform builds still need the Mac). Design draft: `.vs/briefs/spec-draft-language-profiles.md`.
+@@ -122,7 +122,7 @@ Plain-English rule for this file from now on: every item explains itself; no thr
+ - [ ] **vibe: in-flight bug investigation — Mac-host zshrc wrapper regressions (parked 2026-04-24)** — three regressions reported when running vibe via the Option-A Mac-host zshrc wrapper that opens Ghostty with `--title=<folder>`: (1) `vibe --continue` and `vibe --resume <UID>` no longer work — flags suspected to be eaten by the wrapper not forwarding `"$@"` to the inner vibe. (2) Typing `exit` inside vibe closes the Ghostty window entirely, so user can't read the session UID before the window vanishes — Ghostty's `--command=` default behavior; needs `; exec $SHELL` tail or equivalent. (3) Running vibe twice on the same repo produces two windows both titled the same (just `vibe` or just the folder name) — wrapper isn't disambiguating multiple instances of one folder. Diagnosis confidence: high that all three are in the wrapper; low that the in-tree `/workspace/vibe` itself regressed (verified `build_claude_resume_args` produces correct output). Pickup: get the wrapper text from the Mac (Martin to run `sed -n '/^[[:space:]]*\(function[[:space:]]\+\)\?vibe[[:space:]]*(/,/^}/p' ~/.zshrc` and paste output to fresh Claude); diff against three fixes (forward `"$@"` to inner vibe; tail with `; exec $SHELL` or set Ghostty `--abandon-keep-running` semantics; disambiguate multi-instance folder titles e.g. with `pgrep -c vibe-folder` counter or PID suffix).
+ - [ ] **vibe: Ghostty window-title disambiguation — OSC-intercept wrapper (option C)** — problem: multiple Ghostty windows running vibe all show "Claude Code" or the same task-summary string, making it impossible to tell which window is which repo. Option A (Mac-host `~/.zshrc` wrapper launching fresh Ghostty windows with `--title=<folder>` locked) was tried first; if A works but requires per-user setup, add an "Optional optimisations" section to the repo README documenting the zshrc snippet (see Claude conversation 2026-04-24 for the exact function). Option C is the proper in-repo fix: wrap `devcontainer exec` output through a PTY-preserving filter that detects `\033]2;<text>\007` (OSC 2 title-set) sequences from claude and rewrites them to `\033]2;<folder>: <text>\007`, so the folder name prefixes every title claude sets (including task summaries). Gating: only pursue C if A is insufficient or users want folder + claude's live task summary together in one title. Open design: PTY wrapper shape (coproc? `script -q -c`? a small Go/Rust helper? a bash function using `stdbuf`?); must preserve TTY semantics for claude's TUI; must not break input forwarding or resize signals; format customisable via env (`VIBE_TITLE_FORMAT="${folder}: ${claude_title}"` default). Likely a `/vs` task. Don't start until A is confirmed either insufficient or working-but-needing-docs.
+ - [ ] **vibe: Green-AI backend option (GreenPT / Mistral / self-hosted)** — offer users the choice to run vibe against a transparent-carbon AI backend rather than Claude, for users who prioritise environmental impact over Claude-Code-specific agentic features. Anthropic does not publish per-token energy or carbon data (their opacity reads as a negative signal); GreenPT publishes mWh/100 tokens and SCI-for-AI CO₂-eq in real-time, hosts on 100% renewables in Europe, PUE 1.37, WUE 0.067. Mistral publishes carbon impact data, has Le Chat + `codestral` with API, EU-hosted. Self-hosting (Ollama / llama.cpp / vLLM) puts the user in control of the grid source. Open design: (a) which shape — generic AI harness replacing Claude Code entirely (loses /vs + bypass-in-container value), OR a `vibe --green` flag that routes non-coding queries to GreenPT/Mistral while keeping Claude for coding (split-brain), OR just document how to run vibe with LITELLM / Continue.dev / Aider pointed at a green backend (no vibe code change); (b) tool-calling shape — Claude Code's tool loop is Anthropic-specific; open models via Ollama/Aider have their own agentic loops. Probably a `/vs` task with multi-cycle scope. Lands after the autonomous-research stack (Shape 3a + A + B) since that's more urgent for the voting vibe.
+-- [ ] **vibe --TDD session mode (methodology enforcement)** — session-level flag that forces test-driven discipline for the whole project, not just one task. **XP-as-umbrella context (2026-05-18 Martin)**: vibe is exploring extreme programming as the parent methodology with `--TDD` and `--spec-first` as in-scope XP subsets; BDD dropped as out-of-scope niche. The umbrella `--XP` mode may eventually subsume these individual flags, but for now `--TDD` ships first. Shape: `vibe --TDD` writes a CLAUDE.md directive explaining the red/green/refactor workflow; installs a PreToolUse hook that blocks `Edit`/`Write` on implementation files unless a newer test edit with a recently-observed failing assertion exists; persists the mode (e.g. `.vibe/mode=TDD` in the project tree, or flag in `~/.vibe/config` per-repo) so subsequent `vibe` invocations stay in TDD without the flag. On first `--TDD` invocation against a repo with pre-existing code / partial test coverage, offer an "audit current test suite" subagent that catalogs untested surface area and proposes a backfill order. Open design questions: test-file vs impl-file detection (per-language convention — `*_test.py`, `*.test.ts`, `*_test.go`, `#[cfg(test)]`, etc.); what counts as "test ran and failed" (hook executes the test, or trusts the model's last Bash result?); exit protocol (`vibe --no-TDD` or delete marker); interaction with `/vs` (does a `/vs` task under TDD mode force `--fuzzy` off since TDD *is* the acceptance criterion?). Likely a `/vs` task.
++- [ ] **vibe --TDD session mode (methodology enforcement)** — Harness half shipped as /vs --TDD (task_037); this entry is the enforcement half. Session-level flag that forces test-driven discipline for the whole project, not just one task. **XP-as-umbrella context (2026-05-18 Martin)**: vibe is exploring extreme programming as the parent methodology with `--TDD` and `--spec-first` as in-scope XP subsets; BDD dropped as out-of-scope niche. The umbrella `--XP` mode may eventually subsume these individual flags, but for now `--TDD` ships first. Shape: `vibe --TDD` writes a CLAUDE.md directive explaining the red/green/refactor workflow; installs a PreToolUse hook that blocks `Edit`/`Write` on implementation files unless a newer test edit with a recently-observed failing assertion exists; persists the mode (e.g. `.vibe/mode=TDD` in the project tree, or flag in `~/.vibe/config` per-repo) so subsequent `vibe` invocations stay in TDD without the flag. On first `--TDD` invocation against a repo with pre-existing code / partial test coverage, offer an "audit current test suite" subagent that catalogs untested surface area and proposes a backfill order. Open design questions: test-file vs impl-file detection (per-language convention — `*_test.py`, `*.test.ts`, `*_test.go`, `#[cfg(test)]`, etc.); what counts as "test ran and failed" (hook executes the test, or trusts the model's last Bash result?); exit protocol (`vibe --no-TDD` or delete marker); interaction with `/vs` (does a `/vs` task under TDD mode force `--fuzzy` off since TDD *is* the acceptance criterion?). Likely a `/vs` task.
+ - [ ] **vibe --spec-first session mode (backlog)** — require an approved spec file (e.g. `SPEC.md` or `.vibe/spec.md`) before any `Edit`/`Write` tool call lands. Essentially `/vs` Spec Critic elevated to session default — any code change must trace back to a spec line. Design after `--TDD` lands so the two modes compose without contradicting each other (TDD says "test first"; spec-first says "spec first"; sensible combo = spec → test → code).
+ - [ ] **vibe: language-profile presets (à la ClaudeBox)** — one concrete gap surfaced by the 2026-04-23 class-leading audit. ClaudeBox ships per-project profiles (Python venv, Node deps, Rust toolchain, etc.) so the container comes pre-tooled; vibe currently assumes tooling exists on the host or in the base image. Proposed shape: `vibe --profile python` (explicit) or auto-detect from project files (`pyproject.toml` → python, `package.json` → node, `Cargo.toml` → rust); profile applies a small overlay — either an extra Dockerfile layer cached per-profile or a postStart install. Open design questions: where do profile definitions live (`devcontainer/profiles/<name>/`?), how do users author custom profiles, opt-in flag vs auto-detect default, image-rebuild cost vs runtime install trade-off, how does it interact with `--rebuild` / image marker. Likely a `/vs` task.
+ - [ ] **vibe: `vibepaste` Mac shell function for one-word post-exit clipboard pull** — companion to `/c`. After exiting vibe, user wants a single memorable command in Ghostty that does `pbcopy < "$HOME/<dropbox>/Projects/vibe/.vibe/copy-latest.txt"` (path resolved per-repo). Shape options: (a) `vibe paste` subcommand on the host launcher (no shell rc edits, but requires `vibe` to know the cwd's mapping back to its workspace path — non-trivial when invoked outside a vibe project dir); (b) install-time write of a small zsh function into `~/.zshrc` (simplest; user-scoped; easy to opt out); (c) standalone `vibepaste` script on PATH that walks up looking for `.vibe/copy-latest.txt` (clean, but adds a binary). Note: today's host-side watcher already pbcopies on file change, so `vibepaste` is only needed when the watcher isn't running (vibe already exited) and the user wants to re-paste the most recent block from a prior session.
+diff --git a/devcontainer/commands/vs.md b/devcontainer/commands/vs.md
+index d0f1580..8a9274a 100644
+--- a/devcontainer/commands/vs.md
++++ b/devcontainer/commands/vs.md
+@@ -96,6 +96,7 @@ Log every escalation in `.vs/progress.md` (`escalated generator sonnet→opus: <
+ - `/vs --narrow <prompt>` — force strictly serial dispatch, overriding any `--wide` inherited from a wrapping `/vss`/`/vsss`. Inverse of `--wide`; see `narrow.md`.
+ - `/vs --spec-first <prompt>` — after Spec Critic passes, commit the spec + TODO entry, mark `tasks.json` `awaiting-approval`, print a summary, and END the run with no Generator dispatch. Resume via `--approve`. Checkpoint mechanics: § Step 3b.
+ - `/vs --approve [<task-id>]` — continue a spec-first checkpoint from Step 4, using the newest `awaiting-approval` task if `<task-id>` is omitted; archived specs are un-archived first. Full procedure: § Step 3b.
++- `/vs --TDD <prompt>` — Generator writes a red-first evidence trail (`.vs/cycle-<N>/tdd-trail.md`) before each implementing edit; Tester cross-checks it. Mechanical tests only — incompatible with `--fuzzy`. See § Step 4, § Step 5a.
+ 
+ The `--plain` / `--techy` and `--verbosity` flags are independent dimensions: `--plain --verbosity 9` is verbose plain English; `--techy --verbosity 0` is one-line technical pass/fail. The cross-product is always meaningful.
+ 
+@@ -125,6 +126,7 @@ Created at repo root.
+   - `cycle-1/spec-critique.md` — Spec Critic's audit (cycle-1 only — spec doesn't change after that)
+   - `cycle-N/generator-report.md` — Generator's summary of what it did
+   - `cycle-N/diff.patch` — what Generator changed this cycle
++  - `cycle-N/tdd-trail.md` — red-first evidence (`--TDD` only)
+   - **Rigorous mode:** `cycle-N/test-output.log` (full Tester output) + `cycle-N/summary.md` (3-line pass/fail summary).
+   - **Fuzzy mode:** `cycle-N/reviewer-verdict.md` (Reviewer's written verdict with rationale) + `cycle-N/summary.md` (3-line summary: verdict line + concerns count + key concern).
+   - **`--panel` runs:** `cycle-N/panel/reviewer-<k>.md` (one per panellist, k = 1..N) + `cycle-N/panel/summary.md` (chair's aggregation: verdict tally, correlation classification, adjudication one-liners). Gitignored with the rest of `cycle-N/`.
+@@ -246,7 +248,7 @@ Martin's edits to `.vs/spec.md` ARE the approved version: never require it byte-
+ 
+ `/vs --approve [<task-id>]`: set `implementation_status: "in_progress"` and continue from Step 4 unchanged, reading whatever is on disk at `.vs/spec.md`. Omitted `<task-id>` picks the newest `awaiting-approval` task by default; if its spec is archived, it is un-archived first (§ Multi-task state convention). If no task is awaiting approval, print `no task is awaiting approval` and stop — nothing else happens.
+ 
+-`--TDD` stacking: the spec gate runs first; `--TDD` (when implemented) governs Step 4 only.
++`--TDD` stacking: the spec gate runs first; `--TDD` governs Step 4 (red-first trail) and Step 5a (trail check) only.
+ 
+ ## Step 4 — Generate (Generator subagent — tier per Model plan)
+ 
+@@ -260,6 +262,8 @@ Spawn `Agent(subagent_type: "general-purpose", model: "<Model plan tier>")` —
+ - When done: write `.vs/cycle-<N>/generator-report.md`, update `.vs/tasks.json` (`implementation_status: complete`), produce `.vs/cycle-<N>/diff.patch` via `git diff > .vs/cycle-<N>/diff.patch`.
+ - Internal retry budget: 3 attempts if blocked. Report the block in the report file.
+ 
++**Under `--TDD`**: before the implementing edit for each acceptance criterion, write its scratch test under `.vs/cycle-<N>/scratch-tests/`, run it failing, then append one entry per acceptance criterion to `.vs/cycle-<N>/tdd-trail.md` in the shape `AC<n> | test file | command | exit | failing assertion | written:` on one line each — `test file` the scratch path, `command` the exact invocation (must not itself contain `|`), `exit` the non-zero exit code, `failing assertion` the literal failure text, `written:` an ISO-8601 timestamp. A shared scratch file backing several entries shares one mtime. A trail entry written after the implementation, or without a failing run, is a cycle fail.
++
+ ## Step 5 — Verify (branches by mode)
+ 
+ ### Step 5a — Test (Haiku 4.5 Tester) — RIGOROUS MODE ONLY
+@@ -270,11 +274,13 @@ Independence rule: Tester sees only `.vs/spec.md`, the test-dir layout, and the
+ 
+ Tester's brief:
+ - For each acceptance criterion, write a test in the spec's test location that verifies it. Use repo conventions.
+-- Run the tests. Write full output to `.vs/cycle-<N>/test-output.log` and a 3-line summary (total/passed/failed/key-failures) to `.vs/cycle-<N>/summary.md`.
++- Run the tests. Write full output to `.vs/cycle-<N>/test-output.log` and a 3-line summary (4 lines under `--TDD`: a `TDD trail:` line is appended) to `.vs/cycle-<N>/summary.md` (total/passed/failed/key-failures).
+ - **Mandatory regression check:** also run any pre-existing test suite. Any pre-existing failure caused by Generator's diff is a regression — report under `Regressions:` line.
+ - Update `.vs/tasks.json` (`test_status: passing|failing`).
+ - **Once committed, these tests are frozen.** Evaluator enforces immutability on subsequent cycles.
+ 
++**Under `--TDD`**: under `--TDD` the Tester additionally reads `tdd-trail.md` and `diff.patch` — only to check the trail, never the Generator's report. Cross-check: every acceptance criterion has a trail entry; the named test file exists under `scratch-tests/`; the failing assertion names the criterion; `command` names the same file as `test file`; each entry's `written:` timestamp is compared against the scratch file's mtime — a weak proxy, not proof. Any of these unmet — missing entry, wrong file, mismatched assertion — fail the cycle.
++
+ ### Step 5b — Review (Sonnet Reviewer) — FUZZY MODE ONLY
+ 
+ **Skip this step entirely when `--panel` is set** — the panel (Step 5c) REPLACES the singular Reviewer in fuzzy mode; never run both.
+@@ -306,7 +312,7 @@ N validation (parse-time, before any dispatch): N must be an odd integer between
+ 
+ Dispatch N `Agent(subagent_type: "code-reviewer", model: "sonnet")` panellists — ALL IN ONE MESSAGE, a single parallel batch. Blindness is structural, three layers deep: the `code-reviewer` toolset is read-only (no Edit/Write escape hatch); the briefs are identical apart from the one substituted output-path token (no seeded differentiation — genuine disagreement must come from the model, not the prompt); and the batch is concurrent, so no panellist's verdict exists for another to read during its run. Each brief additionally instructs: do not read any file under `.vs/cycle-<N>/panel/`.
+ 
+-Each panellist gets exactly what the 5b Reviewer gets — `.vs/spec.md`, the original user prompt (pasted by Planner), `.vs/cycle-<N>/diff.patch` — and NOT the Generator's report, NOT the Tester's output, NOT any other verdict. Each writes `.vs/cycle-<N>/panel/reviewer-<k>.md` (k = 1..N) with the same three sections as 5b (per-criterion assessment / concerns / verdict `pass`|`revise`|`fail`), honouring the run's `--plain`/`--techy` and resolved verbosity. Panellists do NOT touch `tasks.json` — with N concurrent writers that's a race; the chair updates it once after adjudication (Step 6).
++Each panellist gets exactly what the 5b Reviewer gets — `.vs/spec.md`, the original user prompt (pasted by Planner), `.vs/cycle-<N>/diff.patch` — and NOT the Generator's report, NOT the Tester's output, NOT any other verdict. Each writes `.vs/cycle-<N>/panel/reviewer-<k>.md` (k = 1..N) with the same three sections as 5b (per-criterion assessment / concerns / verdict `pass`|`revise`|`fail`), honouring the run's `--plain`/`--techy` and resolved verbosity. Panellists do NOT touch `tasks.json` — with N concurrent writers that's a race; the chair updates it once after adjudication (Step 6). Under `--TDD`: panellists do not check the trail; the Tester does (§ Step 5a).
+ 
+ ### Correlated-agreement (sycophancy) check — Evaluator-side, mandatory under `--panel`
+ 
+@@ -429,7 +435,8 @@ Superpowers is complementary discipline, not a rival harness — `/vs` supplies
+ - **Status-field mutations only** on `tasks.json`. No unstructured edits.
+ - **Fresh subagents per cycle** — context reset over compaction. Continuity via `.vs/` files only.
+ - **Subagents run long commands in the foreground** — inside any dispatched subagent (Generator, Tester, Reviewer, panellist) a build/test/ssh run uses `timeout: 600000`, never `run_in_background`: a backgrounded command's completion notification goes to the chair, not the subagent that launched it, so the subagent parks forever.
+-- **No cross-subagent context sharing** — Generator never sees Tester's / Reviewer's output; Tester / Reviewer never sees Generator's report. Spec Critic sees only the spec.
++- **No cross-subagent context sharing** — Generator never sees Tester's / Reviewer's output; Tester / Reviewer never sees Generator's report. Spec Critic sees only the spec — except the `--TDD` trail check: Tester reads `tdd-trail.md` and `diff.patch`, never the Generator's report (§ Step 5a).
++- **`--TDD` and `--fuzzy` cannot combine** — `--TDD` needs mechanical tests; `--fuzzy` has none. If both are passed, refuse with one line.
+ - **No cross-panellist context sharing (`--panel`)** — panellists never read each other's verdicts or `.vs/cycle-<N>/panel/` at all; blindness is structural (read-only agent type, byte-identical briefs, one concurrent batch). A panellist brief that individuates panellists ("you are the security reviewer") breaks the mechanism — differentiation must emerge, not be assigned.
+ - **Per-cycle commits** after pass or at escalation points.
+ - **Regression gate (rigorous only)** — Tester runs pre-existing test suite; failure caused by Generator's diff is automatic cycle fail. Fuzzy mode cannot enforce this automatically — Reviewer is asked to flag suspected regressions in the diff, but Evaluator should run pre-existing tests manually before declaring pass if there is a test suite at all.
+diff --git a/devcontainer/commands/vss.md b/devcontainer/commands/vss.md
+index 0214818..0650c73 100644
+--- a/devcontainer/commands/vss.md
++++ b/devcontainer/commands/vss.md
+@@ -6,7 +6,7 @@ description: Versus Solo — autonomous one-shot. No args = pick from TODO.md (o
+ 
+ You are the top-level session model (Opus by default; Fable 5 if launched via `vibe --fable`). `/vss` runs autonomously: no mid-flow approvals from the user except when an item on the **hard-escalate list** is hit. The point is one bounded unit of work end-to-end without back-and-forth.
+ 
+-`$ARGUMENTS` may be empty (Mode A) or a task brief (Mode B). `--wide` (`--narrow` to force off) passes through to whichever tool the planner picks — `/vs --wide`, or Mode A's parallel repo-scan below; see `wide.md` for caps. `--spec-first` also threads through to `/vs`. It is not an escalate trigger — the harness does not abort; the checkpoint IS the escalation: the run ends at `/vs` Step 3b and waits for Martin. `/vss` never acts-as-user on spec approval — resume later with `/vs --approve <task-id>`.
++`$ARGUMENTS` may be empty (Mode A) or a task brief (Mode B). `--wide` (`--narrow` to force off) passes through to whichever tool the planner picks — `/vs --wide`, or Mode A's parallel repo-scan below; see `wide.md` for caps. `--spec-first` also threads through to `/vs`, as does `--TDD`. It is not an escalate trigger — the harness does not abort; the checkpoint IS the escalation: the run ends at `/vs` Step 3b and waits for Martin. `/vss` never acts-as-user on spec approval — resume later with `/vs --approve <task-id>`.
+ 
+ ## Hard-escalate list (inviolable in both modes)
+ 
+diff --git a/devcontainer/commands/vsss.md b/devcontainer/commands/vsss.md
+index 0226dcb..2e99e98 100644
+--- a/devcontainer/commands/vsss.md
++++ b/devcontainer/commands/vsss.md
+@@ -28,6 +28,7 @@ At the very start of `/vsss`, before any work:
+    - `/vsss --sessions X <args>` — combinable with the budget flags; CAPS the run at X credit windows TOTAL (`--sessions 3` = the current window plus up to 2 automatic relaunches; `--sessions 1` = single-window opt-out, no relaunch). **Omitting the flag does NOT mean one window** — the default is unbounded persistence. See § Auto-resume across halts. Legacy: `--auto-resume N` (retired 2026-07-08) meant N EXTRA windows — treat it as `--sessions N+1`.
+    - No budget flag → `BUDGET_HOURS=5`. This is the per-window clock used to estimate `resume_at` — NOT a finish line, and (absent an explicit `--hours`/`--budget` flag) NOT an exit condition.
+    - `/vsss --spec-first <args>` — threads `--spec-first` into every wrapped `/vs` invocation this run dispatches; a checkpoint hit does not stop the loop (§ Interaction with the loop) — semantics: `/vs § Step 3b`.
++   - `/vsss --TDD <args>` — threads `--TDD` into every wrapped `/vs` invocation; red-first trail contract per `/vs § Step 4`.
+ 
+    **Remaining time is never a reason to stop, shrink, or skip work.** There is no graceful-shutdown cushion and none is needed: every iteration commits as it lands, and § Resumption protocol continues an interrupted iteration in the next window — a halt mid-iteration loses nothing. Never bias the optimiser toward "stop" because the clock is running down, and never pass over a queue item because it "won't fit this window" — start it; if the window dies first, resumption finishes it. An explicit `--hours N` / `--budget N[hm]` flag is the ONE user-imposed hard stop: on reaching it with work outstanding, commit what's in flight, write Final state with `Exit reason: user budget cap`, set the marker `active=0`, and stop — never label that stop a perfection gate.
+ 4. Open `.vss/sessions/<start-ISO>.md` (filename uses `T` separator and replaces `:` with `-`, e.g. `2026-05-07T14-29-02Z.md`) and write the audit header per the format defined in `/vss` § Session audit format. The Initial-plan section captures the initial args, priority queue (if any), and budget.
+diff --git a/smoke/checks_05_numbering_hook.py b/smoke/checks_05_numbering_hook.py
+index 38383a3..db925f7 100644
+--- a/smoke/checks_05_numbering_hook.py
++++ b/smoke/checks_05_numbering_hook.py
+@@ -624,7 +624,7 @@ def test_vsss_fromto_format() -> None:
+                   idx > last_idx, f"idx={idx}, last={last_idx}")
+             last_idx = idx
+ 
+-    # AC12: word count invariant — vs.md+vss.md+vsss.md ≤14000 checked in test_wide_mode()
++    # AC12: word count invariant — vs.md+vss.md+vsss.md ≤14300 checked in test_wide_mode()
+ 
+     # AC8: brain2 file check (only if it exists)
+     brain2_file = Path("/brain2/meta/fromto-format.md")
+@@ -850,7 +850,7 @@ def test_wide_mode() -> None:
+         check("[wide] AC14: vsss.md shows '∥' or 'in parallel' for concurrent items",
+               "∥" in vsss_content or "in parallel" in vsss_content, "")
+ 
+-    # AC12 word budget: vs.md + vss.md + vsss.md ≤ 14,000 words
++    # AC12 word budget: vs.md + vss.md + vsss.md ≤ 14,300 words (raised from 14,000 by task_037 for --TDD)
+     if VS_MD.exists() and VSS_MD.exists() and VSSS_MD.exists():
+         vs_content_full = VS_MD.read_text()
+         vss_content_full = VSS_MD.read_text()
+@@ -859,8 +859,8 @@ def test_wide_mode() -> None:
+         vss_words = len(vss_content_full.split())
+         vsss_words = len(vsss_content_full.split())
+         total_words = vs_words + vss_words + vsss_words
+-        check("[wide] AC12: combined vs+vss+vsss word count ≤ 14,000",
+-              total_words <= 14000,
++        check("[wide] AC12: combined vs+vss+vsss word count ≤ 14,300",
++              total_words <= 14300,
+               f"vs={vs_words}, vss={vss_words}, vsss={vsss_words}, total={total_words}")
+ 
+ 
+diff --git a/smoke/checks_09_openproject_and_scanner.py b/smoke/checks_09_openproject_and_scanner.py
+index a3b7266..a342737 100644
+--- a/smoke/checks_09_openproject_and_scanner.py
++++ b/smoke/checks_09_openproject_and_scanner.py
+@@ -195,10 +195,10 @@ def test_task028_fragment_merges_and_fable_grant() -> None:
+             check("[ac7] vs.md --fable-subagents flag line contains '§ Model economy'",
+                   "§ Model economy" in fable_flag_line, f"line: {fable_flag_line[:80]}")
+     
+-    # AC8: vs.md+vss.md+vsss.md total words <= 14000 (bumped from 13500 by task_036 to accommodate --spec-first; 12900->13500 was task_033 for /wide)
++    # AC8: vs.md+vss.md+vsss.md total words <= 14300 (bumped from 14000 by task_037 for --TDD; 13500->14000 was task_036 for --spec-first; 12900->13500 was task_033 for /wide)
+     vs_vss_vsss_text = vs_text + vss_text + vsss_text
+     vs_vss_vsss_words = len(vs_vss_vsss_text.split())
+-    check("[ac8] vs+vss+vsss total words <= 14000", vs_vss_vsss_words <= 14000, f"found {vs_vss_vsss_words}")
++    check("[ac8] vs+vss+vsss total words <= 14300", vs_vss_vsss_words <= 14300, f"found {vs_vss_vsss_words}")
+     
+     # AC9: grep deleted filenames - only permitted in CHANGELOG.md and test names/labels in smoke-test.py
+     deleted_filenames = ["learn-hook.md", "feedback-auto-promote.md", "conversation-history.md"]
+diff --git a/smoke/checks_13_spec_first.py b/smoke/checks_13_spec_first.py
+index 41abba2..4d34839 100644
+--- a/smoke/checks_13_spec_first.py
++++ b/smoke/checks_13_spec_first.py
+@@ -3,7 +3,7 @@
+ Tester-owned spec-only tests. Generator edits vs.md, vss.md, vsss.md command
+ docs, updates task.json schema, adds TODO entry for PreToolUse hook hardening,
+ updates CHANGELOG.md, raises the two word-count pins (checks_05 AC12 and
+-checks_09 AC8) from 13,500 to 14,000.
++checks_09 AC8) from 13,500 to 14,000. task_037 raised both again to 14,300.
+ 
+ Covers:
+   - AC1: vs.md Flags has `--spec-first` and `--approve` bullets, ≤ 40 words each
+@@ -192,11 +192,11 @@ def test_spec_first_flag_docs() -> None:
+     # AC10: Word budget check — vs+vss+vsss combined
+     all_command_text = vs_text + vss_text + vsss_text
+     total_words = len(all_command_text.split())
+-    check("[spec-first] AC10: vs+vss+vsss total ≤ 14,000 words",
+-          total_words <= 14000,
++    check("[spec-first] AC10: vs+vss+vsss total ≤ 14,300 words",
++          total_words <= 14300,
+           f"found {total_words} words")
+ 
+-    # AC10: Check that the two word-count pins are equal and at 14000
++    # AC10: Check that the two word-count pins are equal and at 14300 (raised from 14000 by task_037)
+     checks_05_path = REPO / "smoke" / "checks_05_numbering_hook.py"
+     checks_09_path = REPO / "smoke" / "checks_09_openproject_and_scanner.py"
+ 
+@@ -205,12 +205,12 @@ def test_spec_first_flag_docs() -> None:
+ 
+     # Extract the pin values from checks_05
+     import re
+-    pin_05_match = re.search(r'<= 14000', checks_05_text)
+-    check("[spec-first] AC10: checks_05 has 14000 pin",
++    pin_05_match = re.search(r'<= 14300', checks_05_text)
++    check("[spec-first] AC10: checks_05 has 14300 pin",
+           pin_05_match is not None, "")
+ 
+-    pin_09_match = re.search(r'<= 14000', checks_09_text)
+-    check("[spec-first] AC10: checks_09 has 14000 pin",
++    pin_09_match = re.search(r'<= 14300', checks_09_text)
++    check("[spec-first] AC10: checks_09 has 14300 pin",
+           pin_09_match is not None, "")
+ 
+     # AC12: TODO.md consistency check
