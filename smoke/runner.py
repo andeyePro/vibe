@@ -12,6 +12,7 @@ from smoke.checks_10_pathwarn_and_hunkdiff import *
 from smoke.checks_11_patrotation_and_firewall import *
 from smoke.checks_12_harness_lints import *
 from smoke.checks_13_spec_first import *
+from smoke.checks_14_profiles import *
 
 
 
@@ -569,6 +570,34 @@ def main() -> int:
 
     # task_037: /vs --TDD flag documentation and red-first trail mechanics
     test_tdd_flag_docs()
+
+    # task_040: language-profile mechanism (`vibe --profile <name>`) + python
+    test_profiles_ac2_base_dockerfile_and_devcontainer_json_untouched()
+    test_profiles_ac3_help_lists_profile_flag()
+    test_profiles_ac4_resolve_profile_flag_rung()
+    test_profiles_ac4_resolve_profile_vibeprofile_file_rung()
+    test_profiles_ac4_resolve_profile_vibe_profile_env_rung()
+    test_profiles_ac4_resolve_profile_full_ladder_flag_wins()
+    test_profiles_ac4_resolve_profile_none_at_each_rung()
+    test_profiles_ac4_resolve_profile_trimming()
+    test_profiles_ac5_profile_dir_shipped()
+    test_profiles_ac5_profile_dir_custom()
+    test_profiles_ac5_profile_dir_unknown_exits_1()
+    test_profiles_ac5_profile_dir_shipped_beats_custom()
+    test_profiles_ac6_stale_marker_missing()
+    test_profiles_ac6_stale_file_newer_than_marker()
+    test_profiles_ac6_stale_base_rebuilt_true()
+    test_profiles_ac6_not_stale()
+    test_profiles_ac7_base_is_stale_prunes_profiles()
+    test_profiles_ac7_base_is_stale_when_dockerfile_newer()
+    test_profiles_ac8_render_devcontainer_image_tag()
+    test_profiles_ac9_python_dockerfile_literals()
+    test_profiles_ac10_suggestion_fires_once_and_marks()
+    test_profiles_ac10_suggestion_silent_with_no_python_files()
+    test_profiles_ac10_suggestion_recognises_requirements_txt()
+    test_profiles_ac11_launch_path_structure()
+    test_profiles_ac12_docs()
+    test_profiles_ac13_vibe_profile_gitignored()
 
     print()
     if FAILURES:

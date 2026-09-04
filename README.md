@@ -110,6 +110,18 @@ Fable 5 is billing-aware: since 8 Jul 2026 it bills usage credits at API list ra
 
 Getting the most from Fable 5 on a subscription: reserve it for genuinely huge or ambiguous tasks — its edge concentrates in long-horizon complex work, and on small scoped calls Opus is near-parity at zero extra cost. Two placements pay: `vibe --fable` as the session lead for a big ambiguous run, or the `/vs` escalation ladder's top rung (Fable as Generator on a locked spec — compact brief, fresh context, one-shot strength). Either way the mechanical work stays on subscription tiers — `/vs` pins Sonnet/Haiku for its worker roles, `code-writer` and `shellcheck-fixer` pin Sonnet. `/diet` composes well with a Fable session for the same reason.
 
+### Language profiles
+
+A profile is a thin child image — `devcontainer/profiles/<name>/Dockerfile`, built `FROM` the base `vibe-dev:latest` image — that adds a language toolchain on top of the base container, never project dependencies. `vibe --profile python` builds (once, then caches) and launches on `vibe-dev:python`, which adds `python3`/`python3-venv`/`python3-pip`, `uv`, `ruff`, and `mypy`. `--profile none` launches on the plain base image and silences the suggestion below.
+
+Astro, React and other JavaScript or TypeScript projects need no profile at all: the base image is already Node 20 with npm. Only the `python` profile ships today; the base build's context includes `profiles/`, which is harmless because the base Dockerfile has no `COPY .`.
+
+Persistent selection, so you don't have to pass the flag every launch: put the profile name on the first line of `.vibe/profile` in the project (wins over config, loses to the flag), or set `VIBE_PROFILE="python"` in `~/.vibe/config` for a machine-wide default. Precedence, first hit wins: `--profile` flag → `.vibe/profile` → `VIBE_PROFILE`.
+
+Custom profiles: drop a `Dockerfile` at `~/.vibe/profiles/<name>/Dockerfile` (same `ARG BASE=vibe-dev:latest` / `FROM ${BASE}` shape) and `vibe --profile <name>` picks it up — a shipped profile of the same name always wins on a clash. `vibe --profile <bogus-name>` exits with an error listing every profile actually available (shipped and custom).
+
+Everything a profile installs happens at **build time**, before `init-firewall.sh` ever runs, so no firewall allowlist entry is needed for a profile's own installer traffic (the built image already has the toolchain baked in by the time the container's network lockdown starts). Astro/React projects need no profile at all — the base image is already Node 20 (`FROM node:20`). One incidental note: the base image's build context includes `devcontainer/profiles/` (there's no `.dockerignore`), which is harmless since the base `Dockerfile` has no `COPY .`, but worth knowing if the profiles directory grows large.
+
 ### Overnight auto-resume
 
 `/vsss` (inside a session) runs an autonomous loop that persists across five-hour credit windows by default, by writing a `.vss/auto-resume` marker: it keeps going until the task is genuinely complete, not until the window runs out. If the session dies — typically 5-hour-window credit exhaustion — the launcher notices the active marker after `claude` exits, counts down to the estimated window reset (Ctrl-C cancels; deleting the marker deactivates), then relaunches `claude --continue "/vsss --resume"`. `--sessions X` caps the run at X windows total (X-1 relaunches); `--sessions 1` opts out of relaunch for a single-window run. The `/vsss` loop clears the marker whenever it exits cleanly, so finished runs never relaunch. (Unbounded-by-default since 2026-08-29; before that, omitting `--sessions` meant one window. The flag was `--auto-resume N` — N extra windows — until 2026-07-08.)

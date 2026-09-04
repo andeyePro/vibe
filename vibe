@@ -11,6 +11,8 @@
 #   vibe --resume <uuid>     # resume a specific Claude conversation by id
 #   vibe --fable             # launch on Claude Fable 5 (frontier model; billing-aware)
 #   vibe --model <id>        # launch on a specific Claude model id
+#   vibe --profile <name>    # build/use a language-profile child image
+#                            # (shipped: none, python; --profile none disables)
 #   vibe --list              # list available projects
 #   vibe --version           # print the vibe version and exit
 #   vibe --help              # show this help
@@ -61,7 +63,12 @@ TOKENS_FILE="$HOME/.vibe/tokens"
 REPOS_REGISTRY_FILE="$HOME/.vibe/repos"
 SKIPPED_FILE="$HOME/.vibe/skipped"
 IMAGE_MARKER="$HOME/.vibe/.image-built"
-IMAGE_TAG="vibe-dev:latest"
+# BASE_TAG never changes with --profile: it names the base image the
+# devcontainer/ Dockerfile builds. IMAGE_TAG is the tag actually launched —
+# equal to BASE_TAG when no profile is selected, or reassigned to
+# "vibe-dev:<profile>" once profile resolution (task_040, below) runs.
+BASE_TAG="vibe-dev:latest"
+IMAGE_TAG="$BASE_TAG"
 # Loopback port for the OpenProject MCP forwarder (Mac-side TCP passthrough to
 # the tailnet-only sidecar). Single source of truth: exported to the container
 # as OPENPROJECT_MCP_FWD_PORT so register-op-mcp.sh builds the matching URL.
@@ -1546,6 +1553,12 @@ if shared_names:
         # re-verification needs the exact declared slug in-container too.
         twin = "VIBE_SHARED_SLUG_" + name[len("VIBE_SHARED_TOKEN_"):]
         cfg["remoteEnv"][twin] = "${localEnv:%s}" % twin
+# Language profile (task_040): swap in the profile's image tag when one was
+# selected. Empty/unset (the profile-less default) leaves cfg["image"] as
+# whatever the source config already had — byte-identical output.
+tag = os.environ.get("VIBE_IMAGE_TAG", "")
+if tag:
+    cfg["image"] = tag
 with open(dst, "w") as f:
     json.dump(cfg, f, indent=2)
     f.write("\n")
@@ -2920,6 +2933,11 @@ _build_override_config() {
   mkdir -p "$run_dir"
   local dst="$run_dir/devcontainer-${sha1}.json"
 
+  # VIBE_IMAGE_TAG (task_040) reaches the python heredoc below via the
+  # top-level `export VIBE_IMAGE_TAG=...` set during profile resolution
+  # (empty/unset when profile-less, so the rendered JSON is byte-identical
+  # to before this feature) — no per-call prefix needed for it, unlike
+  # VIBE_OP_ADDHOST which is genuinely call-scoped.
   VIBE_OP_ADDHOST="$op_host" \
     render_devcontainer_with_mounts "$default_cfg" "$dst" "${mount_args[@]}"
   echo "$dst"
@@ -3199,6 +3217,7 @@ parse_vibe_args() {
   RESUME_UID=""
   PROJECT_ARG=""
   MODEL_ARG=""
+  PROFILE_ARG=""
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --rebuild) REBUILD=true; shift ;;
@@ -3211,6 +3230,14 @@ parse_vibe_args() {
           exit 1
         fi
         MODEL_ARG="$1"; shift
+        ;;
+      --profile)
+        shift
+        if ! [[ "${1:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+          echo "--profile needs a name (e.g. python, or none), got: '${1:-}'" >&2
+          exit 1
+        fi
+        PROFILE_ARG="$1"; shift
         ;;
       --resume)
         RESUME=true; shift
@@ -3239,6 +3266,149 @@ parse_vibe_args() {
         ;;
     esac
   done
+}
+
+# ── Language profiles (task_040) ──────────────────────────────────────────────
+# A profile is a thin child image (devcontainer/profiles/<name>/Dockerfile,
+# built FROM the base vibe-dev:latest) that adds a toolchain — never project
+# deps. All helpers below are pure (no docker calls) and defined here, ABOVE
+# the VIBE_SOURCE_ONLY guard, so smoke-test.py can unit-test them via
+# `_source_vibe_call` the same way checks_02 exercises
+# image_drift_needs_recreate/parse_vibe_args.
+
+# resolve_profile <flag_value> <workspace> <config_value>
+# Precedence, first hit wins: <flag_value> (--profile) > <workspace>/.vibe/profile
+# (first line, trimmed) > <config_value> (VIBE_PROFILE from ~/.vibe/config). A
+# literal "none" at WHICHEVER rung wins ends resolution immediately with empty
+# output (base image; the caller also treats an explicit --profile none as
+# suppressing profile_suggestion, since that's the only rung with a distinct
+# flag the caller can still see after this function collapses it to "").
+# Echoes the resolved profile name, or nothing when no profile is selected.
+resolve_profile() {
+  local flag="$1" workspace="$2" config="$3"
+  local candidate=""
+  if [ -n "$flag" ]; then
+    candidate="$flag"
+  elif [ -f "$workspace/.vibe/profile" ]; then
+    candidate="$(head -n1 "$workspace/.vibe/profile" 2>/dev/null)"
+    # Trim leading/trailing whitespace (spaces, tabs, CR) without touching
+    # interior characters.
+    candidate="${candidate#"${candidate%%[![:space:]]*}"}"
+    candidate="${candidate%"${candidate##*[![:space:]]}"}"
+  else
+    candidate="$config"
+  fi
+  [ "$candidate" = "none" ] && return 0
+  [ -n "$candidate" ] && printf '%s\n' "$candidate"
+  return 0
+}
+
+# _profile_names_in <dir> — echoes one profile name per line: every
+# immediate subdirectory of <dir> that contains a Dockerfile. Internal helper
+# for profile_dir's "available" listing; not itself part of the spec'd
+# interface.
+_profile_names_in() {
+  local base="$1" d
+  [ -d "$base" ] || return 0
+  for d in "$base"/*/; do
+    [ -e "$d" ] || continue
+    d="${d%/}"
+    [ -f "$d/Dockerfile" ] && basename "$d"
+  done
+}
+
+# profile_dir <name>
+# Echoes the directory holding <name>'s Dockerfile: the shipped location
+# ($DEVCONTAINER_DIR/profiles/<name>) if it has one, else the custom location
+# ($HOME/.vibe/profiles/<name>) if THAT has one — shipped wins on a name
+# clash. Neither: prints "unknown profile '<name>'; available: <list>" to
+# stderr (shipped + custom names, sorted, comma-separated) and returns 1.
+profile_dir() {
+  local name="$1"
+  local shipped="$DEVCONTAINER_DIR/profiles/$name"
+  local custom="$HOME/.vibe/profiles/$name"
+  if [ -f "$shipped/Dockerfile" ]; then
+    echo "$shipped"
+    return 0
+  fi
+  if [ -f "$custom/Dockerfile" ]; then
+    echo "$custom"
+    return 0
+  fi
+  local available
+  available="$( { _profile_names_in "$DEVCONTAINER_DIR/profiles"; _profile_names_in "$HOME/.vibe/profiles"; } \
+    | sort -u | paste -sd ',' -)"
+  echo "unknown profile '$name'; available: $available" >&2
+  return 1
+}
+
+# profile_is_stale <name> <marker> <base_rebuilt_bool>
+# Echoes 1 when: <marker> is missing, any file under profile_dir <name> is
+# newer than <marker>, or <base_rebuilt_bool> is "true" (the base image was
+# just rebuilt this launch, so any profile built on top of it is stale too).
+# Echoes nothing otherwise.
+profile_is_stale() {
+  local name="$1" marker="$2" base_rebuilt="$3"
+  if [ "$base_rebuilt" = "true" ]; then
+    echo 1
+    return 0
+  fi
+  if [ ! -f "$marker" ]; then
+    echo 1
+    return 0
+  fi
+  local dir
+  dir="$(profile_dir "$name" 2>/dev/null)" || { echo 1; return 0; }
+  if [ -n "$(find "$dir" -type f -newer "$marker" -print 2>/dev/null | head -n 1)" ]; then
+    echo 1
+  fi
+  return 0
+}
+
+# base_is_stale <devcontainer_dir> <marker>
+# Echoes 1 when <marker> is missing, or any file under <devcontainer_dir> is
+# newer than it — EXCLUDING profiles/ (a profile edit must never trigger a
+# base-image rebuild for every project on the machine; that's
+# profile_is_stale's job instead). Echoes nothing otherwise. Extracted from
+# the inline `find` the base-image auto-rebuild check used before task_040
+# so it can be unit-tested and so the exclusion is expressed in one place.
+base_is_stale() {
+  local devcontainer_dir="$1" marker="$2"
+  if [ ! -f "$marker" ]; then
+    echo 1
+    return 0
+  fi
+  if [ -n "$(find "$devcontainer_dir" -path "$devcontainer_dir/profiles" -prune -o -type f -newer "$marker" -print 2>/dev/null | head -n 1)" ]; then
+    echo 1
+  fi
+  return 0
+}
+
+# profile_suggestion <workspace> <hint_marker_dir>
+# One-time-per-project stderr nudge — never auto-selects a profile. When
+# <workspace> looks like a Python project (pyproject.toml or
+# requirements.txt present) and the hint hasn't fired before for THIS
+# workspace (a marker under <hint_marker_dir>, named with the existing
+# vibe_workspace_sha1 helper so it can never collide with the
+# ~/.vibe/.image-built* markers), prints the hint once to stderr and creates
+# the marker. Silent — and no marker write — in every other case: no python
+# files, marker already present, or hashing failed. The CALLER is
+# responsible for only invoking this when no profile was resolved AND
+# --profile none was not explicitly passed; this function has no way to see
+# that distinction itself (resolve_profile has already collapsed "none" to
+# empty output by the time PROFILE reaches here).
+profile_suggestion() {
+  local workspace="$1" hint_marker_dir="$2"
+  local sha1 marker
+  sha1="$(vibe_workspace_sha1 "$workspace")" || return 0
+  marker="$hint_marker_dir/.profile-hint-$sha1"
+  [ -f "$marker" ] && return 0
+  if [ -f "$workspace/pyproject.toml" ] || [ -f "$workspace/requirements.txt" ]; then
+    mkdir -p "$hint_marker_dir"
+    touch "$marker"
+    echo "  ◆ python project? vibe --profile python adds the toolchain (once per project; --profile none silences)" >&2
+  fi
+  return 0
 }
 
 # Allow smoke-test.py to source this file for pure unit-testing of helpers
@@ -3440,13 +3610,43 @@ fi
 # `set -euo pipefail`, same discipline as task_026's setup_token call site.
 refresh_brain2_vibe_note || true
 
+# ── Language profile resolution (task_040) ────────────────────────────────────
+# Resolved here: before any docker call (so an unknown --profile name exits 1
+# before the base build below ever runs), and well before the profile build
+# block and the image_drift_needs_recreate call further down so both see the
+# already-resolved IMAGE_TAG. VIBE_PROFILE arrives as a plain (unexported)
+# shell variable from the sourced CONFIG_FILE, same as any other config
+# default — no `export` needed.
+PROFILE="$(resolve_profile "$PROFILE_ARG" "$WORKSPACE" "${VIBE_PROFILE:-}")"
+PROFILE_MARKER=""
+if [ -n "$PROFILE" ]; then
+  profile_dir "$PROFILE" >/dev/null || exit 1
+  IMAGE_TAG="vibe-dev:$PROFILE"
+  PROFILE_MARKER="$HOME/.vibe/.image-built-$PROFILE"
+fi
+# Exported (not just a local shell var) so render_devcontainer_with_mounts's
+# python3 heredoc — invoked from inside _build_override_config, itself
+# called much later — sees it without needing a second per-call prefix
+# assignment at that call site. Empty/unset when profile-less, so a
+# profile-less launch's rendered devcontainer JSON stays byte-identical.
+export VIBE_IMAGE_TAG="${PROFILE:+$IMAGE_TAG}"
+# Suggestion, not auto-detect (AC10): only when no profile resolved AND the
+# user didn't explicitly pass `--profile none` (a literal "none" opt-out
+# must stay silent, not just fall through to the base image).
+if [ -z "$PROFILE" ] && [ "$PROFILE_ARG" != "none" ]; then
+  profile_suggestion "$WORKSPACE" "$HOME/.vibe"
+fi
+
 # ── Build the image if missing, stale, or --rebuild ──────────────────────────
 # Auto-rebuild when any file in $DEVCONTAINER_DIR is newer than $IMAGE_MARKER
-# (touched after each successful build). Catches updated Dockerfile, firewall
-# script, etc. after `install.sh` or manual edits without needing --rebuild.
-if [ "$REBUILD" != true ] && docker image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
-  if [ ! -f "$IMAGE_MARKER" ] \
-     || [ -n "$(find "$DEVCONTAINER_DIR" -type f -newer "$IMAGE_MARKER" -print 2>/dev/null | head -n 1)" ]; then
+# (touched after each successful build) — EXCLUDING profiles/ (base_is_stale
+# prunes it: a profile edit must never rebuild the base image for everyone).
+# Catches updated Dockerfile, firewall script, etc. after `install.sh` or
+# manual edits without needing --rebuild. Keyed on BASE_TAG (which never
+# changes with --profile) rather than IMAGE_TAG, which may now be the
+# selected profile's tag.
+if [ "$REBUILD" != true ] && docker image inspect "$BASE_TAG" >/dev/null 2>&1; then
+  if [ -n "$(base_is_stale "$DEVCONTAINER_DIR" "$IMAGE_MARKER")" ]; then
     echo "  devcontainer/ changed since last build — rebuilding image."
     REBUILD=true
   fi
@@ -3465,7 +3665,8 @@ if [ "$REBUILD" = true ] && learning_is_enabled \
   fi
 fi
 
-if [ "$REBUILD" = true ] || ! docker image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
+BASE_REBUILT=false
+if [ "$REBUILD" = true ] || ! docker image inspect "$BASE_TAG" >/dev/null 2>&1; then
   # Resolve current Claude Code "latest" host-side. Without this the
   # Dockerfile RUN string `npm install ...@latest` is byte-identical
   # between rebuilds, so Docker reuses the cached layer even when the
@@ -3476,10 +3677,28 @@ if [ "$REBUILD" = true ] || ! docker image inspect "$IMAGE_TAG" >/dev/null 2>&1;
   if command -v npm >/dev/null 2>&1; then
     CLAUDE_CC_VERSION="$(npm view @anthropic-ai/claude-code version 2>/dev/null || echo latest)"
   fi
-  echo "  Building vibe container image ($IMAGE_TAG, claude-code=${CLAUDE_CC_VERSION})..."
-  docker build --build-arg "CLAUDE_CODE_VERSION=${CLAUDE_CC_VERSION}" -t "$IMAGE_TAG" "$DEVCONTAINER_DIR"
+  echo "  Building vibe container image ($BASE_TAG, claude-code=${CLAUDE_CC_VERSION})..."
+  docker build --build-arg "CLAUDE_CODE_VERSION=${CLAUDE_CC_VERSION}" -t "$BASE_TAG" "$DEVCONTAINER_DIR"
   mkdir -p "$(dirname "$IMAGE_MARKER")"
   touch "$IMAGE_MARKER"
+  BASE_REBUILT=true
+fi
+
+# ── Build the selected language-profile image, if any (task_040) ────────────
+# Un-suppressed, same shape as the base build above: under `set -euo
+# pipefail` a failing `docker build` aborts the launcher before the marker
+# is touched — never wrap this in `|| true` or a status-capturing
+# `if docker build ...; then` construct. Runs strictly AFTER the base
+# build/inspect block above so a stale/missing base is already current by
+# the time it's used as this build's --build-arg BASE. `--rebuild` forces
+# both this and the base build above (REBUILD=true short-circuits both
+# conditions); an already-current profile whose base was just rebuilt this
+# launch also rebuilds (profile_is_stale's third argument).
+if [ -n "$PROFILE" ] && { [ "$REBUILD" = true ] || ! docker image inspect "$IMAGE_TAG" >/dev/null 2>&1 || [ -n "$(profile_is_stale "$PROFILE" "$PROFILE_MARKER" "$BASE_REBUILT")" ]; }; then
+  echo "  Building profile image ($IMAGE_TAG from $BASE_TAG)..."
+  docker build --build-arg "BASE=$BASE_TAG" -t "$IMAGE_TAG" "$(profile_dir "$PROFILE")"
+  mkdir -p "$(dirname "$PROFILE_MARKER")"
+  touch "$PROFILE_MARKER"
 fi
 
 # ── Write persistent session settings ────────────────────────────────────────
@@ -3761,6 +3980,9 @@ echo "     path    : $WORKSPACE"
 [ -n "$GITHUB_REPO" ] && echo "     github  : $GITHUB_REPO"
 echo "     hooks   : tool-call guards + idle bell"
 echo "     extras  : 12 commands (/vs /vss /vsss /wide /learn /budget …) · 5 agents"
+# Language profile (task_040): silent when no profile is selected — the
+# profile-less launch stays byte-identical to before this feature.
+[ -n "$PROFILE" ] && echo "  ◆ profile: $PROFILE ($IMAGE_TAG)"
 # Learning banner: three states. Silent when never inited / globally off.
 # "excluded" confirms a project-level .no-learn to reassure the user the
 # opt-out took effect. Otherwise show visibility + library path.

@@ -51,6 +51,8 @@ Two vibe-wide behaviour changes shipped and took effect on this rebuild — surf
 
 ### Mac-side empirical work (can't do autonomously inside a fresh container)
 
+- [ ] **Martin: run MANUAL-TESTS Test 51 — `vibe --profile python`** (task_040, 2026-09-04) — the profile mechanism is unit-tested host-side but never built against real Docker: check the child image builds, `uv`/`ruff`/`mypy` answer in-container, the firewall is unchanged, a plain relaunch recreates onto the base image, and `vibe --profile bogus` exits with the list.
+
 - [ ] **Capture the on-disk layout of Superpowers after a manual user-scope install.** From inside a vibe session: `/plugin marketplace add anthropics/claude-plugins-official` then `/plugin install superpowers@claude-plugins-official` then `/reload-plugins`. After it's installed: `find ~/.claude/plugins/ -type f | head -20` and paste the output back. This unblocks the full auto-install (currently only a banner ships at container start).
 - [ ] **Paste your `~/.zshrc` vibe wrapper text** so the three known regressions can be fixed: `vibe --continue` / `vibe --resume <UID>` flag-eating, `exit` closing the Ghostty window before you can read the session UID, and multi-instance window-title disambiguation. Run `sed -n '/^[[:space:]]*\(function[[:space:]]\+\)\?vibe[[:space:]]*(/,/^}/p' ~/.zshrc` and paste the output.
 
@@ -66,6 +68,8 @@ Two vibe-wide behaviour changes shipped and took effect on this rebuild — surf
 
 ## Open
 
+- [ ] **`vibe --help` prints every top-level `#` comment in the launcher (1,180+ lines)** — `_usage_text` greps `^#` across the whole file, so the flag reference at the top is buried under every section banner and function doc-comment that starts in column 1. Fix: stop at the first non-comment line (the header block only) or mark the usage block with begin/end sentinels. Found 2026-09-04 while adding `--profile`.
+
 ### ⇒ Martin's priority queue (answered 2026-09-04; `/vsss` with no args picks from here, top first)
 
 Plain-English rule for this file from now on: every item explains itself; no thread tags, task ids or mode names without saying what they are.
@@ -74,7 +78,7 @@ Plain-English rule for this file from now on: every item explains itself; no thr
 - [ ] **3. `--TDD` mode for `/vs`** — harness half shipped as `/vs --TDD` (task_037): red-first evidence trail, Tester-verified. Enforcement across a whole project (a hook, a launcher session mode) is the later Martin-gated step — see the `vibe --TDD session mode` entry below.
 - [ ] **4. `--aux` model slot** (awaiting approval — /vs --approve task_038; spec at `.vs/spec.md`, committed 2026-09-04) — a provider-agnostic way to plug in a second, cheaper or greener model (GreenPT, a local Ollama model on the Mac, any OpenAI-compatible endpoint) for mechanical roles only: `/learn` embeddings and an optional extra reviewer/tester in `/vs`. Claude Code's own model is never replaced (that would break the subscription-only rule). Replaces the old GreenPT items. Fourth.
 - [!] **vibepaste — parked, probably not needed** — it was a one-word Mac shell command to pull the last thing Claude wrote into the clipboard AFTER you exit vibe (a companion to the in-session `/c`). Martin (2026-09-04): select-to-copy in Claude Code has made pasting painless, so this is dropped unless the need returns. The two older vibepaste entries below stay as history.
-- [ ] **5. Language profiles, in Martin's order: Swift first, then the Astro/React (Node) toolchain, then C++ (JS8Call), then Python, then Rust** (mechanism + python profile in flight as task_040, /vsss 2026-09-04 iter 7) — `vibe --profile <name>` builds a child image on top of the standard one with that toolchain pre-installed, so a Swift project's container can `swift build` without a bridge to the Mac (Swift on Linux builds Linux targets only; Apple-platform builds still need the Mac). Design draft: `.vs/briefs/spec-draft-language-profiles.md`.
+- [ ] **5. Language profiles** — mechanism + `python` shipped (task_040); Astro/React needs no profile (base is Node 20); Swift and C++ (Qt) wait on Martin's size call (fromClaude item 7); Rust next on his word.
 - [ ] **6. `/review`** — Claude leg shipped as /review (task_039); Gemini/Codex slots wait on fromClaude question 2 and a firewall entry.
 - [ ] **8. Licence: MIT → AGPL + CLA?** — vibe's `LICENSE` file is MIT today (chosen early, before andeye standardised). Martin (2026-09-04): everything else andeye ships is AGPL with a CLA; why MIT here? Decision needed: switch to AGPL-3.0 + the same CLA (contributors so far are listed in CONTRIBUTORS.md and would need to agree), or keep MIT deliberately because a launcher script is more useful to others under a permissive licence. Not autonomous: a licence change is Martin's call.
 - [ ] **Make the spec-checkpoint (item 1, now shipped) actually stop edits, not just ask nicely** — right now the harness is trusted to behave: it writes the spec, marks it "awaiting approval", and ends the run, but nothing at the container level would stop it (or a bug) from editing code before Martin has said yes. The follow-up is a hook that runs before every file edit and blocks it unless the matching spec has been approved. This installs a new safety-floor hook, so — same as the `--TDD` item above — it needs Martin's decision before going in; not something to add on its own.

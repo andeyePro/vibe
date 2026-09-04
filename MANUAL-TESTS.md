@@ -1298,6 +1298,48 @@ Desktop's, so this is the check most likely to differ from the Mac.
 or permission-denied on `/brain2` writes (a uid-mapping problem: the host
 directory must be owned by, or group-writable to, the invoking user).
 
+### Test 51: `vibe --profile python` — build, toolchain, firewall, drift, unknown name (task_040)
+
+```
+$ cd ~/Projects/some-project
+$ vibe --profile python
+```
+
+**Pass:** the launcher builds `vibe-dev:python` from the current `vibe-dev:latest`
+base (banner line `  Building profile image (vibe-dev:python from vibe-dev:latest)...`),
+the launch header shows `  ◆ profile: python (vibe-dev:python)`, and inside the
+container:
+
+```
+  … in the container:
+$ uv --version
+$ ruff --version
+$ mypy --version
+$ curl -s -o /dev/null -w '%{http_code}\n' https://example.com   # unrelated host
+```
+
+**Pass:** `uv`, `ruff`, `mypy` all report a version; the firewall is unchanged
+from a profile-less launch (the unrelated-host curl still fails/times out —
+the profile added no firewall entries, since everything it needed was
+installed at build time).
+
+```
+$ exit
+$ vibe                          # relaunch WITHOUT --profile
+```
+
+**Pass:** the container recreates onto the plain base image (`vibe-dev:latest`)
+— `image_drift_needs_recreate` sees the tag change and forces a recreate; no
+`  ◆ profile:` line this time.
+
+```
+$ vibe --profile bogus-name-xyz
+```
+
+**Pass:** exits 1 immediately (before any docker build) with
+`unknown profile 'bogus-name-xyz'; available: python` (plus any custom
+profiles present under `~/.vibe/profiles/`) — no container launches.
+
 ---
 
 ## Test Summary
