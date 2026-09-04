@@ -19,6 +19,7 @@ from smoke.checks_14_profiles import *
 
 def main() -> int:
     test_help()
+    test_help_is_header_only()
     test_version()
     test_vibe_andeye_page_draft()
     test_repo_owner_selection()

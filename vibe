@@ -32,6 +32,10 @@
 # the bind-mounted project tree from outside.
 #
 #   vibe pat [owner/repo]    # rotate/overwrite the stored GitHub PAT
+#   vibe repos add <owner/repo> [path]   # register a shared private repo (mounts at /repos/<name>)
+#   vibe repos remove <owner/repo>       # unregister it (--purge also drops its token)
+#   vibe repos list          # show the machine's shared-repo registry
+#   vibe audit [--history|--staged]      # scan git history (default) or the staged diff for secrets/PII
 #
 # `vibe pat` runs on the HOST shell too, same as `vibe learn` above — not
 # available inside the container. With no argument the repo is detected
@@ -134,7 +138,15 @@ print_version() {
 # itself is exactly this plus `exit 0` — help output is byte-identical to
 # before this split, same file, same grep/sed pipeline.
 _usage_text() {
-  grep '^#' "$VIBE_REPO_DIR/vibe" | grep -v '#!/' | sed 's/^# \?//'
+  # Header block ONLY: the contiguous comment block at the top of this file,
+  # up to the first line that is neither a comment nor blank (`set -euo
+  # pipefail`). Before 2026-09-04 this grepped `^#` across the WHOLE file, so
+  # `vibe --help` printed every column-1 section banner and function
+  # doc-comment too — 1,270 lines with the flag reference buried at the top.
+  awk 'NR == 1 { next }
+       /^#/ { sub(/^# ?/, ""); print; next }
+       /^[[:space:]]*$/ { next }
+       { exit }' "$VIBE_REPO_DIR/vibe"
   echo ""
   echo "vibe $(_vibe_version)"
 }

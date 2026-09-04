@@ -16,6 +16,28 @@ def test_help() -> None:
     check("usage section present", "Usage:" in r.stdout, r.stdout[:200])
 
 
+def test_help_is_header_only() -> None:
+    """2026-09-04: `vibe --help` prints ONLY the header comment block, not
+    every column-1 `#` comment in the launcher (it printed 1,270 lines before
+    the fix, with the flag reference buried at the top)."""
+    print("\n[vibe --help is the header block only]")
+    with tempfile.TemporaryDirectory() as td:
+        env = {**os.environ, "HOME": td, "VIBE_CONFIG": f"{td}/no-config"}
+        r = run(["bash", str(VIBE), "--help"], env=env)
+    lines = r.stdout.splitlines()
+    check("[help] exit 0", r.returncode == 0, r.stderr)
+    check("[help] under 80 lines", len(lines) < 80, f"{len(lines)} lines")
+    check("[help] no shebang line", not any(l.startswith("!/") for l in lines), r.stdout[:120])
+    for lit in ("Usage:", "--profile <name>", "vibe repos add", "vibe audit [--history|--staged]",
+                "vibe pat", 'learn "<pattern>"', "any order", "8 Jul"):
+        check(f"[help] keeps {lit!r}", lit in r.stdout, r.stdout[:400])
+    for banner in ("Language profiles (", "image_drift_needs_recreate", "Content-guard audit",
+                   "Configuration", "resolve_profile <flag_value>"):
+        check(f"[help] drops body comment {banner!r}", banner not in r.stdout, "")
+    check("[help] ends with the version line",
+          lines[-1].startswith("vibe ") and lines[-2] == "", r.stdout[-80:])
+
+
 def test_version() -> None:
     print("\n[vibe --version]")
     with tempfile.TemporaryDirectory() as td:
