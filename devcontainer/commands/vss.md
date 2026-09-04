@@ -6,7 +6,7 @@ description: Versus Solo — autonomous one-shot. No args = pick from TODO.md (o
 
 You are the top-level session model (Opus by default; Fable 5 if launched via `vibe --fable`). `/vss` runs autonomously: no mid-flow approvals from the user except when an item on the **hard-escalate list** is hit. The point is one bounded unit of work end-to-end without back-and-forth.
 
-`$ARGUMENTS` may be empty (Mode A) or a task brief (Mode B). `--wide` (`--narrow` to force off) passes through to whichever tool the planner picks — `/vs --wide`, or Mode A's parallel repo-scan below; see `wide.md` for caps. `--spec-first` also threads through to `/vs`. It is not an escalate trigger — the harness does not abort; the checkpoint IS the escalation: the run ends at `/vs` Step 3b and waits for Martin. `/vss` never acts-as-user on spec approval — resume later with `/vs --approve <task-id>`.
+`$ARGUMENTS` may be empty (Mode A) or a task brief (Mode B). `--wide` (`--narrow` to force off) passes through to whichever tool the planner picks — `/vs --wide`, or Mode A's parallel repo-scan below; see `wide.md` for caps. `--spec-first` also threads through to `/vs`, as does `--TDD`. It is not an escalate trigger — the harness does not abort; the checkpoint IS the escalation: the run ends at `/vs` Step 3b and waits for Martin. `/vss` never acts-as-user on spec approval — resume later with `/vs --approve <task-id>`.
 
 ## Hard-escalate list (inviolable in both modes)
 

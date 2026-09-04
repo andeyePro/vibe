@@ -624,7 +624,7 @@ def test_vsss_fromto_format() -> None:
                   idx > last_idx, f"idx={idx}, last={last_idx}")
             last_idx = idx
 
-    # AC12: word count invariant — vs.md+vss.md+vsss.md ≤14000 checked in test_wide_mode()
+    # AC12: word count invariant — vs.md+vss.md+vsss.md ≤14300 checked in test_wide_mode()
 
     # AC8: brain2 file check (only if it exists)
     brain2_file = Path("/brain2/meta/fromto-format.md")
@@ -850,7 +850,7 @@ def test_wide_mode() -> None:
         check("[wide] AC14: vsss.md shows '∥' or 'in parallel' for concurrent items",
               "∥" in vsss_content or "in parallel" in vsss_content, "")
 
-    # AC12 word budget: vs.md + vss.md + vsss.md ≤ 14,000 words
+    # AC12 word budget: vs.md + vss.md + vsss.md ≤ 14,300 words (raised from 14,000 by task_037 for --TDD)
     if VS_MD.exists() and VSS_MD.exists() and VSSS_MD.exists():
         vs_content_full = VS_MD.read_text()
         vss_content_full = VSS_MD.read_text()
@@ -859,8 +859,8 @@ def test_wide_mode() -> None:
         vss_words = len(vss_content_full.split())
         vsss_words = len(vsss_content_full.split())
         total_words = vs_words + vss_words + vsss_words
-        check("[wide] AC12: combined vs+vss+vsss word count ≤ 14,000",
-              total_words <= 14000,
+        check("[wide] AC12: combined vs+vss+vsss word count ≤ 14,300",
+              total_words <= 14300,
               f"vs={vs_words}, vss={vss_words}, vsss={vsss_words}, total={total_words}")
 
 

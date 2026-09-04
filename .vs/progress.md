@@ -541,3 +541,8 @@ Verdict: PASS. Committing as `/vs cycle 1: pass`. Not pushed.
 - Mechanical gate: Tester (haiku) 45 [spec-first] checks in a new `smoke/checks_13_spec_first.py`, full suite green; chair re-ran code-check + full suite: green. vs+vss+vsss 13,253 → 13,848 (pins raised to 14,000; the ≤450-word soft target was exceeded by ~145 words to keep every AC4 literal — accepted).
 - Diff read: Step 3b is a coherent checkpoint (commit + summary + END, `/vs --approve` semantics incl. edits-are-approval, credit-tier exception, no-candidate case, un-archive-first, TDD stacking); vss.md's two close-outs park instead of ticking; vsss.md never blocks the loop and lists an unresolved checkpoint under Deferred; the fromClaude action point is verbatim.
 - Generator tier that passed: sonnet (cycle 1). Tester: haiku. Fable rung not pre-authorised.
+
+## task_037 cycle 1 — Evaluator: PASS
+- Mechanical gate: Tester (haiku) 45 [tdd] checks in checks_13; full suite green (Tester foreground run + chair rerun); code-check clean. vs+vss+vsss 13,848 → 14,166 (pins 14,300).
+- Diff read: Step 4 trail contract and Step 5a cross-check are coherent and evidential (one-line entries, no `|` in command, written: vs mtime as a stated weak proxy, cycle-fail sentence); independence carve-out limited to the trail; `--fuzzy` exclusion; Step 3b's dangling line resolved; passthroughs in place.
+- Process note: the sonnet Generator completed every edit but parked three times on a backgrounded suite run; chair stopped it, wrote its report from the tree, and the Tester/chair runs verified. Generator tier that passed: sonnet. Tester: haiku.

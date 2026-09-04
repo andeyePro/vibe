@@ -567,6 +567,9 @@ def main() -> int:
     # task_036: /vs --spec-first flag documentation and checkpoint mechanics
     test_spec_first_flag_docs()
 
+    # task_037: /vs --TDD flag documentation and red-first trail mechanics
+    test_tdd_flag_docs()
+
     print()
     if FAILURES:
         print(f"✗ {len(FAILURES)} check(s) failed:")

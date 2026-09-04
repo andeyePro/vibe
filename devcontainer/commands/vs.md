@@ -96,6 +96,7 @@ Log every escalation in `.vs/progress.md` (`escalated generator sonnet→opus: <
 - `/vs --narrow <prompt>` — force strictly serial dispatch, overriding any `--wide` inherited from a wrapping `/vss`/`/vsss`. Inverse of `--wide`; see `narrow.md`.
 - `/vs --spec-first <prompt>` — after Spec Critic passes, commit the spec + TODO entry, mark `tasks.json` `awaiting-approval`, print a summary, and END the run with no Generator dispatch. Resume via `--approve`. Checkpoint mechanics: § Step 3b.
 - `/vs --approve [<task-id>]` — continue a spec-first checkpoint from Step 4, using the newest `awaiting-approval` task if `<task-id>` is omitted; archived specs are un-archived first. Full procedure: § Step 3b.
+- `/vs --TDD <prompt>` — Generator writes a red-first evidence trail (`.vs/cycle-<N>/tdd-trail.md`) before each implementing edit; Tester cross-checks it. Mechanical tests only — incompatible with `--fuzzy`. See § Step 4, § Step 5a.
 
 The `--plain` / `--techy` and `--verbosity` flags are independent dimensions: `--plain --verbosity 9` is verbose plain English; `--techy --verbosity 0` is one-line technical pass/fail. The cross-product is always meaningful.
 
@@ -125,6 +126,7 @@ Created at repo root.
   - `cycle-1/spec-critique.md` — Spec Critic's audit (cycle-1 only — spec doesn't change after that)
   - `cycle-N/generator-report.md` — Generator's summary of what it did
   - `cycle-N/diff.patch` — what Generator changed this cycle
+  - `cycle-N/tdd-trail.md` — red-first evidence (`--TDD` only)
   - **Rigorous mode:** `cycle-N/test-output.log` (full Tester output) + `cycle-N/summary.md` (3-line pass/fail summary).
   - **Fuzzy mode:** `cycle-N/reviewer-verdict.md` (Reviewer's written verdict with rationale) + `cycle-N/summary.md` (3-line summary: verdict line + concerns count + key concern).
   - **`--panel` runs:** `cycle-N/panel/reviewer-<k>.md` (one per panellist, k = 1..N) + `cycle-N/panel/summary.md` (chair's aggregation: verdict tally, correlation classification, adjudication one-liners). Gitignored with the rest of `cycle-N/`.
@@ -246,7 +248,7 @@ Martin's edits to `.vs/spec.md` ARE the approved version: never require it byte-
 
 `/vs --approve [<task-id>]`: set `implementation_status: "in_progress"` and continue from Step 4 unchanged, reading whatever is on disk at `.vs/spec.md`. Omitted `<task-id>` picks the newest `awaiting-approval` task by default; if its spec is archived, it is un-archived first (§ Multi-task state convention). If no task is awaiting approval, print `no task is awaiting approval` and stop — nothing else happens.
 
-`--TDD` stacking: the spec gate runs first; `--TDD` (when implemented) governs Step 4 only.
+`--TDD` stacking: the spec gate runs first; `--TDD` governs Step 4 (red-first trail) and Step 5a (trail check) only.
 
 ## Step 4 — Generate (Generator subagent — tier per Model plan)
 
@@ -260,6 +262,8 @@ Spawn `Agent(subagent_type: "general-purpose", model: "<Model plan tier>")` — 
 - When done: write `.vs/cycle-<N>/generator-report.md`, update `.vs/tasks.json` (`implementation_status: complete`), produce `.vs/cycle-<N>/diff.patch` via `git diff > .vs/cycle-<N>/diff.patch`.
 - Internal retry budget: 3 attempts if blocked. Report the block in the report file.
 
+**Under `--TDD`**: before the implementing edit for each acceptance criterion, write its scratch test under `.vs/cycle-<N>/scratch-tests/`, run it failing, then append one entry per acceptance criterion to `.vs/cycle-<N>/tdd-trail.md` in the shape `AC<n> | test file | command | exit | failing assertion | written:` on one line each — `test file` the scratch path, `command` the exact invocation (must not itself contain `|`), `exit` the non-zero exit code, `failing assertion` the literal failure text, `written:` an ISO-8601 timestamp. A shared scratch file backing several entries shares one mtime. A trail entry written after the implementation, or without a failing run, is a cycle fail.
+
 ## Step 5 — Verify (branches by mode)
 
 ### Step 5a — Test (Haiku 4.5 Tester) — RIGOROUS MODE ONLY
@@ -270,10 +274,12 @@ Independence rule: Tester sees only `.vs/spec.md`, the test-dir layout, and the 
 
 Tester's brief:
 - For each acceptance criterion, write a test in the spec's test location that verifies it. Use repo conventions.
-- Run the tests. Write full output to `.vs/cycle-<N>/test-output.log` and a 3-line summary (total/passed/failed/key-failures) to `.vs/cycle-<N>/summary.md`.
+- Run the tests. Write full output to `.vs/cycle-<N>/test-output.log` and a 3-line summary (4 lines under `--TDD`: a `TDD trail:` line is appended) to `.vs/cycle-<N>/summary.md` (total/passed/failed/key-failures).
 - **Mandatory regression check:** also run any pre-existing test suite. Any pre-existing failure caused by Generator's diff is a regression — report under `Regressions:` line.
 - Update `.vs/tasks.json` (`test_status: passing|failing`).
 - **Once committed, these tests are frozen.** Evaluator enforces immutability on subsequent cycles.
+
+**Under `--TDD`**: under `--TDD` the Tester additionally reads `tdd-trail.md` and `diff.patch` — only to check the trail, never the Generator's report. Cross-check: every acceptance criterion has a trail entry; the named test file exists under `scratch-tests/`; the failing assertion names the criterion; `command` names the same file as `test file`; each entry's `written:` timestamp is compared against the scratch file's mtime — a weak proxy, not proof. Any of these unmet — missing entry, wrong file, mismatched assertion — fail the cycle.
 
 ### Step 5b — Review (Sonnet Reviewer) — FUZZY MODE ONLY
 
@@ -306,7 +312,7 @@ N validation (parse-time, before any dispatch): N must be an odd integer between
 
 Dispatch N `Agent(subagent_type: "code-reviewer", model: "sonnet")` panellists — ALL IN ONE MESSAGE, a single parallel batch. Blindness is structural, three layers deep: the `code-reviewer` toolset is read-only (no Edit/Write escape hatch); the briefs are identical apart from the one substituted output-path token (no seeded differentiation — genuine disagreement must come from the model, not the prompt); and the batch is concurrent, so no panellist's verdict exists for another to read during its run. Each brief additionally instructs: do not read any file under `.vs/cycle-<N>/panel/`.
 
-Each panellist gets exactly what the 5b Reviewer gets — `.vs/spec.md`, the original user prompt (pasted by Planner), `.vs/cycle-<N>/diff.patch` — and NOT the Generator's report, NOT the Tester's output, NOT any other verdict. Each writes `.vs/cycle-<N>/panel/reviewer-<k>.md` (k = 1..N) with the same three sections as 5b (per-criterion assessment / concerns / verdict `pass`|`revise`|`fail`), honouring the run's `--plain`/`--techy` and resolved verbosity. Panellists do NOT touch `tasks.json` — with N concurrent writers that's a race; the chair updates it once after adjudication (Step 6).
+Each panellist gets exactly what the 5b Reviewer gets — `.vs/spec.md`, the original user prompt (pasted by Planner), `.vs/cycle-<N>/diff.patch` — and NOT the Generator's report, NOT the Tester's output, NOT any other verdict. Each writes `.vs/cycle-<N>/panel/reviewer-<k>.md` (k = 1..N) with the same three sections as 5b (per-criterion assessment / concerns / verdict `pass`|`revise`|`fail`), honouring the run's `--plain`/`--techy` and resolved verbosity. Panellists do NOT touch `tasks.json` — with N concurrent writers that's a race; the chair updates it once after adjudication (Step 6). Under `--TDD`: panellists do not check the trail; the Tester does (§ Step 5a).
 
 ### Correlated-agreement (sycophancy) check — Evaluator-side, mandatory under `--panel`
 
@@ -429,7 +435,8 @@ Superpowers is complementary discipline, not a rival harness — `/vs` supplies 
 - **Status-field mutations only** on `tasks.json`. No unstructured edits.
 - **Fresh subagents per cycle** — context reset over compaction. Continuity via `.vs/` files only.
 - **Subagents run long commands in the foreground** — inside any dispatched subagent (Generator, Tester, Reviewer, panellist) a build/test/ssh run uses `timeout: 600000`, never `run_in_background`: a backgrounded command's completion notification goes to the chair, not the subagent that launched it, so the subagent parks forever.
-- **No cross-subagent context sharing** — Generator never sees Tester's / Reviewer's output; Tester / Reviewer never sees Generator's report. Spec Critic sees only the spec.
+- **No cross-subagent context sharing** — Generator never sees Tester's / Reviewer's output; Tester / Reviewer never sees Generator's report. Spec Critic sees only the spec — except the `--TDD` trail check: Tester reads `tdd-trail.md` and `diff.patch`, never the Generator's report (§ Step 5a).
+- **`--TDD` and `--fuzzy` cannot combine** — `--TDD` needs mechanical tests; `--fuzzy` has none. If both are passed, refuse with one line.
 - **No cross-panellist context sharing (`--panel`)** — panellists never read each other's verdicts or `.vs/cycle-<N>/panel/` at all; blindness is structural (read-only agent type, byte-identical briefs, one concurrent batch). A panellist brief that individuates panellists ("you are the security reviewer") breaks the mechanism — differentiation must emerge, not be assigned.
 - **Per-cycle commits** after pass or at escalation points.
 - **Regression gate (rigorous only)** — Tester runs pre-existing test suite; failure caused by Generator's diff is automatic cycle fail. Fuzzy mode cannot enforce this automatically — Reviewer is asked to flag suspected regressions in the diff, but Evaluator should run pre-existing tests manually before declaring pass if there is a test suite at all.
