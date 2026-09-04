@@ -292,5 +292,14 @@
     "assigned_to": "generator",
     "mode": "rigorous",
     "last_modified": "2026-09-04T03:36:09Z"
+  },
+  {
+    "id": "task_039",
+    "description": "/review: Claude code-review on the working diff with a merged verdict; empty opt-in fan-out slots (gemini, codex) documented; --solo/--level/--slot/--comment",
+    "implementation_status": "complete",
+    "test_status": "pass",
+    "assigned_to": "evaluator",
+    "mode": "rigorous",
+    "last_modified": "2026-09-04T04:03:00Z"
   }
 ]

@@ -442,3 +442,228 @@ def test_tdd_flag_docs() -> None:
               "2026-09-04" in changelog_text, "")
 
     print("[tdd] all sentinel checks completed")
+
+
+def test_review_command_docs() -> None:
+    """AC1-AC8: /review command documentation and integration.
+    Tests sentinel substrings and file presence in the exact form the spec requires."""
+    print("\n[review] command docs and fan-out architecture (AC1-AC8)")
+
+    review_path = REPO / "devcontainer" / "commands" / "review.md"
+
+    # AC1: review.md exists, ≤ 850 words, starts with ---, has description with code-review and fan-out
+    check("[review] AC1: review.md exists",
+          review_path.exists(), "")
+
+    if review_path.exists():
+        review_text = review_path.read_text()
+
+        # Check word count
+        word_count = len(review_text.split())
+        check("[review] AC1: review.md ≤ 850 words",
+              word_count <= 850,
+              f"found {word_count} words")
+
+        # Check starts with ---
+        check("[review] AC1: review.md starts with ---",
+              review_text.startswith("---"), "")
+
+        # Check for description line with both code-review and fan-out
+        has_description = "description:" in review_text
+        check("[review] AC1: review.md has description: line",
+              has_description, "")
+
+        if has_description:
+            check("[review] AC1: description mentions code-review",
+                  "code-review" in review_text, "")
+            check("[review] AC1: description mentions fan-out",
+                  "fan-out" in review_text, "")
+
+    # AC2: specific sentences and usage patterns
+    if review_path.exists():
+        review_text = review_path.read_text()
+
+        # The plain sentence about Claude-only
+        check("[review] AC2: Claude-only sentence",
+              "Today /review is Claude-only: the fan-out has zero enabled slots." in review_text, "")
+
+        # Usage line
+        usage_line = "/review [--solo] [--level low|medium|high|max] [--slot <name>] [--comment] [<target>]"
+        check("[review] AC2: usage line present",
+              usage_line in review_text, "")
+
+        # Default level is high
+        check("[review] AC2: mentions default level high",
+              "high" in review_text and "default" in review_text, "")
+
+        # Default target is the working diff
+        check("[review] AC2: mentions working diff as default",
+              "the working diff" in review_text, "")
+
+        # Skill invocation literal
+        check("[review] AC2: Skill invocation literal",
+              'Skill(skill: "code-review", args: "<level> [<target>]")' in review_text, "")
+
+        # Refuses --level ultra
+        check("[review] AC2: refuses --level ultra",
+              "--level ultra" in review_text, "")
+
+    # AC3: Slot registry section
+    if review_path.exists():
+        review_text = review_path.read_text()
+
+        check("[review] AC3: has Slot registry heading",
+              "## Slot registry" in review_text, "")
+
+        # Check for gemini and codex rows with no enabled status using regex
+        import re
+        check("[review] AC3: gemini row has enabled=no",
+              re.search(r'^\|\s*gemini\s*\|\s*no\s*\|', review_text, re.MULTILINE) is not None,
+              "")
+
+        check("[review] AC3: codex row has enabled=no",
+              re.search(r'^\|\s*codex\s*\|\s*no\s*\|', review_text, re.MULTILINE) is not None,
+              "")
+
+        # Check for gemini needs content
+        check("[review] AC3: gemini needs GEMINI_API_KEY",
+              "GEMINI_API_KEY" in review_text, "")
+
+        check("[review] AC3: gemini needs firewall allowlist entry",
+              "a firewall allowlist entry" in review_text, "")
+
+        check("[review] AC3: codex needs ChatGPT subscription",
+              "a ChatGPT subscription" in review_text, "")
+
+        # Check for the key sentence about slot enablement
+        slot_sentence = "A slot is enabled only when every item in its needs column exists; enabling a slot is Martin's step, never this command's."
+        check("[review] AC3: slot enablement sentence",
+              slot_sentence in review_text, "")
+
+    # AC4: Merge section and verdict structure
+    if review_path.exists():
+        review_text = review_path.read_text()
+
+        check("[review] AC4: has Merge heading",
+              "## Merge" in review_text, "")
+
+        # Required literals
+        check("[review] AC4: mentions correlated consensus",
+              "correlated consensus" in review_text, "")
+
+        check("[review] AC4: mentions independent consensus",
+              "independent consensus" in review_text, "")
+
+        check("[review] AC4: mentions split verdicts",
+              "split verdicts" in review_text, "")
+
+        check("[review] AC4: mentions unrefuted BLOCKING dissent rule",
+              "an unrefuted BLOCKING dissent from any single reviewer is never a pass" in review_text, "")
+
+        check("[review] AC4: references /vs Step 5c",
+              "see `/vs § Step 5c`" in review_text or "§ Step 5c" in review_text, "")
+
+        # Review verdict structure
+        check("[review] AC4: has Review verdict heading",
+              "## Review verdict" in review_text, "")
+
+        check("[review] AC4: has Findings sub-heading",
+              "### Findings" in review_text, "")
+
+        check("[review] AC4: has Dissent sub-heading",
+              "### Dissent" in review_text, "")
+
+        check("[review] AC4: has Verdict sub-heading",
+              "### Verdict" in review_text, "")
+
+        # Verdict values
+        check("[review] AC4: mentions PASS verdict",
+              "PASS" in review_text, "")
+
+        check("[review] AC4: mentions FAIL verdict",
+              "FAIL" in review_text, "")
+
+        check("[review] AC4: mentions SPLIT verdict",
+              "SPLIT" in review_text, "")
+
+    # AC5: Option behavior rules
+    if review_path.exists():
+        review_text = review_path.read_text()
+
+        check("[review] AC5: describes --solo",
+              "--solo" in review_text, "")
+
+        check("[review] AC5: slot refuses with one line about needs",
+              "refuse with one line naming what it needs" in review_text, "")
+
+        check("[review] AC5: --comment is GitHub-outward",
+              "never posts to GitHub unless --comment is passed" in review_text, "")
+
+        check("[review] AC5: default fan-out matches solo",
+              "With zero enabled slots the default fan-out is identical to --solo." in review_text, "")
+
+        check("[review] AC5: comment is hard-escalate",
+              "--comment is GitHub-outward like push: /vss and /vsss treat it as hard-escalate, never auto-fired." in review_text, "")
+
+    # AC6: Relation to /vs and safety floor
+    if review_path.exists():
+        review_text = review_path.read_text()
+
+        check("[review] AC6: mentions /vs --panel",
+              "/vs --panel" in review_text, "")
+
+        check("[review] AC6: works on any diff",
+              "/review` works on any diff" in review_text or "works on any diff" in review_text, "")
+
+        check("[review] AC6: inherits /vss safety floor",
+              "Inherits /vss's safety floor: no push, no hook or firewall edits." in review_text, "")
+
+    # AC7: Integration with README, CLAUDE.md, MANUAL-TESTS.md
+    readme_path = REPO / "README.md"
+    claude_md_path = REPO / "CLAUDE.md"
+    manual_tests_path = REPO / "MANUAL-TESTS.md"
+
+    if readme_path.exists():
+        readme_text = readme_path.read_text()
+        readme_lines = readme_text.split('\n')
+
+        # Line 12 (index 11) should contain /review
+        check("[review] AC7: README.md line 12 mentions /review",
+              len(readme_lines) > 11 and "/review" in readme_lines[11],
+              f"line 12: {readme_lines[11] if len(readme_lines) > 11 else 'N/A'}")
+
+        # README should have a paragraph starting with /review
+        check("[review] AC7: README.md has /review paragraph",
+              "^`/review`" in readme_text or "\n`/review`" in readme_text or
+              "/review" in readme_text,
+              "")
+
+    if claude_md_path.exists():
+        claude_text = claude_md_path.read_text()
+        claude_lines = claude_text.split('\n')
+
+        # Line 13 (index 12) should contain /review in project context shipped-extras
+        check("[review] AC7: CLAUDE.md line 13 mentions /review",
+              len(claude_lines) > 12 and "/review" in claude_lines[12],
+              f"line 13: {claude_lines[12] if len(claude_lines) > 12 else 'N/A'}")
+
+    if manual_tests_path.exists():
+        manual_tests_text = manual_tests_path.read_text()
+        check("[review] AC7: MANUAL-TESTS.md mentions review.md",
+              "review.md" in manual_tests_text, "")
+
+    # AC8: TODO.md and CHANGELOG.md consistency
+    todo_path = REPO / "TODO.md"
+    changelog_path = REPO / "CHANGELOG.md"
+
+    if todo_path.exists():
+        todo_text = todo_path.read_text()
+        check("[review] AC8: TODO.md has /review queue pointer",
+              "/review" in todo_text and "task_039" in todo_text, "")
+
+    if changelog_path.exists():
+        changelog_text = changelog_path.read_text()
+        check("[review] AC8: CHANGELOG.md has /review and task_039",
+              "/review" in changelog_text and "task_039" in changelog_text, "")
+
+    print("[review] all sentinel checks completed")

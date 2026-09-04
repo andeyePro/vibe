@@ -441,6 +441,7 @@ ls ~/.claude/commands/
 - [ ] `~/.claude/commands/vsss.md` exists
 - [ ] `~/.claude/commands/wide.md` exists
 - [ ] `~/.claude/commands/narrow.md` exists
+- [ ] `~/.claude/commands/review.md` exists
 - [ ] `~/.claude/commands/budget.md` exists
 - [ ] `~/.claude/commands/repo.md` exists
 - [ ] `~/.claude/commands/c.md` exists
