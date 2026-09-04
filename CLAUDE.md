@@ -1,6 +1,6 @@
 # vibe
 
-A single-command, containerised coding environment for Claude Code. `cd project && vibe` launches an isolated Docker container with Claude Code pre-authenticated against the user's Claude Pro/Max subscription, a per-repo fine-grained GitHub PAT, and outbound SSH to remote dev machines.
+A single-command, containerised coding environment for Claude Code (product name: Vibe&I). `cd project && vibe` launches an isolated Docker container with Claude Code pre-authenticated against the user's Claude Pro/Max subscription, a per-repo fine-grained GitHub PAT, and outbound SSH to remote dev machines.
 
 ## Onboarding
 

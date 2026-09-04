@@ -1,6 +1,6 @@
-# vibe
+# Vibe&I
 
-A single-command containerised Claude Code environment. `cd my-project && vibe` and you're in.
+Vibe&I (the command is still `vibe`) is a single-command containerised Claude Code environment. `cd my-project && vibe` and you're in.
 
 ## What you get
 

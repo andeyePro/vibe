@@ -23,7 +23,7 @@ check('install CTA links the README install section',
   html.includes('https://github.com/andeyePro/vibe#install'));
 check('register CTA uses the contact.andeye.com prefill convention',
   html.includes('contact.andeye.com/?source=vibe.andeye.com')
-  && html.includes('subject=vibe%20waitlist'));
+  && html.includes('subject=Vibe%26I%20waitlist'));
 check('no "one-click install" promise anywhere', !/one.click install/i.test(html));
 
 // the journey: deck chips + checklists present, in launcher order

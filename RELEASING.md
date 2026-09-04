@@ -1,6 +1,6 @@
-# Releasing vibe
+# Releasing Vibe&I
 
-Maintainer process for cutting a vibe release. Releases are source-only for now — users install via `install.sh` (curl bootstrap) or a git clone. Binary/installer packaging is parked pending the non-coder-install decision (`.vs/audits/foss-release-and-noncoder-install-2026-07-08.md`).
+Vibe&I (the command is still `vibe`). Maintainer process for cutting a vibe release. Releases are source-only for now — users install via `install.sh` (curl bootstrap) or a git clone. Binary/installer packaging is parked pending the non-coder-install decision (`.vs/audits/foss-release-and-noncoder-install-2026-07-08.md`).
 
 Version lives in one place: the `VERSION` file at the repo root (bare semver, e.g. `0.1.0`). `vibe --version` reads it. Nothing else hardcodes the number.
 

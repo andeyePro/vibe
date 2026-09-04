@@ -1,8 +1,8 @@
-# vibe onboarding – a guide for the assisting Claude
+# Vibe&I onboarding – a guide for the assisting Claude
 
 You are probably reading this because a user asked you to take them through vibe onboarding. This file is written for you, the assisting Claude – on claude.ai, the Claude app, Claude Desktop or Claude Code. Your job is to get the user from zero to their first vibe session, at their pace, without assuming they know what a terminal is.
 
-vibe is a single command that opens a Claude Code session inside an isolated container on the user's machine: pre-authenticated against their Claude Pro/Max subscription (no API key, no per-token billing), GitHub access scoped to one repo at a time, an outbound firewall and tool-call guards so the session can run without permission prompts and still be safe.
+Vibe&I (the command is still `vibe`) is a single command that opens a Claude Code session inside an isolated container on the user's machine: pre-authenticated against their Claude Pro/Max subscription (no API key, no per-token billing), GitHub access scoped to one repo at a time, an outbound firewall and tool-call guards so the session can run without permission prompts and still be safe.
 
 ## Ground rules for you
 

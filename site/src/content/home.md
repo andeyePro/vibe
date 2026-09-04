@@ -1,5 +1,5 @@
 ---
-title: Vibe andeye
+title: Vibe&I
 tagline: vibe coding, verified
 description: Adversarial agentic models plan, build, test and review each other's work in a secure sandbox, so you ship code you can trust.
 hero:
@@ -11,11 +11,11 @@ hero:
   cta_install_label: Install from GitHub
   cta_install_href: "https://github.com/andeyePro/vibe#install"
   cta_register_label: Register interest
-  cta_register_href: "https://contact.andeye.com/?source=vibe.andeye.com&subject=vibe%20waitlist&message=Please%20email%20me%20when%20vibe%20andeye%20goes%20live."
+  cta_register_href: "https://contact.andeye.com/?source=vibe.andeye.com&subject=Vibe%26I%20waitlist&message=Please%20email%20me%20when%20Vibe%26I%20goes%20live."
   cta_andeye_label: More from andeye
   sub_default: This very page was planned, built, tested and reviewed by a vibe session.
   sub_install: Free and open source. Clone it, run vibe, and the README walks you through the rest.
-  sub_register: Not a developer? We'll email you when vibe arrives as a ready-to-run app.
+  sub_register: Not a developer? We'll email you when Vibe&I arrives as a ready-to-run app.
   sub_andeye: From the maker of Time&I – automatic time tracking for your Mac.
   fineprint: In development – built on the same open-core values as everything andeye makes.
   see_demo_label: "▾ watch a session run – click the commands yourself"
@@ -234,9 +234,9 @@ journey:
 who:
   eyebrow: Who it's for
   h2: For developers first
-  lede: Vibe is for developers first – but we'd also welcome feedback from non-coding experts who know exactly what they want.
+  lede: Vibe&I is for developers first – but we'd also welcome feedback from non-coding experts who know exactly what they want.
 status: In development – built on the same open-core values as everything andeye makes.
 footer: andeye Ltd, Scotland
 ---
 
-**Letting an AI write your code shouldn't mean accepting whatever it produces.** Vibe andeye puts adversarial agentic models between your idea and your codebase: one plans, one builds, and independent critics, testers and reviewers attack the result until it actually holds up.
+**Letting an AI write your code shouldn't mean accepting whatever it produces.** Vibe&I puts adversarial agentic models between your idea and your codebase: one plans, one builds, and independent critics, testers and reviewers attack the result until it actually holds up.

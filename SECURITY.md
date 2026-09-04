@@ -1,6 +1,6 @@
 # Security
 
-vibe runs Claude Code in a `--permission-mode bypassPermissions` container. That is safe only because two backstops hold: a fail-closed network firewall (`devcontainer/init-firewall.sh` — egress DROP by default, allowlist for GitHub/npm/Anthropic/VS Code plus outbound SSH) and PreToolUse tool-call hooks (`devcontainer/guard-bash.sh`, `devcontainer/guard-fs.sh`). Credentials stay on the host: the GitHub token is a per-repo fine-grained PAT (blast radius is one repo), auth is the user's Claude Pro/Max subscription and never an API key, and secrets never leave the machine unencrypted beyond `~/.vibe/tokens` (chmod 600).
+Vibe&I (the command is still `vibe`) runs Claude Code in a `--permission-mode bypassPermissions` container. That is safe only because two backstops hold: a fail-closed network firewall (`devcontainer/init-firewall.sh` — egress DROP by default, allowlist for GitHub/npm/Anthropic/VS Code plus outbound SSH) and PreToolUse tool-call hooks (`devcontainer/guard-bash.sh`, `devcontainer/guard-fs.sh`). Credentials stay on the host: the GitHub token is a per-repo fine-grained PAT (blast radius is one repo), auth is the user's Claude Pro/Max subscription and never an API key, and secrets never leave the machine unencrypted beyond `~/.vibe/tokens` (chmod 600).
 
 A security issue in vibe is anything that breaks one of those backstops.
 

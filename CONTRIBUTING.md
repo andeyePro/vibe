@@ -1,6 +1,6 @@
-# Contributing to vibe
+# Contributing to Vibe&I
 
-The pitch is dogfooding: contribute to vibe using vibe. Clone it, point your `vibe` at the clone, and hack on the launcher from inside a vibe session.
+Vibe&I (the command is still `vibe`). The pitch is dogfooding: contribute to vibe using vibe. Clone it, point your `vibe` at the clone, and hack on the launcher from inside a vibe session.
 
 ## Set up a dev clone
 
