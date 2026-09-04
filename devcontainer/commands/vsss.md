@@ -27,6 +27,7 @@ At the very start of `/vsss`, before any work:
    - `/vsss --fable-subagents <args>` (alias `--fable`) — standing per-run pre-authorisation of the credit-billed Fable rung, semantics per `/vs § Model economy`; propagated into every wrapped `/vss` iteration and each `/vs` Model plan. Record it in the session file's Initial-plan block and note each Fable dispatch in the per-iter Notes. The grant PERSISTS across auto-resume relaunches: the Resumption protocol restores args from the session file, and that recorded Initial-plan grant IS the authority — never demand a fresh flag mid-run.
    - `/vsss --sessions X <args>` — combinable with the budget flags; CAPS the run at X credit windows TOTAL (`--sessions 3` = the current window plus up to 2 automatic relaunches; `--sessions 1` = single-window opt-out, no relaunch). **Omitting the flag does NOT mean one window** — the default is unbounded persistence. See § Auto-resume across halts. Legacy: `--auto-resume N` (retired 2026-07-08) meant N EXTRA windows — treat it as `--sessions N+1`.
    - No budget flag → `BUDGET_HOURS=5`. This is the per-window clock used to estimate `resume_at` — NOT a finish line, and (absent an explicit `--hours`/`--budget` flag) NOT an exit condition.
+   - `/vsss --spec-first <args>` — threads `--spec-first` into every wrapped `/vs` invocation this run dispatches; a checkpoint hit does not stop the loop (§ Interaction with the loop) — semantics: `/vs § Step 3b`.
 
    **Remaining time is never a reason to stop, shrink, or skip work.** There is no graceful-shutdown cushion and none is needed: every iteration commits as it lands, and § Resumption protocol continues an interrupted iteration in the next window — a halt mid-iteration loses nothing. Never bias the optimiser toward "stop" because the clock is running down, and never pass over a queue item because it "won't fit this window" — start it; if the window dies first, resumption finishes it. An explicit `--hours N` / `--budget N[hm]` flag is the ONE user-imposed hard stop: on reaching it with work outstanding, commit what's in flight, write Final state with `Exit reason: user budget cap`, set the marker `active=0`, and stop — never label that stop a perfection gate.
 4. Open `.vss/sessions/<start-ISO>.md` (filename uses `T` separator and replaces `:` with `-`, e.g. `2026-05-07T14-29-02Z.md`) and write the audit header per the format defined in `/vss` § Session audit format. The Initial-plan section captures the initial args, priority queue (if any), and budget.
@@ -216,6 +217,8 @@ tags — they exist so exchanges stay threaded through renumbering. Tags are
 monotonic and never reused. Channel hygiene applies: questions and blocking
 asks only — no progress notes, no FYIs (progress lives in the session file).
 
+A `--spec-first` checkpoint posts exactly one action point, in this shape: `Approve the spec for <task-id> — <one-line goal>? It's at .vs/spec.md. Reply "approve", or edit that file and reply "approve"; reply with changes instead to redirect. (T<n>)`
+
 ### Answer format (from<User>) — the lazy contract
 
 The user answers with a plain OL whose numbers match what fromClaude showed
@@ -252,8 +255,7 @@ INSTRUCTIONS — see precedence below.
    contiguous OL.
 5. Rewrite fromClaude: drop resolved items, renumber the survivors from 1,
    append any new questions, record the new generation.
-6. Fold answers and instructions into the plan BEFORE the optimiser picks the
-   next area.
+6. Fold answers and instructions into the plan BEFORE the optimiser picks the next area — an `approve` reply to a spec-first action point queues `/vs --approve <task-id>` as the next iteration touching that task; a reply with changes is a spec-revision instruction folded into `.vs/spec.md` before re-approving.
 
 ### Precedence
 
@@ -274,6 +276,8 @@ the question, move to the next area needing no input, pick the answer up at a
 later iteration boundary. If every remaining area is blocked on unanswered
 questions, that is exit-condition territory (no-op iterations) — the exit
 report then says exactly which numbered questions unblock which work.
+
+A `--spec-first` checkpoint never blocks the loop either: write the spec, post one action point, move to the next queue item; an `approve` answer later queues `/vs --approve <task-id>` as a future iteration's item.
 
 ### After each /vss completes
 
@@ -352,6 +356,7 @@ When the loop ends (any reason), report to the user:
 - Exit reason in plain English.
 - One-line note on each commit (sourced from the per-iter blocks in the session file).
 - Anything left in escalate-pending state that needs the user.
+- An unresolved `--spec-first` checkpoint (task awaiting approval) is listed under `Deferred` with its `/vs --approve <task-id>` line — e.g. `Deferred: task_042 awaiting approval — /vs --approve task_042`.
 - Path to the full session audit: `.vss/sessions/<start-ISO>.md` — explicitly named, so the user can open it without guessing the filename.
 - Reminder line: "not pushed; review the session file then `git push` if approved" (omit the reminder only if `--push-on-pass` was passed AND the run cleared the perfection-gate).
 

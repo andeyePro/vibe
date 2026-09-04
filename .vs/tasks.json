@@ -265,5 +265,14 @@
     "assigned_to": "generator",
     "mode": "rigorous",
     "last_modified": "2026-09-03T00:27:35Z"
+  },
+  {
+    "id": "task_036",
+    "description": "--spec-first for /vs: spec-first checkpoint (Step 3b), /vs --approve, tasks.json awaiting-approval status, /vss and /vsss passthrough, fromClaude action point",
+    "implementation_status": "complete",
+    "test_status": "passing",
+    "assigned_to": "generator",
+    "mode": "rigorous",
+    "last_modified": "2026-09-04T03:00:00Z"
   }
 ]

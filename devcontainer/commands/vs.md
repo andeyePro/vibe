@@ -94,6 +94,8 @@ Log every escalation in `.vs/progress.md` (`escalated generator sonnet→opus: <
 - `/vs --vN-eval N <prompt>` — Evaluator-only verbosity override.
 - `/vs --wide [N] <prompt>` — dispatch legally-concurrent stages together instead of one at a time (default 6, ceiling 8 concurrent agents). `propagates into wrapped invocations` — `/vss`/`/vsss` inherit it. Caps, the stacking table, and which stages may overlap: `wide.md`.
 - `/vs --narrow <prompt>` — force strictly serial dispatch, overriding any `--wide` inherited from a wrapping `/vss`/`/vsss`. Inverse of `--wide`; see `narrow.md`.
+- `/vs --spec-first <prompt>` — after Spec Critic passes, commit the spec + TODO entry, mark `tasks.json` `awaiting-approval`, print a summary, and END the run with no Generator dispatch. Resume via `--approve`. Checkpoint mechanics: § Step 3b.
+- `/vs --approve [<task-id>]` — continue a spec-first checkpoint from Step 4, using the newest `awaiting-approval` task if `<task-id>` is omitted; archived specs are un-archived first. Full procedure: § Step 3b.
 
 The `--plain` / `--techy` and `--verbosity` flags are independent dimensions: `--plain --verbosity 9` is verbose plain English; `--techy --verbosity 0` is one-line technical pass/fail. The cross-product is always meaningful.
 
@@ -111,7 +113,7 @@ Created at repo root.
   {
     "id": "task_001",
     "description": "one-line goal",
-    "implementation_status": "pending|in_progress|complete",
+    "implementation_status": "pending|awaiting-approval|in_progress|complete",
     "test_status": "pending|in_progress|passing|failing",
     "assigned_to": "generator|tester|reviewer|evaluator",
     "mode": "rigorous|fuzzy",
@@ -147,7 +149,7 @@ Created at repo root.
   - `.vs/progress.md` — append-only log across all tasks
   - `.vs/cost-summary.json` — rollup of the most recent completed task (overwritten on each Step-7 pass, NOT on task start)
 
-When a `/vs` task is parked mid-flight (Spec Critic passed but user hasn't approved, or cycles ran but the task abandoned without a clean Step-7 verdict), and a NEW `/vs` task needs to start, Planner archives the parked task's per-task state before writing fresh state.
+When a `/vs` task is parked mid-flight (Spec Critic passed but user hasn't approved, `parked at awaiting-approval` under `--spec-first`, or cycles ran but the task abandoned without a clean Step-7 verdict), and a NEW `/vs` task needs to start, Planner archives the parked task's per-task state before writing fresh state. `/vs --approve <task-id>` runs the resume-from-archive procedure below first whenever its target spec is sitting in `.vs/archive/`.
 
 Archive procedure (when new task is starting and `.vs/spec.md` belongs to a different parked task):
 
@@ -234,7 +236,17 @@ Do NOT auto-pass on a plateau. Escalate.
 
 **`--max-iter N` cap**: if the cap fires before convergence, do NOT silently auto-pass. Escalate to the user using the same plateau-style options above (a/b/c).
 
-On `pass` (by any rule path): append task to `TODO.md` Open, show final spec + `spec critic: pass after N iteration(s)` note to user. Wait for approval. In fuzzy mode the user note also includes `mode: --fuzzy`.
+On `pass` (by any rule path): append task to `TODO.md` Open, show final spec + `spec critic: pass after N iteration(s)` note to user. Wait for approval. In fuzzy mode the user note also includes `mode: --fuzzy`. Under `--spec-first`, do not wait in-session — go to Step 3b.
+
+## Step 3b — Spec-first checkpoint (`--spec-first`)
+
+On Spec Critic `pass`, under `--spec-first`: commit `.vs/spec.md`, the `TODO.md` entry, and `tasks.json` with `implementation_status: "awaiting-approval"` in one commit. Print `vs --spec-first: spec awaiting approval (<task-id>)` plus a plain-English summary and `approve with: /vs --approve <task-id>`. END the run — No Generator dispatch happens until approval.
+
+Martin's edits to `.vs/spec.md` ARE the approved version: never require it byte-identical to the committed draft, and never re-run Spec Critic on it — spec edited at approval does not trigger the Rules' restart-at-cycle-1, because no cycle has run yet. Exception: an edit that raises the Model plan to a credit-billed tier needs a fresh ask before proceeding (§ Model economy).
+
+`/vs --approve [<task-id>]`: set `implementation_status: "in_progress"` and continue from Step 4 unchanged, reading whatever is on disk at `.vs/spec.md`. Omitted `<task-id>` picks the newest `awaiting-approval` task by default; if its spec is archived, it is un-archived first (§ Multi-task state convention). If no task is awaiting approval, print `no task is awaiting approval` and stop — nothing else happens.
+
+`--TDD` stacking: the spec gate runs first; `--TDD` (when implemented) governs Step 4 only.
 
 ## Step 4 — Generate (Generator subagent — tier per Model plan)
 

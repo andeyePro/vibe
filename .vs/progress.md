@@ -536,3 +536,8 @@ Verdict: PASS. Committing as `/vs cycle 1: pass`. Not pushed.
 - Mechanical gate: tests frozen from cycle 1 (`checks_12_harness_lints.py`: spawn lint over 51 spawns, open-stdin regression, whole-suite env-routing meta-check over 148 call sites / 4 categories, sha-pin lint with positive+negative controls, CLAUDE.md sentinels, .gitignore block check); Generator's full suite exit 0; chair's independent rerun recorded in the session file.
 - Cycle 2 routed the 29 sites (23 unique env assignments) through `_isolate_extras_env`; one real interaction surfaced — the builder's `GIT_CONFIG_GLOBAL` default hid a test's seeded `~/.gitconfig` — fixed by an explicit post-builder override, which is the routed-through rule's own permitted pattern.
 - Generator tier that passed: sonnet (cycle 2; cycle-1 fail was capability-class — the sweep stopped at spawn arguments). Tester: sonnet. Fable rung pre-authorised, not used.
+
+## task_036 cycle 1 — Evaluator: PASS
+- Mechanical gate: Tester (haiku) 45 [spec-first] checks in a new `smoke/checks_13_spec_first.py`, full suite green; chair re-ran code-check + full suite: green. vs+vss+vsss 13,253 → 13,848 (pins raised to 14,000; the ≤450-word soft target was exceeded by ~145 words to keep every AC4 literal — accepted).
+- Diff read: Step 3b is a coherent checkpoint (commit + summary + END, `/vs --approve` semantics incl. edits-are-approval, credit-tier exception, no-candidate case, un-archive-first, TDD stacking); vss.md's two close-outs park instead of ticking; vsss.md never blocks the loop and lists an unresolved checkpoint under Deferred; the fromClaude action point is verbatim.
+- Generator tier that passed: sonnet (cycle 1). Tester: haiku. Fable rung not pre-authorised.

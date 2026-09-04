@@ -6,7 +6,7 @@ description: Versus Solo — autonomous one-shot. No args = pick from TODO.md (o
 
 You are the top-level session model (Opus by default; Fable 5 if launched via `vibe --fable`). `/vss` runs autonomously: no mid-flow approvals from the user except when an item on the **hard-escalate list** is hit. The point is one bounded unit of work end-to-end without back-and-forth.
 
-`$ARGUMENTS` may be empty (Mode A) or a task brief (Mode B). `--wide` (`--narrow` to force off) passes through to whichever tool the planner picks — `/vs --wide`, or Mode A's parallel repo-scan below; see `wide.md` for caps.
+`$ARGUMENTS` may be empty (Mode A) or a task brief (Mode B). `--wide` (`--narrow` to force off) passes through to whichever tool the planner picks — `/vs --wide`, or Mode A's parallel repo-scan below; see `wide.md` for caps. `--spec-first` also threads through to `/vs`. It is not an escalate trigger — the harness does not abort; the checkpoint IS the escalation: the run ends at `/vs` Step 3b and waits for Martin. `/vss` never acts-as-user on spec approval — resume later with `/vs --approve <task-id>`.
 
 ## Hard-escalate list (inviolable in both modes)
 
@@ -44,7 +44,7 @@ Read `MEMORY.md` at start; surface relevant feedback memories into the planner b
 ## Mode A — no arguments
 
 1. Read `TODO.md`. Find the first `[ ]` item under `## Open` that is **bounded**: single-PR-sized, no external dependencies, no hard-escalate dependencies (no physical actuation, no SSH-out, no firewall edits).
-2. **If found:** announce the item in plain English (one paragraph, what + why-bounded). Begin work immediately. On completion: mark `[x]` with a one-line note + commit SHA, commit, stop.
+2. **If found:** announce the item in plain English (one paragraph, what + why-bounded). Begin work immediately. On completion: mark `[x]` with a one-line note + commit SHA, commit, stop. If the wrapped run instead ends at `awaiting-approval` (a `--spec-first` checkpoint), the TODO entry is NOT ticked and NOT moved — leave it open with `(awaiting approval — /vs --approve <task-id>)` appended, the commit is the Step 3b commit, and the report says the run is parked.
 3. **If no bounded item found:** scan the repo to decide the best next thing to do to improve it. Categories to consider, in order:
    1. Failing tests / lint warnings on `main` that nobody's fixed.
    2. TODO.md `[!]` entries where the failure cause is now solvable (re-attempt-worthy).
@@ -118,6 +118,7 @@ On completion:
 - Move the implicit task to `TODO.md` `## Done` with a one-line note + commit SHA. (Add to `## Open` first if Mode B was invoked without a pre-existing entry — keep the audit log honest.)
 - Commit any uncommitted work. Use the project's commit-message convention.
 - Report back: what was done in 2–3 lines, what was NOT done if any escalate triggered, and the final commit SHA.
+- If the wrapped run instead ends at `awaiting-approval` (a `--spec-first` checkpoint), do NOT tick or move the TODO entry — leave it open with `(awaiting approval — /vs --approve <task-id>)` appended, the commit is the Step 3b commit, and report that the run is parked.
 
 ## State directory: `.vss/`
 

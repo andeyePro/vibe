@@ -11,6 +11,7 @@ from smoke.checks_09_openproject_and_scanner import *
 from smoke.checks_10_pathwarn_and_hunkdiff import *
 from smoke.checks_11_patrotation_and_firewall import *
 from smoke.checks_12_harness_lints import *
+from smoke.checks_13_spec_first import *
 
 
 
@@ -562,6 +563,9 @@ def main() -> int:
     test_no_fixed_sha_baselines()
     test_claude_md_testing_sentinels()
     test_gitignore_managed_block_and_site_gitignore()
+
+    # task_036: /vs --spec-first flag documentation and checkpoint mechanics
+    test_spec_first_flag_docs()
 
     print()
     if FAILURES:
