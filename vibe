@@ -3400,7 +3400,12 @@ _extra_domains_file_ok() {
 resolve_extra_domains() {
   local ws="$1" config="$2"
   local raw="" line stripped="" entry out="" n=0 capped=0 had_f=0
+  # Two globals, because the caller needs two answers and stdout can only carry
+  # one. EXTRA_DOMAINS_RESOLVED is the space-separated list; EXTRA_DOMAINS_SOURCE
+  # names where it came from. Both are ONLY visible to a caller that runs this
+  # function in its own shell — see vibe_resolve_extra_domains_for_launch.
   EXTRA_DOMAINS_SOURCE=""
+  EXTRA_DOMAINS_RESOLVED=""
   # Pin IFS locally: init-firewall.sh runs under IFS=$'\n\t' (no space), and
   # this splitting must not be at the mercy of whatever IFS the caller is under.
   local IFS=$' \t\n'
@@ -3441,11 +3446,32 @@ resolve_extra_domains() {
     if [ "$n" -gt "$EXTRA_DOMAINS_MAX" ]; then capped=1; break; fi
     out="$out $entry"
   done
+  EXTRA_DOMAINS_RESOLVED="${out# }"
   for entry in $out; do printf '%s\n' "$entry"; done
   [ "$had_f" = 1 ] || set +f
   if [ "$capped" = 1 ]; then
     echo "  ⚠ vibe: extra firewall domains capped at $EXTRA_DOMAINS_MAX entries — the rest were ignored." >&2
   fi
+  return 0
+}
+
+# vibe_resolve_extra_domains_for_launch <workspace> <config_value>
+# The launch path's entry point. Sets VIBE_EXTRA_DOMAINS (exported, space
+# separated) and EXTRA_DOMAINS_SOURCE in the CURRENT shell.
+#
+# It exists because `VIBE_EXTRA_DOMAINS="$(resolve_extra_domains …)"` is a
+# subshell: the list came back on stdout but EXTRA_DOMAINS_SOURCE was set in a
+# child and discarded, so `set -u` aborted the launch at the header line with
+# `EXTRA_DOMAINS_SOURCE: unbound variable` — after the image had already built.
+# Never reintroduce a command-substitution call site; take the list from the
+# global the resolver sets instead.
+vibe_resolve_extra_domains_for_launch() {
+  local ws="$1" config="$2"
+  EXTRA_DOMAINS_SOURCE=""
+  EXTRA_DOMAINS_RESOLVED=""
+  resolve_extra_domains "$ws" "$config" >/dev/null
+  VIBE_EXTRA_DOMAINS="$EXTRA_DOMAINS_RESOLVED"
+  export VIBE_EXTRA_DOMAINS
   return 0
 }
 
@@ -4070,9 +4096,7 @@ export VIBE_SHARED_ENV_NAMES
 # not as an env var: the sudoers rule for init-firewall.sh sets env_reset, so
 # an exported name would be stripped before the script ever read it.
 # Not a secret, so unlike GITHUB_TOKEN/ZOTERO_API_KEY it is safe at this layer.
-VIBE_EXTRA_DOMAINS="$(resolve_extra_domains "$WORKSPACE" "${VIBE_EXTRA_DOMAINS:-}" | tr '\n' ' ')"
-VIBE_EXTRA_DOMAINS="${VIBE_EXTRA_DOMAINS%"${VIBE_EXTRA_DOMAINS##*[![:space:]]}"}"
-export VIBE_EXTRA_DOMAINS
+vibe_resolve_extra_domains_for_launch "$WORKSPACE" "${VIBE_EXTRA_DOMAINS:-}"
 
 # Zotero web-API key (optional). Stored alongside the GitHub PATs in
 # ~/.vibe/tokens (chmod 600) under the reserved, slash-free key

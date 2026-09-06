@@ -354,8 +354,10 @@ def test_extra_domains_ac14_launcher_exports() -> None:
     src = VIBE.read_text()
     check("[extra-domains] AC14: resolve_extra_domains defined",
           "resolve_extra_domains()" in src, "")
-    check("[extra-domains] AC14: called with the workspace and config value",
-          'resolve_extra_domains "$WORKSPACE"' in src, "")
+    check("[extra-domains] AC14: reached from the launch path via the wrapper",
+          'vibe_resolve_extra_domains_for_launch "$WORKSPACE"' in src, "")
+    check("[extra-domains] AC14: the wrapper calls the resolver in-shell",
+          'resolve_extra_domains "$ws" "$config" >/dev/null' in src, "")
     check("[extra-domains] AC14: VIBE_EXTRA_DOMAINS exported for ${localEnv:}",
           "export VIBE_EXTRA_DOMAINS" in src, "")
     guard = src.index('[ "${VIBE_SOURCE_ONLY:-}" = "1" ] && return 0')
@@ -421,6 +423,71 @@ def test_extra_domains_ac17_source_attribution() -> None:
                        'git -C "$WS" add -f .vibe/domains; '
                        'git -C "$WS" commit -q -m x'),
                "safe.example.com") == "VIBE_EXTRA_DOMAINS", "")
+
+
+def test_extra_domains_ac17_call_site_pattern_under_set_u() -> None:
+    """Reproduce the LAUNCHER's own call sequence, not the function in
+    isolation. AC17 above called resolve_extra_domains directly, so its global
+    survived; the launcher assigned through `$(...)`, a SUBSHELL, which throws
+    EXTRA_DOMAINS_SOURCE away — and `set -u` then killed the launch at the
+    header line with `EXTRA_DOMAINS_SOURCE: unbound variable`, after the image
+    had already built. The contract this pins: after the launcher's own
+    sequence, in the PARENT shell, both the list and its source are set."""
+    print("\n[extra-domains] AC17: launcher call site keeps both outputs (set -u)")
+    with tempfile.TemporaryDirectory() as td:
+        ws = Path(td) / "ws"; ws.mkdir()
+        setup = _git_ws('printf "a.example.com\nb.example.com\n" > "$WS/.vibe/domains"')
+        call = (f'WS={shlex.quote(str(ws))}; {setup}; '
+                'WORKSPACE="$WS"; '
+                # verbatim from the launcher, including `set -u` being active
+                'set -u; '
+                'vibe_resolve_extra_domains_for_launch "$WORKSPACE" "${VIBE_EXTRA_DOMAINS:-}"; '
+                'echo "LIST=[$VIBE_EXTRA_DOMAINS]"; '
+                'echo "SRC=[$EXTRA_DOMAINS_SOURCE]"')
+        r = _source_vibe_call({}, call)
+        check("[extra-domains] AC17: call site exits 0 under set -u",
+              r.returncode == 0, r.stdout + r.stderr)
+        check("[extra-domains] AC17: no unbound-variable error",
+              "unbound variable" not in r.stderr, r.stderr)
+        check("[extra-domains] AC17: list survives as a space-separated string",
+              "LIST=[a.example.com b.example.com]" in r.stdout, r.stdout + r.stderr)
+        check("[extra-domains] AC17: source survives into the parent shell",
+              "SRC=[.vibe/domains]" in r.stdout, r.stdout + r.stderr)
+
+
+def test_extra_domains_ac17_header_never_unbound() -> None:
+    """With no domains configured at all — the case every existing project is
+    in — the header block must not reference an unset variable under `set -u`."""
+    print("\n[extra-domains] AC17: header block is safe with nothing configured")
+    with tempfile.TemporaryDirectory() as td:
+        ws = Path(td) / "ws"; ws.mkdir()
+        call = (f'WS={shlex.quote(str(ws))}; {_git_ws()}; WORKSPACE="$WS"; set -u; '
+                'vibe_resolve_extra_domains_for_launch "$WORKSPACE" "${VIBE_EXTRA_DOMAINS:-}"; '
+                'if [ -n "$VIBE_EXTRA_DOMAINS" ]; then '
+                '  echo "     domains : firewall also allows ${VIBE_EXTRA_DOMAINS} (via ${EXTRA_DOMAINS_SOURCE})"; '
+                'fi; echo OK')
+        r = _source_vibe_call({}, call)
+        check("[extra-domains] AC17: header block runs clean with no domains",
+              r.returncode == 0 and "OK" in r.stdout, r.stdout + r.stderr)
+        check("[extra-domains] AC17: no unbound-variable error",
+              "unbound variable" not in r.stderr, r.stderr)
+
+
+def test_extra_domains_ac17_launcher_uses_the_wrapper() -> None:
+    """The launcher must not reintroduce the subshell: no `$(resolve_extra_domains`
+    anywhere in `vibe`."""
+    print("\n[extra-domains] AC17: launcher does not call the resolver in a subshell")
+    src = VIBE.read_text()
+    # Comment lines are exempt — the wrapper's own docstring quotes the broken
+    # form on purpose, so that the next person to touch this reads why.
+    offenders = [ln for ln in src.splitlines()
+                 if "$(resolve_extra_domains" in ln and not ln.lstrip().startswith("#")]
+    check("[extra-domains] AC17: no command-substitution call site",
+          offenders == [], repr(offenders))
+    check("[extra-domains] AC17: wrapper defined",
+          "vibe_resolve_extra_domains_for_launch()" in src, "")
+    check("[extra-domains] AC17: wrapper is what the launch path calls",
+          'vibe_resolve_extra_domains_for_launch "$WORKSPACE"' in src, "")
 
 
 # ── AC18: changing the list must recreate the container ──────────────────────
