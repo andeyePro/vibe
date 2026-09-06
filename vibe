@@ -3125,6 +3125,41 @@ shared_repos_mount_drift() {
   return 0
 }
 
+# container_env_value <workspace> <var_name>
+# Echoes the value of <var_name> in the existing container's OWN environment
+# (docker inspect .Config.Env), or "NONE" when this project has no container.
+# Sibling of container_shared_mounts, and the reason VIBE_EXTRA_DOMAINS travels
+# by containerEnv rather than remoteEnv: remoteEnv is applied by the
+# devcontainer CLI when it runs a command and never lands in the container
+# config, so `docker inspect` cannot see it and drift would be undetectable.
+container_env_value() {
+  local cids cid tmpl
+  cids=$(docker ps -aq --filter "label=devcontainer.local_folder=$1" 2>/dev/null) || cids=""
+  cid="${cids%%$'\n'*}"
+  if [ -z "$cid" ]; then
+    echo "NONE"
+    return 0
+  fi
+  tmpl='{{range .Config.Env}}{{$kv := split . "="}}{{if eq (index $kv 0) "'"$2"'"}}{{index $kv 1}}{{end}}{{end}}'
+  docker inspect --format "$tmpl" "$cid" 2>/dev/null || echo "NONE"
+}
+
+# extra_domains_drift <desired> <actual>
+# Pure comparator (no docker), sibling of shared_repos_mount_drift and
+# projects_bind_mount_drift. Emits "1" iff reusing the existing container would
+# keep a firewall built from a STALE extra-domain list. This is what makes
+# "edit .vibe/domains, relaunch" true: init-firewall.sh runs from
+# postStartCommand, which does not re-run against an already-running container,
+# so without a recreate the launch header would announce a hole the container's
+# ipset does not have. "NONE" (no container) is a fresh create, never drift.
+extra_domains_drift() {
+  local desired="$1" actual="$2"
+  [ "$actual" = "NONE" ] && return 0
+  [ "$desired" = "$actual" ] && return 0
+  echo 1
+  return 0
+}
+
 # projects_bind_mount_drift <desired_source> <actual_mounts>
 # Pure comparator (no docker), task_014's sibling of shared_repos_mount_drift.
 # <actual_mounts> is container_shared_mounts' output. Emits "1" iff a container
@@ -3287,6 +3322,132 @@ parse_vibe_args() {
 # the VIBE_SOURCE_ONLY guard, so smoke-test.py can unit-test them via
 # `_source_vibe_call` the same way checks_02 exercises
 # image_drift_needs_recreate/parse_vibe_args.
+
+# ── Extra firewall domains (task_041) ────────────────────────────────────────
+# devcontainer/init-firewall.sh's domain loop is vibe's PUBLIC default
+# allowlist — every container, every user. A single project needing one extra
+# host (a private accounting API, an internal package registry) must never
+# widen that shipped default, so the extension is per-project instead:
+#
+#   <workspace>/.vibe/domains   one host per line, UNTRACKED   (per-project)
+#   VIBE_EXTRA_DOMAINS          in ~/.vibe/config              (machine-wide)
+#
+# Precedence mirrors resolve_profile: the workspace file wins, the config var
+# is the fallback. The UNTRACKED requirement mirrors _op_opted_in and is the
+# security crux — a `.vibe/domains` committed to a repo would let a malicious
+# PR punch its own hole in the firewall of every container that clones it, so
+# a tracked (or unverifiable) file is refused and the config value is used
+# instead. Everything here is pure shell, defined ABOVE the VIBE_SOURCE_ONLY
+# guard so smoke-test.py can unit-test it via _source_vibe_call.
+EXTRA_DOMAINS_MAX="${EXTRA_DOMAINS_MAX:-32}"
+
+# validate_extra_domain <token> — 0 iff <token> is a plain DNS hostname that is
+# safe to hand to `dig` as a bare word. The LDH-label charset alone excludes
+# every shell metacharacter (;, &, |, $, `, quotes, whitespace), every glob
+# character, path separators and URL schemes, so a hostile entry cannot become
+# a command; the dotted-FQDN requirement rejects single labels, and the
+# all-numeric guard rejects a bare IPv4 literal (allowlist an address range in
+# the script itself, not through a name channel). Duplicated verbatim in
+# init-firewall.sh: the firewall must re-validate its own argv rather than
+# trust the launcher that assembled it.
+validate_extra_domain() {
+  local d="$1"
+  [ -n "$d" ] || return 1
+  [ "${#d}" -le 253 ] || return 1
+  [[ "$d" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$ ]] || return 1
+  # Spelt as an `if`, not `[[ ]] && return 1`: under `set -e` the && form makes
+  # the whole statement exit 1 on the common (non-matching) path, which would
+  # kill the launcher the moment this is called outside a condition.
+  if [[ "$d" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then return 1; fi
+  return 0
+}
+
+# _extra_domains_file_ok <workspace> — 0 iff <workspace>/.vibe/domains is
+# positively proven to be a local, UNTRACKED file in a real git work tree.
+# Fails closed on every other outcome (no git, not a work tree, git error, a
+# non-git download that happens to ship the file), exactly like _op_opted_in:
+# --error-unmatch exiting 1 means "not tracked" OR "git broke", and its failure
+# alone must never open a hole in the firewall.
+_extra_domains_file_ok() {
+  local ws="$1"
+  if [ "$(git -C "$ws" rev-parse --is-inside-work-tree 2>/dev/null)" != "true" ]; then
+    echo "  ⚠ .vibe/domains present but this workspace isn't a verifiable git work tree — extra firewall domains refused (a file in a non-git download must not widen the firewall). Use VIBE_EXTRA_DOMAINS in ~/.vibe/config instead." >&2
+    return 1
+  fi
+  # :(icase): on macOS's case-folding filesystem a committed .Vibe/Domains
+  # satisfies the -f test while dodging a case-sensitive index lookup.
+  if git -C "$ws" ls-files --error-unmatch ':(icase).vibe/domains' >/dev/null 2>&1; then
+    echo "  ⚠ .vibe/domains is COMMITTED to this repo — ignored (extra firewall domains must be a local, untracked file; a committed list could be forged by a PR). Keep it untracked to enable." >&2
+    return 1
+  fi
+  # No --exclude-standard: .vibe/ is in vibe's managed .gitignore block, so an
+  # ignored-but-untracked file must still be listed here.
+  if [ -z "$(git -C "$ws" ls-files -o -- ':(icase).vibe/domains' 2>/dev/null)" ]; then
+    echo "  ⚠ .vibe/domains could not be positively verified as an untracked file — extra firewall domains refused (fail closed). Use VIBE_EXTRA_DOMAINS in ~/.vibe/config for a trusted non-git project." >&2
+    return 1
+  fi
+  return 0
+}
+
+# resolve_extra_domains <workspace> <config_value>
+# Echoes the resolved extra allowlist hosts, one per line: validated, de-duped
+# (first-seen order preserved) and capped at $EXTRA_DOMAINS_MAX so a runaway
+# list cannot turn container boot into a DNS marathon. Source precedence:
+# <workspace>/.vibe/domains when it exists AND passes _extra_domains_file_ok,
+# else <config_value>. Both accept comma- or whitespace-separated entries with
+# `#` comments. Invalid entries are dropped with a warning rather than failing
+# the launch — one typo in a domain list must not stop the user working.
+resolve_extra_domains() {
+  local ws="$1" config="$2"
+  local raw="" line stripped="" entry out="" n=0 capped=0 had_f=0
+  EXTRA_DOMAINS_SOURCE=""
+  # Pin IFS locally: init-firewall.sh runs under IFS=$'\n\t' (no space), and
+  # this splitting must not be at the mercy of whatever IFS the caller is under.
+  local IFS=$' \t\n'
+
+  # EXTRA_DOMAINS_SOURCE is set HERE, by the branch that actually decides what
+  # to read, and is what the launch header quotes. Re-deriving it later from
+  # `[ -f .vibe/domains ]` would credit a committed file the launcher just
+  # REFUSED — the header is the blast-radius announcement, so naming the wrong
+  # origin for a firewall hole defeats its purpose.
+  if [ -f "$ws/.vibe/domains" ] && _extra_domains_file_ok "$ws"; then
+    raw="$(cat "$ws/.vibe/domains" 2>/dev/null)"
+    EXTRA_DOMAINS_SOURCE=".vibe/domains"
+  else
+    raw="$config"
+    EXTRA_DOMAINS_SOURCE="VIBE_EXTRA_DOMAINS"
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    # CR -> space before anything else: a file saved by a Windows editor leaves
+    # a trailing \r that the LDH validator rejects, so without this the user is
+    # told their own correctly-spelled hostname is invalid with nothing on
+    # screen to explain why. resolve_profile trims CR for the same reason.
+    line="${line//$'\r'/ }"
+    stripped="$stripped ${line%%#*}"
+  done <<< "$raw"
+  stripped="${stripped//,/ }"
+  # Globbing off around the split: an entry like `*.example.com` must reach
+  # validate_extra_domain as a literal to be rejected, never be expanded
+  # against the launcher's working directory first.
+  case "$-" in *f*) had_f=1 ;; esac
+  set -f
+  for entry in $stripped; do
+    if ! validate_extra_domain "$entry"; then
+      echo "  ⚠ vibe: ignoring invalid extra firewall domain '$entry' — entries must be plain DNS hostnames (e.g. api.example.com)." >&2
+      continue
+    fi
+    case " $out " in *" $entry "*) continue ;; esac
+    n=$(( n + 1 ))
+    if [ "$n" -gt "$EXTRA_DOMAINS_MAX" ]; then capped=1; break; fi
+    out="$out $entry"
+  done
+  for entry in $out; do printf '%s\n' "$entry"; done
+  [ "$had_f" = 1 ] || set +f
+  if [ "$capped" = 1 ]; then
+    echo "  ⚠ vibe: extra firewall domains capped at $EXTRA_DOMAINS_MAX entries — the rest were ignored." >&2
+  fi
+  return 0
+}
 
 # resolve_profile <flag_value> <workspace> <config_value>
 # Precedence, first hit wins: <flag_value> (--profile) > <workspace>/.vibe/profile
@@ -3902,6 +4063,17 @@ if declare -F shared_repos_parse >/dev/null 2>&1 && [ -f "$WORKSPACE/.vibe-repos
 fi
 export VIBE_SHARED_ENV_NAMES
 
+# Extra firewall domains (task_041). Resolved here (workspace file > config
+# var, see resolve_extra_domains) and exported as a single space-separated
+# string so ${localEnv:VIBE_EXTRA_DOMAINS} in devcontainer.json crosses into
+# the container, where postStartCommand hands it to init-firewall.sh as ARGV —
+# not as an env var: the sudoers rule for init-firewall.sh sets env_reset, so
+# an exported name would be stripped before the script ever read it.
+# Not a secret, so unlike GITHUB_TOKEN/ZOTERO_API_KEY it is safe at this layer.
+VIBE_EXTRA_DOMAINS="$(resolve_extra_domains "$WORKSPACE" "${VIBE_EXTRA_DOMAINS:-}" | tr '\n' ' ')"
+VIBE_EXTRA_DOMAINS="${VIBE_EXTRA_DOMAINS%"${VIBE_EXTRA_DOMAINS##*[![:space:]]}"}"
+export VIBE_EXTRA_DOMAINS
+
 # Zotero web-API key (optional). Stored alongside the GitHub PATs in
 # ~/.vibe/tokens (chmod 600) under the reserved, slash-free key
 # `ZOTERO_API_KEY` — it can't collide with an `owner/repo` PAT entry. Exported
@@ -4029,6 +4201,12 @@ if [ -n "$OPENPROJECT_MCP_URL" ]; then
   if [ "${VIBE_OP_AUTO:-}" = "1" ]; then _op_why="VIBE_OP_AUTO"; else _op_why=".vibe-allow-op"; fi
   echo "     op      : /op enabled (opted in via ${_op_why})"
 fi
+# Extra firewall domains (task_041): announce them. The container's blast
+# radius is what the launch header says it is, so a hole punched in the
+# firewall must be visible at launch, never silent.
+if [ -n "$VIBE_EXTRA_DOMAINS" ]; then
+  echo "     domains : firewall also allows ${VIBE_EXTRA_DOMAINS} (via ${EXTRA_DOMAINS_SOURCE})"
+fi
 # Shared-repos header (AC4): driven entirely by SHARED_REPOS_SCAN's M/B/N/U
 # tags (see shared_repos_scan's comment) — one ◆ line per MOUNTED repo, one
 # loud ⚠ warning per registered-but-broken repo naming the reason, and
@@ -4081,12 +4259,18 @@ drift_marker="$(image_drift_needs_recreate "$WORKSPACE" "$IMAGE_TAG")"
 # recreate. One container_shared_mounts snapshot feeds both comparators.
 mount_drift=""
 projects_drift=""
+domains_drift=""
 if [ "$REBUILD" != true ] && [ -z "$drift_marker" ]; then
   actual_mounts="$(container_shared_mounts "$WORKSPACE")"
   mount_drift="$(shared_repos_mount_drift "$SHARED_REPOS_SCAN" "$actual_mounts")"
   projects_drift="$(projects_bind_mount_drift "$(vibe_projects_bind_path "$WORKSPACE")" "$actual_mounts")"
+  # task_041: the extra-domain list is consumed by init-firewall.sh from
+  # postStartCommand, which does not re-run against an already-running
+  # container — so a changed list MUST force a recreate or the new domain is
+  # announced but never allowlisted.
+  domains_drift="$(extra_domains_drift "$VIBE_EXTRA_DOMAINS" "$(container_env_value "$WORKSPACE" VIBE_EXTRA_DOMAINS)")"
 fi
-extra_flag="$(remove_existing_flag "$REBUILD" "${drift_marker}${mount_drift}${projects_drift}")"
+extra_flag="$(remove_existing_flag "$REBUILD" "${drift_marker}${mount_drift}${projects_drift}${domains_drift}")"
 [ -n "$extra_flag" ] && UP_ARGS+=("$extra_flag")
 # Print a distinct status line when drift (not --rebuild) triggered the recreate.
 if [ -n "$drift_marker" ] && [ "$REBUILD" != true ]; then
@@ -4099,6 +4283,10 @@ if [ -n "$mount_drift" ]; then
 fi
 if [ -n "$projects_drift" ]; then
   echo "  per-project Claude history bind changed since this container was created - recreating it."
+  echo ""
+fi
+if [ -n "$domains_drift" ]; then
+  echo "  extra firewall domains changed since this container was created - recreating it."
   echo ""
 fi
 

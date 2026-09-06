@@ -45,6 +45,7 @@
     "CLAUDE_CONFIG_DIR": "/home/node/.claude",
     "POWERLEVEL9K_DISABLE_GITSTATUS": "true",
     "VIBE_SSH_AUTO": "${localEnv:VIBE_SSH_AUTO}",
+    "VIBE_EXTRA_DOMAINS": "${localEnv:VIBE_EXTRA_DOMAINS}",
     "GIT_OPTIONAL_LOCKS": "0"
   },
   "remoteEnv": {
@@ -63,6 +64,6 @@
   },
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
   "workspaceFolder": "/workspace",
-  "postStartCommand": "printf %s \"${GITHUB_TOKEN:-}\" | sudo /usr/local/bin/init-firewall.sh && sudo /usr/sbin/avahi-daemon --daemonize --no-drop-root 2>/dev/null || true && /usr/local/bin/setup-ssh.sh && /usr/local/bin/setup-git.sh && /usr/local/bin/write-env-hint.sh && /usr/local/bin/install-claude-extras.sh && /usr/local/bin/register-op-mcp.sh",
+  "postStartCommand": "printf %s \"${GITHUB_TOKEN:-}\" | sudo /usr/local/bin/init-firewall.sh \"${VIBE_EXTRA_DOMAINS:-}\" && sudo /usr/sbin/avahi-daemon --daemonize --no-drop-root 2>/dev/null || true && /usr/local/bin/setup-ssh.sh && /usr/local/bin/setup-git.sh && /usr/local/bin/write-env-hint.sh && /usr/local/bin/install-claude-extras.sh && /usr/local/bin/register-op-mcp.sh",
   "waitFor": "postStartCommand"
 }

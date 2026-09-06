@@ -13,6 +13,7 @@ from smoke.checks_11_patrotation_and_firewall import *
 from smoke.checks_12_harness_lints import *
 from smoke.checks_13_spec_first import *
 from smoke.checks_14_profiles import *
+from smoke.checks_15_extra_domains import *
 
 
 
@@ -599,6 +600,31 @@ def main() -> int:
     test_profiles_ac11_launch_path_structure()
     test_profiles_ac12_docs()
     test_profiles_ac13_vibe_profile_gitignored()
+
+    # task_041: per-project extra firewall domains
+    test_extra_domains_ac1_untracked_file_is_read()
+    test_extra_domains_ac2_config_fallback()
+    test_extra_domains_ac3_file_wins_over_config()
+    test_extra_domains_ac4_comments_and_blanks_ignored()
+    test_extra_domains_ac5_committed_file_refused()
+    test_extra_domains_ac6_non_git_workspace_refused()
+    test_extra_domains_ac7_invalid_hostnames_dropped()
+    test_extra_domains_ac7_valid_hostnames_accepted()
+    test_extra_domains_ac7_no_shell_evaluation()
+    test_extra_domains_ac8_deduped_first_seen_order()
+    test_extra_domains_ac9_capped()
+    test_extra_domains_ac10_firewall_optional_tier_only()
+    test_extra_domains_ac11_firewall_revalidates_argv()
+    test_extra_domains_ac11_argv_splits_under_script_ifs()
+    test_extra_domains_ac16_crlf_file_is_accepted()
+    test_extra_domains_ac16_firewall_strips_cr()
+    test_extra_domains_ac17_source_attribution()
+    test_extra_domains_ac18_drift_comparator()
+    test_extra_domains_ac18_drift_wired_into_launch()
+    test_extra_domains_ac12_shipped_loop_unchanged()
+    test_extra_domains_ac13_devcontainer_plumbing()
+    test_extra_domains_ac14_launcher_exports()
+    test_extra_domains_ac15_docs()
 
     print()
     if FAILURES:

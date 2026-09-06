@@ -293,6 +293,72 @@ resolve_a_records() {
     return 1
 }
 
+# ── Extra domains (task_041) ─────────────────────────────────────────────────
+# $1 is an optional space/comma-separated allowlist EXTENSION, resolved
+# launcher-side from <workspace>/.vibe/domains (untracked) or VIBE_EXTRA_DOMAINS
+# in ~/.vibe/config, and handed over as ARGV because the sudoers rule for this
+# script sets env_reset (an exported name would never survive the sudo).
+#
+# Every entry is re-validated HERE. The launcher already validated it, but this
+# script runs as root and is the thing that actually widens the firewall, so it
+# does not trust the argv it was handed — a compromised or merely buggy caller
+# must not be able to smuggle a token through to `dig`. Extras join the loop at
+# the OPTIONAL tier only: a project's private endpoint failing to resolve is a
+# warning, never a reason to refuse the whole container a network.
+EXTRA_DOMAINS_MAX="${EXTRA_DOMAINS_MAX:-32}"
+
+# validate_extra_domain <token> — 0 iff <token> is a plain dotted DNS hostname.
+# The LDH-label charset excludes every shell metacharacter, glob character,
+# path separator and URL scheme, so a hostile entry cannot become a command;
+# the all-numeric guard rejects a bare IPv4 literal. Kept byte-identical to the
+# launcher's copy in `vibe` — deliberately duplicated, not shared, so neither
+# side depends on the other having run.
+validate_extra_domain() {
+    local d="$1"
+    [ -n "$d" ] || return 1
+    [ "${#d}" -le 253 ] || return 1
+    [[ "$d" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$ ]] || return 1
+    # Spelt as an `if`, not `[[ ]] && return 1`: under `set -e` the && form
+    # makes the whole statement exit 1 on the common (non-matching) path, which
+    # would kill the script the moment this is called outside a condition.
+    if [[ "$d" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then return 1; fi
+    return 0
+}
+
+# EXTRA_DOMAINS is built NEWLINE-separated, and the separators in $1 are
+# normalised to newlines first, because line 3 sets IFS=$'\n\t' — this script
+# does NOT split words on spaces. A space-joined list would arrive at the
+# resolve loop as one unsplittable token, so the allowlist would look
+# configured and quietly allow nothing. _extra_seen keeps a space-joined twin
+# purely for the O(1) duplicate test and the log line.
+EXTRA_DOMAINS=""
+_extra_seen=""
+if [ -n "${1:-}" ]; then
+    _extra_n=0
+    # Globbing off: an entry like `*.example.com` must reach the validator as a
+    # literal to be rejected, not be expanded against the filesystem first.
+    set -f
+    # \r is in the separator set too: a list that came from a CRLF file would
+    # otherwise carry a trailing \r into the validator and be rejected wholesale.
+    for _extra_d in $(printf '%s' "$1" | tr ',\r \t' '\n\n\n\n'); do
+        if ! validate_extra_domain "$_extra_d"; then
+            echo "WARNING: ignoring invalid extra domain '$_extra_d' - not a plain DNS hostname"
+            continue
+        fi
+        case " $_extra_seen " in *" $_extra_d "*) continue ;; esac
+        _extra_n=$(( _extra_n + 1 ))
+        if [ "$_extra_n" -gt "$EXTRA_DOMAINS_MAX" ]; then
+            echo "WARNING: extra domains capped at $EXTRA_DOMAINS_MAX - the rest were ignored"
+            break
+        fi
+        _extra_seen="$_extra_seen $_extra_d"
+        EXTRA_DOMAINS="${EXTRA_DOMAINS}${EXTRA_DOMAINS:+
+}$_extra_d"
+    done
+    set +f
+    [ -n "$_extra_seen" ] && echo "Extra allowlist domains (project-supplied):$_extra_seen"
+fi
+
 # Test hook: stop here when sourced for unit testing, before anything mutates
 # the host's network state.
 if [ -n "${VIBE_FIREWALL_SOURCE_ONLY:-}" ]; then
@@ -391,6 +457,8 @@ done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git)[]' | aggregate -q)
 # destination-IP only, so allowlisting the host covers both ports. Needed to
 # `claude plugin marketplace add` a Radicle-hosted marketplace and to push/fetch
 # `rad://` remotes from inside a container.
+# shellcheck disable=SC2086  # EXTRA_DOMAINS holds validated hostname tokens;
+# word splitting is exactly what turns them into separate loop items.
 for domain in \
     "registry.npmjs.org" \
     "api.anthropic.com" \
@@ -401,7 +469,8 @@ for domain in \
     "statsig.com" \
     "marketplace.visualstudio.com" \
     "vscode.blob.core.windows.net" \
-    "update.code.visualstudio.com"; do
+    "update.code.visualstudio.com" \
+    $EXTRA_DOMAINS; do
     echo "Resolving $domain..."
     # Two tiers (see MUST_HAVE_DOMAINS above). Optional: a domain that fails to
     # resolve (e.g. a decommissioned endpoint) must NOT abort the whole

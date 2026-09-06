@@ -1342,6 +1342,69 @@ profiles present under `~/.vibe/profiles/`) — no container launches.
 
 ---
 
+### Test 52: per-project extra firewall domains (task_041)
+
+Unit-tested host-side; never exercised against real Docker + iptables.
+
+```
+$ cd <a project>
+$ mkdir -p .vibe && printf '%s\n' example.org > .vibe/domains
+$ vibe
+```
+
+**Pass:** the launch header carries
+`domains : firewall also allows example.org (via .vibe/domains)`, the
+postStart output shows `Extra allowlist domains (project-supplied): example.org`
+followed by `Resolving example.org...` / `Adding <ip> for example.org`, and
+in-container `curl -sS -o /dev/null -w '%{http_code}' https://example.org`
+returns a status instead of hanging. A host NOT in the list (say
+`https://example.net`) is still refused.
+
+Then prove the security gate and the failure modes:
+
+```
+$ git add -f .vibe/domains && git commit -m 'try to widen the firewall'
+$ vibe
+```
+
+**Pass:** the launcher warns `.vibe/domains is COMMITTED to this repo — ignored`,
+the `domains :` header line is gone, and `example.org` is refused again.
+(`git reset --hard HEAD~1` to undo.)
+
+```
+$ printf '%s\n' 'not a hostname; rm -rf /' > .vibe/domains && vibe
+```
+
+**Pass:** each malformed entry is named in an `ignoring invalid extra firewall
+domain` warning, nothing is executed, the container still launches, and the
+firewall is otherwise identical to a run with no `.vibe/domains` at all.
+
+```
+$ printf '%s\n' nonexistent-host.invalid > .vibe/domains && vibe
+```
+
+**Pass:** postStart prints `WARNING: could not resolve nonexistent-host.invalid
+- skipping (not allowlisted this run; tier: optional)` and the container boots
+normally — an unresolvable project domain must never fail the launch closed.
+
+Finally, the drift path — the one that makes "edit and relaunch" true. With the
+container from the first step still **running**:
+
+```
+$ printf '%s\n' example.org example.com > .vibe/domains
+$ vibe
+```
+
+**Pass:** vibe prints `extra firewall domains changed since this container was
+created - recreating it`, the container is recreated (not reused), and
+`example.com` is now reachable in-container. Relaunching again with the file
+unchanged must NOT recreate it — no drift line, same container id
+(`docker ps --filter label=devcontainer.local_folder=$PWD -q`). If a changed
+list ever reuses a running container, the header announces a hole the ipset
+does not have, which is the failure this step exists to catch.
+
+---
+
 ## Test Summary
 
 After completing all tests, check:
