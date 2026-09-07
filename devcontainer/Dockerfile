@@ -118,6 +118,7 @@ RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
 
 # Copy and set up firewall script, SSH setup, env hint, and credential helper
 COPY init-firewall.sh /usr/local/bin/
+COPY refresh-extra-domains.sh /usr/local/bin/
 COPY setup-ssh.sh /usr/local/bin/
 COPY setup-git.sh /usr/local/bin/
 COPY write-env-hint.sh /usr/local/bin/
@@ -138,9 +139,23 @@ COPY claude-md /usr/local/share/vibe/claude-md/
 COPY hooks/ /usr/local/share/vibe/hooks/
 COPY git-hooks/ /usr/local/share/vibe/git-hooks/
 USER root
-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/guard-bash.sh /usr/local/bin/guard-fs.sh /usr/local/bin/install-claude-extras.sh /usr/local/bin/check-sp-current.sh /usr/local/bin/register-op-mcp.sh /usr/local/bin/vibe-credential-helper /usr/local/bin/vibe-copy && \
+# refresh-extra-domains.sh (task_042) gets its OWN sudoers entry rather than a
+# widening of the init-firewall.sh rule: it can only ADD to the existing ipset,
+# so granting it does not also grant a whole firewall rebuild. It exists because
+# CDN-fronted extra domains (Akamai, Cloudflare) move edge IPs after
+# init-firewall.sh's boot-time snapshot.
+#
+# The trailing `""` is load-bearing and easy to get backwards: in sudoers a
+# command listed with NO argument list permits ANY arguments, and only an
+# explicit empty string forbids them. Without it, `node` could pass hostnames
+# to a root script whose whole job is widening the firewall. The script body
+# also never reads its own argv, so this is belt and braces — but the rule is
+# what makes it true for every future version of the script.
+RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/refresh-extra-domains.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/guard-bash.sh /usr/local/bin/guard-fs.sh /usr/local/bin/install-claude-extras.sh /usr/local/bin/check-sp-current.sh /usr/local/bin/register-op-mcp.sh /usr/local/bin/vibe-credential-helper /usr/local/bin/vibe-copy && \
   echo "node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/node-firewall && \
   echo "Defaults!/usr/local/bin/init-firewall.sh env_reset" >> /etc/sudoers.d/node-firewall && \
+  echo 'node ALL=(root) NOPASSWD: /usr/local/bin/refresh-extra-domains.sh ""' >> /etc/sudoers.d/node-firewall && \
+  echo "Defaults!/usr/local/bin/refresh-extra-domains.sh env_reset" >> /etc/sudoers.d/node-firewall && \
   echo "node ALL=(root) NOPASSWD: /usr/sbin/avahi-daemon" >> /etc/sudoers.d/node-firewall && \
   chmod 0440 /etc/sudoers.d/node-firewall
 USER node

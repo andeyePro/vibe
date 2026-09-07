@@ -446,6 +446,56 @@ while read -r cidr; do
     ipset add --exist allowed-domains "$cidr"
 done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git)[]' | aggregate -q)
 
+# Persist the validated extra-domain list where refresh-extra-domains.sh can
+# find it (task_042). That script takes NO argv on purpose - a caller must not
+# be able to widen the allowlist by passing a different list - so the names it
+# is allowed to re-resolve have to come from a root-owned file that only this
+# script writes. Written here, immediately before the resolve loop, so it
+# always describes exactly what the firewall was built to allow.
+VIBE_RUN_DIR="${VIBE_RUN_DIR:-/run/vibe}"
+EXTRA_DOMAINS_STATE="$VIBE_RUN_DIR/extra-domains"
+# Best effort, deliberately: this file is bookkeeping for a convenience script,
+# NOT part of the allowlist. Under `set -e` an unwritable /run (a read-only
+# mount, a full tmpfs) would otherwise abort here, the fail_closed trap would
+# fire, and a container that used to boot with a perfectly good firewall would
+# now refuse to start over a missing hint file. Losing the file costs exactly
+# one thing: `refresh-extra-domains.sh` says "no extra domains configured".
+# Refuse a pre-existing /run/vibe that is a symlink or not root-owned: `mkdir
+# -p` would accept it, `chmod 0755` would leave a node-owned directory writable
+# by node, and the redirect below would follow a symlink into wherever it
+# points. refresh-extra-domains.sh makes the mirror-image check on read.
+_extra_state_ok=1
+if [ -L "$VIBE_RUN_DIR" ]; then
+    _extra_state_ok=0
+elif [ -e "$VIBE_RUN_DIR" ]; then
+    if [ ! -d "$VIBE_RUN_DIR" ] || [ "$(stat -c %u "$VIBE_RUN_DIR" 2>/dev/null)" != "$(id -u)" ]; then
+        _extra_state_ok=0
+    fi
+elif ! mkdir -m 0755 "$VIBE_RUN_DIR" 2>/dev/null; then
+    _extra_state_ok=0
+fi
+if [ "$_extra_state_ok" = "1" ] && [ -L "$EXTRA_DOMAINS_STATE" ]; then
+    # Never write through a symlink planted where the list belongs.
+    rm -f "$EXTRA_DOMAINS_STATE" 2>/dev/null || _extra_state_ok=0
+fi
+if [ "$_extra_state_ok" = "1" ]; then
+    if [ -n "$EXTRA_DOMAINS" ]; then
+        if printf '%s\n' "$EXTRA_DOMAINS" > "$EXTRA_DOMAINS_STATE" 2>/dev/null; then
+            chmod 0644 "$EXTRA_DOMAINS_STATE" 2>/dev/null || true
+        else
+            _extra_state_ok=0
+        fi
+    else
+        # No extras this launch: remove any file a previous run left behind, so
+        # a relaunch that dropped .vibe/domains cannot keep refreshing
+        # yesterday's hosts. (postStart re-runs this on every container start.)
+        rm -f "$EXTRA_DOMAINS_STATE" 2>/dev/null || true
+    fi
+fi
+if [ "$_extra_state_ok" != "1" ]; then
+    echo "Note: could not write $EXTRA_DOMAINS_STATE - mid-session domain refresh unavailable (firewall itself is unaffected)"
+fi
+
 # Resolve and add other allowed domains
 # NOTE: statsig.anthropic.com was removed - it has no A record (decommissioned)
 # and was the exact domain whose resolution failure tripped the old fail-open

@@ -28,17 +28,20 @@ If a user pointed you at this file and asked you to take them through vibe onboa
 - Every test that sources `install-claude-extras.sh`, runs a `vibe learn` argv, or sources `init-firewall.sh` builds its subprocess `env` through `smoke/_core.py`'s `_isolate_extras_env` (or `_fw_run`, which itself calls the builder) — never an inline `{**os.environ, ...}` literal. The builder sandboxes HOME/CLAUDE_CONFIG_DIR/GIT_CONFIG_GLOBAL/GH_META_CACHE so a fixture run can never read or write the real `~/.claude` state or `~/.claude/vibe-firewall/gh-meta-cache.json`; overriding a key afterward (e.g. to the test's own fixture path) is fine, an env built without the call is not.
 - No permanent test pins a fixed commit sha as its baseline — the tree at a given sha drifts the moment a later commit touches the pinned path (task_028/029 broke this way). A `git show <sha>:`/`git diff <sha>` literal in `smoke/*.py` must be registered in `HISTORICAL_PINS_ALLOWED` (`smoke/_core.py`) with a one-line reason; `HEAD` and shas a test generates at runtime against its own throwaway repo don't need an entry.
 
-## On session start: surface Martin's review pile
+## The review pile is pull, not push — fromClaude is the push channel
 
-`TODO.md` opens with a `## For Martin (review and decide)` section. This is the boot-time checklist of items waiting on Martin's hands or judgement.
+`TODO.md` opens with a `## For Martin (review and decide)` section. `/brain2/andeye/vibe-fromClaude.md` is the channel Martin actually reads.
 
-**Every fresh session in this repo, your opening response MUST:**
+**Do NOT list the pile unprompted.** Not at session start, not appended to an unrelated answer. Martin asked for this explicitly (2026-09-07): re-reading the same backlog every time he asks something unrelated spends output tokens he didn't ask for. Surface it only when he asks — "what's outstanding", "what needs me", "walk me through the pile", or a `/vss`-style request to pick work off it.
 
-1. Read `TODO.md` and locate the `## For Martin (review and decide)` section.
-2. List its unticked `[ ]` items in your opening message, grouped by sub-heading (Push and CI / GreenPT / AEP-Plugin / Mac-side empirical / Design decisions / Small bounded items I can ship).
-3. Offer to walk Martin through any of them, or to start the autonomous-shippable items in the last group.
+**Everything you need Martin to do or respond to goes in `vibe-fromClaude.md`** — his correction, 2026-09-07, overriding an earlier split that kept hands-on tasks out of it. That includes:
 
-Do NOT skip this step on the assumption Martin remembers the state — the whole point of the review pile is that he doesn't have to. Surfacing it costs ~10 lines of text and saves him scrolling through TODO.md, CHANGELOG.md, and `.vss/sessions/*.md` to reconstruct what's outstanding.
+- decisions and questions (approve a spec, pick an option, answer a design call), AND
+- hands-on tasks — run a manual test and report what you see, launch something and check it looks right, paste a file, push a batch, create a key.
+
+If it needs his hands or his judgement, it is an item in that file. The only things that stay TODO-only are work Claude can do without him.
+
+Format: one contiguous ordered list, per `/brain2/meta/fromto-format.md` — plain English, one action point per item, no internal jargon (restate what each thing is; see the auto-memory on this). Append new items rather than renumbering, so answers-by-number can't go stale. `TODO.md` remains the full backlog with the detail; fromClaude is the short actionable face of it.
 
 Tick items off (`[ ]` → `[x]`) only when Martin confirms an action complete OR when an autonomous run from `## Small bounded items I can ship without further input` lands a closing commit. Don't tick on assumption.
 

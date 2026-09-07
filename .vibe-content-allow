@@ -72,3 +72,13 @@ path-warn:smoke/*
 .*github_pat_11ABCDEFG0123456789abcdefghij.*
 .*/Users/<name>.*
 path-warn:site/demo/*
+
+# task_042: sudoers rules name a script PATH after "NOPASSWD:", which the
+# secret-assignment rule reads as `PASSWD: <long value>`. A filesystem path is
+# not a credential, and the value is always /usr/local/bin/<script>.sh.
+# Appears in devcontainer/Dockerfile, TODO.md and smoke/checks_16_*.py.
+.*NOPASSWD: /usr/local/bin/[A-Za-z0-9_-]+\.sh.*
+# task_042 TODO entry: the well-known cloud-metadata link-local address, named
+# in a security note about which A records the firewall does NOT reject. Not a
+# host this repo talks to.
+.*169\.254\.169\.254.*

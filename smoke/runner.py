@@ -14,6 +14,7 @@ from smoke.checks_12_harness_lints import *
 from smoke.checks_13_spec_first import *
 from smoke.checks_14_profiles import *
 from smoke.checks_15_extra_domains import *
+from smoke.checks_16_domain_refresh import *
 
 
 
@@ -628,6 +629,20 @@ def main() -> int:
     test_extra_domains_ac13_devcontainer_plumbing()
     test_extra_domains_ac14_launcher_exports()
     test_extra_domains_ac15_docs()
+    test_refresh_ac1_ac2_ac6_script_shape()
+    test_refresh_ac3_ac4_state_file_written()
+    test_refresh_ac5_dockerfile_and_sudoers()
+    test_refresh_ac7_ac8_resolve_and_add()
+    test_refresh_ac7_rejects_malformed_dns_answer()
+    test_refresh_ac13_cap()
+    test_refresh_ac9_no_state_file()
+    test_refresh_ac10_missing_ipset()
+    test_refresh_ac11_ac12_exit_contract()
+    test_refresh_ac14_fragment_content()
+    test_refresh_ac15_fragment_gated_on_extra_domains()
+    test_refresh_ac17_state_file_provenance()
+    test_refresh_ac18_numeric_env_validated()
+    test_refresh_ac16_docs()
 
     print()
     if FAILURES:

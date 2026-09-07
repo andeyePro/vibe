@@ -166,6 +166,14 @@ install_claude_md_fragments() {
       if [ "$(basename "$f")" = "brain2.md" ] && [ ! -d "${VIBE_BRAIN2_MOUNT_DIR:-/brain2}" ]; then
         continue
       fi
+      # extra-domains-refresh.md (task_042) teaches the reactive fix for a
+      # boot-pinned CDN address going stale mid-session. Only relevant when
+      # this project actually allowlisted extra domains — a vibe with none
+      # has no host that can go stale, so the fragment would be pure noise.
+      if [ "$(basename "$f")" = "extra-domains-refresh.md" ] \
+         && [ -z "${VIBE_EXTRA_DOMAINS:-}" ]; then
+        continue
+      fi
       # shared-repos.md (task_017 Cycle 3, AC14) documents the /repos/<name>
       # mount + claim/etiquette rules; only relevant when at least one shared
       # repo is actually mounted this launch. Gated on the runtime manifest

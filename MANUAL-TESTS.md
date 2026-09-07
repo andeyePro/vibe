@@ -1405,6 +1405,78 @@ does not have, which is the failure this step exists to catch.
 
 ---
 
+### Test 53: mid-session refresh of a CDN-fronted extra domain (task_042)
+
+Unit-tested host-side with stubbed `dig`/`ipset`; never exercised against real
+Docker + iptables. Needs an extra domain that actually sits behind a CDN —
+`api.xero.com` is the case this was written for; any Akamai/Cloudflare-fronted
+API will do.
+
+```
+$ cd <a project>
+$ mkdir -p .vibe && printf '%s\n' api.xero.com > .vibe/domains
+$ vibe
+```
+
+Inside the container, confirm the state file init-firewall.sh wrote:
+
+```
+$ cat /run/vibe/extra-domains
+```
+
+**Pass:** it lists `api.xero.com`, one host per line, and nothing else. A
+project with no extra domains must have NO such file (check a plain vibe:
+`ls /run/vibe/extra-domains` → No such file).
+
+Now prove the refresh is additive and idempotent, with the firewall live:
+
+```
+$ sudo ipset list allowed-domains | wc -l
+$ sudo /usr/local/bin/refresh-extra-domains.sh
+$ sudo /usr/local/bin/refresh-extra-domains.sh
+$ sudo ipset list allowed-domains | wc -l
+```
+
+**Pass:** the first run prints `allowed <ip> (api.xero.com)` lines and a
+`re-resolved 1 domain(s)` summary; the second is a clean no-op (same summary,
+no new `allowed` lines) because `ipset -exist add` is idempotent. The set only
+ever grows — never check for entries disappearing. Crucially, `curl -sS -o
+/dev/null -w '%{http_code}' https://api.github.com/zen` must still answer
+after both runs: the refresh must not have disturbed the GitHub ranges.
+
+The real test is the staleness itself, which needs elapsed time:
+
+```
+(leave the session open for several hours, then)
+$ curl -sS -o /dev/null -w '%{http_code}' https://api.xero.com
+```
+
+**Pass:** if it now returns `000`, `sudo /usr/local/bin/refresh-extra-domains.sh`
+followed by the same curl returns a real status code (`401` for api.xero.com
+unauthenticated). That round trip is the whole feature. If the curl still
+answers after hours, the CDN simply hasn't moved — not a failure, just an
+inconclusive run; retry another day or use a shorter-TTL host.
+
+Finally the guard rails:
+
+```
+$ sudo /usr/local/bin/refresh-extra-domains.sh extra.example.com
+```
+
+**Pass:** sudo REFUSES the command (`Sorry, user node is not allowed to
+execute ...`), because the sudoers rule grants the script with no arguments.
+A caller must not be able to widen the allowlist through this path.
+
+And in a project with no extra domains at all:
+
+**Pass:** `sudo /usr/local/bin/refresh-extra-domains.sh` exits 0 with
+`no extra domains configured for this project`, and `~/.claude/CLAUDE.md`
+contains NO `extra-domains-refresh.md` fragment (it is gated on
+`VIBE_EXTRA_DOMAINS` being non-empty). In the project that HAS them, the
+fragment is present and names the command.
+
+---
+
 ## Test Summary
 
 After completing all tests, check:
