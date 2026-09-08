@@ -145,7 +145,9 @@ Then `ssh -i /workspace/.vibe/mac-bridge <account>@host.docker.internal` runs th
 
 ### Code review on demand
 
-`/review` runs Claude's own code review on the working diff (or a PR, branch, or path you name) and merges in any enabled outside-reviewer slots (Gemini, Codex). Today it is Claude-only: both outside slots stay disabled until you opt in with an API key and a firewall entry, so nothing outside Anthropic is contacted by default. `--solo` makes that explicit; `--comment` is the only way findings post back to GitHub.
+`/review` runs Claude's own code review on the working diff (or a PR, branch, or path you name) and merges in any enabled outside-reviewer slots. It is Claude-only until you opt in, so nothing outside Anthropic is contacted by default. `--solo` makes that explicit; `--comment` is the only way findings post back to GitHub.
+
+The **Gemini** slot is wired and self-enabling: put a key in `~/.vibe/tokens` as `GEMINI_API_KEY=<key>` and add `generativelanguage.googleapis.com` to the project's `.vibe/domains`, and the next launch fans out to it. The key travels by `remoteEnv` only, exactly like your GitHub PAT — it never reaches the firewall or postStart layer — and the slot only ever receives a diff and returns text: no shell, no writes. The allowlist entry goes in `.vibe/domains` rather than the shipped list because Google's endpoint is CDN-fronted, and only per-project domains get the mid-session `refresh-extra-domains.sh` re-resolve. Note that Google Workspace accounts are **not** allocated the Gemini API free tier — a key minted from a Workspace identity needs Cloud billing on its project; a personal Google account is the free-tier route. The **Codex** slot remains documented but unwired.
 
 ### Second brain (optional)
 

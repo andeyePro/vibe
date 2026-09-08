@@ -6,7 +6,8 @@ description: Claude code-review on the working diff plus opt-in outside-reviewer
 
 One command: Claude's own code-review on a diff, plus any enabled outside-reviewer slots, merged into one verdict.
 
-Today /review is Claude-only: the fan-out has zero enabled slots.
+The `gemini` slot is wired: it runs whenever `GEMINI_API_KEY` is present in the
+container. With no key, /review is Claude-only.
 
 Usage: `/review [--solo] [--level low|medium|high|max] [--slot <name>] [--comment] [<target>]`
 
@@ -27,16 +28,34 @@ Default level: `high`. Default target: the working diff. `<target>` may instead 
 - --comment is GitHub-outward like push: /vss and /vsss treat it as hard-escalate, never auto-fired.
 - `<target>` — PR number, branch, or path. Default: the working diff.
 
-With zero enabled slots the default fan-out is identical to --solo.
+With no key present the default fan-out is identical to --solo.
+
+## Invoking the gemini slot
+
+Send the same diff Claude reviewed, ask for the same finding shape, and treat the reply as one reviewer's verdict into `## Merge`. Never send anything but the diff and the review instruction.
+
+```bash
+jq -Rs '{contents:[{parts:[{text:.}]}]}' <<<"$(git diff)$(printf '\n\nReview this diff. List correctness bugs only, as: SEVERITY file:line - one sentence. No praise, no style notes.')" \
+  | curl -sS -X POST \
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent" \
+      -H "x-goog-api-key: $GEMINI_API_KEY" -H 'Content-Type: application/json' --data-binary @- \
+  | jq -r '.candidates[0].content.parts[0].text'
+```
+
+If the model id 404s, a preview has retired: swap it here for a current one (`gemini-3.5-flash` is the GA fallback). If the call fails with a connection error or HTTP 000, run `sudo /usr/local/bin/refresh-extra-domains.sh` once and retry before reporting it — the edge has moved.
+
+The slot is read-only by construction: it receives a diff and returns text. It never gets a shell, never writes, and its findings reach GitHub only through `--comment`, same as Claude's.
 
 ## Slot registry
 
 | slot | enabled | needs |
 |---|---|---|
-| gemini | no | `GEMINI_API_KEY` in `~/.vibe/tokens`; a firewall allowlist entry |
-| codex | no | a ChatGPT subscription |
+| gemini | auto | `GEMINI_API_KEY` in `~/.vibe/tokens`; `generativelanguage.googleapis.com` in the project's `.vibe/domains` |
+| codex | no | a ChatGPT subscription that entitles the account to the model; Codex CLI >= 0.153.0 in the image |
 
-A slot is enabled only when every item in its needs column exists; enabling a slot is Martin's step, never this command's.
+A slot is enabled only when every item in its needs column exists. `auto` means this command detects the condition at run time and needs no flip; `no` means the slot is documented but not wired, and wiring it is Martin's step, never this command's.
+
+The allowlist entry belongs in `.vibe/domains` (per-project, untracked), NOT in the shipped `init-firewall.sh` list: `generativelanguage.googleapis.com` is CDN-fronted and moves edges within the hour, and only extra domains are covered by `sudo /usr/local/bin/refresh-extra-domains.sh`. A shipped entry would go stale mid-session with no in-container fix.
 
 ## Merge
 

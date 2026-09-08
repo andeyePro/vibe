@@ -483,9 +483,13 @@ def test_review_command_docs() -> None:
     if review_path.exists():
         review_text = review_path.read_text()
 
-        # The plain sentence about Claude-only
-        check("[review] AC2: Claude-only sentence",
-              "Today /review is Claude-only: the fan-out has zero enabled slots." in review_text, "")
+        # task_043: the gemini slot is wired, so the old "zero enabled slots"
+        # sentence is gone. What must hold now is that the slot is key-gated and
+        # that the no-key state is still Claude-only.
+        check("[review] AC2: gemini slot is key-gated",
+              "runs whenever `GEMINI_API_KEY` is present" in review_text, "")
+        check("[review] AC2: no-key state is still Claude-only",
+              "With no key, /review is Claude-only." in review_text, "")
 
         # Usage line
         usage_line = "/review [--solo] [--level low|medium|high|max] [--slot <name>] [--comment] [<target>]"
@@ -517,8 +521,8 @@ def test_review_command_docs() -> None:
 
         # Check for gemini and codex rows with no enabled status using regex
         import re
-        check("[review] AC3: gemini row has enabled=no",
-              re.search(r'^\|\s*gemini\s*\|\s*no\s*\|', review_text, re.MULTILINE) is not None,
+        check("[review] AC3: gemini row has enabled=auto (task_043 wired it)",
+              re.search(r'^\|\s*gemini\s*\|\s*auto\s*\|', review_text, re.MULTILINE) is not None,
               "")
 
         check("[review] AC3: codex row has enabled=no",
@@ -529,14 +533,23 @@ def test_review_command_docs() -> None:
         check("[review] AC3: gemini needs GEMINI_API_KEY",
               "GEMINI_API_KEY" in review_text, "")
 
-        check("[review] AC3: gemini needs firewall allowlist entry",
-              "a firewall allowlist entry" in review_text, "")
+        check("[review] AC3: gemini needs the API host allowlisted",
+              "generativelanguage.googleapis.com" in review_text, "")
+
+        # task_043: the entry must be per-project (.vibe/domains), NOT the
+        # shipped list — only extra domains get the mid-session re-resolve, and
+        # the Google endpoint is CDN-fronted.
+        check("[review] AC3: allowlist entry is per-project, not shipped",
+              ".vibe/domains" in review_text
+              and "NOT in the shipped `init-firewall.sh` list" in review_text, "")
+        check("[review] AC3: shipped firewall list untouched by the gemini slot",
+              "generativelanguage" not in (REPO / "devcontainer" / "init-firewall.sh").read_text(), "")
 
         check("[review] AC3: codex needs ChatGPT subscription",
               "a ChatGPT subscription" in review_text, "")
 
         # Check for the key sentence about slot enablement
-        slot_sentence = "A slot is enabled only when every item in its needs column exists; enabling a slot is Martin's step, never this command's."
+        slot_sentence = "A slot is enabled only when every item in its needs column exists."
         check("[review] AC3: slot enablement sentence",
               slot_sentence in review_text, "")
 
@@ -599,8 +612,8 @@ def test_review_command_docs() -> None:
         check("[review] AC5: --comment is GitHub-outward",
               "never posts to GitHub unless --comment is passed" in review_text, "")
 
-        check("[review] AC5: default fan-out matches solo",
-              "With zero enabled slots the default fan-out is identical to --solo." in review_text, "")
+        check("[review] AC5: default fan-out matches solo when no key",
+              "With no key present the default fan-out is identical to --solo." in review_text, "")
 
         check("[review] AC5: comment is hard-escalate",
               "--comment is GitHub-outward like push: /vss and /vsss treat it as hard-escalate, never auto-fired." in review_text, "")
@@ -640,12 +653,15 @@ def test_review_command_docs() -> None:
 
     if claude_md_path.exists():
         claude_text = claude_md_path.read_text()
-        claude_lines = claude_text.split('\n')
-
-        # Line 13 (index 12) should contain /review in project context shipped-extras
-        check("[review] AC7: CLAUDE.md line 13 mentions /review",
-              len(claude_lines) > 12 and "/review" in claude_lines[12],
-              f"line 13: {claude_lines[12] if len(claude_lines) > 12 else 'N/A'}")
+        # task_043: this asserted "/review is on CLAUDE.md line 13", which broke
+        # the moment an unrelated bullet was inserted above it (it had never run
+        # — the whole function was unregistered). Pin the CONTENT instead: the
+        # shipped-extras bullet must list /review among the commands.
+        extras_line = next(
+            (ln for ln in claude_text.split("\n")
+             if ln.lstrip().startswith("- Shipped extras:")), "")
+        check("[review] AC7: CLAUDE.md shipped-extras bullet lists /review",
+              "/review" in extras_line, f"shipped-extras bullet: {extras_line[:160]}")
 
     if manual_tests_path.exists():
         manual_tests_text = manual_tests_path.read_text()
@@ -667,3 +683,82 @@ def test_review_command_docs() -> None:
               "/review" in changelog_text and "task_039" in changelog_text, "")
 
     print("[review] all sentinel checks completed")
+
+
+def test_gemini_slot_wiring() -> None:
+    """task_043: the /review `gemini` outside-reviewer slot is wired end to end.
+
+    Three properties, none of which the doc-string checks above can see:
+      - the launcher resolves GEMINI_API_KEY from ~/.vibe/tokens, and the
+        slash-free key does not collide with an `owner/repo` PAT line;
+      - the value crosses into the container by remoteEnv ONLY — never
+        containerEnv, which is the layer the firewall/postStart step reads, so
+        the secret must not be reachable from it;
+      - the key never appears in postStartCommand.
+    """
+    print("\n[gemini] /review slot wiring (task_043)")
+
+    # ── launcher: lookup_token resolves the reserved slash-free key ──────────
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        env = {
+            **os.environ,
+            "HOME": str(tmp),
+            "VIBE_CONFIG": f"{tmp}/no-config",
+            "VIBE_SOURCE_ONLY": "1",
+        }
+        script = f"""
+        set -e
+        source {shlex.quote(str(VIBE))}
+        save_token "amybo/vibe" "ghp_repo"
+        save_token "GEMINI_API_KEY" "AIzaTestKey=="
+        echo "GEMINI=$(lookup_token GEMINI_API_KEY)"
+        echo "REPO=$(lookup_token amybo/vibe)"
+        """
+        r = run(["bash", "-c", script], env=env)
+        check("[gemini] token helpers run cleanly", r.returncode == 0, r.stderr)
+        check("[gemini] key resolves whole (trailing '=' padding kept)",
+              "GEMINI=AIzaTestKey==" in r.stdout, r.stdout)
+        check("[gemini] repo PAT still resolves (no slash-free collision)",
+              "REPO=ghp_repo" in r.stdout, r.stdout)
+
+    # ── launcher exports it at top-level scope (not inside a subshell) ───────
+    vibe_text = VIBE.read_text()
+    check("[gemini] launcher looks the key up from the tokens file",
+          'GEMINI_API_KEY=$(lookup_token "GEMINI_API_KEY")' in vibe_text, "")
+    check("[gemini] launcher exports it",
+          "\nexport GEMINI_API_KEY\n" in vibe_text, "")
+
+    # ── devcontainer.json: remoteEnv only, never containerEnv ────────────────
+    dc = json.loads((REPO / "devcontainer" / "devcontainer.json").read_text())
+    check("[gemini] GEMINI_API_KEY is a remoteEnv passthrough",
+          dc.get("remoteEnv", {}).get("GEMINI_API_KEY") == "${localEnv:GEMINI_API_KEY}",
+          str(dc.get("remoteEnv", {}).get("GEMINI_API_KEY")))
+    check("[gemini] GEMINI_API_KEY is NOT in containerEnv (secret layer)",
+          "GEMINI_API_KEY" not in dc.get("containerEnv", {}),
+          str(list(dc.get("containerEnv", {}))))
+    check("[gemini] GEMINI_API_KEY never reaches postStartCommand",
+          "GEMINI" not in dc.get("postStartCommand", ""),
+          dc.get("postStartCommand", "")[:160])
+
+    # ── the AC4 golden was hand-edited to match (not regenerated) ────────────
+    golden = json.loads(TASK034_GOLDEN_DEVCONTAINER_RENDER_OP_OFF)
+    check("[gemini] AC4 golden carries the same remoteEnv entry",
+          golden.get("remoteEnv", {}).get("GEMINI_API_KEY") == "${localEnv:GEMINI_API_KEY}",
+          "golden not updated for the new remoteEnv key")
+    check("[gemini] AC4 golden keeps GEMINI_API_KEY out of containerEnv",
+          "GEMINI_API_KEY" not in golden.get("containerEnv", {}), "")
+
+    # ── review.md carries a usable, read-only invocation ─────────────────────
+    review_text = (REPO / "devcontainer" / "commands" / "review.md").read_text()
+    for needle, label in [
+        ("generativelanguage.googleapis.com", "API host"),
+        (":generateContent", "endpoint verb"),
+        ("x-goog-api-key: $GEMINI_API_KEY", "auth header"),
+        ("refresh-extra-domains.sh", "stale-edge retry"),
+    ]:
+        check(f"[gemini] recipe names the {label}", needle in review_text, "")
+    check("[gemini] slot is documented as read-only",
+          "It never gets a shell, never writes" in review_text, "")
+
+    print("[gemini] all wiring checks completed")

@@ -4107,6 +4107,19 @@ vibe_resolve_extra_domains_for_launch "$WORKSPACE" "${VIBE_EXTRA_DOMAINS:-}"
 ZOTERO_API_KEY=$(lookup_token "ZOTERO_API_KEY")
 export ZOTERO_API_KEY
 
+# Gemini API key (optional) — the /review `gemini` outside-reviewer slot.
+# Same shape and same reasoning as ZOTERO_API_KEY above: stored in
+# ~/.vibe/tokens (chmod 600) under the reserved, slash-free key
+# `GEMINI_API_KEY` (no collision with an `owner/repo` PAT entry), exported so
+# ${localEnv:GEMINI_API_KEY} resolves, and passed via remoteEnv ONLY — never
+# containerEnv, so the secret never reaches the firewall/postStart layer.
+# Empty when unset, which is the off state: /review's gemini slot is enabled
+# iff this is non-empty in the container, so a user with no key simply gets
+# the Claude-only fan-out. The key's own Google account decides the billing
+# tier; vibe neither knows nor cares which.
+GEMINI_API_KEY=$(lookup_token "GEMINI_API_KEY")
+export GEMINI_API_KEY
+
 # OpenProject MCP (optional). The self-hosted OP MCP is deployed as a
 # tailnet-only HTTPS sidecar; its endpoint URL + bearer are staged in
 # ~/.vibe/tokens (chmod 600) under the reserved, slash-free keys
