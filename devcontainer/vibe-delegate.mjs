@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // One-shot vendor CLI boundary. Never read, copy, log, or proxy an auth cache.
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, rmSync, lstatSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, lstatSync, existsSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -113,6 +113,13 @@ function codexVersionOk(cwd, env) {
 }
 
 function codexReady(cwd, env) {
+  // The login dir is mounted only into projects that opted in; without it the
+  // login probe would fail with a misleading "sign in" message.
+  if (!existsSync(env.CODEX_HOME)) {
+    fail('Codex login dir is not mounted in this container: this project has not opted in. ' +
+      'On the Mac, in the project folder: create the untracked .vibe-allow-codex marker, ' +
+      'add chatgpt.com, api.openai.com and auth.openai.com to .vibe/domains, then relaunch vibe');
+  }
   codexVersionOk(cwd, env);
   const result = spawnSync('codex', ['-c', 'cli_auth_credentials_store="file"', 'login', 'status'],
     { cwd, env, input: '', encoding: 'utf8', timeout: 15000 });

@@ -12,6 +12,7 @@ DELEGATE = REPO / "devcontainer/vibe-delegate.mjs"
 def _delegate_fixture(root):
     home = root / "home"
     home.mkdir()
+    (home / ".codex").mkdir()
     bins = root / "bin"
     bins.mkdir()
     workspace = root / "repo"
@@ -144,6 +145,13 @@ def test_delegate_failures():
                 check(f"[delegate] {label} invokes no model", len(calls) == 2, str(calls))
             if label in ("old CLI", "unparseable version"):
                 check(f"[delegate] {label} stops before the login probe", len(calls) == 1, str(calls))
+        # No login dir at all (project not opted in): name the opt-in, make no call.
+        import shutil
+        shutil.rmtree(home / ".codex", ignore_errors=True)
+        r, calls = _delegate_call(workspace, home, env, ["ask", "astra"])
+        check("[delegate] unmounted login dir names the per-project opt-in and makes no call",
+              r.returncode != 0 and not calls and ".vibe-allow-codex" in r.stderr, r.stderr)
+        (home / ".codex").mkdir()
         for args, payload in [(["ask", "unknown"], "task"), (["ask", "astra"], ""),
                               (["ask", "astra", "--bypass"], "task")]:
             r, calls = _delegate_call(workspace, home, env, args, payload=payload)
