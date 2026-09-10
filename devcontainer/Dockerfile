@@ -12,6 +12,7 @@ ARG TZ
 ENV TZ="$TZ"
 
 ARG CLAUDE_CODE_VERSION=latest
+ARG CODEX_VERSION=0.154.0
 
 # Install basic development tools and iptables/ipset
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -112,8 +113,9 @@ RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/
 # zsh sessions inherit the same locale as everything else.
 RUN sed -i 's/en_US\.UTF-8/C.UTF-8/g; s/en_US:en/C/g' /home/node/.zshrc
 
-# Install Claude
+# Install the vendors' unmodified CLIs; Codex uses the host's subscription login.
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
+RUN npm install -g @openai/codex@${CODEX_VERSION}
 
 
 # Copy and set up firewall script, SSH setup, env hint, and credential helper
@@ -129,6 +131,7 @@ COPY check-sp-current.sh /usr/local/bin/
 COPY register-op-mcp.sh /usr/local/bin/
 COPY credential-helper.sh /usr/local/bin/vibe-credential-helper
 COPY vibe-copy.sh /usr/local/bin/vibe-copy
+COPY vibe-delegate.mjs /usr/local/bin/vibe-delegate
 # Curated Claude Code agents + slash commands. Staged under /usr/local/share
 # because /home/node/.claude is a persistent Docker volume at runtime — files
 # COPY'd there at build time would be shadowed. install-claude-extras.sh syncs

@@ -232,11 +232,12 @@ def test_vibe_copy_watcher_noop_on_non_darwin() -> None:
     print("\n[/c AC19d: watcher is no-op on non-Darwin]")
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
-        # Run the watcher directly with VIBE_COPY_WATCHER_FORCE not set (defaults to 0)
-        # This ensures Darwin guard is checked
-        env = {**os.environ}
-        # Unset VIBE_COPY_WATCHER_FORCE if it exists
+        # Exercise the headless Linux branch even when this suite runs on a
+        # Mac; using the real Darwin uname starts an endless clipboard watcher.
+        shim = _make_uname_shim(tmp, "Linux")
+        env = {**os.environ, "PATH": f"{shim}{os.pathsep}{os.environ.get('PATH', '')}"}
         env.pop("VIBE_COPY_WATCHER_FORCE", None)
+        env.pop("VIBE_COPY_CMD", None)
 
         r = run(["bash", str(VIBE_COPY_WATCHER), str(tmp)], env=env)
         check("[/c] watcher exits 0 on non-Darwin", r.returncode == 0,

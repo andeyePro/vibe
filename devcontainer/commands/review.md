@@ -4,19 +4,22 @@ description: Claude code-review on the working diff plus opt-in outside-reviewer
 
 # /review
 
-One command: Claude's own code-review on a diff, plus any enabled outside-reviewer slots, merged into one verdict.
-
-The `gemini` slot is wired: it runs whenever `GEMINI_API_KEY` is present in the
-container. With no key, /review is Claude-only.
+The `gemini` slot runs whenever `GEMINI_API_KEY` is present and the project enables it.
+The `codex` slot uses a ChatGPT subscription through Codex CLI.
+Without available outside slots, /review is Claude-only.
 
 Usage: `/review [--solo] [--level low|medium|high|max] [--slot <name>] [--comment] [<target>]`
 
-Default level: `high`. Default target: the working diff. `<target>` may instead be a PR number, a branch, or a path.
+Default: `high`, the working diff; alternatively a PR, branch, or path.
 
 ## What it does
 
+Resolve the shared diff snapshot before dispatching either leg.
+
 1. Run `Skill(skill: "code-review", args: "<level> [<target>]")` — Claude's own review, always.
-2. Run every ENABLED slot from the registry below (none today) on the same target.
+2. Unless `--solo`, read `node /usr/local/bin/vibe-delegate slots` from the repo root.
+   Run every available, enabled slot below, or only the explicitly requested `--slot`.
+   A policy error stops fan-out and is reported; never ignore it to enable reviewers.
 3. Merge Claude's findings with every slot's findings per `## Merge`, and print one `## Review verdict` block.
 
 ## Flags
@@ -28,39 +31,71 @@ Default level: `high`. Default target: the working diff. `<target>` may instead 
 - --comment is GitHub-outward like push: /vss and /vsss treat it as hard-escalate, never auto-fired.
 - `<target>` — PR number, branch, or path. Default: the working diff.
 
-With no key present the default fan-out is identical to --solo.
+With no available outside slots the default fan-out is identical to --solo.
+`--solo --slot` is contradictory: refuse it. Disabled means disabled even with `--slot`.
+Report skipped slots and their missing prerequisite; never count absence as agreement.
 
 ## Invoking the gemini slot
 
-Send the same diff Claude reviewed, ask for the same finding shape, and treat the reply as one reviewer's verdict into `## Merge`. Never send anything but the diff and the review instruction.
+Resolve the target ONCE and save a private diff file for all reviewers: working tree
+means staged plus unstaged (`git diff HEAD`); identify untracked files separately.
+For a branch use its merge-base diff; for a PR obtain its diff; for a path filter
+the working diff. Claude reviews that same snapshot. Never substitute plain
+`git diff` for a named target. Send only the diff and review instructions.
 
 ```bash
-jq -Rs '{contents:[{parts:[{text:.}]}]}' <<<"$(git diff)$(printf '\n\nReview this diff. List correctness bugs only, as: SEVERITY file:line - one sentence. No praise, no style notes.')" \
-  | curl -sS -X POST \
+jq -Rs '{contents:[{parts:[{text:(. + "\nReview this diff. List correctness bugs only: SEVERITY file:line - one sentence.")}]}]}' < "$diff_file" \
+  | curl --fail-with-body -sS --connect-timeout 10 --max-time 600 -X POST \
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent" \
       -H "x-goog-api-key: $GEMINI_API_KEY" -H 'Content-Type: application/json' --data-binary @- \
-  | jq -r '.candidates[0].content.parts[0].text'
+  | jq -er '.candidates[0].content.parts[0].text | select(length > 0)'
 ```
 
-If the model id 404s, a preview has retired: swap it here for a current one (`gemini-3.5-flash` is the GA fallback). If the call fails with a connection error or HTTP 000, run `sudo /usr/local/bin/refresh-extra-domains.sh` once and retry before reporting it — the edge has moved.
+It never gets a shell, never writes. Failure or refusal is never a PASS.
+For a connection error, run `sudo /usr/local/bin/refresh-extra-domains.sh` once
+and retry once. No retry loop or silent model substitution.
 
-The slot is read-only by construction: it receives a diff and returns text. It never gets a shell, never writes, and its findings reach GitHub only through `--comment`, same as Claude's.
+## Invoking the codex slot
+
+Check prerequisites using `node /usr/local/bin/vibe-delegate status codex`.
+Send the SAME saved diff, batched once, from the repo root:
+
+```bash
+node /usr/local/bin/vibe-delegate review codex < "$diff_file"
+```
+
+The helper uses `codex exec -m gpt-6-astra --output-schema … --json` because
+`codex review` in 0.154.0 lacks `--output-schema`. It runs a fresh, ephemeral,
+read-only process outside the repository with shell/MCP/apps disabled, passing
+only the diff. Codex alone accesses its login; never inspect its auth file.
+Parse JSON `findings` (severity/file/line/message), `verdict`, `summary`, and
+`usage`. The helper validates types, required fields and completion metadata.
+Never recover findings by parsing prose. Invalid JSON, missing usage, login or
+quota failure, refusal, or any nonzero exit must appear as an incomplete slot;
+final verdict is at least SPLIT until reviewed, never a silent PASS.
 
 ## Slot registry
 
 | slot | enabled | needs |
 |---|---|---|
 | gemini | auto | `GEMINI_API_KEY` in `~/.vibe/tokens`; `generativelanguage.googleapis.com` in the project's `.vibe/domains` |
-| codex | no | a ChatGPT subscription that entitles the account to the model; Codex CLI >= 0.153.0 in the image |
+| codex | auto | a ChatGPT subscription with Astra access; Codex CLI 0.154.0+; Mac login mounted read-write; OpenAI hosts in `.vibe/domains` |
 
-A slot is enabled only when every item in its needs column exists. `auto` means this command detects the condition at run time and needs no flip; `no` means the slot is documented but not wired, and wiring it is Martin's step, never this command's.
+A slot is enabled only when every item in its needs column exists.
+`.vibe/review-slots` is per-project and UNTRACKED: `codex=off` or `gemini=off`
+disables that slot. Missing file/entries default to all enabled; comments and
+blank lines are allowed. Malformed, duplicate, tracked or symlinked policy is
+refused. Claude's own review always runs. `/ask` is independent of this policy.
 
-The allowlist entry belongs in `.vibe/domains` (per-project, untracked), NOT in the shipped `init-firewall.sh` list: `generativelanguage.googleapis.com` is CDN-fronted and moves edges within the hour, and only extra domains are covered by `sudo /usr/local/bin/refresh-extra-domains.sh`. A shipped entry would go stale mid-session with no in-container fix.
+Allowlist entries belong in `.vibe/domains`, NOT in the shipped `init-firewall.sh` list:
+`chatgpt.com`, `api.openai.com`, `auth.openai.com` for Codex, and Google's host
+above for Gemini. Only extra domains get mid-session CDN re-resolution.
 
 ## Merge
 
-Same correlated-agreement discipline as `/vs § Step 5c`, applied across every enabled reviewer plus Claude: a correlated consensus (near-duplicate reasoning across reviewers) counts as one reviewer's worth of signal, not one-per-reviewer confidence; an independent consensus (same verdict, visibly different routes) earns full confidence; split verdicts are the real product and get explicit adjudication written into the output — quote the dissent, refute or accept it in writing. No averaging, no majority shortcut: an unrefuted BLOCKING dissent from any single reviewer is never a pass (see `/vs § Step 5c`).
-
+Apply `/vs § Step 5c`: a correlated consensus counts as one signal; an independent consensus earns full confidence. Adjudicate split verdicts explicitly: quote and
+accept or refute each dissent. No averaging or majority shortcut:
+an unrefuted BLOCKING dissent from any single reviewer is never a pass.
 Output exactly this block:
 
 ```
@@ -75,4 +110,4 @@ Unmerged single-reviewer BLOCKING items, or `none`.
 
 ## Relation to /vs
 
-`/vs --panel` unchanged: it still dispatches Sonnet code-reviewer panellists inside a harness cycle. `/review` works on any diff, not only harness cycles — call it standalone, any time, on any target. Inherits /vss's safety floor: no push, no hook or firewall edits.
+`/vs --panel` is unchanged. `/review` works on any diff. Inherits /vss's safety floor: no push, no hook or firewall edits.

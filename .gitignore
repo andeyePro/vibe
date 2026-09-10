@@ -46,3 +46,4 @@ site/.astro/
 # a committed .vibe/domains is refused by the launcher, so a repo can never
 # widen the firewall of every container that clones it.
 .vibe/domains
+.vibe/review-slots

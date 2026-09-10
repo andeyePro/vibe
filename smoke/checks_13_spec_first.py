@@ -444,6 +444,23 @@ def test_tdd_flag_docs() -> None:
     print("[tdd] all sentinel checks completed")
 
 
+def test_ask_command_docs() -> None:
+    """Phase 1a command guidance and integration are executable acceptance contracts."""
+    text = (REPO / "devcontainer/commands/ask.md").read_text()
+    check("[ask] discoverable command", text.startswith("---\n") and "description:" in text, "")
+    for marker in ("5k", "27k", "bulk payloads, not trivial questions", "per-task credit consent",
+                   "--consent-credits", "--output-schema", "--output-format json",
+                   "VIBE_CLAUDE_P_SETTINGS", "VIBE_CLAUDE_P_BILLING", "usage.total_tokens"):
+        check(f"[ask] guidance includes {marker}", marker in text, "")
+    review = (REPO / "devcontainer/commands/review.md").read_text()
+    for marker in ("vibe-delegate slots", "vibe-delegate review codex", ".vibe/review-slots",
+                   "same snapshot", "--solo --slot", "never a silent PASS", "Never recover findings by parsing prose"):
+        check(f"[review] phase 1a contract includes {marker}", marker in review, "")
+    check("[ask] installer auto-syncs new commands",
+          'install_dir commands' in INSTALL_EXTRAS.read_text(), "")
+    check("[ask] post-relaunch manual coverage", "### Test 54:" in MANUAL_TESTS_MD.read_text(), "")
+
+
 def test_review_command_docs() -> None:
     """AC1-AC8: /review command documentation and integration.
     Tests sentinel substrings and file presence in the exact form the spec requires."""
@@ -488,8 +505,8 @@ def test_review_command_docs() -> None:
         # that the no-key state is still Claude-only.
         check("[review] AC2: gemini slot is key-gated",
               "runs whenever `GEMINI_API_KEY` is present" in review_text, "")
-        check("[review] AC2: no-key state is still Claude-only",
-              "With no key, /review is Claude-only." in review_text, "")
+        check("[review] AC2: no available outside slots is Claude-only",
+              "Without available outside slots, /review is Claude-only." in review_text, "")
 
         # Usage line
         usage_line = "/review [--solo] [--level low|medium|high|max] [--slot <name>] [--comment] [<target>]"
@@ -525,8 +542,8 @@ def test_review_command_docs() -> None:
               re.search(r'^\|\s*gemini\s*\|\s*auto\s*\|', review_text, re.MULTILINE) is not None,
               "")
 
-        check("[review] AC3: codex row has enabled=no",
-              re.search(r'^\|\s*codex\s*\|\s*no\s*\|', review_text, re.MULTILINE) is not None,
+        check("[review] AC3: codex row has enabled=auto",
+              re.search(r'^\|\s*codex\s*\|\s*auto\s*\|', review_text, re.MULTILINE) is not None,
               "")
 
         # Check for gemini needs content
@@ -612,8 +629,8 @@ def test_review_command_docs() -> None:
         check("[review] AC5: --comment is GitHub-outward",
               "never posts to GitHub unless --comment is passed" in review_text, "")
 
-        check("[review] AC5: default fan-out matches solo when no key",
-              "With no key present the default fan-out is identical to --solo." in review_text, "")
+        check("[review] AC5: default fan-out matches solo with no available slots",
+              "With no available outside slots the default fan-out is identical to --solo." in review_text, "")
 
         check("[review] AC5: comment is hard-escalate",
               "--comment is GitHub-outward like push: /vss and /vsss treat it as hard-escalate, never auto-fired." in review_text, "")

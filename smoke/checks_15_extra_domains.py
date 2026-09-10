@@ -56,6 +56,21 @@ CHANGELOG_MD = REPO / "CHANGELOG.md"
 EXTRA_DOMAINS_MAX = 32
 
 
+def test_codex_extra_domains():
+    """Phase 1a hosts use the existing local opt-in and CDN refresh path."""
+    print("\n[codex] per-project domain plumbing")
+    hosts = ["chatgpt.com", "api.openai.com", "auth.openai.com"]
+    setup = 'printf "chatgpt.com\\napi.openai.com\\nauth.openai.com\\n" > "$WS/.vibe/domains"'
+    out, err, rc = _resolve(_git_ws(setup))
+    check("[codex] all hosts resolve through local .vibe/domains", rc == 0 and out == hosts, err)
+    out, err, rc = _resolve(_git_ws(setup + '; git -C "$WS" add .vibe/domains'))
+    check("[codex] tracked OpenAI allowlist refused", out == [] and "COMMITTED" in err, err)
+    firewall = INIT_FIREWALL.read_text()
+    for host in hosts:
+        check(f"[codex] {host} never added to shipped firewall", host not in firewall, "")
+        check(f"[codex] {host} documented for project setup", host in README_MD.read_text(), "")
+
+
 def _resolve(setup: str, config_value: str = "", env_vars: dict | None = None):
     """Build a fixture workspace, run `setup` against it, then source vibe and
     call `resolve_extra_domains "$WS" "<config_value>"`.

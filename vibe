@@ -2842,6 +2842,10 @@ _build_override_config() {
   local workspace="$1"
   local default_cfg="$DEVCONTAINER_DIR/devcontainer.json"
 
+  # Bind the directory, read-write: only Codex reads credentials, and its
+  # token refresh can atomically replace auth.json. Empty is valid before login.
+  mkdir -p "$HOME/.codex"
+
   learning_load
 
   # Collect (source, target, ro) triples for every mount that applies.
@@ -4097,6 +4101,10 @@ export VIBE_SHARED_ENV_NAMES
 # an exported name would be stripped before the script ever read it.
 # Not a secret, so unlike GITHUB_TOKEN/ZOTERO_API_KEY it is safe at this layer.
 vibe_resolve_extra_domains_for_launch "$WORKSPACE" "${VIBE_EXTRA_DOMAINS:-}"
+
+# Non-interactive Claude routing is independent of the subscription-only lead.
+# Values name a billing mode and container paths, never credentials.
+export VIBE_CLAUDE_P_BILLING VIBE_CLAUDE_P_SETTINGS VIBE_CLAUDE_P_CONFIG_DIR
 
 # Zotero web-API key (optional). Stored alongside the GitHub PATs in
 # ~/.vibe/tokens (chmod 600) under the reserved, slash-free key

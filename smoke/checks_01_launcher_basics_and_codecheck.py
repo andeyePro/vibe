@@ -6,6 +6,38 @@ from smoke._core import *  # noqa: F401,F403
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 
+def test_codex_container_plumbing():
+    """Phase 1a: binary, writable directory bind, empty pre-login host home."""
+    print("\n[codex] image and subscription mount")
+    cfg = json.loads((REPO / "devcontainer/devcontainer.json").read_text())
+    mount = "source=${localEnv:HOME}/.codex,target=/home/node/.codex,type=bind"
+    check("[codex] whole auth directory mounted read-write", mount in cfg["mounts"], "")
+    dockerfile = DOCKERFILE.read_text()
+    check("[codex] pinned vendor binary installed in image",
+          "ARG CODEX_VERSION=0.154.0" in dockerfile and
+          "npm install -g @openai/codex@${CODEX_VERSION}" in dockerfile, "")
+    check("[codex] delegate helper shipped",
+          "COPY vibe-delegate.mjs /usr/local/bin/vibe-delegate" in dockerfile, "")
+    for name in ("VIBE_CLAUDE_P_BILLING", "VIBE_CLAUDE_P_SETTINGS", "VIBE_CLAUDE_P_CONFIG_DIR"):
+        check(f"[codex] {name} routing only in remoteEnv",
+              cfg["remoteEnv"].get(name) == "${localEnv:" + name + "}" and
+              name not in cfg["containerEnv"], "")
+    check("[codex] no OpenAI or Claude API keys plumbed",
+          not any(key in cfg[section] for section in ("remoteEnv", "containerEnv")
+                  for key in ("CODEX_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY")), "")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        workspace = root / "workspace"
+        workspace.mkdir()
+        env = {"HOME": str(root / "home"), "VIBE_BRAIN2_PATH": "off", "VIBE_ZOTERO_PATH": "off"}
+        r = _source_vibe_call(env, f'_build_override_config {shlex.quote(str(workspace))}')
+        check("[codex] no existing login required to render config",
+              r.returncode == 0 and (root / "home/.codex").is_dir(), r.stderr)
+        if r.returncode == 0:
+            rendered = json.loads(Path(r.stdout.strip().splitlines()[-1]).read_text())
+            check("[codex] rendered config retains writable auth bind", mount in rendered["mounts"], "")
+
+
 def test_help() -> None:
     print("\n[vibe --help]")
     with tempfile.TemporaryDirectory() as td:

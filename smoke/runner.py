@@ -15,6 +15,7 @@ from smoke.checks_13_spec_first import *
 from smoke.checks_14_profiles import *
 from smoke.checks_15_extra_domains import *
 from smoke.checks_16_domain_refresh import *
+from smoke.checks_17_delegation import *
 
 
 
@@ -573,6 +574,9 @@ def main() -> int:
     # task_039's /review doc tests were defined but never registered here, so
     # they had never run; task_043 wires the gemini slot and registers both.
     test_review_command_docs()
+    test_ask_command_docs()
+    test_codex_container_plumbing()
+    test_codex_extra_domains()
     test_gemini_slot_wiring()
 
     # task_037: /vs --TDD flag documentation and red-first trail mechanics
@@ -647,6 +651,10 @@ def main() -> int:
     test_refresh_ac17_state_file_provenance()
     test_refresh_ac18_numeric_env_validated()
     test_refresh_ac16_docs()
+    test_delegate_astra_contract()
+    test_delegate_failures()
+    test_delegate_claude_routes()
+    test_delegate_review_policy()
 
     print()
     if FAILURES:

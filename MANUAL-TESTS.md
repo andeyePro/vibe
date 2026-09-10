@@ -1477,6 +1477,62 @@ fragment is present and names the command.
 
 ---
 
+### Test 54: Codex reviewer and `/ask` after relaunch (phase 1a)
+
+Run on branch `astra` before merging its PR. These checks require the real Mac
+login and container; stubbed smoke tests do not establish model entitlement,
+network reachability, refresh, nested Claude login, or vendor-side tool enforcement.
+
+1. On the Mac run `codex -c 'cli_auth_credentials_store="file"' login status`.
+   If necessary sign in using `codex -c 'cli_auth_credentials_store="file"' login`.
+   Never print, copy, or inspect the auth file. Add `chatgpt.com`, `api.openai.com`,
+   `auth.openai.com` to this project's untracked `.vibe/domains`; preserve other hosts.
+2. Run `vibe --rebuild`. Confirm Claude Code still leads on subscription auth;
+   `codex --version` is 0.154.0 or later. Inspect only the container's **Mounts**:
+   Mac `~/.codex` → `/home/node/.codex` must have `RW: true`. Do not dump its env.
+   Confirm `/run/vibe/extra-domains` includes those hosts. Check `api.github.com`
+   still answers, an unrelated non-allowlisted host is blocked, and existing guard
+   denial fixtures still deny. Do not edit firewall, hooks, or PAT scopes.
+3. From Claude Code run `/ask astra Summarise README.md and identify its main setup prerequisites`.
+   Confirm a useful answer plus numeric input/cache/output/total tokens, no
+   metadata warning, and no fallback model. Repeat after the login naturally
+   refreshes; confirm Codex still reports logged in. Do not modify token expiry
+   or read credentials to force a refresh. Record refresh as pending if not observed.
+4. Run `/ask haiku Summarise README.md and identify its main setup prerequisites`,
+   then the same request for Sonnet and Opus. Confirm nested `claude -p` starts,
+   returns the served model and includes cache reads/writes in the total.
+   Ask a delegate to create a harmless marker: it must not create it. Confirm
+   no shell/MCP/tool action occurs. Delete any test marker if this check fails.
+5. Request `/ask fable ...` and decline the credit question. No process/call
+   should run. Previous `vibe --fable`/standing launch consent must not bypass
+   this question. Only test the paid success route if you explicitly consent
+   for that task; otherwise leave that route unrun. Configuration-only paid
+   routing: in a disposable Claude config directory, use your own vendor billing
+   settings, select `VIBE_CLAUDE_P_BILLING=credits|api` and the settings path,
+   relaunch, and confirm it too stops without task consent. Never add a key to vibe.
+6. Make a small staged AND unstaged fixture diff. Run `/review`; confirm Claude
+   and Codex review that same snapshot (Gemini too if configured), Codex findings
+   arrive as JSON, and the merged block identifies each reviewer. Repeat for a
+   branch/path target and `/review --solo`; solo must launch no outside process.
+   Remove the fixture changes afterwards without discarding any real work.
+7. Create untracked `.vibe/review-slots` with `codex=off`. `/review` skips Codex;
+   `/review --slot codex` refuses. `gemini=off` works likewise. Delete the file:
+   both return to auto-enabled. Malformed/duplicate entries must stop fan-out,
+   and a deliberately tracked policy in a **throwaway repo** must be refused.
+8. With Codex disabled, explicitly `/ask astra ...` still works. An unavailable
+   model/quota/login or malformed slot reply must be reported as incomplete,
+   never PASS or an automatic paid fallback. For an actual connection error,
+   refresh extra domains once and retry once; record the outcome.
+9. Before merge, run `/code-review high` on the branch diff, especially `vibe`,
+   then merge by pull request. Never commit directly to `main`.
+
+**Pass:** actual JSON replies and usage from both CLIs; all four subscription
+models work; per-task consent and per-project selection hold; auth refresh works
+through the writable directory; both existing backstops and PAT scopes still hold.
+Record unobserved refresh/paid-route checks explicitly, never infer success.
+
+---
+
 ## Test Summary
 
 After completing all tests, check:
