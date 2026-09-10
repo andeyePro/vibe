@@ -39,6 +39,7 @@ site/.astro/
 
 # per-project OpenProject opt-in marker (task_020) - always untracked
 .vibe-allow-op
+.vibe-allow-codex
 
 # per-project extra firewall domains (task_041) - always untracked.
 # .vibe/ is already covered by the vibe-managed block above; this entry is

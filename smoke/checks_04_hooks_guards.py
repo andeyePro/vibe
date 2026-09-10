@@ -376,6 +376,101 @@ def test_zotero_guard_learnings_unregressed() -> None:
           r.stdout.count("hookSpecificOutput") == 1, r.stdout[:200])
 
 
+def test_codex_guard_fs_deny() -> None:
+    """Phase 1a: the read-write Codex login mount is denied to Write/Edit
+    unconditionally (no -d gate: a planted config.toml would run on the Mac)."""
+    print("\n[codex: guard-fs.sh deny fixtures]")
+    if _HOOK_SKIP:
+        print("  (skipped — jq/bash absent)", file=sys.stderr)
+        return
+    for path, label in [
+        ("/home/node/.codex", "dir exact"),
+        ("/home/node/.codex/config.toml", "config.toml"),
+        ("/home/node/.codex/auth.json", "auth.json"),
+        ("/home/node/.codex/../.codex/AGENTS.md", "normalises back inside"),
+        ("/workspace/.vibe-allow-codex", "the opt-in marker"),
+        ("/workspace/sub/../.vibe-allow-codex", "marker via a normalised path"),
+    ]:
+        r = _run_guard_fs(json.dumps({"tool_input": {"file_path": path}}))
+        _assert_deny_json(r, f"[codex] {label}")
+        if r.stdout:
+            reason = json.loads(r.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+            check(f"[codex] {label}: reason names codex", "codex" in reason.lower(), reason)
+    for path, label in [
+        ("/home/node/.codex-other/x", "sibling with a shared prefix"),
+        ("/workspace/.codex/x", "project-local .codex"),
+        ("/home/node/.claude/x", "neighbouring dotdir"),
+        ("/workspace/.vibe-allow-codex-notes", "marker name with a suffix"),
+        ("/workspace/.vibe-allow-op", "the OP marker is not ours to deny"),
+    ]:
+        _assert_silent_exit0(_run_guard_fs(json.dumps({"tool_input": {"file_path": path}})),
+                             f"[codex] neighbour: {label}")
+
+
+def test_codex_guard_bash_idioms() -> None:
+    """guard-bash.sh blocks shell-write idioms aimed at the Codex login dir in
+    its container, ~ and $HOME spellings; reads and the codex binary pass."""
+    print("\n[codex: guard-bash.sh write idioms]")
+    if _HOOK_SKIP:
+        print("  (skipped — jq/bash absent)", file=sys.stderr)
+        return
+    for cmd_str, label in [
+        ("echo hi > ~/.codex/config.toml", "redirect via ~"),
+        ("echo hi >> /home/node/.codex/config.toml", "append via container path"),
+        ("cp x $HOME/.codex/config.toml", "cp via $HOME"),
+        ('tee "${HOME}/.codex/auth.json"', "tee via ${HOME}"),
+        ("rm -rf /home/node/.codex", "rm of the dir itself"),
+        ("sed -i s/a/b/ /home/node/.codex/config.toml", "sed -i"),
+        ("mkdir -p ~/.codex/hooks", "mkdir"),
+        # Spellings the first cut missed (second security pass):
+        ("echo x > /home/node//.codex/config.toml", "doubled slash"),
+        ("echo x > /home/node/./.codex/config.toml", "dot hop"),
+        ("echo x > ~node/.codex/config.toml", "~user"),
+        ("echo x > $HOME/../node/.codex/config.toml", "dot-dot hop"),
+        ("rm -rf /home/node/.codex; echo done", "semicolon after the dir"),
+        ("(rm -rf ~/.codex)", "inside a subshell"),
+        ("echo x >| ~/.codex/config.toml", "noclobber override"),
+        ("install -m600 evil ~/.codex/config.toml", "install"),
+        ("touch /home/node/.codex/config.toml", "touch"),
+        ("tar -xf evil.tar -C /home/node/.codex", "tar -C"),
+        ("rsync -a evil/ /home/node/.codex/", "rsync"),
+        # The opt-in marker is the switch that grants the mount next launch.
+        ("touch .vibe-allow-codex", "marker: touch"),
+        ("echo > /workspace/.vibe-allow-codex", "marker: redirect with path"),
+        ("cp x ./.vibe-allow-codex", "marker: cp"),
+        # Third pass: fetchers, archive members and git plumbing that
+        # materialise the marker without a shell redirect.
+        ("curl -s -o .vibe-allow-codex file:///etc/hostname", "marker: curl -o"),
+        ("wget -O .vibe-allow-codex http://x", "marker: wget -O"),
+        ("unzip x.zip .vibe-allow-codex", "marker: unzip member"),
+        ("git update-index --add --cacheinfo 100644,abc,.vibe-allow-codex", "marker: git update-index"),
+        ("git restore --source=HEAD~1 -- .vibe-allow-codex", "marker: git restore"),
+        ("git -C /workspace checkout HEAD -- .vibe-allow-codex", "marker: git checkout -- path"),
+    ]:
+        r = _run_guard_bash(cmd_str)
+        check(f"[codex] bash write ({label}): exit 2", r.returncode == 2,
+              f"exit={r.returncode} stderr={r.stderr[:200]}")
+        check(f"[codex] bash write ({label}): stderr names codex",
+              "codex" in r.stderr.lower(), r.stderr[:200])
+    for cmd_str, label in [
+        ("cat ~/.codex/config.toml", "cat"),
+        ("ls /home/node/.codex", "ls"),
+        ("codex exec -m gpt-6-astra --output-schema s.json -", "the codex binary itself"),
+        ("node /usr/local/bin/vibe-delegate ask astra < /tmp/p.txt", "the delegate helper"),
+        ("echo x > /workspace/.codex-notes", "unrelated path with the prefix"),
+        ("echo x > /workspace/.codex/x", "project-local .codex dir"),
+        ("touch .vibe-allow-codex-notes", "marker name with a suffix"),
+        ("cat .vibe-allow-codex", "reading the marker"),
+        ("(ls ~/.codex)", "read inside a subshell"),
+        ("git restore -- README.md", "git restore of another path"),
+        ("git checkout main", "git checkout of a branch"),
+        ("curl -s https://api.github.com", "curl without the marker"),
+    ]:
+        _assert_silent_exit0(_run_guard_bash(cmd_str), f"[codex] bash read/neighbour ({label})")
+    r = _run_guard_bash("git push --force origin main && rm /home/node/.codex/auth.json")
+    check("[codex] git block beats codex block: exit 2", r.returncode == 2, f"exit={r.returncode}")
+
+
 def test_task009_settings_json_updated() -> None:
     """AC4: vibe heredoc contains Write|Edit|MultiEdit matcher entry (persistent fix).
 

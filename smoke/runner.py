@@ -203,6 +203,8 @@ def main() -> int:
     test_zotero_guard_neighbour_paths_silent()
     test_zotero_guard_bash_idioms()
     test_zotero_guard_learnings_unregressed()
+    test_codex_guard_fs_deny()
+    test_codex_guard_bash_idioms()
     test_task009_hardening_guard_bash_set_euo()
     test_task009_hardening_guard_fs_realpath_m()
     test_task013_vs_md_intelligent_stopping()
@@ -576,6 +578,7 @@ def main() -> int:
     test_review_command_docs()
     test_ask_command_docs()
     test_codex_container_plumbing()
+    test_codex_mount_drift()
     test_codex_extra_domains()
     test_gemini_slot_wiring()
 

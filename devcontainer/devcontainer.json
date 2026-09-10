@@ -37,7 +37,6 @@
   "mounts": [
     "source=vibe-bash-history,target=/commandhistory,type=volume",
     "source=vibe-claude-config,target=/home/node/.claude,type=volume",
-    "source=${localEnv:HOME}/.codex,target=/home/node/.codex,type=bind",
     "source=${localEnv:HOME}/.ssh,target=/home/node/.ssh-host,type=bind,readonly",
     "source=${localEnv:HOME}/.gitconfig,target=/home/node/.gitconfig-host,type=bind,readonly"
   ],

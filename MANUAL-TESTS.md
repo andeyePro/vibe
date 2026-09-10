@@ -1487,9 +1487,25 @@ network reachability, refresh, nested Claude login, or vendor-side tool enforcem
    If necessary sign in using `codex -c 'cli_auth_credentials_store="file"' login`.
    Never print, copy, or inspect the auth file. Add `chatgpt.com`, `api.openai.com`,
    `auth.openai.com` to this project's untracked `.vibe/domains`; preserve other hosts.
+   Then `touch .vibe-allow-codex` in the project folder (untracked; it is in the
+   managed `.gitignore`).
 2. Run `vibe --rebuild`. Confirm Claude Code still leads on subscription auth;
-   `codex --version` is 0.154.0 or later. Inspect only the container's **Mounts**:
-   Mac `~/.codex` → `/home/node/.codex` must have `RW: true`. Do not dump its env.
+   `codex --version` is 0.154.0 or later. The launch header must show a
+   `codex   : /home/node/.codex (rw, ChatGPT login)` line. Inspect only the
+   container's **Mounts**: Mac `~/.codex` → `/home/node/.codex` must have
+   `RW: true`. Do not dump its env. Then, in the same container, ask Claude to
+   write `/home/node/.codex/config.toml` with its Write tool (expect a deny)
+   and run `echo x > ~/.codex/x` in Bash (expect the hook to block it).
+   Negative cases, each expecting NO `codex` header line and NO
+   `/home/node/.codex` mount: (a) a project with `chatgpt.com` in `.vibe/domains`
+   but no `.vibe-allow-codex`; (b) a project with no `.vibe/domains` launched with
+   `VIBE_EXTRA_DOMAINS=chatgpt.com` in `~/.vibe/config`; (c) the opted-in project
+   after `git add -f .vibe-allow-codex` (expect the COMMITTED refusal line; then
+   `git rm --cached` it). Finally delete the marker from the opted-in project and
+   relaunch plainly: expect `codex login mount changed ... recreating it` and no
+   mount afterwards; recreate the marker and relaunch: the mount returns. Also
+   ask Claude, inside the opted-in container, to `touch .vibe-allow-codex` and to
+   Write `/workspace/.vibe-allow-codex`: both must be refused.
    Confirm `/run/vibe/extra-domains` includes those hosts. Check `api.github.com`
    still answers, an unrelated non-allowlisted host is blocked, and existing guard
    denial fixtures still deny. Do not edit firewall, hooks, or PAT scopes.

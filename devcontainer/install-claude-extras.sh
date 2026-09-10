@@ -407,6 +407,7 @@ ensure_project_gitignore() {
     echo ".vibe-signals/"
     echo ".vibe-allow-ssh"
     echo ".vibe-allow-op"
+    echo ".vibe-allow-codex"
     echo "$close"
   } >> "$gitignore"
   echo "vibe: added managed runtime-exclusions block to $gitignore" >&2

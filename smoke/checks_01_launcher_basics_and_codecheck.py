@@ -7,11 +7,12 @@ from smoke._core import *  # noqa: F401,F403
 
 
 def test_codex_container_plumbing():
-    """Phase 1a: binary, writable directory bind, empty pre-login host home."""
-    print("\n[codex] image and subscription mount")
+    """Phase 1a: binary in the image, login mount OPT-IN per project and never
+    created by vibe, guard hooks cover the mounted path."""
+    print("\n[codex] image, opt-in login mount, guard coverage")
     cfg = json.loads((REPO / "devcontainer/devcontainer.json").read_text())
-    mount = "source=${localEnv:HOME}/.codex,target=/home/node/.codex,type=bind"
-    check("[codex] whole auth directory mounted read-write", mount in cfg["mounts"], "")
+    check("[codex] base config carries NO Codex login mount (it is per-project)",
+          not any(".codex" in str(m) for m in cfg["mounts"]), str(cfg["mounts"]))
     dockerfile = DOCKERFILE.read_text()
     check("[codex] pinned vendor binary installed in image",
           "ARG CODEX_VERSION=0.154.0" in dockerfile and
@@ -25,17 +26,99 @@ def test_codex_container_plumbing():
     check("[codex] no OpenAI or Claude API keys plumbed",
           not any(key in cfg[section] for section in ("remoteEnv", "containerEnv")
                   for key in ("CODEX_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY")), "")
+    check("[codex] guard-fs.sh denies the mounted login dir",
+          "/home/node/.codex" in (REPO / "devcontainer/guard-fs.sh").read_text(), "")
+    check("[codex] guard-bash.sh denies shell writes to it",
+          "codex-write" in (REPO / "devcontainer/guard-bash.sh").read_text(), "")
+
+    def render(home, ws, extra):
+        r = _source_vibe_call(_t14_env(home, extra), f'_build_override_config {shlex.quote(str(ws))}')
+        if r.returncode != 0:
+            check("[codex] _build_override_config exits 0", False, r.stderr[:300])
+            return []
+        return json.loads(Path(r.stdout.strip().splitlines()[-1]).read_text()).get("mounts", [])
+
+    def codex_mounts(mounts):
+        return [m for m in mounts if isinstance(m, dict) and m.get("target") == "/home/node/.codex"]
+
+    def git_ws(root, name):
+        ws = root / name; ws.mkdir()
+        for args in (["init", "-q"], ["config", "user.email", "t@users.noreply.github.com"],
+                     ["config", "user.name", "T"], ["config", "core.hooksPath", "/dev/null"]):
+            run(["git", "-C", str(ws), *args])
+        return ws
+
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
-        workspace = root / "workspace"
-        workspace.mkdir()
-        env = {"HOME": str(root / "home"), "VIBE_BRAIN2_PATH": "off", "VIBE_ZOTERO_PATH": "off"}
-        r = _source_vibe_call(env, f'_build_override_config {shlex.quote(str(workspace))}')
-        check("[codex] no existing login required to render config",
-              r.returncode == 0 and (root / "home/.codex").is_dir(), r.stderr)
-        if r.returncode == 0:
-            rendered = json.loads(Path(r.stdout.strip().splitlines()[-1]).read_text())
-            check("[codex] rendered config retains writable auth bind", mount in rendered["mounts"], "")
+        home = root / "home"; (home / ".codex").mkdir(parents=True)
+        ws = git_ws(root, "workspace")
+        marker = ws / ".vibe-allow-codex"
+        for label, extra, with_marker, expected in [
+            ("untracked marker present", {}, True, True),
+            ("no marker", {}, False, False),
+            ("chatgpt.com in extra domains is NOT enough", {"VIBE_EXTRA_DOMAINS": "chatgpt.com"}, False, False),
+            ("VIBE_CODEX_PATH=off beats the marker", {"VIBE_CODEX_PATH": "off"}, True, False),
+        ]:
+            if with_marker:
+                marker.write_text("")
+            elif marker.exists():
+                marker.unlink()
+            found = codex_mounts(render(home, ws, extra))
+            check(f"[codex] login mount {'present' if expected else 'absent'}: {label}",
+                  bool(found) == expected, str(found))
+            if found:
+                m = found[0]
+                check("[codex] mount is the host dir, bind, read-write",
+                      m.get("source") == str(home / ".codex") and m.get("type") == "bind"
+                      and "readonly" not in m, str(m))
+        # A COMMITTED marker (forgeable by a PR) must not grant the mount.
+        marker.write_text("")
+        run(["git", "-C", str(ws), "add", "-f", ".vibe-allow-codex"])
+        found = codex_mounts(render(home, ws, {}))
+        check("[codex] tracked marker refused", not found, str(found))
+        run(["git", "-C", str(ws), "rm", "-q", "--cached", ".vibe-allow-codex"])
+        # A marker in a non-git download must not grant it either.
+        plain = root / "plain"; plain.mkdir(); (plain / ".vibe-allow-codex").write_text("")
+        found = codex_mounts(render(home, plain, {}))
+        check("[codex] marker outside a git work tree refused", not found, str(found))
+        # Opted in but never logged in on the Mac: no mount, and vibe must not
+        # create the directory itself (a credential dir vibe made would be
+        # empty AND writable from the container).
+        home2 = root / "home2"; home2.mkdir()
+        found = codex_mounts(render(home2, ws, {}))
+        check("[codex] no ~/.codex on the host: no mount and dir not created",
+              not found and not (home2 / ".codex").exists(), str(found))
+        src = (REPO / "vibe").read_text()
+        check("[codex] launcher never mkdirs the login dir",
+              'mkdir -p "$HOME/.codex"' not in src and "_codex_desired_source" in src, "")
+        check("[codex] no machine-wide auto switch for the credential mount",
+              "VIBE_CODEX_AUTO" not in src, "")
+        check("[codex] marker is in the managed .gitignore",
+              ".vibe-allow-codex" in (REPO / ".gitignore").read_text(), "")
+
+
+def test_codex_mount_drift():
+    """Phase 1a: withdrawing the opt-in (marker gone, dir gone, VIBE_CODEX_PATH=off)
+    must recreate a container that still carries the credential bind."""
+    print("\n[codex] login-mount drift comparator")
+    kept = "/home/node/.codex\t/Users/m/.codex\trw"
+    ro = "/home/node/.codex\t/Users/m/.codex\tro"
+    other = "/x\t/y\trw"
+    for label, desired, actual, expect in [
+        ("gates pass, bind present rw", "/Users/m/.codex", kept, ""),
+        ("opt-in withdrawn, bind still present", "", kept, "1"),
+        ("opt-in granted, bind missing", "/Users/m/.codex", other, "1"),
+        ("bind present but ro", "/Users/m/.codex", ro, "1"),
+        ("bind points at another dir", "/Users/x/.codex", kept, "1"),
+        ("neither wanted nor present", "", other, ""),
+        ("no container is a fresh create", "/Users/m/.codex", "NONE", ""),
+    ]:
+        r = _source_vibe_call({}, f'printf "%s" "$(codex_mount_drift {shlex.quote(desired)} "$(printf {shlex.quote(actual)})")"')
+        check(f"[codex] drift: {label}", r.returncode == 0 and r.stdout == expect,
+              f"rc={r.returncode} out={r.stdout!r} err={r.stderr[:200]}")
+    src = (REPO / "vibe").read_text()
+    check("[codex] launch flow computes codex_mount_drift",
+          'codex_drift="$(codex_mount_drift' in src and '${codex_drift}' in src, "")
 
 
 def test_help() -> None:

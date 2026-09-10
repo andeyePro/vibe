@@ -32,6 +32,9 @@ data = sys.stdin.read()
 with (home / "calls.jsonl").open("a") as f:
     f.write(json.dumps({"vendor": vendor, "args": args, "input": data,
         "cwd": os.getcwd(), "env": dict(os.environ)}) + "\n")
+if vendor == "codex" and args == ["--version"]:
+    print(fixture.get("version", "codex-cli 0.154.0"))
+    sys.exit(0)
 if vendor == "codex" and "status" in args:
     print(fixture.get("login", "Logged in using ChatGPT"), file=sys.stderr)
     sys.exit(fixture.get("login_exit", 0))
@@ -64,10 +67,10 @@ else:
     return workspace, home, env
 
 
-def _delegate_call(workspace, home, env, args, fixture=None, payload="Task\nlarge payload\n"):
+def _delegate_call(workspace, home, env, args, fixture=None, payload="Task\nlarge payload\n", cwd=None):
     (home / "fixture.json").write_text(json.dumps(fixture or {}))
     (home / "calls.jsonl").write_text("")
-    result = run(["node", str(DELEGATE), *args], cwd=workspace, env=env, input=payload)
+    result = run(["node", str(DELEGATE), *args], cwd=cwd or workspace, env=env, input=payload)
     calls = [json.loads(line) for line in (home / "calls.jsonl").read_text().splitlines()]
     return result, calls
 
@@ -87,7 +90,8 @@ def test_delegate_astra_contract():
         result = json.loads(r.stdout)
         check("[delegate] exact answer and actual tokens (cache not double counted)",
               result["answer"] == "A useful answer" and result["usage"]["total_tokens"] == 5044, r.stdout)
-        check("[delegate] one login probe and exactly one exec", len(calls) == 2, str(calls))
+        check("[delegate] version floor, one login probe, exactly one exec",
+              len(calls) == 3 and calls[0]["args"] == ["--version"], str(calls))
         call = calls[-1]
         argv = call["args"]
         check("[delegate] exact requested model, structured response and JSON events",
@@ -119,6 +123,8 @@ def test_delegate_failures():
         cases = [
             ("API login", {"login": "Logged in using an API key: PRIVATE_KEY"}),
             ("no login", {"login_exit": 1}),
+            ("old CLI", {"version": "codex-cli 0.153.4"}),
+            ("unparseable version", {"version": "codex-cli"}),
             ("CLI failure", {"exit": 1}),
             ("prose answer", {"answer": "Sorry, unable to review"}),
             ("wrong answer shape", {"answer": {"findings": []}}),
@@ -135,7 +141,9 @@ def test_delegate_failures():
             check(f"[delegate] {label} diagnostics do not leak vendor output",
                   "PRIVATE_" not in r.stderr, r.stderr)
             if label in ("API login", "no login"):
-                check(f"[delegate] {label} invokes no model", len(calls) == 1, str(calls))
+                check(f"[delegate] {label} invokes no model", len(calls) == 2, str(calls))
+            if label in ("old CLI", "unparseable version"):
+                check(f"[delegate] {label} stops before the login probe", len(calls) == 1, str(calls))
         for args, payload in [(["ask", "unknown"], "task"), (["ask", "astra"], ""),
                               (["ask", "astra", "--bypass"], "task")]:
             r, calls = _delegate_call(workspace, home, env, args, payload=payload)
@@ -201,7 +209,17 @@ def test_delegate_review_policy():
         r, calls = _delegate_call(workspace, home, env, ["review", "codex"])
         check("[delegate] disabled explicit reviewer launches nothing", r.returncode != 0 and not calls, r.stderr)
         r, calls = _delegate_call(workspace, home, env, ["ask", "astra"])
-        check("[delegate] explicit ask independent of review policy", r.returncode == 0 and len(calls) == 2, r.stderr)
+        check("[delegate] explicit ask independent of review policy", r.returncode == 0 and len(calls) == 3, r.stderr)
+        # The policy is resolved from the git ROOT: invoked from a subdirectory
+        # it must still be found (fail-open one directory down was the bug).
+        sub = workspace / "sub"; sub.mkdir(exist_ok=True)
+        r, calls = _delegate_call(workspace, home, env, ["slots"], cwd=sub)
+        check("[delegate] policy honoured from a subdirectory",
+              r.returncode == 0 and json.loads(r.stdout) == {"gemini": True, "codex": False} and not calls, r.stderr)
+        r, calls = _delegate_call(workspace, home, env, ["review", "codex"], cwd=sub)
+        check("[delegate] disabled reviewer stays disabled from a subdirectory", r.returncode != 0 and not calls, r.stderr)
+        r, calls = _delegate_call(workspace, home, env, ["slots"], cwd=home)
+        check("[delegate] outside a git work tree the policy call refuses", r.returncode != 0 and not calls, r.stderr)
         for content in ("codex=off\ncodex=on\n", "claude=off\n", "codex=yes\n"):
             policy.write_text(content)
             r, calls = _delegate_call(workspace, home, env, ["slots"])

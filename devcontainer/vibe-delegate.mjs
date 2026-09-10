@@ -47,7 +47,21 @@ function git(root, args) {
   return run('git', ['-C', root, ...args], { timeout: 10000 });
 }
 
-function slots(root) {
+// The policy lives at the repository ROOT. Resolving it from the invocation
+// cwd would fail OPEN one directory down (file not found => all enabled), so
+// the root comes from git itself; outside a work tree there is no policy to
+// honour and the helper refuses rather than guesses.
+function repoRoot(cwd) {
+  const result = spawnSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'],
+    { encoding: 'utf8', input: '', timeout: 10000 });
+  if (result.error || result.status !== 0 || !result.stdout.trim()) {
+    fail('reviewer policy needs a git work tree; run from inside the project');
+  }
+  return result.stdout.trim();
+}
+
+function slots(cwd) {
+  const root = repoRoot(cwd);
   const result = { gemini: true, codex: true };
   const file = join(root, '.vibe/review-slots');
   let stat;
@@ -58,8 +72,7 @@ function slots(root) {
   if (!stat.isFile() || lstatSync(join(root, '.vibe')).isSymbolicLink()) {
     fail('.vibe/review-slots must be a regular local, untracked file');
   }
-  if (git(root, ['rev-parse', '--is-inside-work-tree']).trim() !== 'true' ||
-      git(root, ['ls-files', '--', ':(icase).vibe/review-slots']).trim() ||
+  if (git(root, ['ls-files', '--', ':(icase).vibe/review-slots']).trim() ||
       !git(root, ['ls-files', '-o', '--', ':(icase).vibe/review-slots']).trim()) {
     fail('.vibe/review-slots must be untracked; reviewer selection refused');
   }
@@ -81,7 +94,26 @@ function codexEnv() {
     CODEX_HOME: join(homedir(), '.codex'), LANG: 'C.UTF-8' };
 }
 
+const CODEX_MIN = [0, 154, 0];
+// The whole containment of the Codex leg (read-only sandbox, tools disabled,
+// approval never) rests on flag names and -c keys verified against 0.154.0. An
+// unknown flag fails closed; a silently renamed config key would not, so pin
+// a version floor at runtime rather than trusting the image ARG alone.
+function codexVersionOk(cwd, env) {
+  const result = spawnSync('codex', ['--version'], { cwd, env, input: '', encoding: 'utf8', timeout: 15000 });
+  // Anchored to the first line's leading token so a later banner triple can
+  // never be the one compared.
+  const match = /^[^\d\n]*(\d+)\.(\d+)\.(\d+)/.exec(`${result.stdout}`);
+  if (result.error || result.status !== 0 || !match) fail('codex --version failed; is Codex CLI installed in this image?');
+  const v = match.slice(1, 4).map(Number);
+  for (let i = 0; i < 3; i++) {
+    if (v[i] > CODEX_MIN[i]) return;
+    if (v[i] < CODEX_MIN[i]) fail(`Codex CLI ${match[0]} is older than the ${CODEX_MIN.join('.')} floor the delegate flags were verified against`);
+  }
+}
+
 function codexReady(cwd, env) {
+  codexVersionOk(cwd, env);
   const result = spawnSync('codex', ['-c', 'cli_auth_credentials_store="file"', 'login', 'status'],
     { cwd, env, input: '', encoding: 'utf8', timeout: 15000 });
   // CLI status is deliberately not printed: API-login status can include key fragments.

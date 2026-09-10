@@ -57,8 +57,8 @@ and retry once. No retry loop or silent model substitution.
 
 ## Invoking the codex slot
 
-Check prerequisites using `node /usr/local/bin/vibe-delegate status codex`.
-Send the SAME saved diff, batched once, from the repo root:
+Check prerequisites with `node /usr/local/bin/vibe-delegate status codex`, then
+send the SAME saved diff, batched once, from the repo root:
 
 ```bash
 node /usr/local/bin/vibe-delegate review codex < "$diff_file"
@@ -79,7 +79,7 @@ final verdict is at least SPLIT until reviewed, never a silent PASS.
 | slot | enabled | needs |
 |---|---|---|
 | gemini | auto | `GEMINI_API_KEY` in `~/.vibe/tokens`; `generativelanguage.googleapis.com` in the project's `.vibe/domains` |
-| codex | auto | a ChatGPT subscription with Astra access; Codex CLI 0.154.0+; Mac login mounted read-write; OpenAI hosts in `.vibe/domains` |
+| codex | auto | ChatGPT subscription with Astra access; Codex CLI 0.154.0+ (helper-enforced); file-store `codex login` on the Mac; untracked `.vibe-allow-codex` marker (mounts the login dir); OpenAI hosts in `.vibe/domains` |
 
 A slot is enabled only when every item in its needs column exists.
 `.vibe/review-slots` is per-project and UNTRACKED: `codex=off` or `gemini=off`

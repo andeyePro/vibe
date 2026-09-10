@@ -1596,6 +1596,60 @@ _zotero_source() {
   printf '%s' "$p"
 }
 
+# _codex_source / _codex_opted_in / _codex_desired_source — the Codex CLI
+# login directory (phase 1a). Mounted READ-WRITE at /home/node/.codex because
+# Codex rewrites its auth cache on token refresh, so this is the one
+# host-credential bind that is not read-only — which is exactly why it is
+# gated twice, PER PROJECT, and default-off:
+#   1. the directory must already exist (a `codex login` on the Mac creates
+#      it; vibe NEVER creates it — mirrors the brain2/zotero rule), and
+#      VIBE_CODEX_PATH=off in ~/.vibe/config disables it everywhere;
+#   2. the PROJECT must carry an UNTRACKED .vibe-allow-codex marker, verified
+#      exactly like .vibe-allow-op (git work tree, not committed, positively
+#      untracked). There is deliberately NO machine-wide auto switch: a
+#      credential bind that one config line could grant to every container
+#      is the shape this gating exists to prevent. Network reach is a
+#      separate decision (chatgpt.com in .vibe/domains), so a project can
+#      allowlist OpenAI without receiving the token.
+# guard-fs.sh denies every structured (Write/Edit) tool write under
+# /home/node/.codex and to the marker; guard-bash.sh best-effort-blocks the
+# shell idioms. Only the codex binary has business in that directory.
+_codex_source() {
+  local p="${VIBE_CODEX_PATH:-$HOME/.codex}"
+  [ "$p" = "off" ] && return 0
+  # Canonicalise when the dir exists so codex_mount_drift compares the same
+  # string docker inspect reports (a trailing slash or symlinked HOME would
+  # otherwise read as drift and recreate the container on every launch).
+  [ -d "$p" ] && p="$(cd "$p" 2>/dev/null && pwd -P || printf '%s' "$p")"
+  printf '%s' "$p"
+}
+_codex_opted_in() {
+  local ws="$1"
+  [ -f "$ws/.vibe-allow-codex" ] || return 1
+  if [ "$(git -C "$ws" rev-parse --is-inside-work-tree 2>/dev/null)" != "true" ]; then
+    echo "  ⚠ .vibe-allow-codex present but this workspace isn't a verifiable git work tree — Codex login mount refused (a marker in a non-git download must not mount a credential)." >&2
+    return 1
+  fi
+  if git -C "$ws" ls-files --error-unmatch ':(icase).vibe-allow-codex' >/dev/null 2>&1; then
+    echo "  ⚠ .vibe-allow-codex is COMMITTED to this repo — ignored (the Codex login mount must be a local, untracked opt-in; a committed marker could be forged by a PR). 'touch .vibe-allow-codex' locally to enable." >&2
+    return 1
+  fi
+  if [ -z "$(git -C "$ws" ls-files -o -- ':(icase).vibe-allow-codex' 2>/dev/null)" ]; then
+    echo "  ⚠ .vibe-allow-codex could not be positively verified as an untracked file — Codex login mount refused (fail closed)." >&2
+    return 1
+  fi
+  return 0
+}
+# _codex_desired_source <workspace> — echoes the host dir to bind, or nothing
+# when any gate fails. The single source of truth for the mount, the banner
+# and the drift comparator, so they can never disagree.
+_codex_desired_source() {
+  local ws="$1" p
+  p="$(_codex_source)"
+  [ -n "$p" ] && [ -d "$p" ] && _codex_opted_in "$ws" || return 0
+  printf '%s' "$p"
+}
+
 # refresh_brain2_vibe_note — auto-maintain <brain2>/meta/vibe-operation.md
 # with the CURRENTLY INSTALLED `vibe --help` text, refreshed on every launch,
 # so an in-container Claude with no visibility into the host-side CLI (see
@@ -2842,10 +2896,6 @@ _build_override_config() {
   local workspace="$1"
   local default_cfg="$DEVCONTAINER_DIR/devcontainer.json"
 
-  # Bind the directory, read-write: only Codex reads credentials, and its
-  # token refresh can atomically replace auth.json. Empty is valid before login.
-  mkdir -p "$HOME/.codex"
-
   learning_load
 
   # Collect (source, target, ro) triples for every mount that applies.
@@ -2902,6 +2952,15 @@ _build_override_config() {
   zotero="$(_zotero_source)"
   if [ -n "$zotero" ] && [ -d "$zotero" ]; then
     mount_args+=("$zotero" "/zotero" "1")
+  fi
+
+  # Codex CLI login — read-write at /home/node/.codex, opt-in per project via
+  # an untracked .vibe-allow-codex marker (see _codex_source). Never created
+  # here; a project without the marker gets no credential mount at all.
+  local codex
+  codex="$(_codex_desired_source "$workspace")"
+  if [ -n "$codex" ]; then
+    mount_args+=("$codex" "/home/node/.codex" "0")
   fi
 
   # Shared repos declared in this project's .vibe-repos (task_017 cycle 1).
@@ -3187,6 +3246,31 @@ projects_bind_mount_drift() {
     fi
   done <<< "$actual"
   [ -z "$found" ] && echo 1
+  return 0
+}
+
+# codex_mount_drift <desired_source_or_empty> <actual_mounts>
+# Pure comparator (no docker), phase 1a sibling of projects_bind_mount_drift.
+# <desired> is _codex_desired_source's output: the host dir when every gate
+# passes, empty otherwise. Emits "1" iff reusing the container would keep a
+# credential bind the gates no longer grant (marker removed, dir gone,
+# VIBE_CODEX_PATH=off) OR would run without one the gates now grant. Without
+# this, `off` would stop the header line while the token stayed mounted.
+# "NONE" (no container) is a fresh create, never drift.
+codex_mount_drift() {
+  local desired="$1" actual="$2"
+  [ "$actual" = "NONE" ] && return 0
+  local dest src mode found=""
+  while IFS=$'\t' read -r dest src mode; do
+    [ "$dest" = "/home/node/.codex" ] || continue
+    if [ -n "$desired" ] && [ "$src" = "$desired" ] && [ "$mode" = "rw" ]; then
+      found=1
+    else
+      echo 1
+      return 0
+    fi
+  done <<< "$actual"
+  [ -n "$desired" ] && [ -z "$found" ] && echo 1
   return 0
 }
 
@@ -4239,6 +4323,10 @@ _zotero_banner="$(_zotero_source)"
 if [ -n "$_zotero_banner" ] && [ -d "$_zotero_banner" ]; then
   echo "     zotero  : /zotero (ro) @ ${_zotero_banner}"
 fi
+_codex_banner="$(_codex_desired_source "$WORKSPACE" 2>/dev/null)"
+if [ -n "$_codex_banner" ]; then
+  echo "     codex   : /home/node/.codex (rw, ChatGPT login) @ ${_codex_banner} (opted in via .vibe-allow-codex)"
+fi
 # OpenProject MCP status (task_020): only announce when this project opted in AND
 # creds are staged (i.e. /op is actually wired). Silence otherwise — a project that
 # didn't opt in never learns OP exists, which is the point.
@@ -4305,6 +4393,7 @@ drift_marker="$(image_drift_needs_recreate "$WORKSPACE" "$IMAGE_TAG")"
 mount_drift=""
 projects_drift=""
 domains_drift=""
+codex_drift=""
 if [ "$REBUILD" != true ] && [ -z "$drift_marker" ]; then
   actual_mounts="$(container_shared_mounts "$WORKSPACE")"
   mount_drift="$(shared_repos_mount_drift "$SHARED_REPOS_SCAN" "$actual_mounts")"
@@ -4314,12 +4403,19 @@ if [ "$REBUILD" != true ] && [ -z "$drift_marker" ]; then
   # container — so a changed list MUST force a recreate or the new domain is
   # announced but never allowlisted.
   domains_drift="$(extra_domains_drift "$VIBE_EXTRA_DOMAINS" "$(container_env_value "$WORKSPACE" VIBE_EXTRA_DOMAINS)")"
+  # phase 1a: the Codex login bind is a credential; a container must never
+  # keep it after the project's opt-in (or the global switch) is withdrawn.
+  codex_drift="$(codex_mount_drift "$(_codex_desired_source "$WORKSPACE" 2>/dev/null)" "$actual_mounts")"
 fi
-extra_flag="$(remove_existing_flag "$REBUILD" "${drift_marker}${mount_drift}${projects_drift}${domains_drift}")"
+extra_flag="$(remove_existing_flag "$REBUILD" "${drift_marker}${mount_drift}${projects_drift}${domains_drift}${codex_drift}")"
 [ -n "$extra_flag" ] && UP_ARGS+=("$extra_flag")
 # Print a distinct status line when drift (not --rebuild) triggered the recreate.
 if [ -n "$drift_marker" ] && [ "$REBUILD" != true ]; then
   echo "  image moved on since this project's container was built - recreating it."
+  echo ""
+fi
+if [ -n "$codex_drift" ]; then
+  echo "  codex login mount changed since this container was created (opt-in added or withdrawn) - recreating it."
   echo ""
 fi
 if [ -n "$mount_drift" ]; then
