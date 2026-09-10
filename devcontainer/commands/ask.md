@@ -9,8 +9,10 @@ Claude Code stays the lead. Send one bounded task to another model's own CLI;
 return its answer without moving or resuming the lead's session.
 
 **Delegate bulk payloads, not trivial questions.** Measured one-shot floors are
-about **5k tokens for Astra** and **27k tokens for `claude -p`**. These are observed
-overheads, not guarantees. Move a big file, long log, or large diff when doing so
+about **5k tokens for Astra** and about **3k for `claude -p`** through this helper
+(tools disabled; the earlier **27k** figure was a `claude -p` with its full tool
+set loaded, which the helper never does). These are observed overheads, not
+guarantees. Move a big file, long log, or large diff when doing so
 helps; answer a trivial question in-session. Batch once per payload, not per file.
 
 1. Parse `$ARGUMENTS` as `<model> <prompt>`; accept only `astra`, `opus`, `sonnet`,
