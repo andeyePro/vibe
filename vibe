@@ -3141,9 +3141,14 @@ claude_exit_note() {
 
 # container_shared_mounts <workspace>
 # Echoes the existing container's mounts as "dest<TAB>src<TAB>rw|ro" lines,
-# or the sentinel "NONE" when no container exists (or docker is unavailable) —
-# a missing container is a fresh create, never a drift recreate. Fail-safe
-# like the image-drift docker calls.
+# the sentinel "NONE" when no container exists (or docker is unavailable) —
+# a missing container is a fresh create, never a drift recreate — or the
+# sentinel "UNKNOWN" when a container EXISTS but `docker inspect` failed.
+# The two are deliberately distinct (Astra's review of phase 1a): a
+# transient inspect failure must never read as "nothing mounted", because
+# the codex login bind is a credential and a withdrawn opt-in has to be
+# honoured even when the inspection that would prove it is unavailable.
+# Every comparator treats UNKNOWN as drift (recreate), i.e. fails closed.
 container_shared_mounts() {
   local cids cid
   cids=$(docker ps -aq --filter "label=devcontainer.local_folder=$1" 2>/dev/null) || cids=""
@@ -3154,7 +3159,7 @@ container_shared_mounts() {
   fi
   docker inspect --format \
     '{{range .Mounts}}{{.Destination}}{{"\t"}}{{.Source}}{{"\t"}}{{if .RW}}rw{{else}}ro{{end}}{{"\n"}}{{end}}' \
-    "$cid" 2>/dev/null || echo "NONE"
+    "$cid" 2>/dev/null || echo "UNKNOWN"
 }
 
 # shared_repos_mount_drift <scan_output> <actual_mounts>
@@ -3168,6 +3173,7 @@ container_shared_mounts() {
 shared_repos_mount_drift() {
   local scan="$1" actual="$2"
   [ "$actual" = "NONE" ] && return 0
+  if [ "$actual" = "UNKNOWN" ]; then echo 1; return 0; fi
   local desired_lines="" actual_lines=""
   local tag name bindmode slug path dest src mode
   while read -r tag name bindmode slug path; do
@@ -3235,6 +3241,7 @@ extra_domains_drift() {
 projects_bind_mount_drift() {
   local desired="$1" actual="$2"
   [ "$actual" = "NONE" ] && return 0
+  if [ "$actual" = "UNKNOWN" ]; then echo 1; return 0; fi
   local dest src mode found=""
   while IFS=$'\t' read -r dest src mode; do
     [ "$dest" = "/home/node/.claude/projects" ] || continue
@@ -3260,6 +3267,10 @@ projects_bind_mount_drift() {
 codex_mount_drift() {
   local desired="$1" actual="$2"
   [ "$actual" = "NONE" ] && return 0
+  # A container exists but could not be inspected: fail closed and recreate,
+  # whether or not the opt-in currently stands — the one thing that must not
+  # happen is a lingering credential bind nobody could see.
+  if [ "$actual" = "UNKNOWN" ]; then echo 1; return 0; fi
   local dest src mode found=""
   while IFS=$'\t' read -r dest src mode; do
     [ "$dest" = "/home/node/.codex" ] || continue
@@ -4415,7 +4426,11 @@ if [ -n "$drift_marker" ] && [ "$REBUILD" != true ]; then
   echo ""
 fi
 if [ -n "$codex_drift" ]; then
-  echo "  codex login mount changed since this container was created (opt-in added or withdrawn) - recreating it."
+  if [ "$actual_mounts" = "UNKNOWN" ]; then
+    echo "  this project's container exists but could not be inspected - recreating it rather than trust its mounts."
+  else
+    echo "  codex login mount changed since this container was created (opt-in added or withdrawn) - recreating it."
+  fi
   echo ""
 fi
 if [ -n "$mount_drift" ]; then

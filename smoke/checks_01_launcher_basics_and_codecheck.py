@@ -112,11 +112,19 @@ def test_codex_mount_drift():
         ("bind points at another dir", "/Users/x/.codex", kept, "1"),
         ("neither wanted nor present", "", other, ""),
         ("no container is a fresh create", "/Users/m/.codex", "NONE", ""),
+        ("container exists but inspect failed: fail closed", "", "UNKNOWN", "1"),
+        ("inspect failed even with the opt-in standing: fail closed", "/Users/m/.codex", "UNKNOWN", "1"),
     ]:
         r = _source_vibe_call({}, f'printf "%s" "$(codex_mount_drift {shlex.quote(desired)} "$(printf {shlex.quote(actual)})")"')
         check(f"[codex] drift: {label}", r.returncode == 0 and r.stdout == expect,
               f"rc={r.returncode} out={r.stdout!r} err={r.stderr[:200]}")
     src = (REPO / "vibe").read_text()
+    check("[codex] container_shared_mounts distinguishes UNKNOWN from NONE",
+          'echo "UNKNOWN"' in src and 'echo "NONE"' in src, "")
+    for fn in ("shared_repos_mount_drift", "projects_bind_mount_drift"):
+        r = _source_vibe_call({}, f'printf "%s" "$({fn} "" UNKNOWN)"')
+        check(f"[codex] {fn} also fails closed on UNKNOWN", r.returncode == 0 and r.stdout == "1",
+              f"rc={r.returncode} out={r.stdout!r}")
     check("[codex] launch flow computes codex_mount_drift",
           'codex_drift="$(codex_mount_drift' in src and '${codex_drift}' in src, "")
 
