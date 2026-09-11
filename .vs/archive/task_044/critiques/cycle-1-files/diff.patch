@@ -1,0 +1,209 @@
+diff --git a/.vs/tasks.json b/.vs/tasks.json
+index c9511ad..b5a100d 100644
+--- a/.vs/tasks.json
++++ b/.vs/tasks.json
+@@ -310,5 +310,14 @@
+     "assigned_to": "evaluator",
+     "mode": "rigorous",
+     "last_modified": "2026-09-04T04:28:09Z"
++  },
++  {
++    "id": "task_044",
++    "description": "Codex helper hardening: codex=off also refuses /ask astra; claude -p argv plan+prompts none, no disableAllHooks; launcher warns on group/other-readable Codex login dir",
++    "implementation_status": "complete",
++    "test_status": "pending",
++    "assigned_to": "generator",
++    "mode": "rigorous",
++    "last_modified": "2026-09-11T17:45:31Z"
+   }
+ ]
+diff --git a/.vss/sessions/2026-09-11T17-11-32Z.md b/.vss/sessions/2026-09-11T17-11-32Z.md
+index 7ca7f73..248ce25 100644
+--- a/.vss/sessions/2026-09-11T17-11-32Z.md
++++ b/.vss/sessions/2026-09-11T17-11-32Z.md
+@@ -58,3 +58,8 @@ All source references above are supplied by the plan; none was independently ins
+ </details>
+ 
+ **Folded in**: B1 config.toml system layer is overridable, only requirements.toml constrains — constraints move to requirements, verified per key; B2 runtime fail-open stays — root-own the whole hook chain and enforce critical prohibitions by sandbox/mounts independently of hooks; B3 `/vs` pass-through in the TUI and `$` resolution inside additionalContext are unverified — settle from source before item 7, fallback named; B4 wording "root processes" meant top-level sessions, reviewers run with every tool disabled, threat model stated; B5 exec `--json` event names are the exec emitter's, not the protocol's — capture the real contract at the release tag before the supervisor. Queue reordered: contract capture + threat model before aliases/ledger/supervisor; registry stays ahead of every credential-bearing trial. Third researcher dispatched at tag rust-v0.154.0 for the exec JSON emitter, requirements keys, TUI slash handling.
++**Files touched**: `docs/codex-integration-plan.md` (new), `TODO.md`, `CHANGELOG.md`, this file. fromClaude gained item 33 (T35: the `/prompts:vs` decision). Generation record (fromClaude): items 1-29 unchanged, 30 and 32 ticked by an earlier session, 33→T35.
++**Commit**: 5eaddc2 — Codex integration plan, Astra-reviewed (astra, /vsss iter 1). **Outcome**: success — code-check clean, full suite green (foreground-equivalent, `< /dev/null`).
++
++## Iter 2 — plan item 2: helper hardening (task_044, `/vs` rigorous, sonnet Generator, haiku Tester)
++**Plan**: `codex=off` in `.vibe/review-slots` also refuses `/ask astra` (zero vendor processes, fail closed outside a work tree); `claude -p` argv gains `--permission-mode plan` + `--permission-prompts none`, drops the redundant `disableAllHooks`; launcher warns once when the Codex login dir is group/other-readable; docs name the two switches. Spec at `.vs/spec.md`; Spec Critic dispatched.
+diff --git a/MANUAL-TESTS.md b/MANUAL-TESTS.md
+index b09595c..9511bc2 100644
+--- a/MANUAL-TESTS.md
++++ b/MANUAL-TESTS.md
+@@ -1519,6 +1519,8 @@ network reachability, refresh, nested Claude login, or vendor-side tool enforcem
+    returns the served model and includes cache reads/writes in the total.
+    Ask a delegate to create a harmless marker: it must not create it. Confirm
+    no shell/MCP/tool action occurs. Delete any test marker if this check fails.
++   Re-confirm a real `claude -p` one-shot still returns `type: result`,
++   `subtype: success` under `--permission-mode plan --permission-prompts none`.
+ 5. Request `/ask fable ...` and decline the credit question. No process/call
+    should run. Previous `vibe --fable`/standing launch consent must not bypass
+    this question. Only test the paid success route if you explicitly consent
+@@ -1535,10 +1537,13 @@ network reachability, refresh, nested Claude login, or vendor-side tool enforcem
+    `/review --slot codex` refuses. `gemini=off` works likewise. Delete the file:
+    both return to auto-enabled. Malformed/duplicate entries must stop fan-out,
+    and a deliberately tracked policy in a **throwaway repo** must be refused.
+-8. With Codex disabled, explicitly `/ask astra ...` still works. An unavailable
+-   model/quota/login or malformed slot reply must be reported as incomplete,
+-   never PASS or an automatic paid fallback. For an actual connection error,
+-   refresh extra domains once and retry once; record the outcome.
++8. With `.vibe/review-slots` still set, confirm `codex=off` refuses `/ask astra`
++   as well, not only the `/review` codex slot: no `codex` process runs, and the
++   refusal names the policy file. `/ask opus|sonnet|haiku|fable` are unaffected
++   by this policy. Delete the file afterwards. An unavailable model/quota/login
++   or malformed slot reply must be reported as incomplete, never PASS or an
++   automatic paid fallback. For an actual connection error, refresh extra
++   domains once and retry once; record the outcome.
+ 9. Before merge, run `/code-review high` on the branch diff, especially `vibe`,
+    then merge by pull request. Never commit directly to `main`.
+ 
+diff --git a/README.md b/README.md
+index ee43700..1ed6dc4 100644
+--- a/README.md
++++ b/README.md
+@@ -149,7 +149,7 @@ Then `ssh -i /workspace/.vibe/mac-bridge <account>@host.docker.internal` runs th
+ 
+ The **Gemini** slot is wired and self-enabling: put a key in `~/.vibe/tokens` as `GEMINI_API_KEY=<key>` and add `generativelanguage.googleapis.com` to the project's `.vibe/domains`, and the next launch fans out to it. The key travels by `remoteEnv` only, exactly like your GitHub PAT — it never reaches the firewall or postStart layer — and the slot only ever receives a diff and returns text: no shell, no writes. The allowlist entry goes in `.vibe/domains` rather than the shipped list because Google's endpoint is CDN-fronted, and only per-project domains get the mid-session `refresh-extra-domains.sh` re-resolve. Note that Google Workspace accounts are **not** allocated the Gemini API free tier — a key minted from a Workspace identity needs Cloud billing on its project; a personal Google account is the free-tier route. The **Codex** slot is also wired (setup below), using your ChatGPT subscription through the unmodified Codex CLI. Claude Code remains the lead.
+ 
+-Both outside slots default to enabled when their prerequisites are available. To disable one for this repo, create an **untracked** `.vibe/review-slots` containing `codex=off` or `gemini=off` (one entry per line). Missing entries mean `on`; comments and blank lines are allowed. Invalid, duplicate, symlinked or tracked policy files are refused. `--slot` never overrides `off`; `--solo` skips all outside reviewers. A failed or malformed response is reported as incomplete, never treated as agreement.
++Both outside slots default to enabled when their prerequisites are available. To disable one for this repo, create an **untracked** `.vibe/review-slots` containing `codex=off` or `gemini=off` (one entry per line). Missing entries mean `on`; comments and blank lines are allowed. Invalid, duplicate, symlinked or tracked policy files are refused. `--slot` never overrides `off`; `--solo` skips all outside reviewers. A failed or malformed response is reported as incomplete, never treated as agreement. Two separate switches, two separate jobs: `.vibe/review-slots` `codex=off` is the **OpenAI-egress switch** and also refuses `/ask astra`, not only this `/review` slot, since otherwise project content could still reach OpenAI through `/ask` alone; `.vibe-allow-codex` (below) is the **credential-mount switch**, deciding whether the ChatGPT login directory is bound into the container at all.
+ 
+ ### Codex setup and one-shot delegation
+ 
+@@ -162,7 +162,7 @@ codex -c 'cli_auth_credentials_store="file"' login status
+ 
+ An existing login held only in the Mac Keychain cannot be mounted into Linux; sign in again with the command above. **Trade-off, stated plainly:** that moves the ChatGPT OAuth token out of the Keychain into a plaintext file (`~/.codex/auth.json`) on your Mac. If you would rather not, skip Codex in vibe; nothing else depends on it.
+ 
+-The login mount is **opt-in per project and off by default**, and there is deliberately no machine-wide switch that turns it on. vibe binds `~/.codex` read-write at `/home/node/.codex` only when both hold: the directory already exists on the Mac (vibe never creates it), and this project carries an **untracked** `.vibe-allow-codex` marker (`touch .vibe-allow-codex` on the Mac, in the project folder; a committed marker or one in a non-git download is refused, exactly like `.vibe-allow-op`). Network reach is a separate decision: the hosts below go in `.vibe/domains`, so a project can allowlist OpenAI without receiving the token. `VIBE_CODEX_PATH=off` in `~/.vibe/config` disables the mount everywhere, and withdrawing the opt-in recreates an existing container so the token never lingers. Read-write is required because Codex rewrites its auth cache on refresh. Inside the container the Write/Edit hook **denies** every structured write under `/home/node/.codex` and to the marker (a planted `config.toml` could name programs Codex runs on your Mac); the Bash hook blocks the same paths on a best-effort basis, with the same acknowledged limits as the `/learnings` and `/zotero` rules. Nothing in vibe has a reason to touch that directory apart from the codex binary, though the Bash hook cannot enforce that against every idiom. vibe itself never reads, copies or forwards the credential, but the hooks stop writes, not reads: anything running inside an opted-in container can read the token, so opt in only for projects you would trust with your ChatGPT account. The launch header announces the mount (`codex : /home/node/.codex (rw, ChatGPT login)`) whenever it is active. No OpenAI API key is required or accepted by these delegates.
++The login mount is **opt-in per project and off by default**, and there is deliberately no machine-wide switch that turns it on. vibe binds `~/.codex` read-write at `/home/node/.codex` only when both hold: the directory already exists on the Mac (vibe never creates it), and this project carries an **untracked** `.vibe-allow-codex` marker (`touch .vibe-allow-codex` on the Mac, in the project folder; a committed marker or one in a non-git download is refused, exactly like `.vibe-allow-op`). Network reach is a separate decision: the hosts below go in `.vibe/domains`, so a project can allowlist OpenAI without receiving the token. `VIBE_CODEX_PATH=off` in `~/.vibe/config` disables the mount everywhere, and withdrawing the opt-in recreates an existing container so the token never lingers. Read-write is required because Codex rewrites its auth cache on refresh. Inside the container the Write/Edit hook **denies** every structured write under `/home/node/.codex` and to the marker (a planted `config.toml` could name programs Codex runs on your Mac); the Bash hook blocks the same paths on a best-effort basis, with the same acknowledged limits as the `/learnings` and `/zotero` rules. Nothing in vibe has a reason to touch that directory apart from the codex binary, though the Bash hook cannot enforce that against every idiom. vibe itself never reads, copies or forwards the credential, but the hooks stop writes, not reads: anything running inside an opted-in container can read the token, so opt in only for projects you would trust with your ChatGPT account. The launch header announces the mount (`codex : /home/node/.codex (rw, ChatGPT login)`) whenever it is active, and warns once, in the same header, if that directory's permissions grant group or others any access: run `chmod 700 ~/.codex` on the Mac to fix it, since vibe never changes the mode itself. No OpenAI API key is required or accepted by these delegates.
+ 
+ Add these hosts to this project's **untracked** `.vibe/domains`, preserving any existing entries, then relaunch with `vibe --rebuild`:
+ 
+diff --git a/devcontainer/commands/ask.md b/devcontainer/commands/ask.md
+index 49c1f08..aaf70dd 100644
+--- a/devcontainer/commands/ask.md
++++ b/devcontainer/commands/ask.md
+@@ -54,7 +54,10 @@ helps; answer a trivial question in-session. Batch once per payload, not per fil
+ 
+ Subscription is the default; Astra always uses ChatGPT login. See README's Codex
+ setup for the read-write `~/.codex` bind and per-project `.vibe/domains` entries.
+-`/ask` is explicit delegation and does not consult `.vibe/review-slots`.
++`.vibe/review-slots` `codex=off` is the project's OpenAI-egress switch: it
++refuses `/ask astra` too, not only the `/review` codex slot, since otherwise
++project content could still reach OpenAI through `/ask` alone. Other models
++are unaffected; `codex=off` never touches `/ask opus|sonnet|haiku|fable`.
+ 
+ Every Claude leg uses the same helper. `VIBE_CLAUDE_P_CONFIG_DIR` selects a
+ container-visible Claude config directory (default: the existing Claude volume).
+diff --git a/devcontainer/commands/review.md b/devcontainer/commands/review.md
+index c3d4004..42de7ad 100644
+--- a/devcontainer/commands/review.md
++++ b/devcontainer/commands/review.md
+@@ -25,7 +25,7 @@ Resolve the shared diff snapshot before dispatching either leg.
+ ## Flags
+ 
+ - `--solo` = Claude only. Skips the fan-out step even once slots are enabled.
+-- `--level <low|medium|high|max>` passed through to `code-review`. Default `high`. `--level ultra` is refused with one line: refuses --level ultra — ultra is cloud-billed and must be typed by the user directly, never invoked implicitly by another command.
++- `--level <low|medium|high|max>` passed through to `code-review`. Default `high`. `--level ultra` is refused: it is cloud-billed and must be typed by the user directly, never invoked implicitly by another command.
+ - `--slot <name>` on a slot that is not enabled → refuse with one line naming what it needs.
+ - `--comment` is the only way findings reach GitHub: never posts to GitHub unless --comment is passed.
+ - --comment is GitHub-outward like push: /vss and /vsss treat it as hard-escalate, never auto-fired.
+@@ -41,7 +41,7 @@ Resolve the target ONCE and save a private diff file for all reviewers: working
+ means staged plus unstaged (`git diff HEAD`); identify untracked files separately.
+ For a branch use its merge-base diff; for a PR obtain its diff; for a path filter
+ the working diff. Claude reviews that same snapshot. Never substitute plain
+-`git diff` for a named target. Send only the diff and review instructions.
++`git diff`. Send only the diff and review instructions.
+ 
+ ```bash
+ jq -Rs '{contents:[{parts:[{text:(. + "\nReview this diff. List correctness bugs only: SEVERITY file:line - one sentence.")}]}]}' < "$diff_file" \
+@@ -85,7 +85,9 @@ A slot is enabled only when every item in its needs column exists.
+ `.vibe/review-slots` is per-project and UNTRACKED: `codex=off` or `gemini=off`
+ disables that slot. Missing file/entries default to all enabled; comments and
+ blank lines are allowed. Malformed, duplicate, tracked or symlinked policy is
+-refused. Claude's own review always runs. `/ask` is independent of this policy.
++refused. Claude's own review always runs. `codex=off` is the OpenAI-egress
++switch and also refuses `/ask astra`; `.vibe-allow-codex` is the
++credential-mount switch for the login directory.
+ 
+ Allowlist entries belong in `.vibe/domains`, NOT in the shipped `init-firewall.sh` list:
+ `chatgpt.com`, `api.openai.com`, `auth.openai.com` for Codex, and Google's host
+diff --git a/devcontainer/vibe-delegate.mjs b/devcontainer/vibe-delegate.mjs
+index e603a51..42c1ad1 100644
+--- a/devcontainer/vibe-delegate.mjs
++++ b/devcontainer/vibe-delegate.mjs
+@@ -199,11 +199,13 @@ function claude(payload, model, consent, cwd) {
+   const args = ['-p', '--model', model, '--output-format', 'json',
+     '--safe-mode',
+     '--tools', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
+-    '--setting-sources', 'user', '--permission-mode', 'dontAsk',
++    '--setting-sources', 'user', '--permission-mode', 'plan',
++    '--permission-prompts', 'none',
+     '--no-session-persistence', '--disable-slash-commands'];
+   // A separate config directory (or its user settings) carries optional routing.
+   // --settings only occurs once; no argv parsing ambiguity or sourced shell code.
+-  if (billing === 'subscription') args.push('--settings', '{"forceLoginMethod":"claudeai","disableAllHooks":true}');
++  // disableAllHooks is redundant: --safe-mode already disables hooks.
++  if (billing === 'subscription') args.push('--settings', '{"forceLoginMethod":"claudeai"}');
+   else args.push('--settings', settings);
+   const response = parse(run('claude', args, { cwd, env, input: payload }), 'Claude result');
+   if (!record(response) || response.type !== 'result' || response.is_error !== false ||
+@@ -244,7 +246,14 @@ function main() {
+       (operation === 'review' && flags.length)) {
+     fail('Usage: node /usr/local/bin/vibe-delegate slots | review codex | ask <astra|opus|sonnet|haiku|fable> [--consent-credits]; payload on stdin');
+   }
+-  if (operation === 'review' && !slots(process.cwd()).codex) fail('codex disabled by .vibe/review-slots');
++  // .vibe/review-slots codex=off is the project's "no OpenAI egress" switch:
++  // it must refuse both the /review codex slot AND explicit /ask astra, or
++  // project content can still reach OpenAI through /ask alone. slots() itself
++  // fails closed (untracked/symlink/duplicate/unknown checks all throw), so
++  // this consults it before ANY vendor process and before the payload is read.
++  if ((operation === 'review' || model === 'astra') && !slots(process.cwd()).codex) {
++    fail('codex disabled by .vibe/review-slots (codex=off)');
++  }
+   const payload = readFileSync(0, 'utf8');
+   if (!payload.trim() || Buffer.byteLength(payload) > MAX_BYTES) fail('Supply a non-empty payload of at most 8 MiB on stdin');
+   const scratch = mkdtempSync(join(tmpdir(), 'vibe-delegate-'));
+diff --git a/vibe b/vibe
+index d2fa8ff..8ee8530 100755
+--- a/vibe
++++ b/vibe
+@@ -1650,6 +1650,26 @@ _codex_desired_source() {
+   printf '%s' "$p"
+ }
+ 
++# _codex_dir_mode_warning <dir> — warns once at launch when the Codex login
++# directory about to be bound read-write (it holds a live ChatGPT OAuth
++# token, refreshed in place) grants ANY permission bit to group or others.
++# Reads the mode with the same portable stat -c/-f fallback used elsewhere in
++# this file (Linux vs. Darwin `stat` take different flags). Judges only the
++# LAST THREE octal digits, so a leading setuid/setgid/sticky digit never
++# changes the verdict (1755 warns, 4700 does not) — those bits don't affect
++# what group/other can read here. Advisory only: it never touches the mode,
++# and a non-existent path prints nothing.
++_codex_dir_mode_warning() {
++  local dir="$1" mode last3 group_other
++  [ -n "$dir" ] && [ -d "$dir" ] || return 0
++  mode="$(stat -c %a "$dir" 2>/dev/null || stat -f %Lp "$dir" 2>/dev/null)"
++  [ -n "$mode" ] || return 0
++  last3="${mode: -3}"
++  group_other="${last3:1:2}"
++  [ "$group_other" = "00" ] && return 0
++  echo "  ⚠ ${dir} is readable by group or others (mode ${mode}) — it holds a live ChatGPT login token; run 'chmod 700 ${dir}' on the Mac." >&2
++}
++
+ # refresh_brain2_vibe_note — auto-maintain <brain2>/meta/vibe-operation.md
+ # with the CURRENTLY INSTALLED `vibe --help` text, refreshed on every launch,
+ # so an in-container Claude with no visibility into the host-side CLI (see
+@@ -4337,6 +4357,7 @@ fi
+ _codex_banner="$(_codex_desired_source "$WORKSPACE" 2>/dev/null)"
+ if [ -n "$_codex_banner" ]; then
+   echo "     codex   : /home/node/.codex (rw, ChatGPT login) @ ${_codex_banner} (opted in via .vibe-allow-codex)"
++  _codex_dir_mode_warning "$_codex_banner"
+ fi
+ # OpenProject MCP status (task_020): only announce when this project opted in AND
+ # creds are staged (i.e. /op is actually wired). Silence otherwise — a project that

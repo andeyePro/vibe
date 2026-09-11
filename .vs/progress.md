@@ -546,3 +546,9 @@ Verdict: PASS. Committing as `/vs cycle 1: pass`. Not pushed.
 - Mechanical gate: Tester (haiku) 45 [tdd] checks in checks_13; full suite green (Tester foreground run + chair rerun); code-check clean. vs+vss+vsss 13,848 → 14,166 (pins 14,300).
 - Diff read: Step 4 trail contract and Step 5a cross-check are coherent and evidential (one-line entries, no `|` in command, written: vs mtime as a stated weak proxy, cycle-fail sentence); independence carve-out limited to the trail; `--fuzzy` exclusion; Step 3b's dangling line resolved; passthroughs in place.
 - Process note: the sonnet Generator completed every edit but parked three times on a backgrounded suite run; chair stopped it, wrote its report from the tree, and the Tester/chair runs verified. Generator tier that passed: sonnet. Tester: haiku.
+
+## task_044 — cycle 1 — PASS (2026-09-11T18:23:44Z)
+Generator: sonnet (1 cycle of 2). Tester: haiku. Evaluator: Fable 5.1 chair.
+Spec Critic: revise (3 BLOCKING folded in before dispatch: banner wiring verified by source-text adjacency, MANUAL-TESTS Test 54 step 8 inverted, malformed policy fails closed for ask astra).
+Verified: AC1-AC3 by the delegate fixtures (codex=off refuses ask astra with zero vendor calls; every slots() failure fails closed; outside a work tree fails closed); AC4 by an exact golden argv vector (chair tightened the Tester's element-wise checks to list equality); AC5 by mode fixtures 0700/0755/0750/0705/1755/4700/missing plus the adjacency check (chair moved the test from the over-cap checks_01 to checks_17); AC6 by pinned doc substrings; AC8 code-check clean, full suite green.
+Astra diff review (gpt-6-astra, 19,185 tokens): verdict PASS — one WARNING (stat without -L would judge a symlink's own 777 mode) applied: `stat -L` on both platforms plus a symlink fixture.

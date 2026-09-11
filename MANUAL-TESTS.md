@@ -1519,6 +1519,8 @@ network reachability, refresh, nested Claude login, or vendor-side tool enforcem
    returns the served model and includes cache reads/writes in the total.
    Ask a delegate to create a harmless marker: it must not create it. Confirm
    no shell/MCP/tool action occurs. Delete any test marker if this check fails.
+   Re-confirm a real `claude -p` one-shot still returns `type: result`,
+   `subtype: success` under `--permission-mode plan --permission-prompts none`.
 5. Request `/ask fable ...` and decline the credit question. No process/call
    should run. Previous `vibe --fable`/standing launch consent must not bypass
    this question. Only test the paid success route if you explicitly consent
@@ -1535,10 +1537,13 @@ network reachability, refresh, nested Claude login, or vendor-side tool enforcem
    `/review --slot codex` refuses. `gemini=off` works likewise. Delete the file:
    both return to auto-enabled. Malformed/duplicate entries must stop fan-out,
    and a deliberately tracked policy in a **throwaway repo** must be refused.
-8. With Codex disabled, explicitly `/ask astra ...` still works. An unavailable
-   model/quota/login or malformed slot reply must be reported as incomplete,
-   never PASS or an automatic paid fallback. For an actual connection error,
-   refresh extra domains once and retry once; record the outcome.
+8. With `.vibe/review-slots` still set, confirm `codex=off` refuses `/ask astra`
+   as well, not only the `/review` codex slot: no `codex` process runs, and the
+   refusal names the policy file. `/ask opus|sonnet|haiku|fable` are unaffected
+   by this policy. Delete the file afterwards. An unavailable model/quota/login
+   or malformed slot reply must be reported as incomplete, never PASS or an
+   automatic paid fallback. For an actual connection error, refresh extra
+   domains once and retry once; record the outcome.
 9. Before merge, run `/code-review high` on the branch diff, especially `vibe`,
    then merge by pull request. Never commit directly to `main`.
 

@@ -581,6 +581,7 @@ def main() -> int:
     test_codex_mount_drift()
     test_codex_extra_domains()
     test_gemini_slot_wiring()
+    test_codex_switch_docs()
 
     # task_037: /vs --TDD flag documentation and red-first trail mechanics
     test_tdd_flag_docs()
@@ -658,6 +659,8 @@ def main() -> int:
     test_delegate_failures()
     test_delegate_claude_routes()
     test_delegate_review_policy()
+    test_delegate_ask_policy_and_argv()
+    test_codex_dir_mode_warning()
 
     print()
     if FAILURES:

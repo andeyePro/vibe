@@ -1650,6 +1650,28 @@ _codex_desired_source() {
   printf '%s' "$p"
 }
 
+# _codex_dir_mode_warning <dir> — warns once at launch when the Codex login
+# directory about to be bound read-write (it holds a live ChatGPT OAuth
+# token, refreshed in place) grants ANY permission bit to group or others.
+# Reads the mode with the same portable stat -c/-f fallback used elsewhere in
+# this file (Linux vs. Darwin `stat` take different flags). Judges only the
+# LAST THREE octal digits, so a leading setuid/setgid/sticky digit never
+# changes the verdict (1755 warns, 4700 does not) — those bits don't affect
+# what group/other can read here. Advisory only: it never touches the mode,
+# and a non-existent path prints nothing.
+_codex_dir_mode_warning() {
+  local dir="$1" mode last3 group_other
+  [ -n "$dir" ] && [ -d "$dir" ] || return 0
+  # -L: judge the directory itself, not a symlink pointing at it (a symlink's
+  # own mode is 777 on most systems and would warn on every launch).
+  mode="$(stat -L -c %a "$dir" 2>/dev/null || stat -L -f %Lp "$dir" 2>/dev/null)"
+  [ -n "$mode" ] || return 0
+  last3="${mode: -3}"
+  group_other="${last3:1:2}"
+  [ "$group_other" = "00" ] && return 0
+  echo "  ⚠ ${dir} is readable by group or others (mode ${mode}) — it holds a live ChatGPT login token; run 'chmod 700 ${dir}' on the Mac." >&2
+}
+
 # refresh_brain2_vibe_note — auto-maintain <brain2>/meta/vibe-operation.md
 # with the CURRENTLY INSTALLED `vibe --help` text, refreshed on every launch,
 # so an in-container Claude with no visibility into the host-side CLI (see
@@ -4337,6 +4359,7 @@ fi
 _codex_banner="$(_codex_desired_source "$WORKSPACE" 2>/dev/null)"
 if [ -n "$_codex_banner" ]; then
   echo "     codex   : /home/node/.codex (rw, ChatGPT login) @ ${_codex_banner} (opted in via .vibe-allow-codex)"
+  _codex_dir_mode_warning "$_codex_banner"
 fi
 # OpenProject MCP status (task_020): only announce when this project opted in AND
 # creds are staged (i.e. /op is actually wired). Silence otherwise — a project that

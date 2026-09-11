@@ -779,3 +779,115 @@ def test_gemini_slot_wiring() -> None:
           "It never gets a shell, never writes" in review_text, "")
 
     print("[gemini] all wiring checks completed")
+
+
+def test_codex_switch_docs() -> None:
+    """AC6: Documentation mentions codex=off policy and chmod 700 warning."""
+    print("\n[codex] documentation for policy and file mode warning (AC6)")
+    
+    # AC6: ask.md contains `codex=off` AND `/ask astra` in one sentence with `refus`
+    ask_md_path = REPO / "devcontainer" / "commands" / "ask.md"
+    check("[codex] ask.md exists", ask_md_path.exists(), "")
+    
+    if ask_md_path.exists():
+        ask_text = ask_md_path.read_text()
+        
+        # Check that the old sentence about independence is removed
+        check("[codex] ask.md removes 'independent of this policy' sentence",
+              "independent of this policy" not in ask_text, "")
+        
+        # Check for codex=off, /ask astra, and refus in connection
+        has_codex_off = "codex=off" in ask_text
+        has_ask_astra = "/ask astra" in ask_text
+        
+        check("[codex] ask.md mentions codex=off", has_codex_off, "")
+        check("[codex] ask.md mentions /ask astra", has_ask_astra, "")
+        
+        # Check for a sentence with all three keywords
+        import re
+        has_combined = re.search(r'codex=off.*refus.*astra|astra.*refus.*codex=off|refus.*codex=off.*astra', ask_text, re.IGNORECASE | re.DOTALL)
+        check("[codex] ask.md connects codex=off, refus, and astra",
+              has_combined is not None, "")
+    
+    # AC6: review.md drops "independent of this policy" and mentions the two switches
+    review_md_path = REPO / "devcontainer" / "commands" / "review.md"
+    check("[codex] review.md exists", review_md_path.exists(), "")
+    
+    if review_md_path.exists():
+        review_text = review_md_path.read_text()
+        
+        check("[codex] review.md removes 'independent of this policy'",
+              "independent of this policy" not in review_text, "")
+        
+        # Check for OpenAI-egress or OpenAI egress (may be on different lines)
+        import re
+        has_egress = re.search(r'OpenAI[\s-]*egress.*switch|switch.*OpenAI[\s-]*egress', review_text, re.IGNORECASE | re.DOTALL)
+        check("[codex] review.md calls it OpenAI-egress switch",
+              has_egress is not None,
+              "")
+        
+        check("[codex] review.md mentions credential-mount switch",
+              "mount switch" in review_text or "credential-mount switch" in review_text,
+              "")
+    
+    # AC6: README contains chmod 700 warning and both switch descriptions
+    readme_path = REPO / "README.md"
+    check("[codex] README.md exists", readme_path.exists(), "")
+    
+    if readme_path.exists():
+        readme_text = readme_path.read_text()
+        
+        check("[codex] README mentions chmod 700",
+              "chmod 700" in readme_text, "")
+        
+        check("[codex] README mentions egress switch",
+              "egress switch" in readme_text, "")
+        
+        check("[codex] README mentions mount switch",
+              "mount switch" in readme_text, "")
+    
+    # AC6: MANUAL-TESTS.md Test 54 step 8 no longer says "explicitly works"
+    # and instead says codex=off refuses
+    manual_tests_path = REPO / "MANUAL-TESTS.md"
+    check("[codex] MANUAL-TESTS.md exists", manual_tests_path.exists(), "")
+    
+    if manual_tests_path.exists():
+        manual_text = manual_tests_path.read_text()
+        
+        # Check for Test 54 step 8
+        import re
+        test_54_match = re.search(r'### Test 54:.*?(?=### Test \d+:|$)', manual_text, re.DOTALL)
+        if test_54_match:
+            test_54_text = test_54_match.group(0)
+            
+            # Step 8 should not mention "explicitly /ask astra ... still works"
+            check("[codex] Test 54 step 8 removes 'explicitly works' language",
+                  "explicitly" not in test_54_text or "/ask astra" not in test_54_text or
+                  "still works" not in test_54_text or 
+                  not re.search(r'explicitly.*ask astra.*still works|still works.*ask astra.*explicitly', test_54_text),
+                  "")
+            
+            # Step 8 should mention codex=off refuses
+            check("[codex] Test 54 step 8 mentions codex=off refuses /ask astra",
+                  re.search(r'codex=off.*refus.*astra|astra.*refus.*codex=off', test_54_text, re.IGNORECASE) is not None,
+                  "")
+        
+        # Check for Test 54 step 4: re-confirm real claude -p one-shot behavior
+        if test_54_match:
+            test_54_text = test_54_match.group(0)
+            
+            # Step 4 should mention --permission-mode plan and --permission-prompts none
+            step_4_match = re.search(r'(?:^|\n).*step 4.*$', test_54_text, re.IGNORECASE | re.MULTILINE)
+            if step_4_match:
+                # Find text after step 4
+                step_4_start = step_4_match.start()
+                step_4_text = test_54_text[step_4_start:]
+                
+                has_plan = "--permission-mode plan" in step_4_text or "permission-mode plan" in step_4_text
+                has_none = "--permission-prompts none" in step_4_text or "permission-prompts none" in step_4_text
+                
+                check("[codex] Test 54 step 4 mentions --permission-mode plan",
+                      has_plan, "")
+                
+                check("[codex] Test 54 step 4 mentions --permission-prompts none",
+                      has_none, "")

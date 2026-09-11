@@ -199,11 +199,13 @@ function claude(payload, model, consent, cwd) {
   const args = ['-p', '--model', model, '--output-format', 'json',
     '--safe-mode',
     '--tools', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
-    '--setting-sources', 'user', '--permission-mode', 'dontAsk',
+    '--setting-sources', 'user', '--permission-mode', 'plan',
+    '--permission-prompts', 'none',
     '--no-session-persistence', '--disable-slash-commands'];
   // A separate config directory (or its user settings) carries optional routing.
   // --settings only occurs once; no argv parsing ambiguity or sourced shell code.
-  if (billing === 'subscription') args.push('--settings', '{"forceLoginMethod":"claudeai","disableAllHooks":true}');
+  // disableAllHooks is redundant: --safe-mode already disables hooks.
+  if (billing === 'subscription') args.push('--settings', '{"forceLoginMethod":"claudeai"}');
   else args.push('--settings', settings);
   const response = parse(run('claude', args, { cwd, env, input: payload }), 'Claude result');
   if (!record(response) || response.type !== 'result' || response.is_error !== false ||
@@ -244,7 +246,14 @@ function main() {
       (operation === 'review' && flags.length)) {
     fail('Usage: node /usr/local/bin/vibe-delegate slots | review codex | ask <astra|opus|sonnet|haiku|fable> [--consent-credits]; payload on stdin');
   }
-  if (operation === 'review' && !slots(process.cwd()).codex) fail('codex disabled by .vibe/review-slots');
+  // .vibe/review-slots codex=off is the project's "no OpenAI egress" switch:
+  // it must refuse both the /review codex slot AND explicit /ask astra, or
+  // project content can still reach OpenAI through /ask alone. slots() itself
+  // fails closed (untracked/symlink/duplicate/unknown checks all throw), so
+  // this consults it before ANY vendor process and before the payload is read.
+  if ((operation === 'review' || model === 'astra') && !slots(process.cwd()).codex) {
+    fail('codex disabled by .vibe/review-slots (codex=off)');
+  }
   const payload = readFileSync(0, 'utf8');
   if (!payload.trim() || Buffer.byteLength(payload) > MAX_BYTES) fail('Supply a non-empty payload of at most 8 MiB on stdin');
   const scratch = mkdtempSync(join(tmpdir(), 'vibe-delegate-'));

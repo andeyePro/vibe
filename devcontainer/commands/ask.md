@@ -54,7 +54,10 @@ helps; answer a trivial question in-session. Batch once per payload, not per fil
 
 Subscription is the default; Astra always uses ChatGPT login. See README's Codex
 setup for the read-write `~/.codex` bind and per-project `.vibe/domains` entries.
-`/ask` is explicit delegation and does not consult `.vibe/review-slots`.
+`.vibe/review-slots` `codex=off` is the project's OpenAI-egress switch: it
+refuses `/ask astra` too, not only the `/review` codex slot, since otherwise
+project content could still reach OpenAI through `/ask` alone. Other models
+are unaffected; `codex=off` never touches `/ask opus|sonnet|haiku|fable`.
 
 Every Claude leg uses the same helper. `VIBE_CLAUDE_P_CONFIG_DIR` selects a
 container-visible Claude config directory (default: the existing Claude volume).

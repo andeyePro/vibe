@@ -25,7 +25,7 @@ Resolve the shared diff snapshot before dispatching either leg.
 ## Flags
 
 - `--solo` = Claude only. Skips the fan-out step even once slots are enabled.
-- `--level <low|medium|high|max>` passed through to `code-review`. Default `high`. `--level ultra` is refused with one line: refuses --level ultra — ultra is cloud-billed and must be typed by the user directly, never invoked implicitly by another command.
+- `--level <low|medium|high|max>` passed through to `code-review`. Default `high`. `--level ultra` is refused: it is cloud-billed and must be typed by the user directly, never invoked implicitly by another command.
 - `--slot <name>` on a slot that is not enabled → refuse with one line naming what it needs.
 - `--comment` is the only way findings reach GitHub: never posts to GitHub unless --comment is passed.
 - --comment is GitHub-outward like push: /vss and /vsss treat it as hard-escalate, never auto-fired.
@@ -41,7 +41,7 @@ Resolve the target ONCE and save a private diff file for all reviewers: working 
 means staged plus unstaged (`git diff HEAD`); identify untracked files separately.
 For a branch use its merge-base diff; for a PR obtain its diff; for a path filter
 the working diff. Claude reviews that same snapshot. Never substitute plain
-`git diff` for a named target. Send only the diff and review instructions.
+`git diff`. Send only the diff and review instructions.
 
 ```bash
 jq -Rs '{contents:[{parts:[{text:(. + "\nReview this diff. List correctness bugs only: SEVERITY file:line - one sentence.")}]}]}' < "$diff_file" \
@@ -85,7 +85,9 @@ A slot is enabled only when every item in its needs column exists.
 `.vibe/review-slots` is per-project and UNTRACKED: `codex=off` or `gemini=off`
 disables that slot. Missing file/entries default to all enabled; comments and
 blank lines are allowed. Malformed, duplicate, tracked or symlinked policy is
-refused. Claude's own review always runs. `/ask` is independent of this policy.
+refused. Claude's own review always runs. `codex=off` is the OpenAI-egress
+switch and also refuses `/ask astra`; `.vibe-allow-codex` is the
+credential-mount switch for the login directory.
 
 Allowlist entries belong in `.vibe/domains`, NOT in the shipped `init-firewall.sh` list:
 `chatgpt.com`, `api.openai.com`, `auth.openai.com` for Codex, and Google's host
