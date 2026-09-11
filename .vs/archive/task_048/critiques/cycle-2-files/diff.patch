@@ -1,0 +1,1637 @@
+diff --git a/.vs/progress.md b/.vs/progress.md
+index 482101c..c199a24 100644
+--- a/.vs/progress.md
++++ b/.vs/progress.md
+@@ -570,3 +570,8 @@ Generator: sonnet (1 cycle of 2). Tester: sonnet. Evaluator: Fable 5.1 chair.
+ Spec Critic (draft): revise, 6 BLOCKING folded in before dispatch (no `-a` flag on codex exec; scratch files never inside the workspace; Claude write role keeps empty MCP and a tool allowlist without Agent/Web; the `/` form honestly absent from the Codex TUI; nested `/vs` steps read the command file in-turn; Grep/Glob substitutions).
+ Verified: SKILL.md frontmatter/body/table, Dockerfile COPY coverage, every `role` refusal with zero vendor calls, exact golden argv for read-only and write roles in both families, `-C`/cwd invariants, status derivation, docs; code-check clean; full suite green.
+ Astra diff review (gpt-6-astra, 15,186 tokens): SPLIT — one WARNING, applied: write roles carried no guards because `--setting-sources user` excludes the project's settings.local.json; guards now inline in `--settings` with disableAllHooks pinned false (billed mode merges into a scratch copy). Astra confirmed task_046's absolute `/usr/bin/env` residual.
++
++## task_048 — cycle 1 — FAIL (2026-09-11T21:17:51Z)
++Generator: opus. Tester: sonnet (new checks_19, 25 functions, green). Evaluator: Fable 5.1 chair.
++Astra review (gpt-6-astra, 19,506 tokens): FAIL, five BLOCKING — resume re-sends the original prompt and forgets a completed run; no deadline while awaiting a turn; waits not capped by the wall budget; turnFailures missing from the gate; a persisted wait deadline ignored on resume. All real.
++Classification: `spec` for the gate omission and the resume/wait rules (AC4/AC6/AC7 amended by the chair; restart-at-cycle-1 rule waived because the amendments only tighten the same contract), `capability` for the rest. Cycle 2: Generator re-dispatched at opus with the failure list; the Tester will extend checks_19 for the five behaviours.
+diff --git a/.vs/tasks.json b/.vs/tasks.json
+index fe51a03..d828655 100644
+--- a/.vs/tasks.json
++++ b/.vs/tasks.json
+@@ -10,7 +10,7 @@
+   },
+   {
+     "id": "task_003",
+-    "description": "Prize-worthy haiku about vibe \u2192 HAIKU.md (fuzzy mode)",
++    "description": "Prize-worthy haiku about vibe → HAIKU.md (fuzzy mode)",
+     "implementation_status": "complete",
+     "test_status": "passing",
+     "assigned_to": "evaluator",
+@@ -127,7 +127,7 @@
+     "last_modified": "2026-07-11T05:19:20Z",
+     "cycle_1_note": "Generator (sonnet) delivered AC1-AC7: registry/declaration helpers, vibe repos add|remove|list, shared_repos_scan single-classification-pass mount assembly (2 binds/repo, ro hard-pinned), runtime manifest + install-claude-extras.sh safe.directory wiring, gitignore ownership, README+CHANGELOG. code-check clean, smoke 1080/1080 (no Tester checks yet - append-only per /vs convention, lands next). implementation_status stays in_progress (C1 of 4); C2 (rw lock) not started.",
+     "cycle_2_note": "Tester (haiku) added 18 append-only smoke-test.py functions covering AC8 (rw-intent resolution: free-lock grant, live-holder contention fallback + named warning, ro-declared repos never touch the lock, shared_repo_declaration_set_mode at the helper level, PLUS CLI-level vibe repos add --rw: fresh-add-rw, upgrade-in-place, no-silent-downgrade on plain re-add, --rw position-agnostic - the flag wiring landed as an integrator edit mid-cycle after the Tester flagged it missing), AC9 (lock acquire/contend/stale-reclaim/release/torn-meta, all against real backgrounded processes), AC10 (exit dispatcher survives a refusing first hook via evidence files, single trap -p EXIT installer, no raw trap EXIT elsewhere, clipboard-flush + /learn tempfile cleanup both confirmed migrated into vibe_exit_hook_add), and one mode-coherence fixture tying manifest/override-JSON agreement together. Full suite: smoke-test.py 1273/1273 checks passing, 0 regressions in the frozen C1 suite; code-check.py shellcheck clean. Artifacts: .vs/cycle-2/test-output.log, .vs/cycle-2/summary.md.",
+-    "cycle_3_note": "Tester (haiku) added 10 append-only smoke-test.py functions (61 checks) covering AC12 (/repo command file shape incl. host/container ~/.vibe boundary + negation-window regression guard, claim path/KEY=VALUE content shape, and a substituted-placeholder run of the documented mkdir+write proving syntactic validity + last-claim-wins overwrite since the claim flow has no sourced vibe helper - pure documentation), AC13 (statusLine \u26a0 rw:<requester> segment: structural regression guard on forceLoginMethod/defaultMode/guard-bash.sh/guard-fs.sh entries, byte-identical spot-check of two frozen fixtures with VIBE_REPOS_DIR pointed at an empty temp dir, and three functional fixtures - holder+request present, request present but not-us-the-holder, holder-but-no-request - all via VIBE_REPOS_DIR/VIBE_PROJECT_NAME env overrides), AC14 (shared-repos.md fragment shape + install-claude-extras.sh gating on VIBE_SHARED_REPOS_MANIFEST across missing/empty/non-empty), and VIBE_PROJECT_NAME plumbing (top-level export site before the _build_override_config command-substitution subshell, remoteEnv-only carriage in devcontainer.json, absent from containerEnv). Full suite: smoke-test.py 1334/1334 checks passing, 0 regressions in the frozen C1/C2 suite; code-check.py shellcheck clean. AC13(c)'s discriminating power verified by hand-running a deliberately broken statusLine variant (holder-equality check removed) and confirming the assertion fails against it. No AC12-AC15 mechanism found unimplemented. Artifacts: .vs/cycle-3/test-output.log, .vs/cycle-3/summary.md.",
++    "cycle_3_note": "Tester (haiku) added 10 append-only smoke-test.py functions (61 checks) covering AC12 (/repo command file shape incl. host/container ~/.vibe boundary + negation-window regression guard, claim path/KEY=VALUE content shape, and a substituted-placeholder run of the documented mkdir+write proving syntactic validity + last-claim-wins overwrite since the claim flow has no sourced vibe helper - pure documentation), AC13 (statusLine ⚠ rw:<requester> segment: structural regression guard on forceLoginMethod/defaultMode/guard-bash.sh/guard-fs.sh entries, byte-identical spot-check of two frozen fixtures with VIBE_REPOS_DIR pointed at an empty temp dir, and three functional fixtures - holder+request present, request present but not-us-the-holder, holder-but-no-request - all via VIBE_REPOS_DIR/VIBE_PROJECT_NAME env overrides), AC14 (shared-repos.md fragment shape + install-claude-extras.sh gating on VIBE_SHARED_REPOS_MANIFEST across missing/empty/non-empty), and VIBE_PROJECT_NAME plumbing (top-level export site before the _build_override_config command-substitution subshell, remoteEnv-only carriage in devcontainer.json, absent from containerEnv). Full suite: smoke-test.py 1334/1334 checks passing, 0 regressions in the frozen C1/C2 suite; code-check.py shellcheck clean. AC13(c)'s discriminating power verified by hand-running a deliberately broken statusLine variant (holder-equality check removed) and confirming the assertion fails against it. No AC12-AC15 mechanism found unimplemented. Artifacts: .vs/cycle-3/test-output.log, .vs/cycle-3/summary.md.",
+     "cycle_4_note": "Tester (haiku) added 28 append-only smoke-test.py functions (92 checks) covering AC16 (credential-helper.sh driven directly as a stdin->stdout filter: project-slug exact match, shared-slug match gated by the launcher-exported VIBE_SHARED_SLUG_* twin, unknown-repo silence, .git suffix, subdir suffix, trailing-slash-only (both unmatched and on the project's own slug), case-sensitivity, '..' traversal, embedded control byte, shell-metacharacter injection with a no-execution sentinel check, the post-security-review sanitisation-collision hardening (twin-mismatch silence is the gate-discriminating fixture; twin-match still serves correctly; twin-entirely-unset also silences), non-get ops, non-github host, lookalike subdomain host, http-not-https, empty-token-never-served, and a consolidated never-widen attack battery asserting $GITHUB_TOKEN never appears on stdout across 8 simultaneous non-project attempts), AC17 (useHttpPath registered at the same --global scope as credential.helper in setup-git.sh, plus a functional run of setup-git.sh against a fresh sandbox HOME confirming both settings land), AC18 (structural: GITHUB_REPO_SLUG / shared-token / shared-slug-twin exports all sit at column-0 top-level scope strictly outside and before the _build_override_config command-substitution call; functional: render_devcontainer_with_mounts injects matching VIBE_SHARED_TOKEN_*/VIBE_SHARED_SLUG_* remoteEnv passthroughs, remoteEnv-only never containerEnv), AC19 (CLAUDE.md + README text checks for the amended single-repo-PAT/launch-header-blast-radius/never-multi-repo-token wording). Full suite: smoke-test.py 1426/1426 checks passing, 0 regressions in the frozen C1-C3 suite; code-check.py shellcheck clean across 15 files. GAP FOUND: AC18's sanctioned C4 relaxation (missing token for an acked+registered ro repo should WARN and still MOUNT ro) is NOT implemented - shared_repos_scan still hard-blocks with 'B ... no token configured', so the C1 frozen test test_task017_delta_scan_b_token_absent is unchanged and still passes; no frozen-test amendment needed yet, this is UNIMPLEMENTED plumbing for the chair to pick up, not a Tester-side fix. AC20 (security-review) ran mid-cycle with a CLEAR verdict, closing one LOW (the sanitisation-collision twin-check) which this cycle's tests now cover as the gate-discriminating fixture. AC21's MANUAL-TESTS.md end-to-end push section (shared repo / project repo / undeclared repo) has not been authored yet - Generator/chair responsibility per spec, not Tester's. Artifacts: .vs/cycle-4/test-output.log, .vs/cycle-4/summary.md."
+   },
+   {
+@@ -259,7 +259,7 @@
+   },
+   {
+     "id": "task_035",
+-    "description": "harness hygiene: stdin-immune suite, one sandbox builder + whole-suite meta-check, sha-pin lint, SAFE prunes, CLAUDE.md \u00a7 Testing rules",
++    "description": "harness hygiene: stdin-immune suite, one sandbox builder + whole-suite meta-check, sha-pin lint, SAFE prunes, CLAUDE.md § Testing rules",
+     "implementation_status": "complete",
+     "test_status": "passing",
+     "assigned_to": "generator",
+@@ -286,7 +286,7 @@
+   },
+   {
+     "id": "task_038",
+-    "description": "--aux model slot: second model (local Ollama / any OpenAI-compatible / GreenPT) for mechanical jobs only \u2014 launcher --aux + ~/.vibe/aux, vibe-aux helper, /vs --aux-review, /learn embeddings; never replaces Claude Code's model",
++    "description": "--aux model slot: second model (local Ollama / any OpenAI-compatible / GreenPT) for mechanical jobs only — launcher --aux + ~/.vibe/aux, vibe-aux helper, /vs --aux-review, /learn embeddings; never replaces Claude Code's model",
+     "implementation_status": "awaiting-approval",
+     "test_status": "pending",
+     "assigned_to": "generator",
+@@ -347,5 +347,17 @@
+     "mode": "rigorous",
+     "last_modified": "2026-09-11T20:29:54Z",
+     "cycle_1_note": "Generator (sonnet) delivered AC1-AC7 (AC8 is the Tester's per spec, AC9 verified green by this cycle). SKILL.md wrappers at devcontainer/codex/skills/{vs,vss,vsss}/SKILL.md; Dockerfile COPY --chown=root:root codex/ already covers them (verified, no extra COPY; added explicit chmod 0755/0644 for the new dirs/files alongside the existing task_046 chmod block). vibe-delegate.mjs gained the `role` operation: ask/review/slots/status refactored only via two extractions (codexEvents(), claudeBilling()+claudeReply()) that reproduce their prior bodies verbatim -- diffed byte-for-byte equivalent, confirmed by the full existing suite staying green. Read-only roles (planner/spec-critic/reviewer/evaluator) reuse ask's own read-only argv verbatim in a private temp cwd; write roles (generator/tester) use the AC4 pinned vectors verbatim (Astra: -C <workspace> + danger-full-access, no --ignore-user-config; Claude: --permission-mode bypassPermissions, fixed tool allowlist), schema/output files always in the helper's own scratch dir. AC5 reply contract implemented (Astra schema-native status; Claude STATUS: done|blocked last-line derivation, missing -> blocked). vs.md/vss.md/vsss.md each gained an 6-line Running under Codex section (total word count 14289/14300 -- no trim needed elsewhere). README Codex section, ask.md pointer, and plan D5 wording updated. TDD scratch suite at .vs/cycle-1/scratch-tests/test_role.py (standalone, no smoke import) run red (against git-stashed pre-edit vibe-delegate.mjs) then green; python3 code-check.py clean; python3 smoke-test.py < /dev/null fully green (3695 checks), 0 regressions."
++  },
++  {
++    "id": "task_048",
++    "description": "codex-supervisor: unattended Codex thread via app-server JSON on stdio; prefix rewrite, quota wait on resetsAt, transient/turn-failure retries, ceilings, atomic state, thread/resume after kill, VSSS-EXIT gate",
++    "implementation_status": "complete",
++    "test_status": "passing",
++    "assigned_to": "generator",
++    "mode": "rigorous",
++    "last_modified": "2026-09-11T23:20:00Z",
++    "cycle_1_note": "Generator (opus) delivered AC1-AC9 and AC11 (AC10 is the Tester's). New devcontainer/codex-supervisor.mjs (Node ESM, builtins only) installed by the Dockerfile as root-owned /usr/local/bin/codex-supervisor and added to the chmod +x chain. vsss.md gained the VSSS-EXIT last-line exit contract and a 7-line Running under Codex note; README gained the \"unattended supervisor\" paragraph; plan D7 rewritten with method names verified against tag rust-v0.154.0. The vs+vss+vsss 14,300-word cap had 11 words of headroom, so the additions were paid for by compressing rationale prose in vsss.md (no rule or asserted phrase removed; total now 14,289). TDD harness at .vs/cycle-1/scratch-tests/{stub-codex.py,drive.py}: 20 scenarios / 116 assertions over every AC10 case, run red then green. python3 code-check.py clean; python3 smoke-test.py < /dev/null fully green.",
++    "cycle_1_tester_note": "Tester (sonnet) wrote smoke/checks_19_codex_supervisor.py (1018 lines, 25 test_codex_supervisor_* functions) independently of the Generator's diff/report, against a from-scratch Python stub codex app-server (self-locating fixture/log/meta files, since the supervisor's own spawn() env is pinned to exactly PATH/HOME/CODEX_HOME/LANG so no env-var channel to the stub exists). Registered in smoke/runner.py (import + call list). Every AC10 scenario covered: normal VSSS-EXIT completion, no-exit-line -> literal continue -> exit line, quota wait with known resetsAt (1020s = 900+120 grace) and blind backoff (300/600 with a fresh account/rateLimits/read before each retry), transient 429 backoff (60s), exec-policy-forbidden retry with the SAME resent text, sessionBudgetExceeded/interrupted exit 1, an unattended approval request answered without blocking, mid-run SIGTERM (subprocess.Popen, exit 130, valid state) followed by a resume run asserting thread/resume+turn/start and never turn/steer, promptHash/cwd mismatch exit 2 plus --new-run archiving, all three named ceilings (max-turns/max-quota-waits/max-wall-seconds mid quota-wait) exit 3, relative --cwd and missing CODEX_HOME exit 2 with nothing spawned, status with/without a state file, exact argv/env/initialize-line/ordering assertions, atomicity (no .tmp left), no stray files under --cwd, the REWRITES table via node -e import, and the Dockerfile/vsss.md/README/plan-D7 doc checks. python3 code-check.py clean; python3 smoke-test.py < /dev/null fully green (4037 passing check() lines). No AC left uncovered.",
++    "cycle_2_note": "Generator (opus) cycle 2: fixed all five Evaluator findings in devcontainer/codex-supervisor.mjs against the AMENDED AC4/AC6/AC7. (1) Terminal state + resume input: adoptState() now carries exitReason through, run() prints 'already complete: <reason>' and returns 0 without spawning, and a resumed run's first input is the literal 'continue' when turns is non-empty (the rewritten prompt only when no turn was ever started). (2) AC7(a) wall deadline while awaiting a turn: new nextNotificationOrDeadline() races the next notification against startedAt+maxWallSeconds — a single unref'd timer on the real clock, a 100 ms poll of the --now-source clock so a virtual advance fires it — then expireDuringTurn() sends turn/interrupt {threadId,turnId}, closes stdin, persists and exits 3. (3) AC7(b) waits capped: recordWait() records the would-be wait in waits[] and throws the ceiling instead of sleeping whenever until > deadline, so both the quota and transient paths are covered. (4) checkGates() gained turnFailures >= maxTurnFailures, and every --max-* below 1 is now a parse-time exit 2. (5) A persisted waits[] entry whose until is still in the future is honoured on resume before anything is sent (sleep, or exit 3 if it ends past the ceiling) — gates run either side of it, all before the server is spawned. Child env, argv, initialize line, REWRITES table and state-file atomicity untouched. TDD harness .vs/cycle-2/scratch-tests/{stub-codex.py,drive.py}: 13 scenarios / 48 assertions, run red (23 failing) then green (0 failing). python3 code-check.py clean (22 files); python3 smoke-test.py < /dev/null green, exit 0, 4037 passing checks including all 25 pinned smoke/checks_19_codex_supervisor.py tests, which were not edited."
+   }
+ ]
+diff --git a/.vss/sessions/2026-09-11T17-11-32Z.md b/.vss/sessions/2026-09-11T17-11-32Z.md
+index 106289f..082dcdd 100644
+--- a/.vss/sessions/2026-09-11T17-11-32Z.md
++++ b/.vss/sessions/2026-09-11T17-11-32Z.md
+@@ -221,3 +221,53 @@ Spec Critic (draft): revise, 6 BLOCKING folded in. Generator sonnet: three SKILL
+ 
+ **Applied (the WARNING was a real gap)**: the lead's guard hooks live in the PROJECT's `.claude/settings.local.json`, which `--setting-sources user` excludes — a Claude write role would have run Bash/Write with NO guards. Write roles now carry both guards inline in `--settings` with `disableAllHooks:false` pinned (highest-precedence source); billed mode merges the user's settings file with those keys into a private scratch copy. Spec AC4 updated; golden and a billed-merge assertion added (the checks_17 stub now snapshots a file-valued `--settings`). Task_046's `/usr/bin/env -i` residual confirmed by Astra.
+ **Files touched**: `devcontainer/codex/skills/{vs,vss,vsss}/SKILL.md` (new), `devcontainer/vibe-delegate.mjs`, `devcontainer/Dockerfile`, `devcontainer/commands/{vs,vss,vsss,ask}.md`, `README.md`, `docs/codex-integration-plan.md` (D5), `smoke/checks_18_codex_runtime.py`, `smoke/checks_17_delegation.py` (stub snapshots a file-valued --settings), `smoke/runner.py`, `.vs/*`, `CHANGELOG.md`. Suite 3,890 green.
++**Commit**: 1d3adde — /vs cycle 1: pass — task_047. **Outcome**: success.
++
++## Iter 6 — plan item 6: Codex supervisor as an app-server client (task_048, `/vs` rigorous, opus Generator)
++**Plan**: `codex-supervisor run --cwd --prompt-file` drives one thread through `codex app-server` on stdio (NDJSON, `initialize`, `thread/start`, `turn/start`, `turn/completed` with `codexErrorInfo`, `account/rateLimits/read`, `thread/resume`), prefix rewrite `/vsss`→`$vsss`, quota wait on `resetsAt`, transient back-off, per-turn failure retry, separate counters and ceilings checked at every decision point, atomic state file, `VSSS-EXIT:` gate written into vsss.md's exit section for every runtime. Spec Critic on the draft: revise (6 BLOCKING folded in: sandbox consistent with task_046; ceilings checked before waits; resumes vs quotaWaits separated; forbidden-command turn failures retried, not terminal; the exit marker is a real vsss.md requirement; promptHash mismatch defined).
++Spec Critic (draft): revise, 6 BLOCKING + 7 MINOR folded in. Generator opus: `devcontainer/codex-supervisor.mjs` (~890 lines), Dockerfile, vsss.md exit contract (`VSSS-EXIT:`), README, plan D7; scratch stub app-server with 116 checks; code-check clean; suite green. Tester sonnet: new `smoke/checks_19_codex_supervisor.py` (1,018 lines, 25 functions) with its own stub app-server; 4,037/0. Chair: `smoke/checks_01` split back under the cap (`test_task034_linux_host` → new `checks_20_linux_host.py`; 1,577 → 1,356 lines).
++**Astra call 8** (supervisor review): gpt-6-astra, subscription, input 18,624 / cached 0 / output 882 / total 19,506 tokens. Reply verbatim:
++
++```json
++{
++ "runtime": "codex",
++ "model": "gpt-6-astra",
++ "billing": "subscription",
++ "verdict": "FAIL",
++ "summary": "Resume handling and ceiling enforcement contain blocking correctness bugs.",
++ "findings": [
++  {
++   "severity": "BLOCKING",
++   "file": "devcontainer/codex-supervisor.mjs",
++   "line": 818,
++   "message": "run() always calls loop(promptText), including after thread/resume. Restarting therefore submits the original workflow prompt again instead of 'continue'. adoptState() also drops exitReason, so restarting an already completed run launches more work. Preserve terminal state and choose resume input from persisted progress."
++  },
++  {
++   "severity": "BLOCKING",
++   "file": "devcontainer/codex-supervisor.mjs",
++   "line": 654,
++   "message": "runTurn() waits indefinitely for notifications without enforcing maxWallSeconds. A silent server, endless retry notifications, or a malformed completion that is ignored can keep the supervisor running forever. Enforce a deadline while awaiting turn completion."
++  },
++  {
++   "severity": "BLOCKING",
++   "file": "devcontainer/codex-supervisor.mjs",
++   "line": 709,
++   "message": "quotaWait() sleeps until the reset without limiting the sleep to the remaining wall-clock budget. A weekly reset can exceed the default ten-hour ceiling by days; transient waits can also overshoot. Cap waits at the remaining budget and stop when it expires."
++  },
++  {
++   "severity": "BLOCKING",
++   "file": "devcontainer/codex-supervisor.mjs",
++   "line": 498,
++   "message": "checkGates() omits turnFailures. After reaching maxTurnFailures and exiting, restarting the same state permits another turn; repeated restarts bypass that ceiling. A zero limit also permits an initial attempt. Check this counter alongside the other ceilings before resuming, starting turns, and waiting."
++  },
++  {
++   "severity": "BLOCKING",
++   "file": "devcontainer/codex-supervisor.mjs",
++   "line": 633,
++   "message": "Resume ignores persisted waits[].until. If the supervisor is stopped during a quota or transient wait, restarting immediately submits another turn before the recorded deadline. Honor any outstanding wait before starting resumed work, subject to the wall-clock ceiling."
++  }
++ ]
++}
++```
++
++**Evaluator**: cycle 1 FAIL on Astra's five findings (all real: resume re-sends the original prompt and forgets a completed run; no deadline while awaiting a turn; waits not capped by the wall budget; `turnFailures` missing from the gate; a persisted wait deadline ignored on resume). Classified `spec` for the gate omission (AC7 amended to list `turnFailures`; AC4 amended with the resume input rule and terminal-state preservation; AC6 amended to cap waits) and `capability` for the rest; Generator re-dispatched at opus for cycle 2 with the failure list.
+diff --git a/README.md b/README.md
+index 9d97bec..93b2ef2 100644
+--- a/README.md
++++ b/README.md
+@@ -189,6 +189,8 @@ Claude delegation has its own configurable billing route, independent of the sub
+ 
+ **Skills in a Codex-led container.** `$vs`, `$vss` and `$vsss` are Codex skills baked into the image at `/etc/codex/skills/{vs,vss,vsss}/SKILL.md` — the Admin scope root, so a project cannot add, shadow or disable one, and nothing is ever written into your Mac's `~/.codex` or `~/.agents` to make this work. Each SKILL.md tells Codex to read the single-sourced command body at `/usr/local/share/vibe/commands/<name>.md` and follow it verbatim, substituting a fixed table of Codex equivalents for the handful of Claude-only primitives those bodies use (`Agent`, `Skill`, `ScheduleWakeup`, and so on). The one primitive with no Codex equivalent at all is subagent dispatch — Codex's own `multi_agent` is pinned off in this image (see above) — so `/vs`'s Planner/Spec Critic/Generator/Tester/Evaluator roles become `vibe-delegate role <role> --model <astra|opus|sonnet|haiku|fable> --cwd <workspace>`: one fresh `codex exec` or `claude -p` process per role, run under the same hooks and firewall as the lead, never resuming or sharing a session with it. This ships the plumbing and its offline tests only; the first live Codex-led `/vs` trial is a later, separate item (see **MANUAL-TESTS Test 55**).
+ 
++**The unattended supervisor.** A `$vsss` run is meant to outlive its own quota window, and Codex's CLI has no durable loop of its own, so the image ships one: `/usr/local/bin/codex-supervisor` (root-owned, like the guard chain). It speaks Codex's app-server protocol on stdio — newline-delimited JSON, not JSON-RPC 2.0 — starting ONE thread with `approvalPolicy: "never"` and `sandbox: "danger-full-access"` (the only mode that works here; the container has no user namespaces for Codex's own bubblewrap sandbox, and the real boundary is the container, firewall and hooks described above), then re-entering that same thread with the literal word `continue` until the run's exit report ends with `VSSS-EXIT: <reason>`. It runs the vendor binary as `codex app-server` with no `-c` flags and a four-variable environment, so the system requirements and managed hooks apply unaltered. The reason it uses the protocol rather than `codex exec` is that only the protocol carries `codexErrorInfo` and the rate-limit snapshot: a quota failure names itself and reports when the window resets, so the supervisor sleeps until then plus two minutes rather than guessing, backs off on transient failures, declines every approval request it is sent (nobody is there to answer), and writes its thread id and counters to `.vss/codex-supervisor.json` after every change — so a killed supervisor resumes the same thread instead of starting a new one. Ceilings on turns, resumes, quota waits, retries and wall time bound the whole thing, and `codex-supervisor status --state <file>` prints where a run got to. It is wired into a Codex-led launch by a later item; today it is shipped and tested offline against a stub app-server.
++
+ See **MANUAL-TESTS Test 54** for the post-relaunch end-to-end checks, and **Test 55** for the Codex system policy and liveness checks.
+ 
+ ### Second brain (optional)
+diff --git a/devcontainer/Dockerfile b/devcontainer/Dockerfile
+index 2203acd..e8e46f4 100644
+--- a/devcontainer/Dockerfile
++++ b/devcontainer/Dockerfile
+@@ -148,6 +148,10 @@ COPY vibe-delegate.mjs /usr/local/bin/vibe-delegate
+ # system (Admin) skill root with no extra COPY needed, root-owned like
+ # everything else here.
+ COPY --chown=root:root codex/ /etc/codex/
++# The unattended supervisor (task_048): it drives `codex app-server` for a
++# Codex-led `$vsss` run, so like the guard chain it is root-owned — `node`
++# must not be able to rewrite the thing that decides when to stop.
++COPY --chown=root:root codex-supervisor.mjs /usr/local/bin/codex-supervisor
+ COPY --chown=root:root codex-guard-adapter.sh /usr/local/bin/codex-guard-adapter
+ COPY --chown=root:root codex-guard-liveness.sh /usr/local/bin/codex-guard-liveness
+ # Curated Claude Code agents + slash commands. Staged under /usr/local/share
+@@ -172,7 +176,7 @@ USER root
+ # to a root script whose whole job is widening the firewall. The script body
+ # also never reads its own argv, so this is belt and braces — but the rule is
+ # what makes it true for every future version of the script.
+-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/refresh-extra-domains.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/guard-bash.sh /usr/local/bin/guard-fs.sh /usr/local/bin/install-claude-extras.sh /usr/local/bin/check-sp-current.sh /usr/local/bin/register-op-mcp.sh /usr/local/bin/vibe-credential-helper /usr/local/bin/vibe-copy /usr/local/bin/codex-guard-adapter /usr/local/bin/codex-guard-liveness && \
++RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/refresh-extra-domains.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/guard-bash.sh /usr/local/bin/guard-fs.sh /usr/local/bin/install-claude-extras.sh /usr/local/bin/check-sp-current.sh /usr/local/bin/register-op-mcp.sh /usr/local/bin/vibe-credential-helper /usr/local/bin/vibe-copy /usr/local/bin/codex-guard-adapter /usr/local/bin/codex-guard-liveness /usr/local/bin/codex-supervisor && \
+   chmod 0755 /etc/codex /etc/codex/hooks && \
+   chmod 0644 /etc/codex/requirements.toml /etc/codex/config.toml /etc/codex/hooks/hooks.json && \
+   chmod 0755 /etc/codex/skills /etc/codex/skills/vs /etc/codex/skills/vss /etc/codex/skills/vsss && \
+diff --git a/devcontainer/commands/vsss.md b/devcontainer/commands/vsss.md
+index b5244f1..c58c4ed 100644
+--- a/devcontainer/commands/vsss.md
++++ b/devcontainer/commands/vsss.md
+@@ -39,11 +39,11 @@ The session file is the single canonical audit Martin reviews. There is no separ
+ 
+ ## Resumption protocol (after out-of-tokens halt or interrupted session)
+ 
+-A `/vsss` session can be killed by token-exhaustion, a manual interrupt, or any unhandled error. Without a resumption protocol the work in flight is dropped — partial commits sit on `main`, the priority queue is forgotten, the user has to re-issue the original `/vsss` invocation. Resumption fixes that.
++A `/vsss` session can be killed by token-exhaustion, a manual interrupt, or any unhandled error. Without resumption the work in flight is dropped: partial commits sit on `main`, the priority queue is forgotten, and the user has to re-issue the original invocation.
+ 
+ ### State that survives a halt
+ 
+-The session file at `.vss/sessions/<start-ISO>.md` is the persistence layer. After every iter completes (Generator commit landed, Tester commit landed, optimiser verdict written), the iter block in the session file is up to date. If the session halts, that file's most recent iter block plus the absence of a `## Final state` section is the signal "this session was alive when killed".
++The session file at `.vss/sessions/<start-ISO>.md` is the persistence layer: its iter block is up to date after every iter completes (Generator commit landed, Tester commit landed, optimiser verdict written). A most-recent iter block with no `## Final state` section is the signal "this session was alive when killed".
+ 
+ ### Detecting an in-progress session at startup
+ 
+@@ -55,7 +55,7 @@ Three branches:
+ 
+ - **`/vsss --resume` flag passed, NO in-progress session exists**: fall back to the most recent COMPLETED session (Final state present). Read its `## Final state` § Deferred list. If non-empty, treat the deferred items as the new priority queue and start iter 1 against the first one. Open a fresh session file at `.vss/sessions/<new-ISO>.md` (do NOT append to the completed one — it's finalised); record in Initial-plan that args were `--resume` and the queue was inherited from `<previous-session-file-path>`. Budget is fresh 5h (or `--hours N` override) since the previous session reached Final state cleanly. If the deferred list is empty, surface to the user "no in-progress session and no deferred items in the last completed session; pass args or no flag to start fresh" and stop.
+ 
+-- **`/vsss <new args>` invoked while an in-progress session exists**: surface the conflict to the user. Two reasonable resolutions: (a) `--resume` to pick up the in-progress one, OR (b) explicitly mark the in-progress session as halted (write a Final state section with `Exit reason: superseded by new /vsss invocation` and start fresh). Per `/vss`'s hard-escalate list this is "scope-creep beyond announced plan" — do NOT auto-pick; surface to the user. (User has Q1=a authorisation? They still need to disambiguate this case explicitly; the new args might not match the parked session's queue.)
++- **`/vsss <new args>` invoked while an in-progress session exists**: surface the conflict. Two resolutions: (a) `--resume` to pick up the in-progress one, OR (b) mark it halted (write a Final state section with `Exit reason: superseded by new /vsss invocation` and start fresh). Per `/vss`'s hard-escalate list this is "scope-creep beyond announced plan" — do NOT auto-pick. (A Q1=a authorisation does not cover it: the new args might not match the parked session's queue.)
+ 
+ - **`/vsss` with no args, no in-progress session**: normal Mode A start.
+ 
+@@ -133,9 +133,9 @@ Two corollaries, both of which have caused real multi-hour stalls:
+ - **Stopping is the failure, not speaking.** A message may carry prose AND tool
+   calls together and the run continues — that is ordinary narration. So do not
+   reason "I wrote a summary, therefore the turn ended"; you ended the turn, and
+-  the summary is what ending it looked like. Going silent fixes nothing on its
+-  own: a silent run that stops is equally dead. The rule is **never stop while
+-  an exit condition below is unmet**.
++  the summary is what that looked like. Silence fixes nothing either: a silent
++  run that stops is equally dead. The rule is **never stop while an exit
++  condition below is unmet**.
+ - **A question is not an exit condition.** Needing Martin's input on the current
+   area NEVER ends the loop. Write the ask to the project's fromClaude channel
+   and move to the next area that needs no input; pick the answer up at a later
+@@ -150,11 +150,10 @@ channels below — never through stopping.
+ 
+ ## fromto channels — asynchronous user Q&A without stopping
+ 
+-Why this exists: in a long `/vsss` run, far more scrolls through the TTY than
+-the user will ever read, and the user only wants to read and answer what they
+-MUST to unblock work. So questions leave the terminal entirely: they land in
+-the user's second brain as a short live list, answers come back the same way,
+-and the loop never stops to wait. This section defines the whole protocol.
++Why this exists: a long `/vsss` run scrolls far more through the TTY than the
++user will ever read, and they only want to answer what they MUST to unblock
++work. So questions leave the terminal: they land in the user's second brain as
++a short live list, answers come back the same way, and the loop never waits.
+ 
+ ### The three files
+ 
+@@ -333,22 +332,22 @@ Dispatch rule inherited by every wrapped iteration's subagents: long build/test/
+ 
+ ## Why `/vsss` exists alongside `/vss`
+ 
+-`/vss` is one bounded unit of work. Use it when you want to step away briefly. `/vsss` is "burn the rest of my session productively" — when you have hours of session credit, want it spent on the project, and trust the escalate list to catch anything dangerous. Higher blast radius, more discipline required at the spec level (the optimiser is what keeps the loop honest).
++`/vss` is one bounded unit of work — use it to step away briefly. `/vsss` is "burn the rest of my session productively": hours of session credit spent on the project, with the escalate list catching anything dangerous. Higher blast radius, and more spec-level discipline (the optimiser keeps the loop honest).
+ 
+-If the loop produces three vacuous iterations, that's the design saying "nothing useful left to do" — let it stop. Don't keep feeding it noise tasks.
++Three vacuous iterations are the design saying "nothing useful left to do" — let it stop rather than feeding it noise tasks.
+ 
+ ## Reporting back at exit
+ 
+-**At a real exit, and only there.** Before you write a single word of this
+-block, name which numbered exit condition from § Exit conditions has fired. If
+-you cannot name one, the loop has not ended and this section does not apply —
+-go back and run the next iteration. The named condition must be the one that
+-ACTUALLY fired: a stop whose justification mentions wall-clock, window fit, or
+-"the next item needs N cycles" is condition 3 — lawful only under an explicit
+-`--hours`/`--budget` flag — and must never be reported as a perfection gate. "A version shipped", "a natural milestone",
+-"I need Martin's input on this bit" and "the context is getting long" are NOT
+-exit conditions, and the pull to report at each of them is exactly how a run
+-dies hours early.
++**At a real exit, and only there.** Before writing a word of this block, name
++which numbered exit condition from § Exit conditions has fired. If you cannot
++name one, the loop has not ended — run the next iteration instead. The named
++condition must be the one that ACTUALLY fired: a stop justified by wall-clock,
++window fit, or "the next item needs N cycles" is condition 3, lawful only under
++an explicit `--hours`/`--budget` flag, and
++must never be reported as a perfection gate. "A version shipped", "a natural
++milestone", "I need Martin's input on this bit" and "the context is getting
++long" are NOT exit conditions; the pull to report at each is how a run dies
++hours early.
+ 
+ When the loop ends (any reason), report to the user:
+ 
+@@ -363,12 +362,20 @@ When the loop ends (any reason), report to the user:
+ 
+ Lead with `---` before the report block.
+ 
++**The LAST line of the exit report is `VSSS-EXIT: <exit reason in a few words>`** —
++alone on its line, in every runtime, Claude-led and Codex-led alike. It is the
++end-of-run marker an unattended supervisor watches for; a report without it
++reads as unfinished. Write it once, last, after the bullets above.
++
+ ## Running under Codex
+ 
+ `$vsss` (`/etc/codex/skills/vsss/SKILL.md`) wraps this file for a Codex-led
+ session and carries the substitution table for `Agent(...)` and the other
+ Claude-only primitives it and the wrapped `/vss`/`/vs` use. Role dispatch
+ becomes `vibe-delegate role <role> --model <model> --cwd <workspace>`.
++Unattended runs are driven by `codex-supervisor`: it starts one thread, sends
++`$vsss` as the first turn, re-enters with the literal `continue` after every
++turn that did not end the run, and stops on the report's `VSSS-EXIT:` line.
+ 
+ ---
+ 
+diff --git a/docs/codex-integration-plan.md b/docs/codex-integration-plan.md
+index 3c9c5f5..4c00584 100644
+--- a/docs/codex-integration-plan.md
++++ b/docs/codex-integration-plan.md
+@@ -235,17 +235,41 @@ relies on it.
+   `--ephemeral`) and the tool-disable set against a stub; the live nonce
+   proof (each reviewer's OWN rollout, by `thread_id`, holds only its own
+   nonce) costs N Astra calls and is Martin-gated.
+-- D7 **The supervisor is an app-server JSON-RPC client, not a `codex exec`
+-  wrapper** (F7, F9, Astra B5): `devcontainer/codex-supervisor.mjs` spawns
+-  `codex app-server` on stdio, starts a thread, sends the (prefix-rewritten)
+-  `$vsss` turn, and reads the protocol stream where `codex_error_info` and
+-  `RateLimitSnapshot` survive. On `UsageLimitExceeded`/`RateLimitExceeded`
+-  it waits until `primary.resets_at` (or `secondary`, whichever is binding;
+-  bounded backoff when both are absent), then `thread/resume`. Persistence:
+-  thread id, last completed step and the `.vss/sessions/*.md` file are
+-  written before every wait so a killed supervisor resumes idempotently;
+-  ceilings on wall time, cycles and resumes; explicit cancellation. Exit
+-  code 1 alone is never treated as quota.
++- D7 **The supervisor is an app-server client, not a `codex exec` wrapper**
++  (F7, F9, Astra B5): `devcontainer/codex-supervisor.mjs` (shipped as
++  `/usr/local/bin/codex-supervisor`, task_048) spawns `codex app-server` on
++  stdio — argv exactly `['app-server']`, child env exactly `PATH`, `HOME`,
++  `CODEX_HOME`, `LANG` — and speaks newline-delimited JSON with NO `jsonrpc`
++  field. Method names, verified against tag `rust-v0.154.0`
++  (`app-server-protocol/src/protocol/common.rs` and `protocol/v2/*`) and
++  camelCase on the wire: `initialize` (id 1) then `account/rateLimits/read`
++  (id 2) before any turn; `thread/start {cwd, approvalPolicy:"never",
++  sandbox:"danger-full-access", ephemeral:false}` → `thread.id`;
++  `turn/start {threadId, input:[{type:"text",text}]}`; `thread/resume
++  {threadId}`. The terminal event is the `turn/completed` notification —
++  there is no `turn/failed` — carrying `turn.status`
++  (`completed|interrupted|failed|inProgress`) and, when failed,
++  `turn.error.codexErrorInfo`, externally tagged so unit variants are bare
++  strings (`"usageLimitExceeded"`, `"rateLimitExceeded"`,
++  `"sessionBudgetExceeded"`, `"contextWindowExceeded"`,
++  `"serverOverloaded"`) and struct variants single-key objects
++  (`{"httpConnectionFailed":{"httpStatusCode":429}}`). Streaming text is
++  `item/agentMessage/delta`; completed items arrive as `item/completed`; an
++  `error` notification with `willRetry: true` is transient and ignored.
++  Quota: `account/rateLimits/read` and the sparse `account/rateLimits/
++  updated` carry `RateLimitSnapshot{primary, secondary}` with
++  `{usedPercent, windowDurationMins, resetsAt}` — `resetsAt` is UNIX
++  SECONDS — merged per window, and the supervisor waits until the binding
++  window's `resetsAt` plus a 120 s grace (bounded 300/600/1200/2400 s
++  backoff when no reset time is known), then re-sends the turn. After a kill
++  it sends `thread/resume {threadId}` and then a FRESH `turn/start`, never
++  `turn/steer`: a hard-killed turn is projected as `inProgress` forever.
++  Persistence: thread id and every counter are written atomically to
++  `<cwd>/.vss/codex-supervisor.json` at each change and before every wait,
++  so a killed supervisor resumes idempotently; ceilings on turns, resumes,
++  quota waits, transient retries and wall time exit 3; a prompt-hash or cwd
++  mismatch exits 2 unless `--new-run` archives the old state. Exit code 1
++  alone is never treated as quota — only `codexErrorInfo` is.
+ - D8 **The opt-in that mounts the ChatGPT login moves to the host.**
+   `~/.vibe/codex-allow` (one project path per line, like `~/.vibe/repos`) is
+   required IN ADDITION to the untracked `.vibe-allow-codex` marker; a session
+diff --git a/smoke/checks_01_launcher_basics_and_codecheck.py b/smoke/checks_01_launcher_basics_and_codecheck.py
+index 8bcdac3..23bb1c7 100644
+--- a/smoke/checks_01_launcher_basics_and_codecheck.py
++++ b/smoke/checks_01_launcher_basics_and_codecheck.py
+@@ -1354,224 +1354,3 @@ def test_ac4_remove_existing_flag_no_rebuild_drift_marker() -> None:
+     if len(lines) == 1:
+         check("AC4c token is --remove-existing-container",
+               lines[0] == "--remove-existing-container", f"got: {lines[0]}")
+-
+-
+-def test_task034_linux_host() -> None:
+-    """task_034 (Linux host support): every non-[L] acceptance criterion.
+-    AC1/AC2 (code-check.py / smoke-test.py themselves green) are asserted by
+-    the harness's own separate runs, not re-asserted here. AC12-14 are [L]
+-    (MANUAL-TESTS 44-50, need a real Linux box). Fixture builders live in
+-    smoke/_core.py (_task034_*) per the split-suite convention."""
+-    print("\n[task_034: Linux host support]")
+-
+-    with tempfile.TemporaryDirectory() as td:
+-        tmp = Path(td)
+-
+-        # ── uname PATH shim proof (iteration-2 amendment) ───────────────────
+-        darwin_shim = _make_uname_shim(tmp, "Darwin")
+-        linux_shim = _make_uname_shim(tmp / "linux_side", "Linux")
+-        r = run(["bash", "-c", "uname -s"],
+-                env={**os.environ, "PATH": f"{darwin_shim}{os.pathsep}{os.environ.get('PATH', '')}"})
+-        check("[task034] uname shim shadows real uname (Darwin fixture)",
+-              r.stdout.strip() == "Darwin", r.stdout)
+-        r = run(["bash", "-c", "uname -s"],
+-                env={**os.environ, "PATH": f"{linux_shim}{os.pathsep}{os.environ.get('PATH', '')}"})
+-        check("[task034] uname shim shadows real uname (Linux fixture)",
+-              r.stdout.strip() == "Linux", r.stdout)
+-
+-        # ── AC3 + AC4: render_devcontainer_with_mounts under the Darwin shim ──
+-        devcontainer_json = REPO / "devcontainer" / "devcontainer.json"
+-        mount_args = ["/host/brain2", "/brain2", "0", "/host/zotero", "/zotero", "1"]
+-
+-        def _render(env_extra: dict, tag: str) -> dict:
+-            dst = tmp / f"out-{tag}.json"
+-            call = (f"render_devcontainer_with_mounts {shlex.quote(str(devcontainer_json))} "
+-                    f"{shlex.quote(str(dst))} " + " ".join(shlex.quote(a) for a in mount_args))
+-            env = {"PATH": f"{darwin_shim}{os.pathsep}{os.environ.get('PATH', '')}", **env_extra}
+-            r = _source_vibe_call(env, call)
+-            check(f"[task034] render ({tag}) exits 0", r.returncode == 0, r.stderr)
+-            return json.loads(dst.read_text()) if dst.exists() else {}
+-
+-        cfg_off = _render({}, "op-off")
+-        run_args_off = cfg_off.get("runArgs", [])
+-        check("[task034 AC3] exactly one host.docker.internal add-host (/op off)",
+-              run_args_off.count("--add-host=host.docker.internal:host-gateway") == 1,
+-              str(run_args_off))
+-
+-        cfg_on = _render({"VIBE_OP_ADDHOST": "op.example.ts.net"}, "op-on")
+-        run_args_on = cfg_on.get("runArgs", [])
+-        check("[task034 AC3] exactly one host.docker.internal add-host (/op on)",
+-              run_args_on.count("--add-host=host.docker.internal:host-gateway") == 1,
+-              str(run_args_on))
+-        check("[task034 AC3] /op's own add-host still present when configured",
+-              "--add-host=op.example.ts.net:host-gateway" in run_args_on, str(run_args_on))
+-
+-        check("[task034 AC4] golden carries no host.docker.internal (contamination check)",
+-              "host.docker.internal" not in TASK034_GOLDEN_DEVCONTAINER_RENDER_OP_OFF,
+-              "golden constant is contaminated")
+-        golden_cfg = json.loads(TASK034_GOLDEN_DEVCONTAINER_RENDER_OP_OFF)
+-        expected_cfg = dict(golden_cfg)
+-        expected_cfg["runArgs"] = golden_cfg["runArgs"] + ["--add-host=host.docker.internal:host-gateway"]
+-        check("[task034 AC4] current Darwin render == golden + exactly one add-host line",
+-              cfg_off == expected_cfg,
+-              f"current runArgs={run_args_off}\nexpected runArgs={expected_cfg['runArgs']}")
+-
+-        # ── AC5: Darwin exit-hook block byte-identical to baseline ──────────
+-        base_vibe, base_vibe_rc = _task034_baseline_text("vibe")
+-        check("[task034] git show 3b23b19:vibe exits 0", base_vibe_rc == 0, base_vibe[:200])
+-        cur_vibe = VIBE.read_text()
+-        start_anchor = 'if [[ "$(uname)" == "Darwin" ]] && command -v pbcopy >/dev/null 2>&1; then'
+-        end_anchor = 'kill "$WATCHER_PID" 2>/dev/null || true\''
+-
+-        def _extract(src: str) -> str:
+-            i = src.find(start_anchor)
+-            if i == -1:
+-                return ""
+-            j = src.find(end_anchor, i)
+-            return src[i:j + len(end_anchor)] if j != -1 else ""
+-
+-        base_block, cur_block = _extract(base_vibe), _extract(cur_vibe)
+-        check("[task034 AC5] Darwin exit-hook block found in both baseline and current",
+-              bool(base_block) and bool(cur_block), "")
+-        check("[task034 AC5] Darwin exit-hook block byte-identical to baseline",
+-              base_block == cur_block, "blocks differ")
+-
+-        # ── AC6: vibe_clipboard_cmd precedence ───────────────────────────────
+-        mac_pbcopy = _task034_tool_dir(tmp, "mac_pbcopy", ["pbcopy"])
+-        mac_nopbcopy = _task034_tool_dir(tmp, "mac_nopbcopy", [])
+-        check("[task034 AC6] Darwin + pbcopy present -> 'pbcopy'",
+-              _task034_clipboard_cmd(darwin_shim, [mac_pbcopy]) == "pbcopy", "")
+-        check("[task034 AC6] Darwin + no pbcopy -> empty",
+-              _task034_clipboard_cmd(darwin_shim, [mac_nopbcopy]) == "", "")
+-
+-        all_three = _task034_tool_dir(tmp, "linux_all3", ["wl-copy", "xclip", "xsel"])
+-        check("[task034 AC6] Linux wl-copy beats xclip/xsel -> 'wl-copy'",
+-              _task034_clipboard_cmd(linux_shim, [all_three]) == "wl-copy", "")
+-        xclip_xsel = _task034_tool_dir(tmp, "linux_xclip_xsel", ["xclip", "xsel"])
+-        check("[task034 AC6] Linux xclip (no wl-copy) beats xsel -> flagged clipboard invocation",
+-              _task034_clipboard_cmd(linux_shim, [xclip_xsel]) == "xclip -selection clipboard", "")
+-        xsel_only = _task034_tool_dir(tmp, "linux_xsel_only", ["xsel"])
+-        check("[task034 AC6] Linux xsel only -> flagged clipboard invocation",
+-              _task034_clipboard_cmd(linux_shim, [xsel_only]) == "xsel --clipboard --input", "")
+-        no_tools = _task034_tool_dir(tmp, "linux_none", [])
+-        check("[task034 AC6] Linux with no clipboard tool -> empty",
+-              _task034_clipboard_cmd(linux_shim, [no_tools]) == "", "")
+-
+-        # ── AC7: watcher's 3-way gate (Darwin OR VIBE_COPY_CMD OR FORCE) ────
+-        env_quiet = {**os.environ, "PATH": f"{linux_shim}{os.pathsep}{os.environ.get('PATH', '')}"}
+-        env_quiet.pop("VIBE_COPY_WATCHER_FORCE", None)
+-        env_quiet.pop("VIBE_COPY_CMD", None)
+-        r = run(["bash", str(VIBE_COPY_WATCHER), str(tmp / "watcher-ws-quiet")], env=env_quiet)
+-        check("[task034 AC7] Linux, no FORCE, no VIBE_COPY_CMD -> exits 0 immediately",
+-              r.returncode == 0, f"rc={r.returncode} out={r.stdout!r} err={r.stderr!r}")
+-        # Mechanics-required: FORCE alone keeps it running (mirrors
+-        # test_vibe_path_prefix_isolation's reliance on FORCE alone).
+-        check("[task034 AC7] watcher (FORCE only) does not exit immediately",
+-              _task034_watcher_alive_after({"VIBE_COPY_WATCHER_FORCE": "1"},
+-                                            tmp / "watcher-ws-force", linux_shim), "")
+-        check("[task034 AC7] watcher (VIBE_COPY_CMD set, the Linux path) does not exit immediately",
+-              _task034_watcher_alive_after({"VIBE_COPY_CMD": "true"},
+-                                            tmp / "watcher-ws-copycmd", linux_shim), "")
+-
+-        # ── AC8: install.sh Darwin output byte-identical to pre-change ─────
+-        base_install, base_install_rc = _task034_baseline_text("install.sh")
+-        check("[task034] git show 3b23b19:install.sh exits 0", base_install_rc == 0, base_install[:200])
+-        out_base = _task034_run_install(base_install, tmp / "install-base-home", darwin_shim)
+-        out_cur = _task034_run_install(INSTALL.read_text(), tmp / "install-cur-home", darwin_shim)
+-        check("[task034 AC8] install.sh Darwin output byte-identical to pre-change",
+-              out_base == out_cur, f"--- baseline ---\n{out_base}\n--- current ---\n{out_cur}")
+-
+-        # ── AC9: Linux preflight — apt/dnf hints, docker group, devcontainer ─
+-        install_src = INSTALL.read_text()
+-        for literal in ("preflight_linux", "vibe_linux_pkg", "docker info",
+-                         "id -nG", "usermod -aG docker", "docker-ce", "devcontainer missing"):
+-            check(f"[task034 AC9] install.sh mentions {literal!r}", literal in install_src, "")
+-
+-        r = _task034_run_install_linux("apt", in_group=False, home=tmp / "install-linux-nogroup")
+-        out = r.stdout + r.stderr
+-        check("[task034 AC9] docker-group warning fires when not in group",
+-              "is not in the 'docker' group" in out, out)
+-        check("[task034 AC9] docker-group warning names the remedy",
+-              "usermod -aG docker" in out, out)
+-        check("[task034 AC9] docker-group warning is non-fatal (exit 0)",
+-              r.returncode == 0, f"rc={r.returncode}\n{out}")
+-
+-        r2 = _task034_run_install_linux("dnf", in_group=True, home=tmp / "install-linux-group")
+-        out2 = r2.stdout + r2.stderr
+-        check("[task034 AC9] no docker-group warning when already in group",
+-              "is not in the 'docker' group" not in out2, out2)
+-        check("[task034 AC9] dnf hints present for Fedora/RHEL", "sudo dnf install" in out2, out2)
+-
+-        # set -e safety amendment: empty PATH must not abort the script.
+-        empty_home = tmp / "install-empty-path-home"
+-        empty_home.mkdir()
+-        empty_bin = tmp / "empty-path-bin"
+-        empty_bin.mkdir()
+-        r3 = run(["/bin/bash", str(INSTALL)], env={"HOME": str(empty_home), "PATH": str(empty_bin)})
+-        out3 = r3.stdout + r3.stderr
+-        check("[task034] empty-PATH run reaches the preflight failure message (no early abort)",
+-              "Install the missing dependencies" in out3, out3)
+-        check("[task034] empty-PATH run falls back to Darwin hints, not a crash",
+-              "xcode-select" in out3 or "brew install" in out3, out3)
+-
+-        # ── AC10: Dockerfile nsswitch sed is idempotent ─────────────────────
+-        dockerfile_src = DOCKERFILE.read_text()
+-        m = re.search(r"sed -i '([^']+)' /etc/nsswitch\.conf", dockerfile_src)
+-        check("[task034 AC10] Dockerfile nsswitch sed expression found", m is not None, dockerfile_src[:2000])
+-        if m:
+-            sed_expr = m.group(1)
+-            nss = tmp / "nsswitch.conf"
+-            nss.write_text("hosts:          files dns\n")
+-            r = run(["sed", "-i", sed_expr, str(nss)])
+-            check("[task034 AC10] first sed application exits 0", r.returncode == 0, r.stderr)
+-            check("[task034 AC10] one mdns4_minimal entry after first apply",
+-                  nss.read_text().count("mdns4_minimal") == 1, nss.read_text())
+-            r = run(["sed", "-i", sed_expr, str(nss)])
+-            check("[task034 AC10] second sed application exits 0", r.returncode == 0, r.stderr)
+-            check("[task034 AC10] still exactly one mdns4_minimal entry after second apply (idempotent)",
+-                  nss.read_text().count("mdns4_minimal") == 1, nss.read_text())
+-
+-        # ── mDNS probe: warns once with the spec's literal, then stays silent ─
+-        mdns_bin = _task034_tool_dir(tmp, "mdns_bin", [])
+-        (mdns_bin / "getent").write_text("#!/bin/sh\nexit 1\n")
+-        (mdns_bin / "getent").chmod(0o755)
+-        (mdns_bin / "hostname").write_text("#!/bin/sh\necho testhost\n")
+-        (mdns_bin / "hostname").chmod(0o755)
+-        marker = tmp / "mdns-marker"
+-        env_probe = {
+-            "VIBE_MDNS_MARKER": str(marker),
+-            "PATH": f"{linux_shim}{os.pathsep}{mdns_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+-        }
+-        r = _source_vibe_call(env_probe, "vibe_mdns_probe")
+-        check("[task034] mDNS probe function exists and runs cleanly", r.returncode == 0, r.stderr)
+-        check("[task034] mDNS probe warns with the spec's literal on failure",
+-              "mDNS: this host cannot resolve" in r.stdout, r.stdout)
+-        check("[task034] mDNS probe names the host.docker.internal fallback",
+-              "host.docker.internal" in r.stdout, r.stdout)
+-        check("[task034] mDNS probe drops a marker after warning", marker.exists(), "")
+-        r2m = _source_vibe_call(env_probe, "vibe_mdns_probe")
+-        check("[task034] mDNS probe is silent on the second (marker-gated) call",
+-              "mDNS" not in r2m.stdout, r2m.stdout)
+-
+-        # ── Docs: README / ONBOARDING / MANUAL-TESTS ────────────────────────
+-        readme = (REPO / "README.md").read_text()
+-        check("[task034] README has a Linux hosts section", "## Linux hosts" in readme, "")
+-        check("[task034] README names the reference platform",
+-              "Ubuntu 24.04 LTS with Docker Engine" in readme, "")
+-        check("[task034] README documents the host.docker.internal add-host",
+-              "--add-host=host.docker.internal:host-gateway" in readme, "")
+-        check("[task034] README marks the build bridge macOS-only", "macOS-only" in readme, "")
+-
+-        onboarding = (REPO / "ONBOARDING.md").read_text()
+-        check("[task034] ONBOARDING forks steps by platform",
+-              "Mac only" in onboarding and "Linux only" in onboarding, "")
+-        check("[task034] ONBOARDING names Ubuntu 24.04 LTS with Docker Engine",
+-              "Ubuntu 24.04 LTS with Docker Engine" in onboarding, "")
+-
+-        manual_tests = (REPO / "MANUAL-TESTS.md").read_text()
+-        check("[task034] MANUAL-TESTS has the Linux host section",
+-              "## Linux host (Ubuntu 24.04 LTS)" in manual_tests, "")
+-        check("[task034] MANUAL-TESTS names the [L] acceptance criteria",
+-              "`[L]` acceptance criteria" in manual_tests, "")
+-        for n in range(44, 51):
+-            check(f"[task034] MANUAL-TESTS has Test {n}", f"### Test {n}:" in manual_tests, "")
+diff --git a/smoke/runner.py b/smoke/runner.py
+index 0ba43b0..b1eecf5 100644
+--- a/smoke/runner.py
++++ b/smoke/runner.py
+@@ -17,8 +17,8 @@ from smoke.checks_15_extra_domains import *
+ from smoke.checks_16_domain_refresh import *
+ from smoke.checks_17_delegation import *
+ from smoke.checks_18_codex_runtime import *
+-
+-
++from smoke.checks_19_codex_supervisor import *
++from smoke.checks_20_linux_host import *
+ 
+ 
+ def main() -> int:
+@@ -698,6 +698,34 @@ def main() -> int:
+     test_codex_commands_running_under_codex_ac6()
+     test_codex_docs_ac7()
+ 
++    # task_048: codex-supervisor as an app-server client (offline against a
++    # stub codex app-server; smoke/checks_19_codex_supervisor.py)
++    test_codex_supervisor_rewrites_table()
++    test_codex_supervisor_prefix_rewrite_cli()
++    test_codex_supervisor_handshake_argv_env()
++    test_codex_supervisor_usage_errors_no_spawn()
++    test_codex_supervisor_relative_cwd_exit2_no_spawn()
++    test_codex_supervisor_missing_codex_home_exit2_no_spawn()
++    test_codex_supervisor_normal_completion()
++    test_codex_supervisor_continue_then_exit()
++    test_codex_supervisor_quota_known_resets_at()
++    test_codex_supervisor_quota_blind_backoff()
++    test_codex_supervisor_transient_429_backoff()
++    test_codex_supervisor_turn_failure_retries_same_text()
++    test_codex_supervisor_session_budget_exceeded_exit1()
++    test_codex_supervisor_interrupted_exit1()
++    test_codex_supervisor_approval_request_answered()
++    test_codex_supervisor_sigterm_then_resume()
++    test_codex_supervisor_prompthash_mismatch_and_new_run()
++    test_codex_supervisor_ceiling_max_turns()
++    test_codex_supervisor_ceiling_max_quota_waits()
++    test_codex_supervisor_ceiling_max_wall_seconds_during_quota_wait()
++    test_codex_supervisor_status_with_and_without_state()
++    test_codex_supervisor_dockerfile_lines()
++    test_codex_supervisor_vsss_md_exit_section()
++    test_codex_supervisor_readme_mentions()
++    test_codex_supervisor_plan_d7_methods()
++
+     print()
+     if FAILURES:
+         print(f"✗ {len(FAILURES)} check(s) failed:")
+
+# untracked (git diff cannot show it): devcontainer/codex-supervisor.mjs
+diff --git a/devcontainer/codex-supervisor.mjs b/devcontainer/codex-supervisor.mjs
+new file mode 100755
+index 0000000..8593ccc
+--- /dev/null
++++ b/devcontainer/codex-supervisor.mjs
+@@ -0,0 +1,1015 @@
++#!/usr/bin/env node
++// codex-supervisor — drives ONE unattended Codex thread through
++// `codex app-server` on stdio, so `$vsss` can run across quota windows
++// without a human turn (docs/codex-integration-plan.md D7, task_048).
++//
++// Wire format is newline-delimited JSON, NOT JSON-RPC 2.0: no `jsonrpc`
++// field is sent or expected (codex-rs/app-server-transport/src/transport/
++// stdio.rs, app-server-protocol/src/rpc.rs at tag rust-v0.154.0).
++//
++// Safety contract (AC8): never passes `--dangerously-bypass-approvals-and-
++// sandbox`, never sets `-c`, never reads or copies `auth.json`, writes only
++// the state file and the log beside it, and sends no prompt other than the
++// user's (prefix-rewritten) text and the literal `continue`.
++import { spawn, spawnSync } from 'node:child_process';
++import { createHash } from 'node:crypto';
++import {
++  appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync,
++  renameSync, statSync, writeFileSync,
++} from 'node:fs';
++import { homedir } from 'node:os';
++import { dirname, isAbsolute, join } from 'node:path';
++import { fileURLToPath } from 'node:url';
++
++// --- constants ---------------------------------------------------------
++
++export const EXIT_OK = 0;
++export const EXIT_FAIL = 1;
++export const EXIT_USAGE = 2;
++export const EXIT_CEILING = 3;
++export const EXIT_SIGNAL = 130;
++
++// AC2: only an exact, case-sensitive FIRST token is rewritten. `/vss:foo`,
++// `/vssx` and `/VS` are other tokens and travel unchanged.
++export const REWRITES = { '/vs': '$vs', '/vss': '$vss', '/vsss': '$vsss' };
++
++export const CLIENT_NAME = 'vibe-codex-supervisor';
++const HANDSHAKE_TIMEOUT_MS = 30000;
++const REQUEST_TIMEOUT_MS = 30000;
++// AC5 transient back-off ladder and AC6 blind-quota ladder, both capped.
++const TRANSIENT_BACKOFF = [60, 120, 240, 480, 960, 1920];
++const QUOTA_BACKOFF = [300, 600, 1200, 2400];
++const BACKOFF_CAP = 3600;
++const QUOTA_GRACE_SECONDS = 120;
++// Externally-tagged CodexErrorInfo (protocol/v2/shared.rs:70-113): unit
++// variants are bare strings, struct variants single-key objects.
++const QUOTA_ERRORS = new Set(['usageLimitExceeded', 'rateLimitExceeded']);
++const FATAL_ERRORS = new Set(['sessionBudgetExceeded', 'contextWindowExceeded']);
++const TRANSIENT_ERRORS = new Set([
++  'serverOverloaded', 'responseStreamConnectionFailed',
++  'responseStreamDisconnected', 'responseTooManyFailedAttempts',
++]);
++const DEFAULTS = {
++  maxTurns: 50,
++  maxResumes: 20,
++  maxQuotaWaits: 12,
++  maxTransientRetries: 6,
++  maxTurnFailures: 3,
++  maxWallSeconds: 36000,
++};
++const USAGE = [
++  'Usage:',
++  '  codex-supervisor run --cwd <abs workspace> --prompt-file <file>',
++  '      [--state <file>] [--max-turns N] [--max-resumes N]',
++  '      [--max-quota-waits N] [--max-transient-retries N]',
++  '      [--max-turn-failures N] [--max-wall-seconds N] [--model <id>]',
++  '      [--codex-bin <path>] [--now-source <file>] [--new-run]',
++  '  codex-supervisor status --state <file>',
++].join('\n');
++
++// --- small helpers -----------------------------------------------------
++
++class SupervisorError extends Error {
++  constructor(code, message) { super(message); this.code = code; }
++}
++const usageError = (m) => new SupervisorError(EXIT_USAGE, m);
++const failError = (m) => new SupervisorError(EXIT_FAIL, m);
++const ceilingError = (m) => new SupervisorError(EXIT_CEILING, m);
++
++function isRecord(value) {
++  return value !== null && typeof value === 'object' && !Array.isArray(value);
++}
++
++export function rewritePrompt(text) {
++  const index = text.search(/\s/);
++  const token = index === -1 ? text : text.slice(0, index);
++  if (Object.prototype.hasOwnProperty.call(REWRITES, token)) {
++    return REWRITES[token] + text.slice(token.length);
++  }
++  return text;
++}
++
++// The image has no copy of the repo's VERSION file, so fall back through the
++// in-repo layout (which is what the offline tests exercise) to the shipped
++// location, then to a placeholder — never to an invalid clientInfo.version,
++// which initialize_processor.rs rejects as an HTTP header value.
++function vibeVersion() {
++  const here = dirname(fileURLToPath(import.meta.url));
++  for (const candidate of [join(here, '..', 'VERSION'), '/usr/local/share/vibe/VERSION']) {
++    try {
++      const text = readFileSync(candidate, 'utf8').trim();
++      if (/^[\x21-\x7e]+$/.test(text)) return text;
++    } catch { /* try the next candidate */ }
++  }
++  return '0.0.0';
++}
++
++function insideGitWorkTree(dir) {
++  const result = spawnSync('git', ['-C', dir, 'rev-parse', '--is-inside-work-tree'],
++    { encoding: 'utf8', input: '', timeout: 10000 });
++  return !result.error && result.status === 0 && result.stdout.trim() === 'true';
++}
++
++function isDirectory(path) {
++  try { return statSync(path).isDirectory(); } catch { return false; }
++}
++
++// --- clock (real, or a file the tests own) -----------------------------
++
++class Clock {
++  constructor(sourcePath) {
++    this.sourcePath = sourcePath || null;
++    this.offset = 0;
++    this.last = null;
++    if (this.sourcePath) this.last = this.readSource();
++  }
++
++  readSource() {
++    const raw = readFileSync(this.sourcePath, 'utf8').trim();
++    const value = Number(raw);
++    if (!Number.isFinite(value)) throw usageError(`--now-source: not a unix timestamp: ${raw}`);
++    return value;
++  }
++
++  now() {
++    if (!this.sourcePath) return Math.floor(Date.now() / 1000);
++    try { this.last = this.readSource(); } catch { /* keep the last good read */ }
++    return Math.floor(this.last + this.offset);
++  }
++
++  // AC6: under --now-source every sleep is a no-op, but the computed
++  // duration still elapses on the virtual clock, so a wall-clock ceiling
++  // can be reached inside a quota wait.
++  async sleep(seconds) {
++    if (this.sourcePath) { this.offset += seconds; return; }
++    if (seconds <= 0) return;
++    await new Promise((resolve) => { setTimeout(resolve, seconds * 1000); });
++  }
++}
++
++// --- app-server client -------------------------------------------------
++
++class AppServer {
++  constructor(child, log) {
++    this.child = child;
++    this.log = log;
++    this.buffer = '';
++    this.pending = new Map();
++    this.queue = [];
++    this.waiter = null;
++    this.nextId = 1;
++    this.closed = false;
++    this.exitNote = null;
++    this.stdinOpen = true;
++
++    child.stdout.setEncoding('utf8');
++    child.stdout.on('data', (chunk) => this.onData(chunk));
++    child.stderr.setEncoding('utf8');
++    child.stderr.on('data', (chunk) => this.log(`[server-stderr] ${String(chunk).trimEnd()}`));
++    child.stdin.on('error', () => { this.stdinOpen = false; });
++    child.on('exit', (code, signal) => {
++      this.exitNote = `app-server exited (code ${code}, signal ${signal})`;
++      this.shutdown();
++    });
++    child.on('error', (error) => {
++      this.exitNote = `app-server could not be started: ${error.message}`;
++      this.shutdown();
++    });
++  }
++
++  shutdown() {
++    this.closed = true;
++    for (const [, entry] of this.pending) {
++      clearTimeout(entry.timer);
++      entry.reject(failError(this.exitNote || 'app-server connection closed'));
++    }
++    this.pending.clear();
++    if (this.waiter) { const w = this.waiter; this.waiter = null; w.wake(); }
++  }
++
++  onData(chunk) {
++    this.buffer += chunk;
++    let index = this.buffer.indexOf('\n');
++    while (index !== -1) {
++      const line = this.buffer.slice(0, index);
++      this.buffer = this.buffer.slice(index + 1);
++      this.onLine(line);
++      index = this.buffer.indexOf('\n');
++    }
++  }
++
++  onLine(line) {
++    if (!line.trim()) return;
++    let message;
++    try { message = JSON.parse(line); } catch {
++      this.log(`[warn] unparseable line from app-server: ${line.slice(0, 200)}`);
++      return;
++    }
++    if (!isRecord(message)) return;
++    const hasId = message.id !== undefined && message.id !== null;
++    if (typeof message.method === 'string' && hasId) {
++      // Server→client request. An unattended supervisor has nobody to ask,
++      // so every one is declined at once and never blocks the turn.
++      this.log(`[declined] ${message.method} (id ${message.id})`);
++      this.write({ id: message.id, error: { code: -32601, message: 'unattended' } });
++      return;
++    }
++    if (typeof message.method === 'string') { this.push(message); return; }
++    if (!hasId) return;
++    const entry = this.pending.get(message.id);
++    if (!entry) { this.log(`[warn] response for unknown id ${message.id}`); return; }
++    this.pending.delete(message.id);
++    clearTimeout(entry.timer);
++    if (message.error !== undefined && message.error !== null) {
++      const detail = isRecord(message.error) ? (message.error.message || JSON.stringify(message.error))
++        : String(message.error);
++      entry.reject(failError(`${entry.label} failed: ${detail}`));
++      return;
++    }
++    entry.resolve(message.result);
++  }
++
++  push(notification) {
++    this.queue.push(notification);
++    if (this.waiter) { const w = this.waiter; this.waiter = null; w.wake(); }
++  }
++
++  write(object) {
++    if (!this.stdinOpen) return;
++    try { this.child.stdin.write(`${JSON.stringify(object)}\n`); }
++    catch { this.stdinOpen = false; }
++  }
++
++  request(method, params, { timeoutMs = REQUEST_TIMEOUT_MS, timeoutMessage = null } = {}) {
++    if (this.closed) return Promise.reject(failError(this.exitNote || 'app-server connection closed'));
++    const id = this.nextId;
++    this.nextId += 1;
++    return new Promise((resolve, reject) => {
++      const timer = setTimeout(() => {
++        this.pending.delete(id);
++        reject(failError(timeoutMessage || `${method} timeout`));
++      }, timeoutMs);
++      if (typeof timer.unref === 'function') timer.unref();
++      this.pending.set(id, { resolve, reject, timer, label: method });
++      // Key order here is the wire order asserted by the tests (AC3).
++      this.write({ id, method, params });
++    });
++  }
++
++  // A request whose response we will not wait for (AC7a's `turn/interrupt`,
++  // sent as the supervisor is on its way out).
++  send(method, params) {
++    const id = this.nextId;
++    this.nextId += 1;
++    this.write({ id, method, params });
++    return id;
++  }
++
++  async nextNotification() {
++    for (;;) {
++      if (this.queue.length) return this.queue.shift();
++      if (this.closed) throw failError(this.exitNote || 'app-server connection closed');
++      await new Promise((resolve) => { this.waiter = { wake: resolve }; });
++    }
++  }
++
++  closeStdin() {
++    if (!this.stdinOpen) return;
++    this.stdinOpen = false;
++    // stdio mode is single-client: EOF on stdin shuts the server down
++    // (app-server/src/lib.rs:1042,1061-1064). No signal or RPC needed.
++    try { this.child.stdin.end(); } catch { /* already gone */ }
++  }
++}
++
++// --- rate limits -------------------------------------------------------
++
++function mergeWindow(previous, update) {
++  if (update === undefined || update === null) return previous === undefined ? null : previous;
++  return update;
++}
++
++// AC5: `account/rateLimits/updated` is a sparse rolling update — merge it
++// into the last snapshot rather than replacing it, per window.
++export function mergeRateLimits(previous, update) {
++  if (!isRecord(update)) return previous ?? null;
++  const merged = isRecord(previous) ? { ...previous } : {};
++  for (const [key, value] of Object.entries(update)) {
++    if (value !== null && value !== undefined) merged[key] = value;
++  }
++  merged.primary = mergeWindow(isRecord(previous) ? previous.primary : undefined, update.primary);
++  merged.secondary = mergeWindow(isRecord(previous) ? previous.secondary : undefined, update.secondary);
++  return merged;
++}
++
++// AC6: the binding window is the exhausted one (the later reset if both are
++// exhausted), otherwise the window that resets later. Returns its resetsAt
++// in unix SECONDS, or null when no reset time is known.
++export function bindingResetsAt(snapshot) {
++  const windows = [];
++  if (isRecord(snapshot?.primary)) windows.push(snapshot.primary);
++  if (isRecord(snapshot?.secondary)) windows.push(snapshot.secondary);
++  const exhausted = windows.filter((w) => Number(w.usedPercent) >= 100);
++  const pool = exhausted.length ? exhausted : windows;
++  let latest = null;
++  for (const window of pool) {
++    // `resetsAt` is Option<i64> on the wire: an absent window reset arrives
++    // as null, and Number(null) is 0 — never treat that as a reset time.
++    if (window.resetsAt === null || window.resetsAt === undefined) continue;
++    const resets = Number(window.resetsAt);
++    if (Number.isFinite(resets) && (latest === null || resets > latest)) latest = resets;
++  }
++  return latest;
++}
++
++export function backoffSeconds(ladder, index) {
++  const capped = Math.min(index, ladder.length - 1);
++  return Math.min(ladder[capped < 0 ? 0 : capped], BACKOFF_CAP);
++}
++
++// --- error classification ---------------------------------------------
++
++// `codexErrorInfo` is externally tagged: `"usageLimitExceeded"` for a unit
++// variant, `{"httpConnectionFailed":{"httpStatusCode":429}}` for a struct one.
++export function classifyError(info) {
++  if (typeof info === 'string') {
++    if (QUOTA_ERRORS.has(info)) return { kind: 'quota', name: info };
++    if (FATAL_ERRORS.has(info)) return { kind: 'fatal', name: info };
++    if (TRANSIENT_ERRORS.has(info)) return { kind: 'transient', name: info };
++    return { kind: 'other', name: info };
++  }
++  if (isRecord(info)) {
++    const keys = Object.keys(info);
++    if (keys.length === 1) {
++      const name = keys[0];
++      const body = info[name];
++      if (QUOTA_ERRORS.has(name)) return { kind: 'quota', name };
++      if (FATAL_ERRORS.has(name)) return { kind: 'fatal', name };
++      if (TRANSIENT_ERRORS.has(name)) return { kind: 'transient', name };
++      if (name === 'httpConnectionFailed' && Number(isRecord(body) ? body.httpStatusCode : NaN) === 429) {
++        return { kind: 'transient', name };
++      }
++      return { kind: 'other', name };
++    }
++  }
++  return { kind: 'other', name: 'unknown' };
++}
++
++// AC7: the exit line must stand alone at the start of a line.
++export function exitReasonFrom(text) {
++  if (typeof text !== 'string') return null;
++  const match = /^VSSS-EXIT:[ \t]*(.*)$/m.exec(text);
++  if (!match) return null;
++  return match[1].trim();
++}
++
++function lastAgentMessageText(turn) {
++  const items = Array.isArray(turn?.items) ? turn.items : [];
++  let text = null;
++  for (const item of items) {
++    if (isRecord(item) && item.type === 'agentMessage' && typeof item.text === 'string') text = item.text;
++  }
++  return text;
++}
++
++// --- argument parsing --------------------------------------------------
++
++const STRING_FLAGS = {
++  '--cwd': 'cwd',
++  '--prompt-file': 'promptFile',
++  '--state': 'state',
++  '--model': 'model',
++  '--codex-bin': 'codexBin',
++  '--now-source': 'nowSource',
++};
++const NUMBER_FLAGS = {
++  '--max-turns': 'maxTurns',
++  '--max-resumes': 'maxResumes',
++  '--max-quota-waits': 'maxQuotaWaits',
++  '--max-transient-retries': 'maxTransientRetries',
++  '--max-turn-failures': 'maxTurnFailures',
++  '--max-wall-seconds': 'maxWallSeconds',
++};
++
++export function parseArgs(argv) {
++  const command = argv[0];
++  if (command === undefined || command === '--help' || command === '-h' || command === 'help') {
++    throw usageError(USAGE);
++  }
++  if (command !== 'run' && command !== 'status') throw usageError(`unknown command: ${command}\n${USAGE}`);
++  const options = { command, newRun: false, ...DEFAULTS };
++  for (let i = 1; i < argv.length; i += 1) {
++    const flag = argv[i];
++    if (flag === '--new-run') { options.newRun = true; continue; }
++    const stringKey = STRING_FLAGS[flag];
++    const numberKey = NUMBER_FLAGS[flag];
++    if (!stringKey && !numberKey) throw usageError(`unknown argument: ${flag}\n${USAGE}`);
++    const value = argv[i + 1];
++    if (value === undefined || value.startsWith('--')) throw usageError(`${flag} needs a value`);
++    i += 1;
++    if (stringKey) { options[stringKey] = value; continue; }
++    // AC7 (Astra review): every ceiling must be ≥ 1 — a 0 ceiling would be
++    // breached before the first turn and is always a mistake, not a request.
++    if (!/^\d+$/.test(value)) throw usageError(`${flag} needs a positive integer, got: ${value}`);
++    if (Number(value) < 1) throw usageError(`${flag} must be at least 1, got: ${value}`);
++    options[numberKey] = Number(value);
++  }
++  if (command === 'status') {
++    if (!options.state) throw usageError('status needs --state <file>');
++    if (options.cwd || options.promptFile || options.newRun) {
++      throw usageError('status takes only --state');
++    }
++    return options;
++  }
++  if (!options.cwd) throw usageError('run needs --cwd <abs workspace>');
++  if (!options.promptFile) throw usageError('run needs --prompt-file <file>');
++  if (!isAbsolute(options.cwd)) throw usageError(`--cwd must be an absolute path: ${options.cwd}`);
++  if (!isDirectory(options.cwd)) throw usageError(`--cwd is not a directory: ${options.cwd}`);
++  if (!insideGitWorkTree(options.cwd)) throw usageError(`--cwd is not inside a git work tree: ${options.cwd}`);
++  if (!options.state) options.state = join(options.cwd, '.vss', 'codex-supervisor.json');
++  if (!options.codexBin) options.codexBin = 'codex';
++  if (options.nowSource && !existsSync(options.nowSource)) {
++    throw usageError(`--now-source file not found: ${options.nowSource}`);
++  }
++  return options;
++}
++
++// --- state -------------------------------------------------------------
++
++function freshState(threadId, cwd, promptHash, startedAt) {
++  return {
++    threadId,
++    cwd,
++    promptHash,
++    startedAt,
++    turns: [],
++    resumes: 0,
++    quotaWaits: 0,
++    transientRetries: 0,
++    turnFailures: 0,
++    lastRateLimits: null,
++    waits: [],
++  };
++}
++
++// AC4: every counter change lands on disk, and it lands atomically —
++// a torn state file would strand the next resume.
++function writeStateFile(path, state) {
++  const temporary = `${path}.tmp`;
++  writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`);
++  renameSync(temporary, path);
++}
++
++// --- the supervisor ----------------------------------------------------
++
++class Supervisor {
++  constructor(options) {
++    this.options = options;
++    this.statePath = options.state;
++    this.stateDir = dirname(this.statePath);
++    this.logPath = join(this.stateDir, 'codex-supervisor.log');
++    this.clock = new Clock(options.nowSource);
++    this.state = null;
++    this.server = null;
++    this.quotaBlindIndex = 0;
++  }
++
++  log(line) {
++    const stamp = new Date(this.clock.now() * 1000).toISOString();
++    try { appendFileSync(this.logPath, `\n[${stamp}] ${line}\n`); } catch { /* logging is best effort */ }
++  }
++
++  logRaw(text) {
++    try { appendFileSync(this.logPath, text); } catch { /* logging is best effort */ }
++  }
++
++  persist() { writeStateFile(this.statePath, this.state); }
++
++  // The instant the wall ceiling bites, in the clock's own units. Every
++  // deadline decision (awaiting a turn, capping a wait, honouring an
++  // outstanding one) is expressed against this single value.
++  deadline(state = this.state) {
++    return Number(state.startedAt) + this.options.maxWallSeconds;
++  }
++
++  // AC7: every ceiling is checked at every decision point.
++  checkGates(state = this.state) {
++    const o = this.options;
++    if (state.turns.length >= o.maxTurns) throw ceilingError(`ceiling reached: max-turns (${o.maxTurns})`);
++    if (state.resumes >= o.maxResumes) throw ceilingError(`ceiling reached: max-resumes (${o.maxResumes})`);
++    if (state.quotaWaits >= o.maxQuotaWaits) {
++      throw ceilingError(`ceiling reached: max-quota-waits (${o.maxQuotaWaits})`);
++    }
++    if (state.transientRetries >= o.maxTransientRetries) {
++      throw ceilingError(`ceiling reached: max-transient-retries (${o.maxTransientRetries})`);
++    }
++    // AC7 (Astra review): without this gate a resumed run could carry an
++    // already-exhausted turnFailures count straight back into the loop.
++    if (Number(state.turnFailures) >= o.maxTurnFailures) {
++      throw ceilingError(`ceiling reached: max-turn-failures (${o.maxTurnFailures})`);
++    }
++    const elapsed = this.clock.now() - Number(state.startedAt);
++    if (elapsed >= o.maxWallSeconds) {
++      throw ceilingError(`ceiling reached: max-wall-seconds (${o.maxWallSeconds}, elapsed ${elapsed}s)`);
++    }
++  }
++
++  spawnServer() {
++    const env = {
++      PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin',
++      HOME: process.env.HOME || homedir(),
++      CODEX_HOME: this.codexHome,
++      LANG: process.env.LANG || 'C.UTF-8',
++    };
++    // argv is exactly ['app-server']: no `-c`, so the image's system
++    // requirements and managed hooks apply unmodified. The server's working
++    // directory is deliberately left alone — the workspace travels in
++    // `thread/start.cwd`.
++    const child = spawn(this.options.codexBin, ['app-server'], {
++      env, stdio: ['pipe', 'pipe', 'pipe'],
++    });
++    this.server = new AppServer(child, (line) => this.log(line));
++  }
++
++  async handshake() {
++    const params = {
++      clientInfo: { name: CLIENT_NAME, version: vibeVersion() },
++      capabilities: {},
++    };
++    await this.server.request('initialize', params, {
++      timeoutMs: HANDSHAKE_TIMEOUT_MS, timeoutMessage: 'handshake timeout',
++    });
++    this.log('initialize acknowledged');
++  }
++
++  async readRateLimits() {
++    const result = await this.server.request('account/rateLimits/read', {});
++    if (isRecord(result) && result.rateLimits !== undefined) {
++      this.applyRateLimits(result.rateLimits);
++    }
++  }
++
++  applyRateLimits(snapshot) {
++    const merged = mergeRateLimits(this.state ? this.state.lastRateLimits : null, snapshot);
++    if (this.state) {
++      this.state.lastRateLimits = merged;
++      this.persist();
++    } else {
++      this.pendingRateLimits = merged;
++    }
++  }
++
++  loadState() {
++    if (!existsSync(this.statePath)) return null;
++    let parsed;
++    try { parsed = JSON.parse(readFileSync(this.statePath, 'utf8')); }
++    catch { parsed = null; }
++    if (!isRecord(parsed)) {
++      if (this.options.newRun) return { corrupt: true };
++      throw usageError(`state file is not readable JSON: ${this.statePath} (pass --new-run to start fresh)`);
++    }
++    return parsed;
++  }
++
++  archiveState(previous) {
++    const startedAt = Number(previous?.startedAt);
++    const stamp = Number.isFinite(startedAt) ? startedAt : this.clock.now();
++    const archive = join(this.stateDir, `codex-supervisor.${stamp}.json`);
++    renameSync(this.statePath, archive);
++    this.log(`--new-run: archived previous state to ${archive}`);
++    return archive;
++  }
++
++  // AC4: a state file only resumes when BOTH cwd and promptHash match.
++  adoptState(previous, promptHash) {
++    if (!previous) return null;
++    if (this.options.newRun) { this.archiveState(previous.corrupt ? null : previous); return null; }
++    if (previous.cwd !== this.options.cwd) {
++      throw usageError(`state file cwd mismatch: state has ${previous.cwd}, --cwd is ${this.options.cwd} `
++        + '(pass --new-run to archive it and start fresh)');
++    }
++    if (previous.promptHash !== promptHash) {
++      throw usageError(`state file promptHash mismatch: state has ${previous.promptHash}, prompt hashes to `
++        + `${promptHash} (pass --new-run to archive it and start fresh)`);
++    }
++    if (typeof previous.threadId !== 'string' || !previous.threadId) {
++      throw usageError(`state file has no threadId: ${this.statePath} (pass --new-run to start fresh)`);
++    }
++    const state = freshState(previous.threadId, previous.cwd, previous.promptHash,
++      Number(previous.startedAt) || this.clock.now());
++    state.turns = Array.isArray(previous.turns) ? previous.turns : [];
++    state.waits = Array.isArray(previous.waits) ? previous.waits : [];
++    for (const key of ['resumes', 'quotaWaits', 'transientRetries', 'turnFailures']) {
++      state[key] = Number.isFinite(Number(previous[key])) ? Number(previous[key]) : 0;
++    }
++    state.lastRateLimits = previous.lastRateLimits ?? null;
++    // AC4 (Astra review): `exitReason` makes the state TERMINAL. It must
++    // survive adoption, or a finished run would silently start over.
++    if (previous.exitReason !== undefined && previous.exitReason !== null) {
++      state.exitReason = previous.exitReason;
++    }
++    return state;
++  }
++
++  // AC4 (Astra review): a wait recorded before the process went away is
++  // still owed. Honour what is left of it before touching the server —
++  // re-sending a turn into an exhausted quota window just burns a failure.
++  async honourOutstandingWait(state) {
++    const waits = Array.isArray(state.waits) ? state.waits : [];
++    const last = waits.length ? waits[waits.length - 1] : null;
++    if (!isRecord(last)) return;
++    const until = Number(last.until);
++    if (!Number.isFinite(until)) return;
++    const now = this.clock.now();
++    if (until <= now) return;
++    const deadline = this.deadline(state);
++    if (until > deadline) {
++      throw ceilingError(`ceiling reached: max-wall-seconds (${this.options.maxWallSeconds}): the `
++        + `outstanding ${last.reason} wait ends ${until - deadline}s past the ceiling; not sleeping`);
++    }
++    this.log(`honouring the outstanding ${last.reason} wait: ${until - now}s left until `
++      + `${new Date(until * 1000).toISOString()}`);
++    await this.clock.sleep(until - now);
++  }
++
++  async startThread(promptHash) {
++    const params = {
++      cwd: this.options.cwd,
++      approvalPolicy: 'never',
++      sandbox: 'danger-full-access',
++      ephemeral: false,
++    };
++    if (this.options.model) params.model = this.options.model;
++    const result = await this.server.request('thread/start', params);
++    const threadId = result?.thread?.id;
++    if (typeof threadId !== 'string' || !threadId) throw failError('thread/start returned no thread id');
++    this.state = freshState(threadId, this.options.cwd, promptHash, this.clock.now());
++    if (this.pendingRateLimits !== undefined) this.state.lastRateLimits = this.pendingRateLimits;
++    this.persist();
++    this.log(`thread/start → ${threadId}`);
++  }
++
++  async resumeThread(state) {
++    this.state = state;
++    if (this.pendingRateLimits !== undefined && this.state.lastRateLimits === null) {
++      this.state.lastRateLimits = this.pendingRateLimits;
++    }
++    // Gates first: a run that is already over a ceiling must not touch the
++    // server at all.
++    this.checkGates(state);
++    await this.server.request('thread/resume', { threadId: state.threadId });
++    this.state.resumes += 1;
++    this.persist();
++    this.log(`thread/resume → ${state.threadId} (resume ${this.state.resumes})`);
++  }
++
++  // AC7(a): awaiting a turn is the one place the supervisor could otherwise
++  // block for ever — a silent server, or one that retries internally without
++  // ever completing the turn. Race the next notification against the wall
++  // deadline. With a real clock one timer suffices; with `--now-source` the
++  // clock only moves when the file does, so poll it (cheaply, unref'd) and
++  // fire as soon as an observation lands past the deadline.
++  async nextNotificationOrDeadline() {
++    const deadline = this.deadline();
++    if (this.clock.now() >= deadline) return { expired: true };
++    let timer = null;
++    const expiry = new Promise((resolve) => {
++      if (this.clock.sourcePath) {
++        timer = setInterval(() => { if (this.clock.now() >= deadline) resolve(); }, 100);
++      } else {
++        timer = setTimeout(resolve, Math.max(0, (deadline - this.clock.now()) * 1000));
++      }
++      if (typeof timer.unref === 'function') timer.unref();
++    });
++    try {
++      return await Promise.race([
++        this.server.nextNotification().then((message) => ({ message })),
++        expiry.then(() => ({ expired: true })),
++      ]);
++    } finally {
++      clearTimeout(timer);
++      clearInterval(timer);
++    }
++  }
++
++  // AC7(a): interrupt the turn, close the server's stdin (it exits on EOF),
++  // write the state, and leave with the ceiling exit code.
++  expireDuringTurn(turnId) {
++    const elapsed = this.clock.now() - Number(this.state.startedAt);
++    this.log(`wall deadline reached while awaiting turn ${turnId || '(no id)'}: interrupting`);
++    if (turnId) this.server.send('turn/interrupt', { threadId: this.state.threadId, turnId });
++    this.server.closeStdin();
++    try { this.persist(); } catch { /* best effort */ }
++    throw ceilingError(`ceiling reached: max-wall-seconds (${this.options.maxWallSeconds}, elapsed `
++      + `${elapsed}s) while awaiting a turn; sent turn/interrupt`);
++  }
++
++  // One turn: start it, then drain notifications until its `turn/completed`.
++  async runTurn(text) {
++    const result = await this.server.request('turn/start', {
++      threadId: this.state.threadId,
++      input: [{ type: 'text', text }],
++    });
++    const turnId = typeof result?.turn?.id === 'string' ? result.turn.id : null;
++    this.log(`turn/start → ${turnId || '(no id)'}`);
++    let lastAgentMessage = null;
++    for (;;) {
++      const next = await this.nextNotificationOrDeadline();
++      if (next.expired) this.expireDuringTurn(turnId);
++      const message = next.message;
++      const params = isRecord(message.params) ? message.params : {};
++      const sameTurn = !turnId || !params.turnId || params.turnId === turnId;
++      switch (message.method) {
++        case 'turn/completed': {
++          const turn = isRecord(params.turn) ? params.turn : {};
++          if (turnId && typeof turn.id === 'string' && turn.id !== turnId) {
++            this.log(`[warn] turn/completed for another turn (${turn.id})`);
++            break;
++          }
++          const text0 = lastAgentMessage ?? lastAgentMessageText(turn);
++          return { turn, turnId: turnId || turn.id || null, agentMessage: text0 };
++        }
++        case 'item/completed': {
++          const item = isRecord(params.item) ? params.item : {};
++          if (sameTurn && item.type === 'agentMessage' && typeof item.text === 'string') {
++            lastAgentMessage = item.text;
++          }
++          break;
++        }
++        case 'item/agentMessage/delta': {
++          if (typeof params.delta === 'string') this.logRaw(params.delta);
++          break;
++        }
++        case 'error': {
++          const willRetry = params.willRetry === true;
++          const detail = isRecord(params.error) ? params.error.message : '';
++          this.log(`[server-error] willRetry=${willRetry} ${detail || ''}`.trimEnd());
++          break;
++        }
++        case 'account/rateLimits/updated': {
++          this.applyRateLimits(params.rateLimits);
++          break;
++        }
++        default:
++          break;
++      }
++    }
++  }
++
++  // AC7(b): a wait is only ever taken if it ends inside the wall budget. The
++  // wait that WOULD have been taken is still recorded — the state file is
++  // the record of why the run stopped — and then the ceiling fires instead
++  // of a sleep that could never have been useful.
++  recordWait(reason, seconds, detail) {
++    const until = this.clock.now() + seconds;
++    this.state.waits.push({ reason, seconds, until });
++    this.persist();
++    this.log(`wait ${seconds}s (${reason}${detail ? `: ${detail}` : ''}) until `
++      + `${new Date(until * 1000).toISOString()}`);
++    const deadline = this.deadline();
++    if (until > deadline) {
++      throw ceilingError(`ceiling reached: max-wall-seconds (${this.options.maxWallSeconds}): a `
++        + `${seconds}s ${reason} wait would end ${until - deadline}s past the ceiling; not sleeping`);
++    }
++  }
++
++  async quotaWait(name) {
++    this.checkGates();
++    const resetsAt = bindingResetsAt(this.state.lastRateLimits);
++    let seconds;
++    let blind = false;
++    if (resetsAt === null) {
++      blind = true;
++      seconds = backoffSeconds(QUOTA_BACKOFF, this.quotaBlindIndex);
++      this.quotaBlindIndex += 1;
++    } else {
++      seconds = Math.max(0, (resetsAt + QUOTA_GRACE_SECONDS) - this.clock.now());
++    }
++    this.state.quotaWaits += 1;
++    this.persist();
++    this.recordWait('quota', seconds, name);
++    await this.clock.sleep(seconds);
++    // A blind wait learns nothing from the clock, so re-read the snapshot
++    // before the next attempt (AC6).
++    if (blind) await this.readRateLimits();
++  }
++
++  async transientWait(name) {
++    this.checkGates();
++    const seconds = backoffSeconds(TRANSIENT_BACKOFF, this.state.transientRetries);
++    this.state.transientRetries += 1;
++    this.persist();
++    this.recordWait('transient', seconds, name);
++    await this.clock.sleep(seconds);
++  }
++
++  async loop(firstText) {
++    let text = firstText;
++    for (;;) {
++      this.checkGates();
++      const { turn, turnId, agentMessage } = await this.runTurn(text);
++      const status = turn.status;
++      if (status === 'completed') {
++        this.state.turns.push({
++          turnId: turnId || null,
++          status: 'completed',
++          at: this.clock.now(),
++        });
++        this.persist();
++        const reason = exitReasonFrom(agentMessage);
++        if (reason !== null) {
++          this.state.exitReason = reason;
++          this.persist();
++          this.log(`VSSS-EXIT: ${reason}`);
++          return EXIT_OK;
++        }
++        this.quotaBlindIndex = 0;
++        text = 'continue';
++        continue;
++      }
++      if (status === 'interrupted') {
++        throw failError('turn interrupted by someone else; not restarting');
++      }
++      if (status !== 'failed') {
++        throw failError(`unexpected turn status: ${String(status)}`);
++      }
++      const error = isRecord(turn.error) ? turn.error : {};
++      const info = classifyError(error.codexErrorInfo);
++      const detail = typeof error.message === 'string' ? error.message : '';
++      this.log(`turn failed: ${info.name} (${info.kind})${detail ? ` — ${detail}` : ''}`);
++      if (info.kind === 'fatal') {
++        throw failError(`turn failed: ${info.name}; waiting cannot help — rerun with --new-run`);
++      }
++      if (info.kind === 'quota') { await this.quotaWait(info.name); continue; }
++      if (info.kind === 'transient') { await this.transientWait(info.name); continue; }
++      this.state.turnFailures += 1;
++      this.persist();
++      if (this.state.turnFailures >= this.options.maxTurnFailures) {
++        throw failError(`turn failed ${this.state.turnFailures} times (max-turn-failures `
++          + `${this.options.maxTurnFailures}); last message: ${detail || info.name}`);
++      }
++    }
++  }
++
++  async run() {
++    const options = this.options;
++    let promptRaw;
++    try { promptRaw = readFileSync(options.promptFile, 'utf8'); }
++    catch { throw usageError(`--prompt-file cannot be read: ${options.promptFile}`); }
++    const promptHash = createHash('sha256').update(promptRaw).digest('hex');
++    const promptText = rewritePrompt(promptRaw.replace(/\s+$/, ''));
++    if (!promptText) throw usageError(`--prompt-file is empty: ${options.promptFile}`);
++
++    this.codexHome = process.env.CODEX_HOME || join(process.env.HOME || homedir(), '.codex');
++    if (!isDirectory(this.codexHome)) {
++      throw usageError(`CODEX_HOME does not exist: ${this.codexHome}`);
++    }
++
++    mkdirSync(this.stateDir, { recursive: true });
++    const previous = this.loadState();
++    const resumed = this.adoptState(previous, promptHash);
++    // AC4 (Astra review): a state file that records an exitReason is done.
++    // Re-running it would restart a completed job; `--new-run` is the only
++    // way to start over, and it has already archived this file if passed.
++    if (resumed && resumed.exitReason !== undefined) {
++      process.stdout.write(`already complete: ${resumed.exitReason}\n`);
++      return EXIT_OK;
++    }
++    if (resumed) {
++      // Gates BEFORE anything is sent, then any wait the previous process
++      // still owed — both without spawning a server we may never use.
++      this.checkGates(resumed);
++      await this.honourOutstandingWait(resumed);
++      this.checkGates(resumed);
++    }
++
++    this.spawnServer();
++    installSignalHandlers(this);
++    try {
++      await this.handshake();
++      await this.readRateLimits();
++      let firstText = promptText;
++      if (resumed) {
++        await this.resumeThread(resumed);
++        // AC4: the thread already holds the original prompt and whatever
++        // progress it made, so a resumed run nudges it with `continue`; the
++        // prompt itself only goes out when no turn was ever started.
++        if (resumed.turns.length) firstText = 'continue';
++      } else {
++        await this.startThread(promptHash);
++      }
++      return await this.loop(firstText);
++    } finally {
++      if (this.state) { try { this.persist(); } catch { /* best effort */ } }
++      this.server.closeStdin();
++    }
++  }
++}
++
++// --- signals -----------------------------------------------------------
++
++function installSignalHandlers(supervisor) {
++  for (const signal of ['SIGTERM', 'SIGINT']) {
++    process.on(signal, () => {
++      try { if (supervisor.server) supervisor.server.closeStdin(); } catch { /* already gone */ }
++      try { if (supervisor.state) supervisor.persist(); } catch { /* best effort */ }
++      try { supervisor.log(`${signal}: stdin closed, state saved`); } catch { /* best effort */ }
++      process.exit(EXIT_SIGNAL);
++    });
++  }
++}
++
++// --- status ------------------------------------------------------------
++
++function stamp(seconds) {
++  const value = Number(seconds);
++  if (!Number.isFinite(value)) return '-';
++  return new Date(value * 1000).toISOString();
++}
++
++export function statusReport(state) {
++  const rows = [
++    ['thread', state.threadId ?? '-'],
++    ['cwd', state.cwd ?? '-'],
++    ['prompt sha256', state.promptHash ?? '-'],
++    ['started', stamp(state.startedAt)],
++    ['turns', String(Array.isArray(state.turns) ? state.turns.length : 0)],
++    ['resumes', String(state.resumes ?? 0)],
++    ['quota waits', String(state.quotaWaits ?? 0)],
++    ['transient retries', String(state.transientRetries ?? 0)],
++    ['turn failures', String(state.turnFailures ?? 0)],
++    ['waits', String(Array.isArray(state.waits) ? state.waits.length : 0)],
++  ];
++  const waits = Array.isArray(state.waits) ? state.waits : [];
++  if (waits.length) {
++    const last = waits[waits.length - 1];
++    rows.push(['last wait', `${last.reason} ${last.seconds}s until ${stamp(last.until)}`]);
++  }
++  const limits = state.lastRateLimits;
++  if (isRecord(limits)) {
++    for (const key of ['primary', 'secondary']) {
++      const window = limits[key];
++      if (isRecord(window)) {
++        rows.push([`${key} window`, `${window.usedPercent}% used, resets ${stamp(window.resetsAt)}`]);
++      }
++    }
++  }
++  if (state.exitReason !== undefined) rows.push(['exit reason', String(state.exitReason)]);
++  const width = Math.max(...rows.map(([label]) => label.length));
++  return rows.map(([label, value]) => `${label.padEnd(width)}  ${value}`).join('\n');
++}
++
++function runStatus(options) {
++  if (!existsSync(options.state)) {
++    process.stdout.write('no run\n');
++    return EXIT_FAIL;
++  }
++  let state;
++  try { state = JSON.parse(readFileSync(options.state, 'utf8')); }
++  catch { process.stdout.write('no run\n'); return EXIT_FAIL; }
++  if (!isRecord(state)) { process.stdout.write('no run\n'); return EXIT_FAIL; }
++  process.stdout.write(`${statusReport(state)}\n`);
++  return EXIT_OK;
++}
++
++// --- entry point -------------------------------------------------------
++
++export async function main(argv) {
++  let options;
++  try { options = parseArgs(argv); }
++  catch (error) {
++    process.stderr.write(`${error.message}\n`);
++    return error.code ?? EXIT_USAGE;
++  }
++  if (options.command === 'status') {
++    try { return runStatus(options); }
++    catch (error) {
++      process.stderr.write(`${error.message}\n`);
++      return error.code ?? EXIT_FAIL;
++    }
++  }
++  const supervisor = new Supervisor(options);
++  try {
++    return await supervisor.run();
++  } catch (error) {
++    const code = error.code ?? EXIT_FAIL;
++    process.stderr.write(`${error.message}\n`);
++    try { supervisor.log(`exit ${code}: ${error.message}`); } catch { /* best effort */ }
++    return code;
++  }
++}
++
++function invokedDirectly() {
++  const entry = process.argv[1];
++  if (!entry) return false;
++  const self = fileURLToPath(import.meta.url);
++  if (entry === self) return true;
++  try { return realpathSync(entry) === realpathSync(self); } catch { return false; }
++}
++
++if (invokedDirectly()) {
++  main(process.argv.slice(2)).then((code) => { process.exit(code); }, (error) => {
++    process.stderr.write(`${error && error.stack ? error.stack : String(error)}\n`);
++    process.exit(EXIT_FAIL);
++  });
++}

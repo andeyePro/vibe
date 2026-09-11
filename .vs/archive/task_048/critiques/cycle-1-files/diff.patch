@@ -1,0 +1,238 @@
+diff --git a/.vs/tasks.json b/.vs/tasks.json
+index fe51a03..8450b79 100644
+--- a/.vs/tasks.json
++++ b/.vs/tasks.json
+@@ -347,5 +347,15 @@
+     "mode": "rigorous",
+     "last_modified": "2026-09-11T20:29:54Z",
+     "cycle_1_note": "Generator (sonnet) delivered AC1-AC7 (AC8 is the Tester's per spec, AC9 verified green by this cycle). SKILL.md wrappers at devcontainer/codex/skills/{vs,vss,vsss}/SKILL.md; Dockerfile COPY --chown=root:root codex/ already covers them (verified, no extra COPY; added explicit chmod 0755/0644 for the new dirs/files alongside the existing task_046 chmod block). vibe-delegate.mjs gained the `role` operation: ask/review/slots/status refactored only via two extractions (codexEvents(), claudeBilling()+claudeReply()) that reproduce their prior bodies verbatim -- diffed byte-for-byte equivalent, confirmed by the full existing suite staying green. Read-only roles (planner/spec-critic/reviewer/evaluator) reuse ask's own read-only argv verbatim in a private temp cwd; write roles (generator/tester) use the AC4 pinned vectors verbatim (Astra: -C <workspace> + danger-full-access, no --ignore-user-config; Claude: --permission-mode bypassPermissions, fixed tool allowlist), schema/output files always in the helper's own scratch dir. AC5 reply contract implemented (Astra schema-native status; Claude STATUS: done|blocked last-line derivation, missing -> blocked). vs.md/vss.md/vsss.md each gained an 6-line Running under Codex section (total word count 14289/14300 -- no trim needed elsewhere). README Codex section, ask.md pointer, and plan D5 wording updated. TDD scratch suite at .vs/cycle-1/scratch-tests/test_role.py (standalone, no smoke import) run red (against git-stashed pre-edit vibe-delegate.mjs) then green; python3 code-check.py clean; python3 smoke-test.py < /dev/null fully green (3695 checks), 0 regressions."
++  },
++  {
++    "id": "task_048",
++    "description": "codex-supervisor: unattended Codex thread via app-server JSON on stdio; prefix rewrite, quota wait on resetsAt, transient/turn-failure retries, ceilings, atomic state, thread/resume after kill, VSSS-EXIT gate",
++    "implementation_status": "complete",
++    "test_status": "pending",
++    "assigned_to": "generator",
++    "mode": "rigorous",
++    "last_modified": "2026-09-11T20:53:59Z",
++    "cycle_1_note": "Generator (opus) delivered AC1-AC9 and AC11 (AC10 is the Tester's). New devcontainer/codex-supervisor.mjs (Node ESM, builtins only) installed by the Dockerfile as root-owned /usr/local/bin/codex-supervisor and added to the chmod +x chain. vsss.md gained the VSSS-EXIT last-line exit contract and a 7-line Running under Codex note; README gained the \"unattended supervisor\" paragraph; plan D7 rewritten with method names verified against tag rust-v0.154.0. The vs+vss+vsss 14,300-word cap had 11 words of headroom, so the additions were paid for by compressing rationale prose in vsss.md (no rule or asserted phrase removed; total now 14,289). TDD harness at .vs/cycle-1/scratch-tests/{stub-codex.py,drive.py}: 20 scenarios / 116 assertions over every AC10 case, run red then green. python3 code-check.py clean; python3 smoke-test.py < /dev/null fully green."
+   }
+ ]
+diff --git a/.vss/sessions/2026-09-11T17-11-32Z.md b/.vss/sessions/2026-09-11T17-11-32Z.md
+index 106289f..067c025 100644
+--- a/.vss/sessions/2026-09-11T17-11-32Z.md
++++ b/.vss/sessions/2026-09-11T17-11-32Z.md
+@@ -221,3 +221,7 @@ Spec Critic (draft): revise, 6 BLOCKING folded in. Generator sonnet: three SKILL
+ 
+ **Applied (the WARNING was a real gap)**: the lead's guard hooks live in the PROJECT's `.claude/settings.local.json`, which `--setting-sources user` excludes — a Claude write role would have run Bash/Write with NO guards. Write roles now carry both guards inline in `--settings` with `disableAllHooks:false` pinned (highest-precedence source); billed mode merges the user's settings file with those keys into a private scratch copy. Spec AC4 updated; golden and a billed-merge assertion added (the checks_17 stub now snapshots a file-valued `--settings`). Task_046's `/usr/bin/env -i` residual confirmed by Astra.
+ **Files touched**: `devcontainer/codex/skills/{vs,vss,vsss}/SKILL.md` (new), `devcontainer/vibe-delegate.mjs`, `devcontainer/Dockerfile`, `devcontainer/commands/{vs,vss,vsss,ask}.md`, `README.md`, `docs/codex-integration-plan.md` (D5), `smoke/checks_18_codex_runtime.py`, `smoke/checks_17_delegation.py` (stub snapshots a file-valued --settings), `smoke/runner.py`, `.vs/*`, `CHANGELOG.md`. Suite 3,890 green.
++**Commit**: 1d3adde — /vs cycle 1: pass — task_047. **Outcome**: success.
++
++## Iter 6 — plan item 6: Codex supervisor as an app-server client (task_048, `/vs` rigorous, opus Generator)
++**Plan**: `codex-supervisor run --cwd --prompt-file` drives one thread through `codex app-server` on stdio (NDJSON, `initialize`, `thread/start`, `turn/start`, `turn/completed` with `codexErrorInfo`, `account/rateLimits/read`, `thread/resume`), prefix rewrite `/vsss`→`$vsss`, quota wait on `resetsAt`, transient back-off, per-turn failure retry, separate counters and ceilings checked at every decision point, atomic state file, `VSSS-EXIT:` gate written into vsss.md's exit section for every runtime. Spec Critic on the draft: revise (6 BLOCKING folded in: sandbox consistent with task_046; ceilings checked before waits; resumes vs quotaWaits separated; forbidden-command turn failures retried, not terminal; the exit marker is a real vsss.md requirement; promptHash mismatch defined).
+diff --git a/README.md b/README.md
+index 9d97bec..93b2ef2 100644
+--- a/README.md
++++ b/README.md
+@@ -189,6 +189,8 @@ Claude delegation has its own configurable billing route, independent of the sub
+ 
+ **Skills in a Codex-led container.** `$vs`, `$vss` and `$vsss` are Codex skills baked into the image at `/etc/codex/skills/{vs,vss,vsss}/SKILL.md` — the Admin scope root, so a project cannot add, shadow or disable one, and nothing is ever written into your Mac's `~/.codex` or `~/.agents` to make this work. Each SKILL.md tells Codex to read the single-sourced command body at `/usr/local/share/vibe/commands/<name>.md` and follow it verbatim, substituting a fixed table of Codex equivalents for the handful of Claude-only primitives those bodies use (`Agent`, `Skill`, `ScheduleWakeup`, and so on). The one primitive with no Codex equivalent at all is subagent dispatch — Codex's own `multi_agent` is pinned off in this image (see above) — so `/vs`'s Planner/Spec Critic/Generator/Tester/Evaluator roles become `vibe-delegate role <role> --model <astra|opus|sonnet|haiku|fable> --cwd <workspace>`: one fresh `codex exec` or `claude -p` process per role, run under the same hooks and firewall as the lead, never resuming or sharing a session with it. This ships the plumbing and its offline tests only; the first live Codex-led `/vs` trial is a later, separate item (see **MANUAL-TESTS Test 55**).
+ 
++**The unattended supervisor.** A `$vsss` run is meant to outlive its own quota window, and Codex's CLI has no durable loop of its own, so the image ships one: `/usr/local/bin/codex-supervisor` (root-owned, like the guard chain). It speaks Codex's app-server protocol on stdio — newline-delimited JSON, not JSON-RPC 2.0 — starting ONE thread with `approvalPolicy: "never"` and `sandbox: "danger-full-access"` (the only mode that works here; the container has no user namespaces for Codex's own bubblewrap sandbox, and the real boundary is the container, firewall and hooks described above), then re-entering that same thread with the literal word `continue` until the run's exit report ends with `VSSS-EXIT: <reason>`. It runs the vendor binary as `codex app-server` with no `-c` flags and a four-variable environment, so the system requirements and managed hooks apply unaltered. The reason it uses the protocol rather than `codex exec` is that only the protocol carries `codexErrorInfo` and the rate-limit snapshot: a quota failure names itself and reports when the window resets, so the supervisor sleeps until then plus two minutes rather than guessing, backs off on transient failures, declines every approval request it is sent (nobody is there to answer), and writes its thread id and counters to `.vss/codex-supervisor.json` after every change — so a killed supervisor resumes the same thread instead of starting a new one. Ceilings on turns, resumes, quota waits, retries and wall time bound the whole thing, and `codex-supervisor status --state <file>` prints where a run got to. It is wired into a Codex-led launch by a later item; today it is shipped and tested offline against a stub app-server.
++
+ See **MANUAL-TESTS Test 54** for the post-relaunch end-to-end checks, and **Test 55** for the Codex system policy and liveness checks.
+ 
+ ### Second brain (optional)
+diff --git a/devcontainer/Dockerfile b/devcontainer/Dockerfile
+index 2203acd..e8e46f4 100644
+--- a/devcontainer/Dockerfile
++++ b/devcontainer/Dockerfile
+@@ -148,6 +148,10 @@ COPY vibe-delegate.mjs /usr/local/bin/vibe-delegate
+ # system (Admin) skill root with no extra COPY needed, root-owned like
+ # everything else here.
+ COPY --chown=root:root codex/ /etc/codex/
++# The unattended supervisor (task_048): it drives `codex app-server` for a
++# Codex-led `$vsss` run, so like the guard chain it is root-owned — `node`
++# must not be able to rewrite the thing that decides when to stop.
++COPY --chown=root:root codex-supervisor.mjs /usr/local/bin/codex-supervisor
+ COPY --chown=root:root codex-guard-adapter.sh /usr/local/bin/codex-guard-adapter
+ COPY --chown=root:root codex-guard-liveness.sh /usr/local/bin/codex-guard-liveness
+ # Curated Claude Code agents + slash commands. Staged under /usr/local/share
+@@ -172,7 +176,7 @@ USER root
+ # to a root script whose whole job is widening the firewall. The script body
+ # also never reads its own argv, so this is belt and braces — but the rule is
+ # what makes it true for every future version of the script.
+-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/refresh-extra-domains.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/guard-bash.sh /usr/local/bin/guard-fs.sh /usr/local/bin/install-claude-extras.sh /usr/local/bin/check-sp-current.sh /usr/local/bin/register-op-mcp.sh /usr/local/bin/vibe-credential-helper /usr/local/bin/vibe-copy /usr/local/bin/codex-guard-adapter /usr/local/bin/codex-guard-liveness && \
++RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/refresh-extra-domains.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/guard-bash.sh /usr/local/bin/guard-fs.sh /usr/local/bin/install-claude-extras.sh /usr/local/bin/check-sp-current.sh /usr/local/bin/register-op-mcp.sh /usr/local/bin/vibe-credential-helper /usr/local/bin/vibe-copy /usr/local/bin/codex-guard-adapter /usr/local/bin/codex-guard-liveness /usr/local/bin/codex-supervisor && \
+   chmod 0755 /etc/codex /etc/codex/hooks && \
+   chmod 0644 /etc/codex/requirements.toml /etc/codex/config.toml /etc/codex/hooks/hooks.json && \
+   chmod 0755 /etc/codex/skills /etc/codex/skills/vs /etc/codex/skills/vss /etc/codex/skills/vsss && \
+diff --git a/devcontainer/commands/vsss.md b/devcontainer/commands/vsss.md
+index b5244f1..c58c4ed 100644
+--- a/devcontainer/commands/vsss.md
++++ b/devcontainer/commands/vsss.md
+@@ -39,11 +39,11 @@ The session file is the single canonical audit Martin reviews. There is no separ
+ 
+ ## Resumption protocol (after out-of-tokens halt or interrupted session)
+ 
+-A `/vsss` session can be killed by token-exhaustion, a manual interrupt, or any unhandled error. Without a resumption protocol the work in flight is dropped — partial commits sit on `main`, the priority queue is forgotten, the user has to re-issue the original `/vsss` invocation. Resumption fixes that.
++A `/vsss` session can be killed by token-exhaustion, a manual interrupt, or any unhandled error. Without resumption the work in flight is dropped: partial commits sit on `main`, the priority queue is forgotten, and the user has to re-issue the original invocation.
+ 
+ ### State that survives a halt
+ 
+-The session file at `.vss/sessions/<start-ISO>.md` is the persistence layer. After every iter completes (Generator commit landed, Tester commit landed, optimiser verdict written), the iter block in the session file is up to date. If the session halts, that file's most recent iter block plus the absence of a `## Final state` section is the signal "this session was alive when killed".
++The session file at `.vss/sessions/<start-ISO>.md` is the persistence layer: its iter block is up to date after every iter completes (Generator commit landed, Tester commit landed, optimiser verdict written). A most-recent iter block with no `## Final state` section is the signal "this session was alive when killed".
+ 
+ ### Detecting an in-progress session at startup
+ 
+@@ -55,7 +55,7 @@ Three branches:
+ 
+ - **`/vsss --resume` flag passed, NO in-progress session exists**: fall back to the most recent COMPLETED session (Final state present). Read its `## Final state` § Deferred list. If non-empty, treat the deferred items as the new priority queue and start iter 1 against the first one. Open a fresh session file at `.vss/sessions/<new-ISO>.md` (do NOT append to the completed one — it's finalised); record in Initial-plan that args were `--resume` and the queue was inherited from `<previous-session-file-path>`. Budget is fresh 5h (or `--hours N` override) since the previous session reached Final state cleanly. If the deferred list is empty, surface to the user "no in-progress session and no deferred items in the last completed session; pass args or no flag to start fresh" and stop.
+ 
+-- **`/vsss <new args>` invoked while an in-progress session exists**: surface the conflict to the user. Two reasonable resolutions: (a) `--resume` to pick up the in-progress one, OR (b) explicitly mark the in-progress session as halted (write a Final state section with `Exit reason: superseded by new /vsss invocation` and start fresh). Per `/vss`'s hard-escalate list this is "scope-creep beyond announced plan" — do NOT auto-pick; surface to the user. (User has Q1=a authorisation? They still need to disambiguate this case explicitly; the new args might not match the parked session's queue.)
++- **`/vsss <new args>` invoked while an in-progress session exists**: surface the conflict. Two resolutions: (a) `--resume` to pick up the in-progress one, OR (b) mark it halted (write a Final state section with `Exit reason: superseded by new /vsss invocation` and start fresh). Per `/vss`'s hard-escalate list this is "scope-creep beyond announced plan" — do NOT auto-pick. (A Q1=a authorisation does not cover it: the new args might not match the parked session's queue.)
+ 
+ - **`/vsss` with no args, no in-progress session**: normal Mode A start.
+ 
+@@ -133,9 +133,9 @@ Two corollaries, both of which have caused real multi-hour stalls:
+ - **Stopping is the failure, not speaking.** A message may carry prose AND tool
+   calls together and the run continues — that is ordinary narration. So do not
+   reason "I wrote a summary, therefore the turn ended"; you ended the turn, and
+-  the summary is what ending it looked like. Going silent fixes nothing on its
+-  own: a silent run that stops is equally dead. The rule is **never stop while
+-  an exit condition below is unmet**.
++  the summary is what that looked like. Silence fixes nothing either: a silent
++  run that stops is equally dead. The rule is **never stop while an exit
++  condition below is unmet**.
+ - **A question is not an exit condition.** Needing Martin's input on the current
+   area NEVER ends the loop. Write the ask to the project's fromClaude channel
+   and move to the next area that needs no input; pick the answer up at a later
+@@ -150,11 +150,10 @@ channels below — never through stopping.
+ 
+ ## fromto channels — asynchronous user Q&A without stopping
+ 
+-Why this exists: in a long `/vsss` run, far more scrolls through the TTY than
+-the user will ever read, and the user only wants to read and answer what they
+-MUST to unblock work. So questions leave the terminal entirely: they land in
+-the user's second brain as a short live list, answers come back the same way,
+-and the loop never stops to wait. This section defines the whole protocol.
++Why this exists: a long `/vsss` run scrolls far more through the TTY than the
++user will ever read, and they only want to answer what they MUST to unblock
++work. So questions leave the terminal: they land in the user's second brain as
++a short live list, answers come back the same way, and the loop never waits.
+ 
+ ### The three files
+ 
+@@ -333,22 +332,22 @@ Dispatch rule inherited by every wrapped iteration's subagents: long build/test/
+ 
+ ## Why `/vsss` exists alongside `/vss`
+ 
+-`/vss` is one bounded unit of work. Use it when you want to step away briefly. `/vsss` is "burn the rest of my session productively" — when you have hours of session credit, want it spent on the project, and trust the escalate list to catch anything dangerous. Higher blast radius, more discipline required at the spec level (the optimiser is what keeps the loop honest).
++`/vss` is one bounded unit of work — use it to step away briefly. `/vsss` is "burn the rest of my session productively": hours of session credit spent on the project, with the escalate list catching anything dangerous. Higher blast radius, and more spec-level discipline (the optimiser keeps the loop honest).
+ 
+-If the loop produces three vacuous iterations, that's the design saying "nothing useful left to do" — let it stop. Don't keep feeding it noise tasks.
++Three vacuous iterations are the design saying "nothing useful left to do" — let it stop rather than feeding it noise tasks.
+ 
+ ## Reporting back at exit
+ 
+-**At a real exit, and only there.** Before you write a single word of this
+-block, name which numbered exit condition from § Exit conditions has fired. If
+-you cannot name one, the loop has not ended and this section does not apply —
+-go back and run the next iteration. The named condition must be the one that
+-ACTUALLY fired: a stop whose justification mentions wall-clock, window fit, or
+-"the next item needs N cycles" is condition 3 — lawful only under an explicit
+-`--hours`/`--budget` flag — and must never be reported as a perfection gate. "A version shipped", "a natural milestone",
+-"I need Martin's input on this bit" and "the context is getting long" are NOT
+-exit conditions, and the pull to report at each of them is exactly how a run
+-dies hours early.
++**At a real exit, and only there.** Before writing a word of this block, name
++which numbered exit condition from § Exit conditions has fired. If you cannot
++name one, the loop has not ended — run the next iteration instead. The named
++condition must be the one that ACTUALLY fired: a stop justified by wall-clock,
++window fit, or "the next item needs N cycles" is condition 3, lawful only under
++an explicit `--hours`/`--budget` flag, and
++must never be reported as a perfection gate. "A version shipped", "a natural
++milestone", "I need Martin's input on this bit" and "the context is getting
++long" are NOT exit conditions; the pull to report at each is how a run dies
++hours early.
+ 
+ When the loop ends (any reason), report to the user:
+ 
+@@ -363,12 +362,20 @@ When the loop ends (any reason), report to the user:
+ 
+ Lead with `---` before the report block.
+ 
++**The LAST line of the exit report is `VSSS-EXIT: <exit reason in a few words>`** —
++alone on its line, in every runtime, Claude-led and Codex-led alike. It is the
++end-of-run marker an unattended supervisor watches for; a report without it
++reads as unfinished. Write it once, last, after the bullets above.
++
+ ## Running under Codex
+ 
+ `$vsss` (`/etc/codex/skills/vsss/SKILL.md`) wraps this file for a Codex-led
+ session and carries the substitution table for `Agent(...)` and the other
+ Claude-only primitives it and the wrapped `/vss`/`/vs` use. Role dispatch
+ becomes `vibe-delegate role <role> --model <model> --cwd <workspace>`.
++Unattended runs are driven by `codex-supervisor`: it starts one thread, sends
++`$vsss` as the first turn, re-enters with the literal `continue` after every
++turn that did not end the run, and stops on the report's `VSSS-EXIT:` line.
+ 
+ ---
+ 
+diff --git a/docs/codex-integration-plan.md b/docs/codex-integration-plan.md
+index 3c9c5f5..4c00584 100644
+--- a/docs/codex-integration-plan.md
++++ b/docs/codex-integration-plan.md
+@@ -235,17 +235,41 @@ relies on it.
+   `--ephemeral`) and the tool-disable set against a stub; the live nonce
+   proof (each reviewer's OWN rollout, by `thread_id`, holds only its own
+   nonce) costs N Astra calls and is Martin-gated.
+-- D7 **The supervisor is an app-server JSON-RPC client, not a `codex exec`
+-  wrapper** (F7, F9, Astra B5): `devcontainer/codex-supervisor.mjs` spawns
+-  `codex app-server` on stdio, starts a thread, sends the (prefix-rewritten)
+-  `$vsss` turn, and reads the protocol stream where `codex_error_info` and
+-  `RateLimitSnapshot` survive. On `UsageLimitExceeded`/`RateLimitExceeded`
+-  it waits until `primary.resets_at` (or `secondary`, whichever is binding;
+-  bounded backoff when both are absent), then `thread/resume`. Persistence:
+-  thread id, last completed step and the `.vss/sessions/*.md` file are
+-  written before every wait so a killed supervisor resumes idempotently;
+-  ceilings on wall time, cycles and resumes; explicit cancellation. Exit
+-  code 1 alone is never treated as quota.
++- D7 **The supervisor is an app-server client, not a `codex exec` wrapper**
++  (F7, F9, Astra B5): `devcontainer/codex-supervisor.mjs` (shipped as
++  `/usr/local/bin/codex-supervisor`, task_048) spawns `codex app-server` on
++  stdio — argv exactly `['app-server']`, child env exactly `PATH`, `HOME`,
++  `CODEX_HOME`, `LANG` — and speaks newline-delimited JSON with NO `jsonrpc`
++  field. Method names, verified against tag `rust-v0.154.0`
++  (`app-server-protocol/src/protocol/common.rs` and `protocol/v2/*`) and
++  camelCase on the wire: `initialize` (id 1) then `account/rateLimits/read`
++  (id 2) before any turn; `thread/start {cwd, approvalPolicy:"never",
++  sandbox:"danger-full-access", ephemeral:false}` → `thread.id`;
++  `turn/start {threadId, input:[{type:"text",text}]}`; `thread/resume
++  {threadId}`. The terminal event is the `turn/completed` notification —
++  there is no `turn/failed` — carrying `turn.status`
++  (`completed|interrupted|failed|inProgress`) and, when failed,
++  `turn.error.codexErrorInfo`, externally tagged so unit variants are bare
++  strings (`"usageLimitExceeded"`, `"rateLimitExceeded"`,
++  `"sessionBudgetExceeded"`, `"contextWindowExceeded"`,
++  `"serverOverloaded"`) and struct variants single-key objects
++  (`{"httpConnectionFailed":{"httpStatusCode":429}}`). Streaming text is
++  `item/agentMessage/delta`; completed items arrive as `item/completed`; an
++  `error` notification with `willRetry: true` is transient and ignored.
++  Quota: `account/rateLimits/read` and the sparse `account/rateLimits/
++  updated` carry `RateLimitSnapshot{primary, secondary}` with
++  `{usedPercent, windowDurationMins, resetsAt}` — `resetsAt` is UNIX
++  SECONDS — merged per window, and the supervisor waits until the binding
++  window's `resetsAt` plus a 120 s grace (bounded 300/600/1200/2400 s
++  backoff when no reset time is known), then re-sends the turn. After a kill
++  it sends `thread/resume {threadId}` and then a FRESH `turn/start`, never
++  `turn/steer`: a hard-killed turn is projected as `inProgress` forever.
++  Persistence: thread id and every counter are written atomically to
++  `<cwd>/.vss/codex-supervisor.json` at each change and before every wait,
++  so a killed supervisor resumes idempotently; ceilings on turns, resumes,
++  quota waits, transient retries and wall time exit 3; a prompt-hash or cwd
++  mismatch exits 2 unless `--new-run` archives the old state. Exit code 1
++  alone is never treated as quota — only `codexErrorInfo` is.
+ - D8 **The opt-in that mounts the ChatGPT login moves to the host.**
+   `~/.vibe/codex-allow` (one project path per line, like `~/.vibe/repos`) is
+   required IN ADDITION to the untracked `.vibe-allow-codex` marker; a session

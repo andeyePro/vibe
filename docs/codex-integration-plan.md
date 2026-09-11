@@ -235,17 +235,41 @@ relies on it.
   `--ephemeral`) and the tool-disable set against a stub; the live nonce
   proof (each reviewer's OWN rollout, by `thread_id`, holds only its own
   nonce) costs N Astra calls and is Martin-gated.
-- D7 **The supervisor is an app-server JSON-RPC client, not a `codex exec`
-  wrapper** (F7, F9, Astra B5): `devcontainer/codex-supervisor.mjs` spawns
-  `codex app-server` on stdio, starts a thread, sends the (prefix-rewritten)
-  `$vsss` turn, and reads the protocol stream where `codex_error_info` and
-  `RateLimitSnapshot` survive. On `UsageLimitExceeded`/`RateLimitExceeded`
-  it waits until `primary.resets_at` (or `secondary`, whichever is binding;
-  bounded backoff when both are absent), then `thread/resume`. Persistence:
-  thread id, last completed step and the `.vss/sessions/*.md` file are
-  written before every wait so a killed supervisor resumes idempotently;
-  ceilings on wall time, cycles and resumes; explicit cancellation. Exit
-  code 1 alone is never treated as quota.
+- D7 **The supervisor is an app-server client, not a `codex exec` wrapper**
+  (F7, F9, Astra B5): `devcontainer/codex-supervisor.mjs` (shipped as
+  `/usr/local/bin/codex-supervisor`, task_048) spawns `codex app-server` on
+  stdio — argv exactly `['app-server']`, child env exactly `PATH`, `HOME`,
+  `CODEX_HOME`, `LANG` — and speaks newline-delimited JSON with NO `jsonrpc`
+  field. Method names, verified against tag `rust-v0.154.0`
+  (`app-server-protocol/src/protocol/common.rs` and `protocol/v2/*`) and
+  camelCase on the wire: `initialize` (id 1) then `account/rateLimits/read`
+  (id 2) before any turn; `thread/start {cwd, approvalPolicy:"never",
+  sandbox:"danger-full-access", ephemeral:false}` → `thread.id`;
+  `turn/start {threadId, input:[{type:"text",text}]}`; `thread/resume
+  {threadId}`. The terminal event is the `turn/completed` notification —
+  there is no `turn/failed` — carrying `turn.status`
+  (`completed|interrupted|failed|inProgress`) and, when failed,
+  `turn.error.codexErrorInfo`, externally tagged so unit variants are bare
+  strings (`"usageLimitExceeded"`, `"rateLimitExceeded"`,
+  `"sessionBudgetExceeded"`, `"contextWindowExceeded"`,
+  `"serverOverloaded"`) and struct variants single-key objects
+  (`{"httpConnectionFailed":{"httpStatusCode":429}}`). Streaming text is
+  `item/agentMessage/delta`; completed items arrive as `item/completed`; an
+  `error` notification with `willRetry: true` is transient and ignored.
+  Quota: `account/rateLimits/read` and the sparse `account/rateLimits/
+  updated` carry `RateLimitSnapshot{primary, secondary}` with
+  `{usedPercent, windowDurationMins, resetsAt}` — `resetsAt` is UNIX
+  SECONDS — merged per window, and the supervisor waits until the binding
+  window's `resetsAt` plus a 120 s grace (bounded 300/600/1200/2400 s
+  backoff when no reset time is known), then re-sends the turn. After a kill
+  it sends `thread/resume {threadId}` and then a FRESH `turn/start`, never
+  `turn/steer`: a hard-killed turn is projected as `inProgress` forever.
+  Persistence: thread id and every counter are written atomically to
+  `<cwd>/.vss/codex-supervisor.json` at each change and before every wait,
+  so a killed supervisor resumes idempotently; ceilings on turns, resumes,
+  quota waits, transient retries and wall time exit 3; a prompt-hash or cwd
+  mismatch exits 2 unless `--new-run` archives the old state. Exit code 1
+  alone is never treated as quota — only `codexErrorInfo` is.
 - D8 **The opt-in that mounts the ChatGPT login moves to the host.**
   `~/.vibe/codex-allow` (one project path per line, like `~/.vibe/repos`) is
   required IN ADDITION to the untracked `.vibe-allow-codex` marker; a session

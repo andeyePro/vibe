@@ -148,6 +148,10 @@ COPY vibe-delegate.mjs /usr/local/bin/vibe-delegate
 # system (Admin) skill root with no extra COPY needed, root-owned like
 # everything else here.
 COPY --chown=root:root codex/ /etc/codex/
+# The unattended supervisor (task_048): it drives `codex app-server` for a
+# Codex-led `$vsss` run, so like the guard chain it is root-owned — `node`
+# must not be able to rewrite the thing that decides when to stop.
+COPY --chown=root:root codex-supervisor.mjs /usr/local/bin/codex-supervisor
 COPY --chown=root:root codex-guard-adapter.sh /usr/local/bin/codex-guard-adapter
 COPY --chown=root:root codex-guard-liveness.sh /usr/local/bin/codex-guard-liveness
 # Curated Claude Code agents + slash commands. Staged under /usr/local/share
@@ -172,7 +176,7 @@ USER root
 # to a root script whose whole job is widening the firewall. The script body
 # also never reads its own argv, so this is belt and braces — but the rule is
 # what makes it true for every future version of the script.
-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/refresh-extra-domains.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/guard-bash.sh /usr/local/bin/guard-fs.sh /usr/local/bin/install-claude-extras.sh /usr/local/bin/check-sp-current.sh /usr/local/bin/register-op-mcp.sh /usr/local/bin/vibe-credential-helper /usr/local/bin/vibe-copy /usr/local/bin/codex-guard-adapter /usr/local/bin/codex-guard-liveness && \
+RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/refresh-extra-domains.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/guard-bash.sh /usr/local/bin/guard-fs.sh /usr/local/bin/install-claude-extras.sh /usr/local/bin/check-sp-current.sh /usr/local/bin/register-op-mcp.sh /usr/local/bin/vibe-credential-helper /usr/local/bin/vibe-copy /usr/local/bin/codex-guard-adapter /usr/local/bin/codex-guard-liveness /usr/local/bin/codex-supervisor && \
   chmod 0755 /etc/codex /etc/codex/hooks && \
   chmod 0644 /etc/codex/requirements.toml /etc/codex/config.toml /etc/codex/hooks/hooks.json && \
   chmod 0755 /etc/codex/skills /etc/codex/skills/vs /etc/codex/skills/vss /etc/codex/skills/vsss && \

@@ -1,0 +1,5 @@
+# task_048 cycle 2 — test summary
+
+- **code-check.py**: clean (shellcheck, 22 files). **smoke-test.py**: total 4119 checks, passed 4118, failed 1.
+- **key failures**: `test_codex_supervisor_c2_resume_after_sigterm_sends_continue` — after a SIGTERM kills a turn mid-flight (turn/start sent, never completed, so `state.turns` is persisted as `[]`), the amended AC4 spec says resume should send the literal `continue`; the real implementation instead sends the rewritten prompt (`resumeThread`'s `if (resumed.turns.length) firstText = 'continue'` in `devcontainer/codex-supervisor.mjs` can't distinguish "turn in flight, killed before completion" from "no turn ever attempted" — both leave `turns: []` on disk) — got `'$vsss go c2'` instead of `'continue'`.
+- **Regressions**: none — every cycle-1 `checks_19_codex_supervisor.py` test (frozen, unmodified) and all other smoke tests still pass; the sole failure is the new cycle-2 test above, exposing a real gap against the amended spec, not a test-authoring bug.

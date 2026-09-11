@@ -17,8 +17,9 @@ from smoke.checks_15_extra_domains import *
 from smoke.checks_16_domain_refresh import *
 from smoke.checks_17_delegation import *
 from smoke.checks_18_codex_runtime import *
-
-
+from smoke.checks_19_codex_supervisor import *
+from smoke.checks_20_linux_host import *
+from smoke.checks_21_codex_supervisor_c2 import *
 
 
 def main() -> int:
@@ -697,6 +698,66 @@ def main() -> int:
     test_delegate_role_status_ac5()
     test_codex_commands_running_under_codex_ac6()
     test_codex_docs_ac7()
+
+    # task_048: codex-supervisor as an app-server client (offline against a
+    # stub codex app-server; smoke/checks_19_codex_supervisor.py)
+    test_codex_supervisor_rewrites_table()
+    test_codex_supervisor_prefix_rewrite_cli()
+    test_codex_supervisor_handshake_argv_env()
+    test_codex_supervisor_usage_errors_no_spawn()
+    test_codex_supervisor_relative_cwd_exit2_no_spawn()
+    test_codex_supervisor_missing_codex_home_exit2_no_spawn()
+    test_codex_supervisor_normal_completion()
+    test_codex_supervisor_continue_then_exit()
+    test_codex_supervisor_quota_known_resets_at()
+    test_codex_supervisor_quota_blind_backoff()
+    test_codex_supervisor_transient_429_backoff()
+    test_codex_supervisor_turn_failure_retries_same_text()
+    test_codex_supervisor_session_budget_exceeded_exit1()
+    test_codex_supervisor_interrupted_exit1()
+    test_codex_supervisor_approval_request_answered()
+    test_codex_supervisor_sigterm_then_resume()
+    test_codex_supervisor_prompthash_mismatch_and_new_run()
+    test_codex_supervisor_ceiling_max_turns()
+    test_codex_supervisor_ceiling_max_quota_waits()
+    test_codex_supervisor_ceiling_max_wall_seconds_during_quota_wait()
+    test_codex_supervisor_status_with_and_without_state()
+    test_codex_supervisor_dockerfile_lines()
+    test_codex_supervisor_vsss_md_exit_section()
+    test_codex_supervisor_readme_mentions()
+    test_codex_supervisor_plan_d7_methods()
+
+    # task_048 CYCLE 2: amended AC4/AC6/AC7 (resume semantics + terminal
+    # state, wall deadline while awaiting a turn, waits capped by the wall
+    # budget, the turnFailures gate + --max-* >= 1, an outstanding wait
+    # honoured on resume). Appended after the cycle-1 block above, which is
+    # frozen and unchanged.
+    test_codex_supervisor_c2_terminal_state_no_spawn()
+    test_codex_supervisor_c2_terminal_state_new_run_starts_fresh()
+    test_codex_supervisor_c2_resume_after_sigterm_sends_continue()
+    test_codex_supervisor_c2_resume_never_started_sends_rewritten_prompt()
+    test_codex_supervisor_c2_wall_deadline_during_turn_sends_interrupt()
+    test_codex_supervisor_c2_quota_wait_capped_by_wall_budget()
+    test_codex_supervisor_c2_transient_wait_capped_by_wall_budget()
+    test_codex_supervisor_c2_turn_failures_gate_exit1_then_exit3_on_resume()
+    test_codex_supervisor_c2_max_flags_zero_exit2_no_spawn()
+    test_codex_supervisor_c2_outstanding_wait_honoured_then_resumes()
+    test_codex_supervisor_c2_outstanding_wait_exceeds_deadline_exit3_no_spawn()
+
+    # task_048 CYCLE 4: AC4/AC5/AC7 amended again after the reviewer's
+    # second pass (rewritten prompt sent exactly once per thread across
+    # all retry paths; the wall deadline bounds outstanding requests too,
+    # not just the wait for a turn's completion; a fresh rateLimits
+    # snapshot is merged into lastRateLimits field-wise on every run,
+    # including a resume, so a stale persisted value never wins).
+    # Appended after the cycle-2 block above, which is frozen and
+    # unchanged.
+    test_codex_supervisor_c4_quota_before_completion_then_success_continue_text()
+    test_codex_supervisor_c4_transient_before_completion_then_success_continue_text()
+    test_codex_supervisor_c4_failed_turn_before_completion_then_success_continue_text()
+    test_codex_supervisor_c4_wall_deadline_turn_start_never_answers()
+    test_codex_supervisor_c4_wall_deadline_thread_start_never_answers()
+    test_codex_supervisor_c4_stale_lastratelimits_merged_with_fresh_snapshot()
 
     print()
     if FAILURES:

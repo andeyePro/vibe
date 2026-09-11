@@ -570,3 +570,19 @@ Generator: sonnet (1 cycle of 2). Tester: sonnet. Evaluator: Fable 5.1 chair.
 Spec Critic (draft): revise, 6 BLOCKING folded in before dispatch (no `-a` flag on codex exec; scratch files never inside the workspace; Claude write role keeps empty MCP and a tool allowlist without Agent/Web; the `/` form honestly absent from the Codex TUI; nested `/vs` steps read the command file in-turn; Grep/Glob substitutions).
 Verified: SKILL.md frontmatter/body/table, Dockerfile COPY coverage, every `role` refusal with zero vendor calls, exact golden argv for read-only and write roles in both families, `-C`/cwd invariants, status derivation, docs; code-check clean; full suite green.
 Astra diff review (gpt-6-astra, 15,186 tokens): SPLIT — one WARNING, applied: write roles carried no guards because `--setting-sources user` excludes the project's settings.local.json; guards now inline in `--settings` with disableAllHooks pinned false (billed mode merges into a scratch copy). Astra confirmed task_046's absolute `/usr/bin/env` residual.
+
+## task_048 — cycle 1 — FAIL (2026-09-11T21:17:51Z)
+Generator: opus. Tester: sonnet (new checks_19, 25 functions, green). Evaluator: Fable 5.1 chair.
+Astra review (gpt-6-astra, 19,506 tokens): FAIL, five BLOCKING — resume re-sends the original prompt and forgets a completed run; no deadline while awaiting a turn; waits not capped by the wall budget; turnFailures missing from the gate; a persisted wait deadline ignored on resume. All real.
+Classification: `spec` for the gate omission and the resume/wait rules (AC4/AC6/AC7 amended by the chair; restart-at-cycle-1 rule waived because the amendments only tighten the same contract), `capability` for the rest. Cycle 2: Generator re-dispatched at opus with the failure list; the Tester will extend checks_19 for the five behaviours.
+
+## task_048 — cycle 2 — FAIL (2026-09-11T21:48:11Z)
+Generator: opus — all five Astra findings fixed (terminal state, resume input, wall deadline during a turn, waits capped, turnFailures gate, outstanding wait honoured). Tester: sonnet — 11 new tests in a new `checks_21_codex_supervisor_c2.py` (checks_19 frozen at 1,019 lines); 4,118/1.
+The one failure is real: a turn killed mid-flight leaves `turns` empty, so resume could not tell "killed in flight" from "never started" and re-sent the original prompt. Classification `spec` (AC4 amended: a persisted `turnsStarted` counter written before every `turn/start` decides). Cycle 3: sonnet Generator, one targeted fix.
+
+## task_048 — cycles 3 and 4 (2026-09-11T22:12:55Z)
+Cycle 3 (sonnet): persisted `turnsStarted` counter written before every `turn/start`; the cycle-2 failure passes; 4,120/0.
+Astra re-review (22,323 tokens): FAIL, three more findings — failure retries re-sent the original prompt before the first completion; the wall deadline did not cover an outstanding request; a fresh rate-limit snapshot was discarded on resume. Spec AC4/AC5/AC7 amended; cycle 4 (sonnet) fixed all three. The cycle-1 assertion "retry resends the same text" contradicted the amended AC5 and was flipped by the chair (immutability guards against Generator gaming, not against the spec changing). Cycle-4 Tester adds the three scenarios.
+
+## task_048 — cycle 4 — PASS (2026-09-11T22:33:05Z)
+Generator: sonnet; Tester: sonnet (+6 tests, 30 assertions); 4,155/0. Evaluator: pass — every Astra finding from both passes fixed with tests; the last three are chair-evaluated and ride in the next Astra payload.

@@ -39,11 +39,11 @@ The session file is the single canonical audit Martin reviews. There is no separ
 
 ## Resumption protocol (after out-of-tokens halt or interrupted session)
 
-A `/vsss` session can be killed by token-exhaustion, a manual interrupt, or any unhandled error. Without a resumption protocol the work in flight is dropped — partial commits sit on `main`, the priority queue is forgotten, the user has to re-issue the original `/vsss` invocation. Resumption fixes that.
+A `/vsss` session can be killed by token-exhaustion, a manual interrupt, or any unhandled error. Without resumption the work in flight is dropped: partial commits sit on `main`, the priority queue is forgotten, and the user has to re-issue the original invocation.
 
 ### State that survives a halt
 
-The session file at `.vss/sessions/<start-ISO>.md` is the persistence layer. After every iter completes (Generator commit landed, Tester commit landed, optimiser verdict written), the iter block in the session file is up to date. If the session halts, that file's most recent iter block plus the absence of a `## Final state` section is the signal "this session was alive when killed".
+The session file at `.vss/sessions/<start-ISO>.md` is the persistence layer: its iter block is up to date after every iter completes (Generator commit landed, Tester commit landed, optimiser verdict written). A most-recent iter block with no `## Final state` section is the signal "this session was alive when killed".
 
 ### Detecting an in-progress session at startup
 
@@ -55,7 +55,7 @@ Three branches:
 
 - **`/vsss --resume` flag passed, NO in-progress session exists**: fall back to the most recent COMPLETED session (Final state present). Read its `## Final state` § Deferred list. If non-empty, treat the deferred items as the new priority queue and start iter 1 against the first one. Open a fresh session file at `.vss/sessions/<new-ISO>.md` (do NOT append to the completed one — it's finalised); record in Initial-plan that args were `--resume` and the queue was inherited from `<previous-session-file-path>`. Budget is fresh 5h (or `--hours N` override) since the previous session reached Final state cleanly. If the deferred list is empty, surface to the user "no in-progress session and no deferred items in the last completed session; pass args or no flag to start fresh" and stop.
 
-- **`/vsss <new args>` invoked while an in-progress session exists**: surface the conflict to the user. Two reasonable resolutions: (a) `--resume` to pick up the in-progress one, OR (b) explicitly mark the in-progress session as halted (write a Final state section with `Exit reason: superseded by new /vsss invocation` and start fresh). Per `/vss`'s hard-escalate list this is "scope-creep beyond announced plan" — do NOT auto-pick; surface to the user. (User has Q1=a authorisation? They still need to disambiguate this case explicitly; the new args might not match the parked session's queue.)
+- **`/vsss <new args>` invoked while an in-progress session exists**: surface the conflict. Two resolutions: (a) `--resume` to pick up the in-progress one, OR (b) mark it halted (write a Final state section with `Exit reason: superseded by new /vsss invocation` and start fresh). Per `/vss`'s hard-escalate list this is "scope-creep beyond announced plan" — do NOT auto-pick. (A Q1=a authorisation does not cover it: the new args might not match the parked session's queue.)
 
 - **`/vsss` with no args, no in-progress session**: normal Mode A start.
 
@@ -133,9 +133,9 @@ Two corollaries, both of which have caused real multi-hour stalls:
 - **Stopping is the failure, not speaking.** A message may carry prose AND tool
   calls together and the run continues — that is ordinary narration. So do not
   reason "I wrote a summary, therefore the turn ended"; you ended the turn, and
-  the summary is what ending it looked like. Going silent fixes nothing on its
-  own: a silent run that stops is equally dead. The rule is **never stop while
-  an exit condition below is unmet**.
+  the summary is what that looked like. Silence fixes nothing either: a silent
+  run that stops is equally dead. The rule is **never stop while an exit
+  condition below is unmet**.
 - **A question is not an exit condition.** Needing Martin's input on the current
   area NEVER ends the loop. Write the ask to the project's fromClaude channel
   and move to the next area that needs no input; pick the answer up at a later
@@ -150,11 +150,10 @@ channels below — never through stopping.
 
 ## fromto channels — asynchronous user Q&A without stopping
 
-Why this exists: in a long `/vsss` run, far more scrolls through the TTY than
-the user will ever read, and the user only wants to read and answer what they
-MUST to unblock work. So questions leave the terminal entirely: they land in
-the user's second brain as a short live list, answers come back the same way,
-and the loop never stops to wait. This section defines the whole protocol.
+Why this exists: a long `/vsss` run scrolls far more through the TTY than the
+user will ever read, and they only want to answer what they MUST to unblock
+work. So questions leave the terminal: they land in the user's second brain as
+a short live list, answers come back the same way, and the loop never waits.
 
 ### The three files
 
@@ -333,22 +332,22 @@ Dispatch rule inherited by every wrapped iteration's subagents: long build/test/
 
 ## Why `/vsss` exists alongside `/vss`
 
-`/vss` is one bounded unit of work. Use it when you want to step away briefly. `/vsss` is "burn the rest of my session productively" — when you have hours of session credit, want it spent on the project, and trust the escalate list to catch anything dangerous. Higher blast radius, more discipline required at the spec level (the optimiser is what keeps the loop honest).
+`/vss` is one bounded unit of work — use it to step away briefly. `/vsss` is "burn the rest of my session productively": hours of session credit spent on the project, with the escalate list catching anything dangerous. Higher blast radius, and more spec-level discipline (the optimiser keeps the loop honest).
 
-If the loop produces three vacuous iterations, that's the design saying "nothing useful left to do" — let it stop. Don't keep feeding it noise tasks.
+Three vacuous iterations are the design saying "nothing useful left to do" — let it stop rather than feeding it noise tasks.
 
 ## Reporting back at exit
 
-**At a real exit, and only there.** Before you write a single word of this
-block, name which numbered exit condition from § Exit conditions has fired. If
-you cannot name one, the loop has not ended and this section does not apply —
-go back and run the next iteration. The named condition must be the one that
-ACTUALLY fired: a stop whose justification mentions wall-clock, window fit, or
-"the next item needs N cycles" is condition 3 — lawful only under an explicit
-`--hours`/`--budget` flag — and must never be reported as a perfection gate. "A version shipped", "a natural milestone",
-"I need Martin's input on this bit" and "the context is getting long" are NOT
-exit conditions, and the pull to report at each of them is exactly how a run
-dies hours early.
+**At a real exit, and only there.** Before writing a word of this block, name
+which numbered exit condition from § Exit conditions has fired. If you cannot
+name one, the loop has not ended — run the next iteration instead. The named
+condition must be the one that ACTUALLY fired: a stop justified by wall-clock,
+window fit, or "the next item needs N cycles" is condition 3, lawful only under
+an explicit `--hours`/`--budget` flag, and
+must never be reported as a perfection gate. "A version shipped", "a natural
+milestone", "I need Martin's input on this bit" and "the context is getting
+long" are NOT exit conditions; the pull to report at each is how a run dies
+hours early.
 
 When the loop ends (any reason), report to the user:
 
@@ -363,12 +362,20 @@ When the loop ends (any reason), report to the user:
 
 Lead with `---` before the report block.
 
+**The LAST line of the exit report is `VSSS-EXIT: <exit reason in a few words>`** —
+alone on its line, in every runtime, Claude-led and Codex-led alike. It is the
+end-of-run marker an unattended supervisor watches for; a report without it
+reads as unfinished. Write it once, last, after the bullets above.
+
 ## Running under Codex
 
 `$vsss` (`/etc/codex/skills/vsss/SKILL.md`) wraps this file for a Codex-led
 session and carries the substitution table for `Agent(...)` and the other
 Claude-only primitives it and the wrapped `/vss`/`/vs` use. Role dispatch
 becomes `vibe-delegate role <role> --model <model> --cwd <workspace>`.
+Unattended runs are driven by `codex-supervisor`: it starts one thread, sends
+`$vsss` as the first turn, re-enters with the literal `continue` after every
+turn that did not end the run, and stops on the report's `VSSS-EXIT:` line.
 
 ---
 
