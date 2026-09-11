@@ -1488,7 +1488,13 @@ network reachability, refresh, nested Claude login, or vendor-side tool enforcem
    Never print, copy, or inspect the auth file. Add `chatgpt.com`, `api.openai.com`,
    `auth.openai.com` to this project's untracked `.vibe/domains`; preserve other hosts.
    Then `touch .vibe-allow-codex` in the project folder (untracked; it is in the
-   managed `.gitignore`).
+   managed `.gitignore`), and from that same folder run `vibe codex allow` — both
+   halves are required. Expect
+   `✓ <path> allowed to mount the Codex login (~/.vibe/codex-allow)` plus the
+   reminder that the marker is still needed, and confirm `~/.vibe/codex-allow`
+   is mode `600` with exactly one line for this project (`vibe codex allow` a
+   second time must not add a duplicate). `vibe codex list` must show the
+   project with `(marker present)`.
 2. Run `vibe --rebuild`. Confirm Claude Code still leads on subscription auth;
    `codex --version` is 0.154.0 or later. The launch header must show a
    `codex   : /home/node/.codex (rw, ChatGPT login)` line. Inspect only the
@@ -1501,8 +1507,17 @@ network reachability, refresh, nested Claude login, or vendor-side tool enforcem
    but no `.vibe-allow-codex`; (b) a project with no `.vibe/domains` launched with
    `VIBE_EXTRA_DOMAINS=chatgpt.com` in `~/.vibe/config`; (c) the opted-in project
    after `git add -f .vibe-allow-codex` (expect the COMMITTED refusal line; then
-   `git rm --cached` it). Finally delete the marker from the opted-in project and
-   relaunch plainly: expect `codex login mount changed ... recreating it` and no
+   `git rm --cached` it); (d) the marker present but the project NOT allowed on
+   this machine — run `vibe codex deny` (answer `n` to the stop prompt if a
+   container is running, then stop it yourself) and relaunch: expect NO mount and
+   exactly ONE warning line, naming `vibe codex allow`, with no COMMITTED or
+   work-tree line alongside it; `vibe codex list` must no longer list the project.
+   Re-run `vibe codex allow` and relaunch to restore the mount. Then, with the
+   container running and the mount active, run `vibe codex deny` again and answer
+   `y` at `Stop the container for <path> now so the login is unmounted
+   immediately?`: the container must stop (`docker ps -a` shows it Exited, NOT
+   removed). Re-allow and relaunch before continuing. Finally delete the marker
+   from the opted-in project and relaunch plainly: expect `codex login mount changed ... recreating it` and no
    mount afterwards; recreate the marker and relaunch: the mount returns. Also
    ask Claude, inside the opted-in container, to `touch .vibe-allow-codex` and to
    Write `/workspace/.vibe-allow-codex`: both must be refused.

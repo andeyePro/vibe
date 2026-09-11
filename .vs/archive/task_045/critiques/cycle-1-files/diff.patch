@@ -1,0 +1,468 @@
+diff --git a/.vs/tasks.json b/.vs/tasks.json
+index dce05e1..021808f 100644
+--- a/.vs/tasks.json
++++ b/.vs/tasks.json
+@@ -319,5 +319,14 @@
+     "assigned_to": "evaluator",
+     "mode": "rigorous",
+     "last_modified": "2026-09-11T18:23:44Z"
++  },
++  {
++    "id": "task_045",
++    "description": "host-side Codex opt-in registry ~/.vibe/codex-allow required alongside the untracked marker; vibe codex allow|deny|list; deny stops the container",
++    "implementation_status": "complete",
++    "test_status": "pending",
++    "assigned_to": "generator",
++    "mode": "rigorous",
++    "last_modified": "2026-09-11T18:38:04Z"
+   }
+ ]
+diff --git a/.vss/sessions/2026-09-11T17-11-32Z.md b/.vss/sessions/2026-09-11T17-11-32Z.md
+index b75deb7..00ad64a 100644
+--- a/.vss/sessions/2026-09-11T17-11-32Z.md
++++ b/.vss/sessions/2026-09-11T17-11-32Z.md
+@@ -86,3 +86,7 @@ Spec Critic: revise (7 concerns, 3 BLOCKING) — all folded in. Generator sonnet
+ 
+ **Applied**: `stat -L` on both platform variants plus a symlink fixture (0700 target silent, 0755 target warns).
+ **Files touched**: `devcontainer/vibe-delegate.mjs`, `vibe`, `devcontainer/commands/{ask,review}.md`, `README.md`, `MANUAL-TESTS.md`, `smoke/checks_17_delegation.py`, `smoke/checks_13_spec_first.py`, `smoke/runner.py`, `.vs/*`, `TODO.md`, `CHANGELOG.md`.
++**Commit**: 7d87959 — /vs cycle 1: pass — task_044 Codex helper hardening; bcefa24 — vs: archive task_044 spec. **Outcome**: success — code-check clean, full suite green (3,474 checks, `< /dev/null`). **Notes**: pre-existing over-cap file `smoke/checks_01` (1,563 lines) left as found; content guard blocked the raw test log from the archive (fixture PAT string), log dropped from the archive as in earlier tasks.
++
++## Iter 3 — plan item 3: host-side Codex opt-in registry (task_045, `/vs` rigorous, opus Generator, haiku Tester)
++**Plan**: `~/.vibe/codex-allow` (chmod 600, canonical path per line) required alongside the untracked marker; `vibe codex allow|deny|list`; `deny` stops the project's container; registry symlink/mode fails closed; drift comparator unchanged. Spec Critic ran on the draft (5 BLOCKING folded in: deny-skip logic local to `_codex_deny`, explicit HOME override in tests, portable stat idiom, marker-branch precedence, TODO entry split). Optimiser dispatched after iter 2 in parallel.
+diff --git a/MANUAL-TESTS.md b/MANUAL-TESTS.md
+index 9511bc2..860b2e5 100644
+--- a/MANUAL-TESTS.md
++++ b/MANUAL-TESTS.md
+@@ -1488,7 +1488,13 @@ network reachability, refresh, nested Claude login, or vendor-side tool enforcem
+    Never print, copy, or inspect the auth file. Add `chatgpt.com`, `api.openai.com`,
+    `auth.openai.com` to this project's untracked `.vibe/domains`; preserve other hosts.
+    Then `touch .vibe-allow-codex` in the project folder (untracked; it is in the
+-   managed `.gitignore`).
++   managed `.gitignore`), and from that same folder run `vibe codex allow` — both
++   halves are required. Expect
++   `✓ <path> allowed to mount the Codex login (~/.vibe/codex-allow)` plus the
++   reminder that the marker is still needed, and confirm `~/.vibe/codex-allow`
++   is mode `600` with exactly one line for this project (`vibe codex allow` a
++   second time must not add a duplicate). `vibe codex list` must show the
++   project with `(marker present)`.
+ 2. Run `vibe --rebuild`. Confirm Claude Code still leads on subscription auth;
+    `codex --version` is 0.154.0 or later. The launch header must show a
+    `codex   : /home/node/.codex (rw, ChatGPT login)` line. Inspect only the
+@@ -1501,8 +1507,17 @@ network reachability, refresh, nested Claude login, or vendor-side tool enforcem
+    but no `.vibe-allow-codex`; (b) a project with no `.vibe/domains` launched with
+    `VIBE_EXTRA_DOMAINS=chatgpt.com` in `~/.vibe/config`; (c) the opted-in project
+    after `git add -f .vibe-allow-codex` (expect the COMMITTED refusal line; then
+-   `git rm --cached` it). Finally delete the marker from the opted-in project and
+-   relaunch plainly: expect `codex login mount changed ... recreating it` and no
++   `git rm --cached` it); (d) the marker present but the project NOT allowed on
++   this machine — run `vibe codex deny` (answer `n` to the stop prompt if a
++   container is running, then stop it yourself) and relaunch: expect NO mount and
++   exactly ONE warning line, naming `vibe codex allow`, with no COMMITTED or
++   work-tree line alongside it; `vibe codex list` must no longer list the project.
++   Re-run `vibe codex allow` and relaunch to restore the mount. Then, with the
++   container running and the mount active, run `vibe codex deny` again and answer
++   `y` at `Stop the container for <path> now so the login is unmounted
++   immediately?`: the container must stop (`docker ps -a` shows it Exited, NOT
++   removed). Re-allow and relaunch before continuing. Finally delete the marker
++   from the opted-in project and relaunch plainly: expect `codex login mount changed ... recreating it` and no
+    mount afterwards; recreate the marker and relaunch: the mount returns. Also
+    ask Claude, inside the opted-in container, to `touch .vibe-allow-codex` and to
+    Write `/workspace/.vibe-allow-codex`: both must be refused.
+diff --git a/README.md b/README.md
+index 1ed6dc4..70b442c 100644
+--- a/README.md
++++ b/README.md
+@@ -98,6 +98,7 @@ The installer clones vibe to `~/.vibe-src`, symlinks `~/bin/vibe`, and prompts f
+ - `vibe --model <id>` — launch this session on any Claude model id
+ - `vibe learn --init` — one-time setup of the cross-org learning library
+ - `vibe repos add <owner/repo> [path]` — register a private repo this machine mounts read-only at `/repos/<name>` for every project that declares it (`vibe repos list` / `vibe repos remove [--purge]` manage it; see Shared repos above)
++- `vibe codex allow|deny|list [path]` — host-side, manage the machine's Codex login-mount consent registry (`~/.vibe/codex-allow`); `deny` also offers to stop that project's container so the login is unmounted at once (see Codex setup below)
+ - `vibe audit [--history|--staged]` — host-side, scans the current project's full git history (default) or its staged diff for secrets and PII the git-hook layer below can't retroactively catch (see Content guard below)
+ 
+ Fresh conversation is the default — durable memory lives in `TODO.md`, `CLAUDE.md`, and Claude's auto-memory, not in resumed conversations (which accumulate compaction debt). `--continue` / `--resume` are opt-in for short-horizon pickup.
+@@ -162,7 +163,13 @@ codex -c 'cli_auth_credentials_store="file"' login status
+ 
+ An existing login held only in the Mac Keychain cannot be mounted into Linux; sign in again with the command above. **Trade-off, stated plainly:** that moves the ChatGPT OAuth token out of the Keychain into a plaintext file (`~/.codex/auth.json`) on your Mac. If you would rather not, skip Codex in vibe; nothing else depends on it.
+ 
+-The login mount is **opt-in per project and off by default**, and there is deliberately no machine-wide switch that turns it on. vibe binds `~/.codex` read-write at `/home/node/.codex` only when both hold: the directory already exists on the Mac (vibe never creates it), and this project carries an **untracked** `.vibe-allow-codex` marker (`touch .vibe-allow-codex` on the Mac, in the project folder; a committed marker or one in a non-git download is refused, exactly like `.vibe-allow-op`). Network reach is a separate decision: the hosts below go in `.vibe/domains`, so a project can allowlist OpenAI without receiving the token. `VIBE_CODEX_PATH=off` in `~/.vibe/config` disables the mount everywhere, and withdrawing the opt-in recreates an existing container so the token never lingers. Read-write is required because Codex rewrites its auth cache on refresh. Inside the container the Write/Edit hook **denies** every structured write under `/home/node/.codex` and to the marker (a planted `config.toml` could name programs Codex runs on your Mac); the Bash hook blocks the same paths on a best-effort basis, with the same acknowledged limits as the `/learnings` and `/zotero` rules. Nothing in vibe has a reason to touch that directory apart from the codex binary, though the Bash hook cannot enforce that against every idiom. vibe itself never reads, copies or forwards the credential, but the hooks stop writes, not reads: anything running inside an opted-in container can read the token, so opt in only for projects you would trust with your ChatGPT account. The launch header announces the mount (`codex : /home/node/.codex (rw, ChatGPT login)`) whenever it is active, and warns once, in the same header, if that directory's permissions grant group or others any access: run `chmod 700 ~/.codex` on the Mac to fix it, since vibe never changes the mode itself. No OpenAI API key is required or accepted by these delegates.
++The login mount is **opt-in per project and off by default**, and there is deliberately no machine-wide switch that turns it on. Opting a project in takes three deliberate steps, all on the Mac, and all three are required:
++
++1. **Log in**, so `~/.codex` exists — vibe never creates that directory itself.
++2. **`touch .vibe-allow-codex`** in the project folder. The marker must be **untracked**: a committed marker, or one in a non-git download, is refused, exactly like `.vibe-allow-op`.
++3. **`vibe codex allow`** from that same folder, which records the project's canonical path in `~/.vibe/codex-allow` (`chmod 600`, one path per line). `vibe codex list` shows every allowed project and whether its marker is in place; `vibe codex deny` withdraws the grant and offers to stop that project's running container so the login is unmounted immediately rather than at the next launch.
++
++Then relaunch. Step 3 exists because step 2 lives in the project tree, which is exactly the filesystem the container can write: the in-container hooks deny the obvious writes to the marker, but not every shell idiom that could create it, so a prompt-injected session could plant a marker and the user's next launch would bind the token. The registry is the half a container cannot reach — it lives under the Mac's `$HOME` and is never mounted into any container, so **a container cannot opt itself in**. The marker states a request; the registry is the consent, and only you can give it. Removing either half is enough to revoke: the mount needs both on every launch. Network reach is a separate decision: the hosts below go in `.vibe/domains`, so a project can allowlist OpenAI without receiving the token. `VIBE_CODEX_PATH=off` in `~/.vibe/config` disables the mount everywhere, and withdrawing the opt-in recreates an existing container so the token never lingers. Read-write is required because Codex rewrites its auth cache on refresh. Inside the container the Write/Edit hook **denies** every structured write under `/home/node/.codex` and to the marker (a planted `config.toml` could name programs Codex runs on your Mac); the Bash hook blocks the same paths on a best-effort basis, with the same acknowledged limits as the `/learnings` and `/zotero` rules. Nothing in vibe has a reason to touch that directory apart from the codex binary, though the Bash hook cannot enforce that against every idiom. vibe itself never reads, copies or forwards the credential, but the hooks stop writes, not reads: anything running inside an opted-in container can read the token, so opt in only for projects you would trust with your ChatGPT account. The launch header announces the mount (`codex : /home/node/.codex (rw, ChatGPT login)`) whenever it is active, and warns once, in the same header, if that directory's permissions grant group or others any access: run `chmod 700 ~/.codex` on the Mac to fix it, since vibe never changes the mode itself. No OpenAI API key is required or accepted by these delegates.
+ 
+ Add these hosts to this project's **untracked** `.vibe/domains`, preserving any existing entries, then relaunch with `vibe --rebuild`:
+ 
+@@ -196,9 +203,10 @@ Every launch also auto-refreshes `<brain2>/meta/vibe-operation.md` (fail-soft 
+ |---|---|
+ | `~/bin/vibe` | Symlink to the launcher |
+ | `~/.vibe-src/` | Clone of this repo |
+-| `~/.vibe/config` | `VIBE_PROJECTS_DIR`, `VIBE_SSH_AUTO` (opt-in: `=1` skips the per-action SSH ask in all projects), `VIBE_BRAIN2_PATH` / `VIBE_ZOTERO_PATH` (shared brain2 at `/brain2` rw + Zotero at `/zotero` ro; default `~/brain2` / `~/Zotero/storage`, mounted into every container when the dir exists, `=off` to disable), `VIBE_CODEX_PATH` (the Codex CLI login dir, default `~/.codex`; unlike the two above it is mounted read-write and ONLY into projects carrying an untracked `.vibe-allow-codex` marker — see the Codex setup section; `=off` disables it everywhere), `VIBE_MODEL` (default model id for every launch; flags win), `VIBE_FABLE_CREDITS_OK` (`=1` skips the Fable 5 usage-credits confirm from 8 Jul 2026), `VIBE_OP_AUTO` (`=1` opts every project into the OpenProject MCP; off by default so `/op` never auto-activates in a public/upstream project's container — see below), `VIBE_GITHUB_OWNER` (default owner — personal account or org — offered when vibe creates a new repo; you can still type a different owner at the prompt) |
++| `~/.vibe/config` | `VIBE_PROJECTS_DIR`, `VIBE_SSH_AUTO` (opt-in: `=1` skips the per-action SSH ask in all projects), `VIBE_BRAIN2_PATH` / `VIBE_ZOTERO_PATH` (shared brain2 at `/brain2` rw + Zotero at `/zotero` ro; default `~/brain2` / `~/Zotero/storage`, mounted into every container when the dir exists, `=off` to disable), `VIBE_CODEX_PATH` (the Codex CLI login dir, default `~/.codex`; unlike the two above it is mounted read-write and ONLY into projects that carry an untracked `.vibe-allow-codex` marker AND are listed in `~/.vibe/codex-allow` — see the Codex setup section; `=off` disables it everywhere), `VIBE_MODEL` (default model id for every launch; flags win), `VIBE_FABLE_CREDITS_OK` (`=1` skips the Fable 5 usage-credits confirm from 8 Jul 2026), `VIBE_OP_AUTO` (`=1` opts every project into the OpenProject MCP; off by default so `/op` never auto-activates in a public/upstream project's container — see below), `VIBE_GITHUB_OWNER` (default owner — personal account or org — offered when vibe creates a new repo; you can still type a different owner at the prompt) |
+ | `~/.vibe/tokens` | GitHub PATs (`owner/repo=ghp_...`); optional `ZOTERO_API_KEY=...` line (slash-free key → no collision with a repo entry) surfaced in-container as `$ZOTERO_API_KEY` for direct Zotero web-API calls; optional `OPENPROJECT_MCP_URL=...` + `OPENPROJECT_MCP_BEARER=...` lines — the OpenProject MCP endpoint and bearer, loaded only into projects that opt in (see Security model). A shared repo's PAT lives here too, keyed by its slug — same store, same `chmod 600`. Rotate an expired/revoked PAT with `vibe pat [owner/repo]` (re-prompts, hidden input, overwrites in place — no rebuild needed); a launch also auto-detects a stored PAT GitHub now rejects with `401` and re-runs the same prompt right when it bites (`VIBE_PAT_CHECK=0` skips the check). Never commit or sync to the cloud |
+ | `~/.vibe/repos` | Shared-repo machine registry (`owner/repo=/local/path`), `chmod 600`. Written by `vibe repos add`; per-machine, so two Macs sharing a project each register their own local checkout path |
++| `~/.vibe/codex-allow` | Codex login-mount consent registry (one canonical project path per line), `chmod 600`. Written by `vibe codex allow`, cleared by `vibe codex deny`. Never mounted into a container, so nothing running inside one can grant itself the ChatGPT login — the in-project `.vibe-allow-codex` marker alone is not enough |
+ | `~/.vibe/skipped` | Projects opted out of GitHub |
+ | `~/.vibe/learning.config` | Learning library location + visibility |
+ 
+diff --git a/TODO.md b/TODO.md
+index bef5ed1..27159e3 100644
+--- a/TODO.md
++++ b/TODO.md
+@@ -78,7 +78,7 @@ Two vibe-wide behaviour changes shipped and took effect on this rebuild — surf
+ 
+ - [ ] **Relayed from the taskandeye vibe session (2026-09-10)** — (a) "`/ask astra` cannot run in containers because the launcher never binds `~/.codex`, even after the file-store login and a relaunch": not a launcher bug — the mount is opt-in per project and taskandeye has no `.vibe-allow-codex` marker; the helper's error wrongly pointed at the login, fixed the same day to name the opt-in. Remaining action is in that project: create the untracked `.vibe-allow-codex` marker, add the three OpenAI hosts to `.vibe/domains`, relaunch. Also confirm which launcher that session runs (`readlink ~/bin/vibe`): a curl-installed `~/.vibe-src` has none of phase 1a. (b) "The Apple container spike, to be kept separable for the later agent-host helper" — recorded as relayed; no detail reached this repo. When that spike lands here, keep it behind its own flag/module so the agent-host helper can adopt it without a launcher rewrite.
+ 
+-- [ ] **Phase 1a: move the Codex opt-in switch off the container-writable filesystem** (third security pass, 2026-09-10, HIGH but accepted for the branch because it needs a relaunch to take effect and the header announces it) — `.vibe-allow-codex` lives in `/workspace`, so a prompt-injected session can still create it by a path the Bash hook cannot see (verified: `curl -o`, git plumbing such as `update-index --cacheinfo` + `checkout-index`, `git restore --source`, `git apply`/`patch`/`unzip` members, `M=.vibe-allow-codex; touch "$M"`), and the user's next launch mounts the ChatGPT token. Real fix: a host-side registry the container cannot reach (`~/.vibe/codex-allow`, one project path per line, like `~/.vibe/repos`), or a one-time host prompt the first time a project's marker appears. The regex additions landed on the branch (`curl|wget|unzip|patch`, a `git restore|checkout|checkout-index|update-index|apply|am|stash` arm) narrow the funnel only. Also from that pass: reads of `/home/node/.codex/auth.json` are not gated at all (README now says so); the `/learnings` and `/zotero` bash arms still lack the hardened idiom set (`>|`, `~`/`$HOME`, `(`, `touch/install/tar/rsync`) — fold them through `_codex_write_idiom`; the marker deny in `guard-fs.sh` should extend to `/repos/*/.vibe-allow-codex` once rw shared repos land.
++- [ ] **Phase 1a follow-ups from the third security pass (2026-09-10), minus the registry** — the host-side `~/.vibe/codex-allow` registry that was the headline of this entry SHIPPED (task_045, CHANGELOG); the launcher now requires both the untracked `.vibe-allow-codex` marker and a registry line, and `vibe codex allow|deny|list` manage it on the Mac. Still open from that same pass, all three guard/hook edits and therefore Martin-gated: (i) reads of `/home/node/.codex/auth.json` are not gated at all (README says so) — the hooks stop writes, not reads, so anything running inside an opted-in container can read the live ChatGPT token; (ii) the `/learnings` and `/zotero` bash arms still lack the hardened idiom set (`>|`, `~`/`$HOME`, `(`, `touch/install/tar/rsync`) — fold them through `_codex_write_idiom`; (iii) the marker deny in `guard-fs.sh` should extend to `/repos/*/.vibe-allow-codex` once rw shared repos land. The regex additions already on the branch (`curl|wget|unzip|patch`, a `git restore|checkout|checkout-index|update-index|apply|am|stash` arm) narrow the funnel only; the registry is what actually closed the marker-forgery route, since a container cannot reach `~/.vibe` at all.
+ 
+ - [ ] **Phase 1a follow-up (ii) from the security review (2026-09-10)** — the Fable/credits gate is `--consent-credits` in argv, i.e. the lead passing a flag after following `ask.md` prose; an autonomous `/vss` run can satisfy it itself. Consider a launcher- or hook-level gate for autonomous runs, and stop describing it as human consent until then (hook/settings edit: Martin-gated). Items (i) `codex=off` honoured by `/ask astra`, (iii) `claude -p` belt-and-braces flags, and (iv) the `~/.codex` mode warning closed by task_044 (2026-09-11, CHANGELOG).
+ 
+diff --git a/vibe b/vibe
+index caf0b12..536ded8 100755
+--- a/vibe
++++ b/vibe
+@@ -35,6 +35,7 @@
+ #   vibe repos add <owner/repo> [path]   # register a shared private repo (mounts at /repos/<name>)
+ #   vibe repos remove <owner/repo>       # unregister it (--purge also drops its token)
+ #   vibe repos list          # show the machine's shared-repo registry
++#   vibe codex allow|deny|list [path]    # host-side opt-in registry for the Codex login mount
+ #   vibe audit [--history|--staged]      # scan git history (default) or the staged diff for secrets/PII
+ #
+ # `vibe pat` runs on the HOST shell too, same as `vibe learn` above — not
+@@ -1606,7 +1607,11 @@ _zotero_source() {
+ #      VIBE_CODEX_PATH=off in ~/.vibe/config disables it everywhere;
+ #   2. the PROJECT must carry an UNTRACKED .vibe-allow-codex marker, verified
+ #      exactly like .vibe-allow-op (git work tree, not committed, positively
+-#      untracked). There is deliberately NO machine-wide auto switch: a
++#      untracked); and
++#   3. the project's canonical path must be listed in the HOST-SIDE registry
++#      ~/.vibe/codex-allow (`vibe codex allow`, task_045) — the consent layer
++#      no container can reach, since (2) lives on a filesystem the container
++#      can write. There is deliberately NO machine-wide auto switch: a
+ #      credential bind that one config line could grant to every container
+ #      is the shape this gating exists to prevent. Network reach is a
+ #      separate decision (chatgpt.com in .vibe/domains), so a project can
+@@ -1623,6 +1628,110 @@ _codex_source() {
+   [ -d "$p" ] && p="$(cd "$p" 2>/dev/null && pwd -P || printf '%s' "$p")"
+   printf '%s' "$p"
+ }
++
++# ── Host-side Codex opt-in registry (~/.vibe/codex-allow, task_045) ───────────
++# The .vibe-allow-codex marker lives INSIDE the project tree, which is exactly
++# the filesystem a container can write. guard-fs.sh denies the structured
++# (Write/Edit) writes and guard-bash.sh best-effort-blocks the shell idioms,
++# but a prompt-injected session can still create that marker by a path the
++# Bash hook cannot see (`curl -o`, git plumbing such as `update-index
++# --cacheinfo` + `checkout-index`, `git restore --source`, an indirected
++# `M=.vibe-allow-codex; touch "$M"`), and the user's NEXT launch would bind a
++# live ChatGPT OAuth token into that same container. So the marker alone is
++# deliberately NOT sufficient any more: the mount also requires a line in this
++# machine-local registry, which lives under the Mac's $HOME and is never
++# bind-mounted into any container — nothing running inside a container can add
++# itself to it, by any idiom, because the file is not reachable from there.
++#
++# This is the ~/.vibe/repos-acks pattern applied to the credential mount, for
++# the same reason: the in-tree file states a REQUEST, the host-side registry
++# is the CONSENT, and only the user (running `vibe codex allow` on the Mac)
++# can supply the second. One canonical `pwd -P` path per line, matched
++# whole-line fixed-string (grep -qxF — no regex surface), chmod 600. There is
++# still deliberately NO machine-wide "allow everywhere" switch: a credential
++# bind that one config line could grant to every container is the shape this
++# gating exists to prevent.
++CODEX_ALLOW_FILE="$HOME/.vibe/codex-allow"
++
++# codex_registry_usable — true when ~/.vibe/codex-allow is safe to trust.
++# Fails CLOSED, with one ⚠ line, in two cases:
++#   1. the registry is a SYMLINK — a symlink could aim the consent record (or
++#      a `deny` rewrite, or the chmod) at a file the user never meant to
++#      grant, including one a container can reach through another mount; a
++#      consent record must be a real file on this machine;
++#   2. its mode grants group or others ANY bit — a consent record the rest of
++#      the machine can edit is not consent.
++# A MISSING file is usable and simply contains nothing: absence is the
++# default-off state, not an error (a first-ever launch must not warn). The
++# mode is read with the same portable stat -c/-f fallback as
++# _codex_dir_mode_warning (Linux vs. Darwin stat take different flags), and
++# only the LAST THREE octal digits are judged, so a leading setuid/setgid/
++# sticky digit never changes the verdict. An unreadable mode is treated as
++# unusable rather than assumed fine — same fail-closed direction.
++codex_registry_usable() {
++  local f="$CODEX_ALLOW_FILE" mode last3 group_other
++  if [ -L "$f" ]; then
++    echo "  ⚠ ${f} is a symlink — ignored, so no project counts as allowed (the Codex opt-in registry must be a real file on this machine; delete the symlink and re-run 'vibe codex allow')." >&2
++    return 1
++  fi
++  [ -e "$f" ] || return 0
++  mode="$(stat -L -c %a "$f" 2>/dev/null || stat -L -f %Lp "$f" 2>/dev/null)" || mode=""
++  if [ -z "$mode" ]; then
++    echo "  ⚠ ${f} permissions could not be read — ignored, so no project counts as allowed (fail closed)." >&2
++    return 1
++  fi
++  last3="${mode: -3}"
++  group_other="${last3:1:2}"
++  if [ "$group_other" != "00" ]; then
++    echo "  ⚠ ${f} is readable or writable by group or others (mode ${mode}) — ignored, so no project counts as allowed; run 'chmod 600 ${f}' on the Mac." >&2
++    return 1
++  fi
++  return 0
++}
++
++# codex_allowed <workspace> — true iff the canonical workspace path has a line
++# of its own in a usable registry. A missing registry is false (default off);
++# an unusable one is treated as ABSENT, so a tampered or world-writable file
++# grants nothing rather than everything.
++codex_allowed() {
++  local ws="$1"
++  codex_registry_usable || return 1
++  [ -f "$CODEX_ALLOW_FILE" ] || return 1
++  grep -qxF -e "$ws" "$CODEX_ALLOW_FILE"
++}
++
++# codex_allow_record <workspace> — records the path (idempotent). Refuses a
++# symlinked registry outright: `touch` and `chmod` both FOLLOW symlinks, so
++# recording through one would mutate whatever it points at. A real file with
++# a loose mode is repaired here (chmod 600) rather than refused — the user is
++# standing at the keyboard asking for exactly this grant, and leaving them
++# with a file only codex_registry_usable can explain would be a dead end.
++codex_allow_record() {
++  local ws="$1"
++  if [ -L "$CODEX_ALLOW_FILE" ]; then
++    echo "  ⚠ ${CODEX_ALLOW_FILE} is a symlink — refusing to write through it." >&2
++    return 1
++  fi
++  mkdir -p "$(dirname "$CODEX_ALLOW_FILE")"
++  touch "$CODEX_ALLOW_FILE"
++  chmod 600 "$CODEX_ALLOW_FILE"
++  grep -qxF -e "$ws" "$CODEX_ALLOW_FILE" && return 0
++  printf '%s\n' "$ws" >> "$CODEX_ALLOW_FILE"
++}
++
++# codex_allow_remove <workspace> — drops the exact line (idempotent). Rewrites
++# through a temp file and restores mode 600, mirroring _vibe_repos_decl_remove.
++# Callers gate on codex_registry_usable first, so a symlinked registry is
++# never rewritten.
++codex_allow_remove() {
++  local ws="$1" tmp
++  [ -f "$CODEX_ALLOW_FILE" ] || return 0
++  tmp=$(mktemp)
++  grep -vxF -e "$ws" "$CODEX_ALLOW_FILE" > "$tmp" || true
++  mv "$tmp" "$CODEX_ALLOW_FILE"
++  chmod 600 "$CODEX_ALLOW_FILE"
++}
++
+ _codex_opted_in() {
+   local ws="$1"
+   [ -f "$ws/.vibe-allow-codex" ] || return 1
+@@ -1638,6 +1747,17 @@ _codex_opted_in() {
+     echo "  ⚠ .vibe-allow-codex could not be positively verified as an untracked file — Codex login mount refused (fail closed)." >&2
+     return 1
+   fi
++  # Last gate, and deliberately last: the three marker branches above describe
++  # what is WRONG with the request, and must say so whether or not the machine
++  # has ever granted this project. Only a well-formed request that the machine
++  # has not consented to reaches the registry line below. The reverse case —
++  # registry line but no marker — returns 1 SILENTLY at the top of this
++  # function: no marker means no request was made, so there is nothing to
++  # warn about.
++  if ! codex_allowed "$ws"; then
++    printf '%s\n' "  ⚠ .vibe-allow-codex is present but this project is not in ~/.vibe/codex-allow — Codex login mount refused (the marker lives in the container-writable project tree, so it alone cannot grant a credential). On the Mac, in that folder, run: vibe codex allow" >&2
++    return 1
++  fi
+   return 0
+ }
+ # _codex_desired_source <workspace> — echoes the host dir to bind, or nothing
+@@ -1672,6 +1792,172 @@ _codex_dir_mode_warning() {
+   echo "  ⚠ ${dir} is readable by group or others (mode ${mode}) — it holds a live ChatGPT login token; run 'chmod 700 ${dir}' on the Mac." >&2
+ }
+ 
++# ── `vibe codex` subcommands (task_045) ───────────────────────────────────────
++# Host-side only, mirroring `vibe repos`: they manage ~/.vibe/codex-allow on
++# the Mac and never enter workspace resolution, preflight, image build or
++# container launch. Being host-side is the whole point — if these could run
++# inside a container, the registry would be no stronger than the marker it
++# backstops. Every branch exits inside its own sub-function.
++#
++# `printf '%s\n'`, not `echo`, on every line below that names a `codex`
++# subcommand: smoke's source-adjacency drift check (checks_17_delegation.py)
++# locates the LAUNCH-HEADER line for this mount by scanning for the file's
++# first echo that also carries a lowercase "codex" and a colon, so an earlier
++# one here would silently point that check at the wrong line (this comment
++# avoids the same triple for the same reason). printf is the more portable
++# idiom for a fixed string anyway; keep it.
++
++_codex_usage() {
++  printf '%s\n' "Usage: vibe codex allow|deny|list [path]" >&2
++  exit 1
++}
++
++# _codex_canonical_path <arg> — `pwd -P` of the current directory when <arg>
++# is empty, else the canonical form of <arg>. Canonicalisation matters: the
++# registry is matched against the launcher's own `pwd -P`, so recording a
++# symlinked path would record a line no launch can ever match (fail-safe
++# toward NOT mounting, but confusing). When <arg> names something that does
++# not exist it is echoed unchanged, so `deny` can still clear a stale entry
++# for a folder that has since been deleted.
++_codex_canonical_path() {
++  local arg="${1:-}"
++  if [ -z "$arg" ]; then
++    pwd -P
++    return 0
++  fi
++  if [ -d "$arg" ]; then
++    (cd "$arg" 2>/dev/null && pwd -P) || printf '%s\n' "$arg"
++  else
++    printf '%s\n' "$arg"
++  fi
++}
++
++# _codex_allow [path] — record the project in the machine's consent registry.
++# Refuses anything that is not a directory, and anything that is not a git
++# work tree: the marker gate in _codex_opted_in verifies untrackedness with
++# git, so a non-git folder could never satisfy it anyway, and recording one
++# would leave a line that looks like consent but can never take effect.
++# It NEVER creates the .vibe-allow-codex marker — two independent switches,
++# in two places only the user can reach both of, is the design.
++_codex_allow() {
++  local arg="${1:-}" path
++  if [ -n "$arg" ] && [ ! -d "$arg" ]; then
++    printf '%s\n' "vibe codex allow: '$arg' is not a directory" >&2
++    exit 1
++  fi
++  path="$(_codex_canonical_path "$arg")"
++  if [ "$(git -C "$path" rev-parse --is-inside-work-tree 2>/dev/null)" != "true" ]; then
++    printf '%s\n' "vibe codex allow: '$path' is not a git work tree — refused (the Codex login mount is only ever granted to a verifiable git project)" >&2
++    exit 1
++  fi
++  if ! codex_allow_record "$path"; then
++    printf '%s\n' "vibe codex allow: could not record '$path' in $CODEX_ALLOW_FILE" >&2
++    exit 1
++  fi
++  echo "  ✓ $path allowed to mount the Codex login (~/.vibe/codex-allow)"
++  printf '%s\n' "    Still required in that project: an untracked .vibe-allow-codex marker (touch .vibe-allow-codex). This command never creates it."
++  echo "    Relaunch (vibe) — the launcher recreates the container automatically when the mount set changes."
++  exit 0
++}
++
++# _codex_deny [path] — withdraw consent, and make the withdrawal immediate.
++# Removing the line stops the NEXT launch from mounting the login, but a
++# container started while the grant stood still has the token bound right
++# now, so deny offers to stop it. `docker stop`, never `docker rm`: stopping
++# unmounts the credential (that is the whole requirement) while leaving the
++# container, its state and any running work recoverable — removal is a
++# destructive act the user has not asked for.
++#
++# The prompt is skipped and the stop runs UNCONDITIONALLY when stdin is not a
++# TTY or VIBE_CODEX_DENY_YES=1 is set — a revocation invoked from a script or
++# a pipe must not silently leave the credential mounted because nobody was
++# there to answer. That skip lives here and nowhere else: ask_yes_no is a
++# general-purpose prompt used by unrelated flows and is NOT modified.
++_codex_deny() {
++  local arg="${1:-}" path ids do_stop
++  path="$(_codex_canonical_path "$arg")"
++  if ! codex_registry_usable; then
++    printf '%s\n' "vibe codex deny: $CODEX_ALLOW_FILE is unusable — refusing to rewrite it" >&2
++    exit 1
++  fi
++  if codex_allowed "$path"; then
++    codex_allow_remove "$path"
++    echo "  ✓ $path removed from ~/.vibe/codex-allow"
++  else
++    echo "  ✓ $path removed from ~/.vibe/codex-allow (already absent)"
++  fi
++
++  ids=$(docker ps -aq --filter "label=devcontainer.local_folder=$path" 2>/dev/null) || ids=""
++  if [ -n "$ids" ]; then
++    do_stop=1
++    if [ -t 0 ] && [ "${VIBE_CODEX_DENY_YES:-}" != "1" ]; then
++      ask_yes_no "Stop the container for $path now so the login is unmounted immediately?" y || do_stop=0
++    fi
++    if [ "$do_stop" = "1" ]; then
++      # Word-splitting is intended: docker ps -aq emits one id per line.
++      # shellcheck disable=SC2086
++      docker stop $ids >/dev/null 2>&1 || true
++      echo "  ✓ container stopped — the Codex login is no longer mounted"
++    else
++      echo "    Container left running; it keeps the login mounted until it stops."
++    fi
++  fi
++  exit 0
++}
++
++# _codex_list — show every allowed project with whether its in-tree marker is
++# also present, since BOTH are required. A registry line on its own mounts
++# nothing, so the status suffix is the difference between "armed" and "half
++# configured". Always exits 0 (listing has no validation-failure mode); an
++# unusable registry prints its own ⚠ line and then `(none)`, which is exactly
++# what such a registry grants.
++_codex_list() {
++  local line found=0
++  if ! codex_registry_usable || [ ! -f "$CODEX_ALLOW_FILE" ]; then
++    echo "  (none)"
++    exit 0
++  fi
++  while IFS= read -r line; do
++    [ -n "$line" ] || continue
++    found=1
++    if [ ! -d "$line" ]; then
++      echo "  $line (path missing)"
++    elif [ -e "$line/.vibe-allow-codex" ]; then
++      echo "  $line (marker present)"
++    else
++      echo "  $line (no marker – not mounted)"
++    fi
++  done < "$CODEX_ALLOW_FILE"
++  [ "$found" -eq 1 ] || echo "  (none)"
++  exit 0
++}
++
++# codex_handle_subcommand <args...> — top-level dispatcher for `vibe codex`,
++# invoked from its own dispatch block (mirrors `repos`, see the block before
++# parse_vibe_args below). An empty OR unknown subcommand prints the usage
++# line and exits 1 — there is no default action, deliberately: a typo must
++# never be read as a grant.
++codex_handle_subcommand() {
++  shift  # consume "codex"
++  local subcmd="${1:-}"
++  case "$subcmd" in
++    allow)
++      shift
++      _codex_allow "$@"
++      ;;
++    deny)
++      shift
++      _codex_deny "$@"
++      ;;
++    list)
++      _codex_list
++      ;;
++    *)
++      _codex_usage
++      ;;
++  esac
++}
++
+ # refresh_brain2_vibe_note — auto-maintain <brain2>/meta/vibe-operation.md
+ # with the CURRENTLY INSTALLED `vibe --help` text, refreshed on every launch,
+ # so an in-container Claude with no visibility into the host-side CLI (see
+@@ -3756,6 +4042,18 @@ if [ "${1:-}" = "repos" ]; then
+   exit $?
+ fi
+ 
++# ── Codex opt-in registry dispatch (task_045) ─────────────────────────────────
++# Must be BEFORE the --* flag-parser loop — exactly like `learn`/`repos` above
++# — otherwise `vibe codex allow` falls through to parse_vibe_args's positional
++# catch-all and is treated as a project name. Host-side only: it edits
++# ~/.vibe/codex-allow (and may stop a container on `deny`), and never enters
++# workspace resolution, preflight, image build, GitHub setup or launch.
++if [ "${1:-}" = "codex" ]; then
++  codex_handle_subcommand "$@"
++  # codex_handle_subcommand's sub-functions always exit; this is a safety net.
++  exit $?
++fi
++
+ # ── Audit subcommand dispatch (task_019) ──────────────────────────────────────
+ # Must be BEFORE the --* flag-parser loop — mirrors `learn`/`repos` above.
+ # Host-side only: scans the CURRENT directory's git repo directly, no

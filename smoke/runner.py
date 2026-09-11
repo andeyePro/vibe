@@ -661,6 +661,13 @@ def main() -> int:
     test_delegate_review_policy()
     test_delegate_ask_policy_and_argv()
     test_codex_dir_mode_warning()
+    test_codex_registry_gates()
+    test_codex_mount_drift_with_desired_source()
+    test_codex_allow_subcommand()
+    test_codex_deny_subcommand()
+    test_codex_list_subcommand()
+    test_codex_usage_and_help()
+    test_codex_allow_docs()
 
     print()
     if FAILURES:

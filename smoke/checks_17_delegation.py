@@ -429,7 +429,7 @@ def test_codex_dir_mode_warning() -> None:
     # Find the line echoing the codex header
     codex_header_line = None
     for i, line in enumerate(lines):
-        if 'echo' in line and 'codex' in line and ':' in line:
+        if 'echo' in line and 'codex   : /home/node/.codex (rw, ChatGPT login)' in line:
             codex_header_line = i
             break
     
@@ -473,3 +473,447 @@ def test_codex_dir_mode_warning() -> None:
             
             check("[codex] _codex_dir_mode_warning inside _codex_banner if block",
                   call_in_if, "")
+
+
+# ── task_045: host-side Codex opt-in registry (~/.vibe/codex-allow) ──────────
+# Independent of checks_01's test_codex_container_plumbing (mount rendering)
+# and test_codex_mount_drift (pure comparator, arbitrary strings): these cover
+# the registry gate itself (_codex_opted_in / codex_allowed /
+# codex_registry_usable), AC7's drift-through-_codex_desired_source case, and
+# the `vibe codex allow|deny|list` subcommands against the REAL launcher.
+# Every sourced call passes an EXPLICIT HOME to a fixture dir (never the real
+# ~/.vibe), following checks_01's existing codex fixtures.
+
+def _codex_git_ws(root, name="workspace"):
+    """A throwaway git work tree, same recipe as checks_01's git_ws."""
+    ws = root / name
+    ws.mkdir()
+    for args in (["init", "-q"], ["config", "user.email", "t@users.noreply.github.com"],
+                 ["config", "user.name", "T"], ["config", "core.hooksPath", "/dev/null"]):
+        run(["git", "-C", str(ws), *args])
+    return ws
+
+
+def _codex_rc_call(home, func_call):
+    """Source vibe with HOME=home, run func_call inside `if ... ; then/else`
+    (so a non-zero return from the function under test does not itself
+    trigger the sourced script's `set -e`), and report RC=0/RC=<n> on stdout.
+    Returns the CompletedProcess; stderr carries the function's own ⚠ lines."""
+    return _source_vibe_call(
+        {"HOME": str(home)},
+        f'if {func_call}; then echo "RC=0"; else echo "RC=$?"; fi')
+
+
+def _codex_docker_stub(bindir, log):
+    """A `docker` stub shadowing PATH: logs every invocation's argv to `log`
+    (one line per call) and, for `ps`, prints $DOCKER_STUB_PS_OUTPUT (a fake
+    container id, or empty for "no container") so _codex_deny's stop path can
+    be exercised without a real Docker daemon."""
+    bindir.mkdir(parents=True, exist_ok=True)
+    stub = bindir / "docker"
+    stub.write_text(
+        "#!/bin/sh\n"
+        f"printf '%s\\n' \"$*\" >> {shlex.quote(str(log))}\n"
+        # `ps -aq` = discovery (all containers); `ps -q` = the post-stop
+        # verification (running only); `stop` honours DOCKER_STUB_STOP_EXIT;
+        # DOCKER_STUB_PS_EXIT makes discovery itself fail (daemon down).
+        'if [ "$1" = "ps" ] && [ "${DOCKER_STUB_PS_EXIT:-0}" != "0" ]; then exit "${DOCKER_STUB_PS_EXIT}"; fi\n'
+        'if [ "$1" = "ps" ] && [ "$2" = "-aq" ]; then printf \'%s\\n\' "${DOCKER_STUB_PS_OUTPUT:-}"; fi\n'
+        'if [ "$1" = "ps" ] && [ "$2" = "-q" ]; then printf \'%s\\n\' "${DOCKER_STUB_PS_RUNNING_OUTPUT:-}"; fi\n'
+        'if [ "$1" = "stop" ]; then exit "${DOCKER_STUB_STOP_EXIT:-0}"; fi\n'
+        "exit 0\n")
+    stub.chmod(0o755)
+    return stub
+
+
+def test_codex_registry_gates():
+    """AC1/AC2/AC9: _codex_opted_in's registry gate, and codex_allowed /
+    codex_registry_usable directly, across the full precedence matrix."""
+    print("\n[codex] ~/.vibe/codex-allow gate matrix (_codex_opted_in, codex_allowed, codex_registry_usable)")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        home = root / "home"; home.mkdir()
+        ws = _codex_git_ws(root)
+        marker = ws / ".vibe-allow-codex"
+        registry = home / ".vibe" / "codex-allow"
+
+        def set_marker(present):
+            if present:
+                marker.write_text("")
+            elif marker.exists():
+                marker.unlink()
+
+        def set_registry(lines):
+            registry.parent.mkdir(parents=True, exist_ok=True)
+            if registry.exists() or registry.is_symlink():
+                registry.unlink()
+            if lines is None:
+                return
+            registry.write_text("".join(line + "\n" for line in lines))
+            registry.chmod(0o600)
+
+        def opted_in(path=None):
+            return _codex_rc_call(home, f'_codex_opted_in {shlex.quote(str(path or ws))}')
+
+        # Neither marker nor registry: refused silently (nothing to warn about).
+        set_marker(False); set_registry(None)
+        r = opted_in()
+        check("[codex] neither marker nor registry: RC=1, silent",
+              r.returncode == 0 and "RC=1" in r.stdout and r.stderr == "", repr(r.stderr))
+
+        # Registry-only: refused silently. No marker means no request was made.
+        set_marker(False); set_registry([str(ws)])
+        r = opted_in()
+        check("[codex] registry-only (no marker): RC=1, silent",
+              r.returncode == 0 and "RC=1" in r.stdout and r.stderr == "", repr(r.stderr))
+
+        # Marker-only: refused, ONE ⚠ line naming `vibe codex allow`.
+        set_marker(True); set_registry(None)
+        r = opted_in()
+        check("[codex] marker-only: RC=1, one ⚠ line naming vibe codex allow",
+              r.returncode == 0 and "RC=1" in r.stdout and
+              r.stderr.count("⚠") == 1 and "vibe codex allow" in r.stderr, r.stderr)
+
+        # Both: opted in.
+        set_marker(True); set_registry([str(ws)])
+        r = opted_in()
+        check("[codex] marker + registry: RC=0",
+              r.returncode == 0 and "RC=0" in r.stdout and r.stderr == "", repr(r.stderr))
+
+        # Committed marker + registry: the COMMITTED line fires, not the
+        # allow hint — the three marker branches are checked BEFORE the
+        # registry, so a malformed request is diagnosed as malformed even
+        # when the registry would otherwise have granted it.
+        run(["git", "-C", str(ws), "add", "-f", ".vibe-allow-codex"])
+        r = opted_in()
+        check("[codex] committed marker + registry: COMMITTED line, not the allow hint",
+              r.returncode == 0 and "RC=1" in r.stdout and
+              "COMMITTED" in r.stderr and "vibe codex allow" not in r.stderr, r.stderr)
+        run(["git", "-C", str(ws), "rm", "-q", "--cached", ".vibe-allow-codex"])
+
+        # Non-work-tree marker + registry: the work-tree line fires.
+        plain = root / "plain"; plain.mkdir()
+        (plain / ".vibe-allow-codex").write_text("")
+        set_registry([str(plain)])
+        r = opted_in(plain)
+        check("[codex] non-work-tree marker + registry: work-tree line",
+              r.returncode == 0 and "RC=1" in r.stdout and
+              "verifiable git work tree" in r.stderr, r.stderr)
+
+        # Symlinked registry: codex_registry_usable/codex_allowed treat it as
+        # ABSENT with exactly one ⚠ line (fail closed) when called directly.
+        set_marker(True)
+        target = home / "real-file"; target.write_text(str(ws) + "\n")
+        set_registry(None)
+        registry.symlink_to(target)
+        r = _codex_rc_call(home, "codex_registry_usable")
+        check("[codex] symlinked registry: codex_registry_usable RC=1, one ⚠ line",
+              r.returncode == 0 and "RC=1" in r.stdout and
+              r.stderr.count("⚠") == 1 and "symlink" in r.stderr, r.stderr)
+        r = _codex_rc_call(home, f"codex_allowed {shlex.quote(str(ws))}")
+        check("[codex] symlinked registry: codex_allowed RC=1, one ⚠ line",
+              r.returncode == 0 and "RC=1" in r.stdout and
+              r.stderr.count("⚠") == 1 and "symlink" in r.stderr, r.stderr)
+        r = opted_in()
+        check("[codex] symlinked registry + marker: _codex_opted_in RC=1, warns",
+              r.returncode == 0 and "RC=1" in r.stdout and "⚠" in r.stderr, r.stderr)
+        registry.unlink()
+
+        # Mode-644 registry: same fail-closed treatment, one ⚠ line.
+        set_registry([str(ws)])
+        registry.chmod(0o644)
+        r = _codex_rc_call(home, "codex_registry_usable")
+        check("[codex] mode-644 registry: codex_registry_usable RC=1, one ⚠ line",
+              r.returncode == 0 and "RC=1" in r.stdout and
+              r.stderr.count("⚠") == 1 and "chmod 600" in r.stderr, r.stderr)
+        r = opted_in()
+        check("[codex] mode-644 registry + marker: _codex_opted_in RC=1, warns",
+              r.returncode == 0 and "RC=1" in r.stdout and "⚠" in r.stderr, r.stderr)
+        registry.chmod(0o600)
+
+        # Canonicalisation: the registry holds the real (pwd -P) path; a
+        # launch from a SYMLINKED path is a different literal string, so
+        # grep -qxF does not match it and the launch is refused exactly like
+        # an unregistered project (the allow hint, not a distinct message).
+        set_registry([str(ws)])
+        set_marker(True)
+        symlinked_ws = root / "workspace-link"
+        symlinked_ws.symlink_to(ws)
+        r = opted_in(symlinked_ws)
+        check("[codex] canonicalisation: launch from a symlinked path is refused",
+              r.returncode == 0 and "RC=1" in r.stdout and "vibe codex allow" in r.stderr, r.stderr)
+
+
+def test_codex_mount_drift_with_desired_source():
+    """AC7: codex_mount_drift fed the OUTPUT of _codex_desired_source (not a
+    literal string) sees the registry line's removal/restoration as drift."""
+    print("\n[codex] AC7 drift: codex_mount_drift(_codex_desired_source(ws), ...)")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        home = root / "home"; home.mkdir()
+        codex_dir = home / ".codex"; codex_dir.mkdir()
+        ws = _codex_git_ws(root)
+        (ws / ".vibe-allow-codex").write_text("")
+        registry = home / ".vibe" / "codex-allow"
+        actual = f"/home/node/.codex\t{codex_dir}\trw"
+
+        def drift():
+            call = (f'desired="$(_codex_desired_source {shlex.quote(str(ws))})"; '
+                    f'printf "%s" "$(codex_mount_drift "$desired" "$(printf %s {shlex.quote(actual)})")"')
+            return _source_vibe_call({"HOME": str(home)}, call)
+
+        # Marker present, registry line removed: desired is empty, but the
+        # mount is still bound -> drift.
+        if registry.exists():
+            registry.unlink()
+        r = drift()
+        check("[codex] AC7: marker present, registry line removed -> drift '1'",
+              r.returncode == 0 and r.stdout == "1", f"stdout={r.stdout!r} stderr={r.stderr[:200]!r}")
+
+        # Both present: desired matches the actual bind -> no drift.
+        registry.parent.mkdir(parents=True, exist_ok=True)
+        registry.write_text(str(ws) + "\n")
+        registry.chmod(0o600)
+        r = drift()
+        check("[codex] AC7: marker + registry both present, matching bind -> no drift",
+              r.returncode == 0 and r.stdout == "", f"stdout={r.stdout!r} stderr={r.stderr[:200]!r}")
+
+
+def test_codex_allow_subcommand():
+    """AC3: `vibe codex allow` against the real launcher — idempotent, mode
+    600, refuses a non-directory and a non-git path."""
+    print("\n[codex] `vibe codex allow` subcommand")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        home = root / "home"; home.mkdir()
+        ws = _codex_git_ws(root)
+        env = {**os.environ, "HOME": str(home), "VIBE_CONFIG": f"{home}/no-config"}
+        registry = home / ".vibe" / "codex-allow"
+
+        r = run(["bash", str(VIBE), "codex", "allow"], env=env, cwd=ws)
+        check("[codex] allow: exit 0, pinned ✓ line, marker reminder",
+              r.returncode == 0 and
+              f"✓ {ws} allowed to mount the Codex login (~/.vibe/codex-allow)" in r.stdout and
+              ".vibe-allow-codex" in r.stdout, r.stdout + r.stderr)
+        check("[codex] allow: registry mode 600",
+              oct(registry.stat().st_mode)[-3:] == "600", oct(registry.stat().st_mode))
+        check("[codex] allow: never creates the marker itself",
+              not (ws / ".vibe-allow-codex").exists(), "")
+
+        r2 = run(["bash", str(VIBE), "codex", "allow"], env=env, cwd=ws)
+        check("[codex] allow twice: still exit 0",
+              r2.returncode == 0, r2.stdout + r2.stderr)
+        lines = [l for l in registry.read_text().splitlines() if l]
+        check("[codex] allow twice: exactly one line, no duplicate",
+              lines == [str(ws)], lines)
+
+        missing = root / "does-not-exist"
+        r3 = run(["bash", str(VIBE), "codex", "allow", str(missing)], env=env)
+        check("[codex] allow: non-directory path refused, exit 1",
+              r3.returncode == 1 and "is not a directory" in r3.stderr, r3.stderr)
+
+        plain = root / "plain-not-git"; plain.mkdir()
+        r4 = run(["bash", str(VIBE), "codex", "allow", str(plain)], env=env)
+        check("[codex] allow: non-git-work-tree path refused, exit 1",
+              r4.returncode == 1 and "not a git work tree" in r4.stderr, r4.stderr)
+        check("[codex] allow: refused path never recorded",
+              str(plain) not in registry.read_text(), registry.read_text())
+
+        # Astra re-review (iter 3): a directory whose NAME ends in a newline
+        # canonicalises, through `$(...)`, to its newline-less sibling — the
+        # grant (or a revocation) would land on the wrong project. Both the
+        # argument and the canonical result are refused when they carry one.
+        before = registry.read_text()
+        twin = Path(str(ws) + "\n"); twin.mkdir()
+        run(["git", "init", "-q", str(twin)])
+        r5 = run(["bash", str(VIBE), "codex", "allow", str(twin)], env=env)
+        check("[codex] allow: newline-suffixed twin directory refused, exit 1",
+              r5.returncode == 1 and "newline" in r5.stderr, r5.stdout + r5.stderr)
+        check("[codex] allow: registry unchanged after the newline refusal",
+              registry.read_text() == before, registry.read_text())
+        r6 = run(["bash", str(VIBE), "codex", "allow", f"{root}/evil\n{ws}"], env=env)
+        check("[codex] allow: embedded-newline argument refused, exit 1, nothing recorded",
+              r6.returncode == 1 and registry.read_text() == before, r6.stderr)
+        r7 = run(["bash", str(VIBE), "codex", "deny", str(twin)], env=env, input="")
+        check("[codex] deny: newline-suffixed twin directory refused, sibling's line kept",
+              r7.returncode == 1 and "newline" in r7.stderr and registry.read_text() == before, r7.stdout + r7.stderr)
+
+
+def test_codex_deny_subcommand():
+    """AC4: `vibe codex deny` against the real launcher — removes the line,
+    idempotent ('already absent'), refuses a symlinked registry, and stops a
+    running container unconditionally when stdin is not a TTY."""
+    print("\n[codex] `vibe codex deny` subcommand")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        home = root / "home"; home.mkdir()
+        ws = _codex_git_ws(root)
+        registry = home / ".vibe" / "codex-allow"
+        registry.parent.mkdir(parents=True, exist_ok=True)
+        registry.write_text(str(ws) + "\n")
+        registry.chmod(0o600)
+
+        bindir = root / "bin"
+        log = root / "docker.log"
+        _codex_docker_stub(bindir, log)
+        env = {**os.environ, "HOME": str(home), "VIBE_CONFIG": f"{home}/no-config",
+               "PATH": str(bindir) + os.pathsep + os.environ["PATH"]}
+
+        # A container "exists" for this workspace (stub ps returns an id).
+        # stdin is not a TTY (empty-string input -> DEVNULL per run()'s own
+        # discipline), so the stop must run WITHOUT the ask_yes_no prompt.
+        deny_env = {**env, "DOCKER_STUB_PS_OUTPUT": "fakecontainerid"}
+        r = run(["bash", str(VIBE), "codex", "deny"], env=deny_env, cwd=ws, input="")
+        check("[codex] deny: exit 0, pinned ✓ removal line",
+              r.returncode == 0 and
+              f"✓ {ws} removed from ~/.vibe/codex-allow" in r.stdout, r.stdout + r.stderr)
+        check("[codex] deny: line actually removed",
+              str(ws) not in (registry.read_text() if registry.exists() else ""), "")
+        check("[codex] deny: stdin not a TTY -> stop runs unconditionally, no prompt text",
+              "ps -aq --filter label=devcontainer.local_folder=" + str(ws) in log.read_text() and
+              "stop fakecontainerid" in log.read_text(), log.read_text())
+        check("[codex] deny: never docker rm",
+              " rm " not in log.read_text() and not log.read_text().splitlines()[-1].startswith("rm"), log.read_text())
+
+        # Idempotent: removing again says "already absent", still exit 0.
+        log.write_text("")
+        r2 = run(["bash", str(VIBE), "codex", "deny"], env=env, cwd=ws, input="")
+        check("[codex] deny: idempotent, 'already absent', exit 0",
+              r2.returncode == 0 and "already absent" in r2.stdout, r2.stdout + r2.stderr)
+
+        # Symlinked registry: refused outright, exit 1, never rewritten.
+        target = home / "real-file"; target.write_text(str(ws) + "\n")
+        if registry.exists() or registry.is_symlink():
+            registry.unlink()
+        registry.symlink_to(target)
+        r3 = run(["bash", str(VIBE), "codex", "deny"], env=env, cwd=ws, input="")
+        check("[codex] deny: symlinked registry refused, exit 1",
+              r3.returncode == 1 and "unusable" in r3.stderr, r3.stderr)
+        check("[codex] deny: symlinked registry left untouched (still a symlink)",
+              registry.is_symlink(), "")
+
+        # Astra review (iter 3): a failed or unverified stop must never be
+        # reported as success — the container would still hold the login.
+        registry.unlink()
+        registry.write_text(str(ws) + "\n"); registry.chmod(0o600)
+        log.write_text("")
+        r4 = run(["bash", str(VIBE), "codex", "deny"], cwd=ws, input="",
+                 env={**deny_env, "DOCKER_STUB_STOP_EXIT": "1"})
+        check("[codex] deny: docker stop failure -> exit 1, ⚠ names the container as still holding the login",
+              r4.returncode == 1 and "STILL holds" in r4.stderr and "no longer mounted" not in r4.stdout, r4.stdout + r4.stderr)
+        registry.write_text(str(ws) + "\n"); registry.chmod(0o600)
+        r5 = run(["bash", str(VIBE), "codex", "deny"], cwd=ws, input="",
+                 env={**deny_env, "DOCKER_STUB_PS_RUNNING_OUTPUT": "fakecontainerid"})
+        check("[codex] deny: container still listed as running after stop -> exit 1, not reported as unmounted",
+              r5.returncode == 1 and "could not confirm" in r5.stderr and "no longer mounted" not in r5.stdout, r5.stdout + r5.stderr)
+        registry.write_text(str(ws) + "\n"); registry.chmod(0o600)
+        r6 = run(["bash", str(VIBE), "codex", "deny"], cwd=ws, input="",
+                 env={**deny_env, "DOCKER_STUB_PS_EXIT": "1"})
+        check("[codex] deny: docker discovery failure is visible (exit 1, ⚠), registry line still removed",
+              r6.returncode == 1 and "docker ps failed" in r6.stderr and str(ws) not in registry.read_text(), r6.stdout + r6.stderr)
+
+        # Astra review (iter 3): the registry is line-based; a path with an
+        # embedded newline must never match, be recorded, or be removed.
+        registry.write_text(str(ws) + "\n"); registry.chmod(0o600)
+        evil = f"{root}/evil\n{ws}"
+        r7 = _codex_rc_call(home, f'codex_allowed {shlex.quote(evil)}')
+        check("[codex] newline-in-path never matches another project's grant", "RC=1" in r7.stdout, r7.stdout + r7.stderr)
+        r8 = _codex_rc_call(home, f'codex_allow_record {shlex.quote(evil)}')
+        check("[codex] newline-in-path is refused by codex_allow_record, registry unchanged",
+              "RC=1" in r8.stdout and registry.read_text() == str(ws) + "\n", r8.stdout + r8.stderr)
+        r9 = _codex_rc_call(home, f'codex_allow_remove {shlex.quote(evil)}')
+        check("[codex] newline-in-path is refused by codex_allow_remove, registry unchanged",
+              "RC=1" in r9.stdout and registry.read_text() == str(ws) + "\n", r9.stdout + r9.stderr)
+
+
+def test_codex_list_subcommand():
+    """AC5: `vibe codex list` status suffixes and the empty-registry case."""
+    print("\n[codex] `vibe codex list` subcommand")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        home = root / "home"; home.mkdir()
+        env = {**os.environ, "HOME": str(home), "VIBE_CONFIG": f"{home}/no-config"}
+
+        r0 = run(["bash", str(VIBE), "codex", "list"], env=env, cwd=home)
+        check("[codex] list: empty registry prints (none), exit 0",
+              r0.returncode == 0 and r0.stdout.strip() == "(none)", r0.stdout)
+
+        with_marker = _codex_git_ws(root, "with-marker")
+        (with_marker / ".vibe-allow-codex").write_text("")
+        no_marker = _codex_git_ws(root, "no-marker")
+        gone = root / "gone-ws"; gone.mkdir()
+
+        registry = home / ".vibe" / "codex-allow"
+        registry.parent.mkdir(parents=True, exist_ok=True)
+        registry.write_text(f"{with_marker}\n{no_marker}\n{gone}\n")
+        registry.chmod(0o600)
+        import shutil
+        shutil.rmtree(gone)
+
+        r = run(["bash", str(VIBE), "codex", "list"], env=env, cwd=home)
+        check("[codex] list: exit 0", r.returncode == 0, r.stderr)
+        check("[codex] list: marker present",
+              f"{with_marker} (marker present)" in r.stdout, r.stdout)
+        check("[codex] list: no marker – not mounted",
+              f"{no_marker} (no marker – not mounted)" in r.stdout, r.stdout)
+        check("[codex] list: path missing",
+              f"{gone} (path missing)" in r.stdout, r.stdout)
+
+
+def test_codex_usage_and_help():
+    """AC6: `vibe codex` / `vibe codex bogus` print usage on stderr and exit
+    1; `vibe --help` names the three subcommands."""
+    print("\n[codex] `vibe codex` usage and `vibe --help`")
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td) / "home"; home.mkdir()
+        env = {**os.environ, "HOME": str(home), "VIBE_CONFIG": f"{home}/no-config"}
+
+        for args in (["codex"], ["codex", "bogus"]):
+            r = run(["bash", str(VIBE), *args], env=env, cwd=home)
+            check(f"[codex] {' '.join(args)}: usage on stderr, exit 1, no stdout",
+                  r.returncode == 1 and
+                  "Usage: vibe codex allow|deny|list [path]" in r.stderr and not r.stdout,
+                  r.stdout + "|" + r.stderr)
+
+        r = run(["bash", str(VIBE), "--help"], env=env)
+        check("[codex] vibe --help mentions vibe codex allow|deny|list",
+              "vibe codex allow|deny|list" in r.stdout, r.stdout[:2000])
+
+
+def test_codex_allow_docs():
+    """AC8: README/MANUAL-TESTS/TODO carry the registry's documentation.
+    Whitespace-normalised (single spaces) before substring checks so a
+    reflow of the source markdown's line wrapping can't break the test."""
+    print("\n[codex] AC8 docs: README, MANUAL-TESTS Test 54 step 1, TODO re-filed follow-ups")
+
+    def flat(text):
+        return " ".join(text.split())
+
+    readme = README_MD.read_text()
+    check("[codex] README names `vibe codex allow`", "`vibe codex allow`" in readme, "")
+    check("[codex] README names the registry as the reason a container cannot opt itself in",
+          "a container cannot opt itself in" in readme, "")
+    readme_flat = flat(readme)
+    check("[codex] README describes the three-step opt-in (log in, marker, allow)",
+          "1. **Log in**" in readme_flat and
+          "2. **`touch .vibe-allow-codex`**" in readme_flat and
+          "3. **`vibe codex allow`**" in readme_flat, "")
+
+    manual = MANUAL_TESTS_MD.read_text()
+    m = re.search(r"### Test 54:.*?(?=\n### Test \d+:|\Z)", manual, re.DOTALL)
+    check("[codex] MANUAL-TESTS.md has a Test 54 section", m is not None, "")
+    test54_flat = flat(m.group(0)) if m else ""
+    step1_flat = flat(m.group(0).split("\n2.", 1)[0]) if m else ""
+    check("[codex] Test 54 step 1 mentions `vibe codex allow`",
+          "vibe codex allow" in step1_flat, step1_flat[:400])
+    check("[codex] Test 54 negative case (d): marker present but not allowed on this machine",
+          "(d) the marker present but the project NOT allowed on this machine" in test54_flat, "")
+    check("[codex] Test 54 case (d) expects NO mount and exactly ONE warning naming vibe codex allow",
+          "exactly ONE warning line, naming `vibe codex allow`" in test54_flat, "")
+
+    todo = (REPO / "TODO.md").read_text()
+    check("[codex] TODO.md closes the registry clause of the container-writable-filesystem entry",
+          "SHIPPED (task_045, CHANGELOG)" in todo, "")
+    check("[codex] TODO.md re-files the three still-open guard-gated follow-ups",
+          "auth.json" in todo and "/learnings" in todo and "/zotero" in todo and
+          "/repos/*/.vibe-allow-codex" in todo, "")

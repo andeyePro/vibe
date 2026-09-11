@@ -53,6 +53,20 @@ def test_codex_container_plumbing():
         home = root / "home"; (home / ".codex").mkdir(parents=True)
         ws = git_ws(root, "workspace")
         marker = ws / ".vibe-allow-codex"
+        # task_045: _codex_opted_in now ALSO requires ws to be listed in the
+        # host-side registry ~/.vibe/codex-allow (marker alone is no longer
+        # enough). Register it here so the marker-only positive case below
+        # ("untracked marker present" -> mount present) still holds; every
+        # other case in this fixture already expects the mount ABSENT for a
+        # reason the registry doesn't change (no marker, wrong HOME, tracked
+        # marker, non-git dir), so a single fixture-wide registration is
+        # enough — task_045's own registry-specific gates (registry-only,
+        # symlinked/loose-mode registry, canonicalisation, ...) are covered
+        # separately in checks_17_delegation.py's test_codex_registry_gates.
+        codex_allow_file = home / ".vibe" / "codex-allow"
+        codex_allow_file.parent.mkdir(parents=True, exist_ok=True)
+        codex_allow_file.write_text(f"{ws}\n")
+        codex_allow_file.chmod(0o600)
         for label, extra, with_marker, expected in [
             ("untracked marker present", {}, True, True),
             ("no marker", {}, False, False),

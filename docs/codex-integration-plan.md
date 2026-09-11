@@ -124,6 +124,26 @@ relies on it.
   `codex_error_info`); `codex exec` is itself an in-process app-server client.
   `@openai/codex-sdk` 0.154.0 spawns the CLI and exchanges JSONL, it does not
   speak JSON-RPC.
+- F11 (tag, `core/src/tools/hook_names.rs`, `ext/skills/src/host_roots.rs`,
+  `sandboxing/src/manager.rs`; probed in this container 2026-09-11) Hook
+  names are already Claude-shaped: the shell tool `exec_command` reaches
+  hooks as `tool_name: "Bash"` with `tool_input.command` (a string);
+  `apply_patch` reaches them as `apply_patch` with aliases `Write`/`Edit`
+  and the raw patch text in `tool_input.command`; `write_stdin` fires no
+  PreToolUse of its own; MCP tools are `mcp__<server>__<tool>`; matchers
+  are exact pipe-separated names or a regex, missing means all. The admin
+  skill root is `<system layer dir>/skills` = `/etc/codex/skills` on Unix.
+  `features.<key> = false` in requirements PINS the feature (every set is
+  clamped), `rules.prefix_rules` accept only `forbidden`/`prompt`, an EMPTY
+  `[mcp_servers]` forbids every server, and there is no `deny_write`.
+  Codex's Linux sandbox is bubblewrap and needs unprivileged user
+  namespaces, which the vibe container does not have (`unshare -U` and
+  `codex sandbox -- echo` both fail here); `read-only`/`workspace-write`
+  therefore cannot execute any tool, and a Codex-led session must run
+  `danger-full-access` with the container, firewall, root-owned policy,
+  exec-policy rules and hooks as the enforcement, exactly as for Claude
+  Code. Enabling user namespaces for the container is a security-posture
+  change and is Martin-gated.
 - F10 `multi_agent` and `multi_agent_v2` are `stable, true` by default;
   issue openai/codex#26130 (sibling prompt envelopes leak with
   `fork_turns: none`) is still OPEN. `codex review` has no `--json` /

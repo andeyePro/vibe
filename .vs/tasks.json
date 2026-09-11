@@ -319,5 +319,14 @@
     "assigned_to": "evaluator",
     "mode": "rigorous",
     "last_modified": "2026-09-11T18:23:44Z"
+  },
+  {
+    "id": "task_045",
+    "description": "host-side Codex opt-in registry ~/.vibe/codex-allow required alongside the untracked marker; vibe codex allow|deny|list; deny stops the container",
+    "implementation_status": "complete",
+    "test_status": "pass",
+    "assigned_to": "evaluator",
+    "mode": "rigorous",
+    "last_modified": "2026-09-11T19:03:53Z"
   }
 ]
