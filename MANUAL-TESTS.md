@@ -1622,12 +1622,52 @@ cannot establish that the image actually ships the policy root-owned.
    Do **not** run `codex exec`, `codex review` or anything else that contacts a
    model as part of this test; the delegate paths are Test 54's job.
 
+**The Codex-led launch itself (`vibe --agent codex`, task_049).** Six further
+steps, run after step 4 above and on the same rebuilt container. This is the
+first time Codex leads a vibe session, so run it with the day free of anything
+else you care about.
+
+1. **Launch.** From the project folder on the Mac, with `.vibe-allow-codex`
+   present and `vibe codex allow` already run, type `vibe --agent codex`. The
+   launch header must show the usual `codex   : /home/node/.codex (rw, ChatGPT
+   login) @ …` mount line and, directly beneath it,
+   `agent   : codex (policy: /etc/codex, gate: codex-guard-liveness)`. One line
+   before the session starts must say that auto-resume and the stall watchdog
+   are Claude-only and point at `codex-supervisor` for unattended work.
+2. **The gate ran.** Before the TUI paints, the session must print
+   `codex-led session: guard chain proven, starting codex`, preceded by the
+   liveness gate's own `ok` lines. If you see `codex-led session refused: …`
+   instead, that is the test doing its job — record the failing check and stop.
+3. **Approval policy.** In the Codex TUI, confirm the session is running under
+   approval policy `never` and that the workspace is the project directory.
+   Do not change either; both come from `/etc/codex/config.toml`.
+4. **A denied write.** Ask Codex to write `/home/node/.codex/config.toml` (any
+   content). The managed hook must **deny** it, with the guard's own wording —
+   not an approval prompt, and not a silent success. Check the file's mtime
+   afterwards to be sure nothing landed.
+5. **Allowed and denied shell.** Ask Codex to run `git status`: allowed, and it
+   should show the working tree. Then ask it to run `git push --force`: denied
+   by the same argv-prefix rule that holds for a Claude Code session.
+6. **Back to Claude.** Exit the Codex session, then run plain `vibe` in the same
+   folder. Claude Code must lead again with no leftover state, no `agent   :`
+   header line, and the usual auto-resume behaviour available.
+
+**Negative, run second:** in a project that is NOT in `~/.vibe/codex-allow` (or
+with `VIBE_CODEX_PATH=off`), `vibe --agent codex` must exit 1 with
+`✗ --agent codex needs the Codex login mount: …` naming both the
+`.vibe-allow-codex` marker and `vibe codex allow`, **before** any Docker build
+or container creation — check with `docker ps -a` that nothing new appeared.
+
 **Pass:** `codex-guard-liveness` exits 0 in a freshly rebuilt container; the whole
 policy and guard chain is root-owned and not writable by `node`; the adapter
 denies each known-bad fixture in both modes, converts `ask` to `deny`, allows
 benign work, and exits 2 whenever it cannot do its job; the liveness gate exits 1
-for a fail-open stub and for a weakened requirements file; and the sudoers block
-is unchanged. Record any check you could not run rather than inferring it.
+for a fail-open stub and for a weakened requirements file; the sudoers block
+is unchanged; and a `vibe --agent codex` launch shows the agent header line,
+prints the `guard chain proven` line, denies the Codex login-dir write and the
+force-push, allows `git status`, hands the lead back to Claude on the next plain
+launch, and is refused before Docker when the registry line is missing. Record
+any check you could not run rather than inferring it.
 
 ---
 

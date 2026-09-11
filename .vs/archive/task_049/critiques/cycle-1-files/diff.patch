@@ -1,0 +1,515 @@
+diff --git a/.gitignore b/.gitignore
+index dd92ee6..046137d 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -48,3 +48,8 @@ site/.astro/
+ # widen the firewall of every container that clones it.
+ .vibe/domains
+ .vibe/review-slots
++
++# per-project lead-runtime choice (task_049) - always untracked, for the same
++# reason: a committed .vibe/agent would let a PR pick the runtime that leads
++# every container cloning this repo, so the launcher refuses a tracked one.
++.vibe/agent
+diff --git a/.vs/tasks.json b/.vs/tasks.json
+index 713da24..fd116f4 100644
+--- a/.vs/tasks.json
++++ b/.vs/tasks.json
+@@ -362,5 +362,14 @@
+     "cycle_2_tester_note": "Tester (sonnet) cycle 2: appended 11 test_codex_supervisor_c2_* functions covering every amended AC4/AC6/AC7 behaviour, driven through the real devcontainer/codex-supervisor.mjs (no scratch-tests, generator-report.md or diff.patch read). Cycle 1's smoke/checks_19_codex_supervisor.py (1019 lines) is untouched; the new tests live in a new smoke/checks_21_codex_supervisor_c2.py (563 lines, registered in smoke/runner.py) because appending in place would have crossed the smoke/ 1500-line-per-part convention. Covered: terminal exitReason state short-circuits run() to 'already complete: <reason>' exit 0 with the stub never spawned, and --new-run archives + starts fresh; the wall deadline firing while AWAITING a turn (turn/interrupt sent, exit 3, state written); a quota wait and a transient back-off each capped by the remaining wall budget (would-be wait still recorded in waits[], exit 3, no second turn/start); the turnFailures gate (--max-turn-failures 1 exits 1 on the first failure per AC5(v), then a resumed run already at the ceiling exits 3 without spawning) and every --max-* flag rejecting 0 with exit 2; an outstanding persisted waits[] entry honoured via the virtual clock before thread/resume+turn/start (or exit 3 without spawning if it would end past the deadline); and the resume-input split (rewritten prompt vs literal 'continue'). RESULT: 10 of 11 pass. The one failure is real, not a test bug: test_codex_supervisor_c2_resume_after_sigterm_sends_continue kills a turn mid-flight (turn/start sent, never completed -> persisted turns: []) and expects the resumed run to send 'continue' per the amended AC4 text ('the literal continue when turns is non-empty... the rewritten prompt only when no turn was ever started'); the actual implementation sent the rewritten prompt ('$vsss go c2') instead, because resumeThread()'s `if (resumed.turns.length) firstText = 'continue'` cannot distinguish 'a turn was attempted and killed before completing' from 'no turn was ever attempted' -- both leave turns: [] on disk with no other persisted marker. python3 code-check.py clean (22 files, shellcheck); python3 smoke-test.py < /dev/null: 4119 checks, 4118 passed, 1 failed, exit 1. No regressions: all cycle-1 checks_19 tests and every other smoke test still pass. Full output in .vs/cycle-2/test-output.log, 3-line summary in .vs/cycle-2/summary.md.",
+     "cycle_3_note": "Generator (sonnet) cycle 3: single targeted fix in devcontainer/codex-supervisor.mjs for the cycle-2 Tester finding, per the amended AC4 wording (turnsStarted). Added a persisted `turnsStarted` counter: present in freshState() (starts at 0), carried through adoptState()'s per-key copy loop (defaults to 0 for a legacy state file that predates the field), incremented and written atomically (this.persist(), the existing tmp+rename helper) at the very top of runTurn() \u2014 i.e. immediately before every `turn/start` send, including re-sends after a quota/transient/turn-failure wait, since the loop always re-enters runTurn() for those \u2014 and surfaced as a 'turns started' row in statusReport(). run()'s resume branch now decides firstText from `Number(resumed.turnsStarted || 0) >= 1` (literal 'continue') instead of `resumed.turns.length` (which cannot distinguish a turn killed mid-flight, leaving turns: [], from a thread that never got a turn/start at all). No other behaviour touched: argv, env, the initialize line, ordering/wait semantics, and state-file atomicity are all unchanged, and no test under smoke/ was edited. python3 code-check.py clean (22 files, shellcheck). python3 smoke-test.py < /dev/null: fully green, exit 0, 4120 check() lines all passing (0 failed), including every checks_19 and checks_21 test \u2014 test_codex_supervisor_c2_resume_after_sigterm_sends_continue (the cycle-2 failure) now passes. Report: .vs/cycle-3/generator-report.md. Diff: .vs/cycle-3/diff.patch.",
+     "cycle_4_tester_note": "Tester (sonnet) cycle 4: appended 6 test_codex_supervisor_c4_* functions to smoke/checks_21_codex_supervisor_c2.py (951 lines, still one part; checks_19 and the pre-existing checks_21 tests are untouched), registered in smoke/runner.py after the checks_21 block. Spec-only read (.vs/spec.md AC4/AC5/AC7 amended again after the reviewer's second pass); no cycle-4 generator-report.md, diff.patch or scratch-tests read. Covers: (a) three fresh scenarios -- quota failure, transient failure, and a plain failed turn, each BEFORE any completed turn -- asserting explicitly that the first turn/start is the rewritten prompt and the second is the literal 'continue' (checks_19's turn_failure_retries_same_text already covers the failed-turn path for its own purpose and is frozen/unedited; these three are independent cycle-4 confirmations across all three retry paths). (b) two never-answers-the-request tests using a new hang-stub variant (_write_hang_stub / _CODEX_STUB_HANG_SRC, self-locating like the base stub, logs receipt via the same IN/OUT log format then idles watching stdin for EOF instead of leaking a real sleeping process): turn/start never answered and thread/start never answered, each with a tiny --max-wall-seconds (5s, no --now-source) -- confirmed by reading codex-supervisor.mjs's boundedRequest() (lines ~512-521) that the real per-request setTimeout is computed as min(own limit, remaining wall budget) ONCE at request-issue time (not re-derived by polling a virtual clock afterward), so a small ceiling with instant stub replies on the earlier handshake steps naturally leaves only a few REAL seconds of budget by the time the hung request is sent. Both assert exit 3 naming max-wall-seconds (never exit 1) and that the stub log shows the request was received; only the turn/start case also asserts a state file exists, since thread/start had already succeeded and set this.state before turn/start hung, whereas the thread/start-hang case never obtains a threadId and the exit path only persists `if (this.state)` -- confirmed correct against the source (a spec-consistent design, not a bug) rather than assumed, after an initial draft of these two tests (using the c2 wall-deadline test's advance-the-clock-mid-run pattern) failed for the wrong reason and was corrected. (c) one hand-written-state-file resume test proving AC4/AC6's fresh-snapshot-wins merge rule: a persisted lastRateLimits.primary.resetsAt 1000s in the past is superseded by the stub's fresh account/rateLimits/read reply (resetsAt = now+900), so the recorded quota wait is 1020s (900+120 grace), not a stale/negative one. python3 code-check.py clean (22 files, shellcheck). python3 smoke-test.py < /dev/null: fully green, exit 0, 4155 check() lines all passing (0 failed) -- 30 new c4 checks across the 6 new functions, no regressions in any checks_19/checks_21/other smoke test. Full output: .vs/cycle-4/test-output.log. Summary: .vs/cycle-4/summary.md. Everything in the amended AC4/AC5/AC7 is covered; nothing left untested for this cycle's scope."
++  },
++  {
++    "id": "task_049",
++    "description": "vibe --agent codex: launcher flag/.vibe/agent/VIBE_AGENT, refused without the Codex login grant, launch_codex via root-owned codex-entry (liveness gate then exec codex), header line, Test 55; auto-resume stays Claude-only",
++    "implementation_status": "complete",
++    "test_status": "pending",
++    "assigned_to": "generator",
++    "mode": "rigorous",
++    "last_modified": "2026-09-11T22:33:22Z"
+   }
+ ]
+diff --git a/.vss/sessions/2026-09-11T17-11-32Z.md b/.vss/sessions/2026-09-11T17-11-32Z.md
+index 1cc6fb0..3c57333 100644
+--- a/.vss/sessions/2026-09-11T17-11-32Z.md
++++ b/.vss/sessions/2026-09-11T17-11-32Z.md
+@@ -313,3 +313,7 @@ Cycle 2 (opus): all five findings fixed; Tester (sonnet) added 11 tests in a new
+ **Generation record (fromClaude rewrite after Martin's answers, 2026-09-11 ~23:10 UTC):** consumed T36 done, T35 y (→ task_053), T38 answered (Pro GBP 89 already), T14 done, T13 answered; kept and renumbered: 1→T37, 2→T29, 3→T15, 4→T18, 5→T19, 6→T20, 7→T21, 8→T22, 9→T28, 10→T27, 11→T8, 12→T30, 13→T31, 14→T6, 15→T23, 16→T2, 17→T7, 18→T9, 19→T4, 20→T5, 21→T26, 22→T24. T37 and T29 reworded with answers to his questions.
+ Cycle 4 (sonnet): retry input exactly-once rule, wall deadline over outstanding requests, fresh snapshot merged on resume; cycle-1 assertion contradicting the amended AC5 flipped by the chair; Tester (sonnet) +6 tests; 4,155/0.
+ **Files touched**: `devcontainer/codex-supervisor.mjs` (new, ~950 lines), `devcontainer/Dockerfile`, `devcontainer/commands/vsss.md` (`VSSS-EXIT:` exit contract), `README.md`, `docs/codex-integration-plan.md` (D7), `smoke/checks_19_codex_supervisor.py` + `checks_21_codex_supervisor_c2.py` (new), `smoke/checks_20_linux_host.py` (split out of `checks_01`), `smoke/checks_01_launcher_basics_and_codecheck.py`, `smoke/runner.py`, `.vs/*`, `TODO.md`, `CHANGELOG.md`.
++**Commit**: 3307d4b — /vs cycle 4: pass — task_048. **Outcome**: success (4 cycles; Astra 2 calls, 8 findings fixed). Martin's answers consumed mid-iteration (T36 done, T35 y → task_053 queued, T38 answered: Pro GBP 89 already, T14 done, T13 answered); fromClaude now 22 items; memory martin-ai-account-entitlements updated.
++
++## Iter 7 — plan item 7: `vibe --agent codex` behind the liveness gate (task_049, `/vs` rigorous, opus Generator)
++**Plan**: launcher `--agent <claude|codex>` (flag > untracked `.vibe/agent` > `VIBE_AGENT` > claude), refused unless the Codex login mount is granted; `launch_codex` + backgrounded `launch_codex_plain` wrapper (EXIT traps still fire); root-owned `codex-entry` runs `codex-guard-liveness` then execs `codex`; header line; Test 55 steps; auto-resume stays Claude-only. Spec Critic on the draft: revise (4 BLOCKING folded in: backgrounded launch so traps fire; entry-script relocation flags for tests; checks_18 liveness fixture updated for the new path; explicit symlink/untracked rule for `.vibe/agent`).
+diff --git a/MANUAL-TESTS.md b/MANUAL-TESTS.md
+index cb2895b..57526fb 100644
+--- a/MANUAL-TESTS.md
++++ b/MANUAL-TESTS.md
+@@ -1622,12 +1622,52 @@ cannot establish that the image actually ships the policy root-owned.
+    Do **not** run `codex exec`, `codex review` or anything else that contacts a
+    model as part of this test; the delegate paths are Test 54's job.
+ 
++**The Codex-led launch itself (`vibe --agent codex`, task_049).** Six further
++steps, run after step 4 above and on the same rebuilt container. This is the
++first time Codex leads a vibe session, so run it with the day free of anything
++else you care about.
++
++1. **Launch.** From the project folder on the Mac, with `.vibe-allow-codex`
++   present and `vibe codex allow` already run, type `vibe --agent codex`. The
++   launch header must show the usual `codex   : /home/node/.codex (rw, ChatGPT
++   login) @ …` mount line and, directly beneath it,
++   `agent   : codex (policy: /etc/codex, gate: codex-guard-liveness)`. One line
++   before the session starts must say that auto-resume and the stall watchdog
++   are Claude-only and point at `codex-supervisor` for unattended work.
++2. **The gate ran.** Before the TUI paints, the session must print
++   `codex-led session: guard chain proven, starting codex`, preceded by the
++   liveness gate's own `ok` lines. If you see `codex-led session refused: …`
++   instead, that is the test doing its job — record the failing check and stop.
++3. **Approval policy.** In the Codex TUI, confirm the session is running under
++   approval policy `never` and that the workspace is the project directory.
++   Do not change either; both come from `/etc/codex/config.toml`.
++4. **A denied write.** Ask Codex to write `/home/node/.codex/config.toml` (any
++   content). The managed hook must **deny** it, with the guard's own wording —
++   not an approval prompt, and not a silent success. Check the file's mtime
++   afterwards to be sure nothing landed.
++5. **Allowed and denied shell.** Ask Codex to run `git status`: allowed, and it
++   should show the working tree. Then ask it to run `git push --force`: denied
++   by the same argv-prefix rule that holds for a Claude Code session.
++6. **Back to Claude.** Exit the Codex session, then run plain `vibe` in the same
++   folder. Claude Code must lead again with no leftover state, no `agent   :`
++   header line, and the usual auto-resume behaviour available.
++
++**Negative, run second:** in a project that is NOT in `~/.vibe/codex-allow` (or
++with `VIBE_CODEX_PATH=off`), `vibe --agent codex` must exit 1 with
++`✗ --agent codex needs the Codex login mount: …` naming both the
++`.vibe-allow-codex` marker and `vibe codex allow`, **before** any Docker build
++or container creation — check with `docker ps -a` that nothing new appeared.
++
+ **Pass:** `codex-guard-liveness` exits 0 in a freshly rebuilt container; the whole
+ policy and guard chain is root-owned and not writable by `node`; the adapter
+ denies each known-bad fixture in both modes, converts `ask` to `deny`, allows
+ benign work, and exits 2 whenever it cannot do its job; the liveness gate exits 1
+-for a fail-open stub and for a weakened requirements file; and the sudoers block
+-is unchanged. Record any check you could not run rather than inferring it.
++for a fail-open stub and for a weakened requirements file; the sudoers block
++is unchanged; and a `vibe --agent codex` launch shows the agent header line,
++prints the `guard chain proven` line, denies the Codex login-dir write and the
++force-push, allows `git status`, hands the lead back to Claude on the next plain
++launch, and is refused before Docker when the registry line is missing. Record
++any check you could not run rather than inferring it.
+ 
+ ---
+ 
+diff --git a/README.md b/README.md
+index 93b2ef2..8d76802 100644
+--- a/README.md
++++ b/README.md
+@@ -96,6 +96,7 @@ The installer clones vibe to `~/.vibe-src`, symlinks `~/bin/vibe`, and prompts f
+ - `vibe --resume <uuid>` — resume a specific past conversation
+ - `vibe --fable` — launch this session on Claude Fable 5 (billing-aware, see below)
+ - `vibe --model <id>` — launch this session on any Claude model id
++- `vibe --agent <claude|codex>` — choose the lead runtime for this launch (default `claude`; see Codex-led sessions below)
+ - `vibe learn --init` — one-time setup of the cross-org learning library
+ - `vibe repos add <owner/repo> [path]` — register a private repo this machine mounts read-only at `/repos/<name>` for every project that declares it (`vibe repos list` / `vibe repos remove [--purge]` manage it; see Shared repos above)
+ - `vibe codex allow|deny|list [path]` — host-side, manage the machine's Codex login-mount consent registry (`~/.vibe/codex-allow`); `deny` also offers to stop that project's container so the login is unmounted at once (see Codex setup below)
+@@ -191,6 +192,16 @@ Claude delegation has its own configurable billing route, independent of the sub
+ 
+ **The unattended supervisor.** A `$vsss` run is meant to outlive its own quota window, and Codex's CLI has no durable loop of its own, so the image ships one: `/usr/local/bin/codex-supervisor` (root-owned, like the guard chain). It speaks Codex's app-server protocol on stdio — newline-delimited JSON, not JSON-RPC 2.0 — starting ONE thread with `approvalPolicy: "never"` and `sandbox: "danger-full-access"` (the only mode that works here; the container has no user namespaces for Codex's own bubblewrap sandbox, and the real boundary is the container, firewall and hooks described above), then re-entering that same thread with the literal word `continue` until the run's exit report ends with `VSSS-EXIT: <reason>`. It runs the vendor binary as `codex app-server` with no `-c` flags and a four-variable environment, so the system requirements and managed hooks apply unaltered. The reason it uses the protocol rather than `codex exec` is that only the protocol carries `codexErrorInfo` and the rate-limit snapshot: a quota failure names itself and reports when the window resets, so the supervisor sleeps until then plus two minutes rather than guessing, backs off on transient failures, declines every approval request it is sent (nobody is there to answer), and writes its thread id and counters to `.vss/codex-supervisor.json` after every change — so a killed supervisor resumes the same thread instead of starting a new one. Ceilings on turns, resumes, quota waits, retries and wall time bound the whole thing, and `codex-supervisor status --state <file>` prints where a run got to. It is wired into a Codex-led launch by a later item; today it is shipped and tested offline against a stub app-server.
+ 
++#### Codex-led sessions (`vibe --agent codex`)
++
++`vibe --agent codex` launches the ordinary vibe container — same image, same firewall, same mounts, same single-repo PAT — but starts the Codex TUI instead of Claude Code. The choice can also be a per-project **untracked** `.vibe/agent` file containing one word (`claude` or `codex`), or `VIBE_AGENT` in `~/.vibe/config`; the flag beats the file, the file beats the config var, and the default is `claude`. A tracked, symlinked or malformed `.vibe/agent` is ignored with one `⚠` line and the next source is used — a committed one would let a pull request choose the lead runtime of every container that clones the repo.
++
++Three prerequisites, all of them the Codex login mount's existing gates: `~/.codex` must exist on the Mac (from `codex -c 'cli_auth_credentials_store="file"' login`), the project must carry the untracked `.vibe-allow-codex` marker, and the project must be listed in `~/.vibe/codex-allow` (`vibe codex allow`). Miss any of them and the launch is refused **before** Docker does anything, naming both switches — Codex without its login is not a degraded session, it is a session that cannot work.
++
++What is enforced once it starts: the launcher hands off to `/usr/local/bin/codex-entry`, a root-owned script that runs `codex-guard-liveness` first and refuses to start Codex at all unless the whole chain proves itself — every file root-owned and not group-writable, the requirements constraints active, every managed hook in its hardened form, four known-bad calls actually denied through the real adapter, a benign one still allowed, and the `codex --version` floor met. Only then does it `exec` the unmodified `codex` binary, with no model, approval or sandbox flag of its own: those belong to the root-owned policy in `/etc/codex`, which is the only place they can be audited. A refusal prints the failing check and exits; nothing is started.
++
++**Claude Code remains the default and the recommended lead.** Codex-led sessions are new, and one capability is deliberately missing from them: overnight auto-resume and the stall watchdog are Claude-only for now — the marker is written by the `/vsss` skill inside a Claude Code session and the relaunch it drives is `claude --continue`. A Codex launch says so in one line before it starts; for unattended Codex work, run `codex-supervisor` inside the session instead. Ending the session returns you to a plain `vibe` launch with Claude leading, with nothing to undo.
++
+ See **MANUAL-TESTS Test 54** for the post-relaunch end-to-end checks, and **Test 55** for the Codex system policy and liveness checks.
+ 
+ ### Second brain (optional)
+diff --git a/TODO.md b/TODO.md
+index f31029d..fc8f444 100644
+--- a/TODO.md
++++ b/TODO.md
+@@ -88,7 +88,7 @@ Two vibe-wide behaviour changes shipped and took effect on this rebuild — surf
+ 
+ - [ ] **Phase 1a follow-up (ii) from the security review (2026-09-10)** — the Fable/credits gate is `--consent-credits` in argv, i.e. the lead passing a flag after following `ask.md` prose; an autonomous `/vss` run can satisfy it itself. Consider a launcher- or hook-level gate for autonomous runs, and stop describing it as human consent until then (hook/settings edit: Martin-gated). Items (i) `codex=off` honoured by `/ask astra`, (iii) `claude -p` belt-and-braces flags, and (iv) the `~/.codex` mode warning closed by task_044 (2026-09-11, CHANGELOG).
+ 
+-- [ ] **Codex-in-vibe phase 1b: supervised `/vs`, `/vss`, `/vsss` with both command prefixes** — PLAN WRITTEN AND ASTRA-REVIEWED 2026-09-11: `docs/codex-integration-plan.md` (facts F1-F10 at tag `rust-v0.154.0`, decisions D1-D9, a 10-item queue; Astra's five BLOCKING findings folded in, reply verbatim in `.vss/sessions/2026-09-11T17-11-32Z.md`). The `/vsss` run on `astra` works the queue top-down, one commit and one Astra diff review per item: 2 helper hardening (`codex=off` also gates `/ask astra`; `claude -p` argv), 3 host-side `~/.vibe/codex-allow` registry, 4 `/etc/codex/requirements.toml` policy layer + guard adapter + liveness runner + tool inventory, 5 Codex skills `$vs/$vss/$vsss`, 6 supervisor as an app-server JSON-RPC client (exec `--json` drops `codex_error_info` and never emits rate limits, so a `codex exec` wrapper cannot classify quota), 7 `vibe --agent codex`, 8 Codex panel runner, 9 usage ledger + `/budget`, 10 Claude-side `$vs` fragment. Settled by source: the Codex TUI rejects unknown slash commands before submission, so `/vs` typed in Codex's own terminal has one route only, a custom prompt in the user's `~/.codex/prompts` (`/prompts:vs`) — Martin's call, posted to fromClaude. Original entry: phase 1a implementation is recorded in CHANGELOG (2026-09-10); its real-container acceptance run remains open above. Claude remains lead until the Codex-led trial passes. Other commands/agents/fragments remain deferred. Billing changes must stay configuration-only and consent-gated. Brief: `/brain2/andeye/vibe-ChatGPT.md` §10.
++- [ ] **Codex-in-vibe phase 1b: supervised `/vs`, `/vss`, `/vsss` with both command prefixes** — PLAN WRITTEN AND ASTRA-REVIEWED 2026-09-11: `docs/codex-integration-plan.md` (facts F1-F10 at tag `rust-v0.154.0`, decisions D1-D9, a 10-item queue; Astra's five BLOCKING findings folded in, reply verbatim in `.vss/sessions/2026-09-11T17-11-32Z.md`). The `/vsss` run on `astra` works the queue top-down, one commit and one Astra diff review per item: 2 helper hardening (`codex=off` also gates `/ask astra`; `claude -p` argv), 3 host-side `~/.vibe/codex-allow` registry, 4 `/etc/codex/requirements.toml` policy layer + guard adapter + liveness runner + tool inventory, 5 Codex skills `$vs/$vss/$vsss`, 6 supervisor as an app-server JSON-RPC client (exec `--json` drops `codex_error_info` and never emits rate limits, so a `codex exec` wrapper cannot classify quota), 7 `vibe --agent codex` (SHIPPED task_049 — code, gate and docs; **live trial is Martin's**: run the Codex-led block of MANUAL-TESTS Test 55 on real Docker and report what you see, since nothing in the suite has ever started a real Codex session), 8 Codex panel runner, 9 usage ledger + `/budget`, 10 Claude-side `$vs` fragment. Settled by source: the Codex TUI rejects unknown slash commands before submission, so `/vs` typed in Codex's own terminal has one route only, a custom prompt in the user's `~/.codex/prompts` (`/prompts:vs`) — Martin's call, posted to fromClaude. Original entry: phase 1a implementation is recorded in CHANGELOG (2026-09-10); its real-container acceptance run remains open above. Claude remains lead until the Codex-led trial passes. Other commands/agents/fragments remain deferred. Billing changes must stay configuration-only and consent-gated. Brief: `/brain2/andeye/vibe-ChatGPT.md` §10.
+ 
+ - [ ] **`/vs` guidance: "a control that cannot be observed failing is not a control"** (2026-09-08) — four fail-open test designs were caught in one session's adversarial review: a nonce sweep pointed at a directory an isolated panel never writes to (vacuous pass); an `rg -l 'A|B|C'` alternation that self-matches so a perfectly blind panel fails and the natural "fix" makes it pass forever; an A/B for Fable-reverts-to-Opus specified on an Opus session, where the reroute could not fire and the null read as evidence of absence; and a same-content two-directory A/B defeated by content-hash-keyed sticky routing. Each would have REPORTED SUCCESS while measuring nothing, and each was caught by the reviewer rather than the author. A fifth failure had the same disease in a different form: a PREMISE nobody checked (sticky routing was taken as applying to `claude -p`, and two rounds of design hardening were built on it, before its own author found it is documented only for requests carrying the API `fallbacks` parameter, which `claude -p` does not send). Add BOTH halves to `/vs`'s Tester/Spec-Critic guidance: **(a) state what result the test would produce if the mechanism under test were entirely absent** — that result must differ from a pass, and include a positive control where the mechanism is expected to fire; **(b) state what the test assumes**, and mark any assumption not verified against an artefact, so a design rule is never stacked on an unchecked premise. Working examples in `/brain2/andeye/vibe-ChatGPT-chat.md`.
+ 
+diff --git a/devcontainer/Dockerfile b/devcontainer/Dockerfile
+index e8e46f4..6ffd6ba 100644
+--- a/devcontainer/Dockerfile
++++ b/devcontainer/Dockerfile
+@@ -154,6 +154,11 @@ COPY --chown=root:root codex/ /etc/codex/
+ COPY --chown=root:root codex-supervisor.mjs /usr/local/bin/codex-supervisor
+ COPY --chown=root:root codex-guard-adapter.sh /usr/local/bin/codex-guard-adapter
+ COPY --chown=root:root codex-guard-liveness.sh /usr/local/bin/codex-guard-liveness
++# The Codex-led session entry point (task_049): it runs codex-guard-liveness
++# and refuses to start Codex unless that gate exits 0, so it is root-owned
++# for the same reason the gate is — `node` must not be able to rewrite the
++# file that decides whether `node` gets a Codex session.
++COPY --chown=root:root codex-entry.sh /usr/local/bin/codex-entry
+ # Curated Claude Code agents + slash commands. Staged under /usr/local/share
+ # because /home/node/.claude is a persistent Docker volume at runtime — files
+ # COPY'd there at build time would be shadowed. install-claude-extras.sh syncs
+@@ -176,7 +181,7 @@ USER root
+ # to a root script whose whole job is widening the firewall. The script body
+ # also never reads its own argv, so this is belt and braces — but the rule is
+ # what makes it true for every future version of the script.
+-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/refresh-extra-domains.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/guard-bash.sh /usr/local/bin/guard-fs.sh /usr/local/bin/install-claude-extras.sh /usr/local/bin/check-sp-current.sh /usr/local/bin/register-op-mcp.sh /usr/local/bin/vibe-credential-helper /usr/local/bin/vibe-copy /usr/local/bin/codex-guard-adapter /usr/local/bin/codex-guard-liveness /usr/local/bin/codex-supervisor && \
++RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/refresh-extra-domains.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/guard-bash.sh /usr/local/bin/guard-fs.sh /usr/local/bin/install-claude-extras.sh /usr/local/bin/check-sp-current.sh /usr/local/bin/register-op-mcp.sh /usr/local/bin/vibe-credential-helper /usr/local/bin/vibe-copy /usr/local/bin/codex-guard-adapter /usr/local/bin/codex-guard-liveness /usr/local/bin/codex-supervisor /usr/local/bin/codex-entry && \
+   chmod 0755 /etc/codex /etc/codex/hooks && \
+   chmod 0644 /etc/codex/requirements.toml /etc/codex/config.toml /etc/codex/hooks/hooks.json && \
+   chmod 0755 /etc/codex/skills /etc/codex/skills/vs /etc/codex/skills/vss /etc/codex/skills/vsss && \
+diff --git a/devcontainer/codex-guard-liveness.sh b/devcontainer/codex-guard-liveness.sh
+index 9b17f03..f9ce176 100755
+--- a/devcontainer/codex-guard-liveness.sh
++++ b/devcontainer/codex-guard-liveness.sh
+@@ -173,6 +173,10 @@ check_owned "$hooks_file"
+ check_owned "$adapter"
+ check_owned "$bin/guard-bash.sh"
+ check_owned "$bin/guard-fs.sh"
++# task_049: the Codex-led entry point is part of the chain too — it is
++# the file that consults THIS gate, so a `node`-writable copy of it could
++# simply not call it.
++check_owned "$bin/codex-entry"
+ # jq is a distribution binary, not part of the vibe chain: it is always
+ # root-owned even when --owner relocates the chain to a test user, so root is
+ # accepted for it in addition to --owner.
+diff --git a/devcontainer/install-claude-extras.sh b/devcontainer/install-claude-extras.sh
+index 9efd875..f12274d 100755
+--- a/devcontainer/install-claude-extras.sh
++++ b/devcontainer/install-claude-extras.sh
+@@ -404,6 +404,13 @@ ensure_project_gitignore() {
+     echo "# delete this entire block (won't be re-added once removed)."
+     echo ".claude/settings.local.json"
+     echo ".vibe/"
++    # Explicit despite the blanket .vibe/ line above: untrackedness is a
++    # SECURITY property for this file, not tidiness. A committed .vibe/agent
++    # would let a pull request choose the lead runtime of every container
++    # that clones the repo, so the launcher refuses a tracked one — and the
++    # entry is spelled out here so that intent survives an edit to the
++    # blanket line.
++    echo ".vibe/agent"
+     echo ".vibe-signals/"
+     echo ".vibe-allow-ssh"
+     echo ".vibe-allow-op"
+diff --git a/docs/codex-integration-plan.md b/docs/codex-integration-plan.md
+index 4c00584..a9729af 100644
+--- a/docs/codex-integration-plan.md
++++ b/docs/codex-integration-plan.md
+@@ -299,7 +299,7 @@ before conveniences; the host registry before any credential-bearing trial.
+ | 4 | Requirements policy layer + tool inventory + guard adapter + liveness runner: `/etc/codex/{requirements.toml,hooks/hooks.json}` baked root-owned; `codex-guard-adapter.sh`; `codex-guard-liveness.sh`; `docs/codex-tool-inventory.md` | `devcontainer/codex/*`, adapter, liveness, `Dockerfile`, new `smoke/checks_18_codex_runtime.py` | each requirements key present and shaped per F2; adapter feeds the real guards: a shell write into the Codex login dir denied, a `/learnings` write denied (ask becomes deny), a benign command allowed; liveness exits non-zero against a fail-open stub and against a mutable requirements file; hooks.json validates against F4; inventory covers every tool name the tag can enable | opus |
+ | 5 | Codex skills `$vs/$vss/$vsss` in the system skill root; fromClaude question on `/prompts:vs` | `devcontainer/codex/skills/*/SKILL.md`, `Dockerfile`, `checks_18`, `vibe-fromClaude.md` | SKILL.md frontmatter valid per F5; skill root path settled with a cited source (or an offline discovery probe) before the COPY lands | sonnet |
+ | 6 | Supervisor as app-server client: thread/turn/resume, prefix rewrite, quota wait on `resets_at`, persistence, ceilings, cancellation; offline against a stub `codex app-server` | `devcontainer/codex-supervisor.mjs`, `checks_18` | stub emits `codex_error_info: usage_limit_exceeded` with a `rate_limits` snapshot and the supervisor waits (fake clock) then `thread/resume`s the recorded id; plain failure means no resume; kill-and-restart resumes from the persisted state exactly once; ceilings stop; no network | opus |
+-| 7 | `vibe --agent codex`: launcher flag + `.vibe/agent` file; container entry runs the liveness gate then `codex`; header line; requires 3 and 4 | `vibe`, `devcontainer/codex-entry.sh`, `devcontainer.json`, README, MANUAL-TESTS (Test 55) | launcher fixtures: flag parsing, refusal without registry+marker, argv golden; entry script refuses on liveness failure | opus |
++| 7 | **DELIVERED, pending live trial (task_049).** `vibe --agent codex`: launcher flag + untracked `.vibe/agent` file + `VIBE_AGENT`; refusal before Docker when the login mount is not granted; `launch_codex` / `launch_codex_plain` (no heartbeat, marker or stall watchdog — auto-resume stays Claude-only); root-owned `/usr/local/bin/codex-entry` runs the liveness gate and refuses to start Codex on any failure; `agent   :` header line; `codex-entry` added to the gate's ownership list. `devcontainer.json` NOT changed — the entry script is reached through `devcontainer exec`, not `postStartCommand`. Live trial is MANUAL-TESTS Test 55's Codex-led block (Martin) | `vibe`, `devcontainer/codex-entry.sh`, `devcontainer/codex-guard-liveness.sh`, `devcontainer/Dockerfile`, `devcontainer/install-claude-extras.sh`, `.gitignore`, README, MANUAL-TESTS (Test 55) | launcher fixtures: flag parsing, refusal without registry+marker, argv golden; entry script refuses on liveness failure | opus |
+ | 8 | Codex panel runner `codex-panel.mjs` for `/vs --panel` on Codex: N tool-less processes, private cwds, nonce, verify/ship argv symmetric difference `{--ephemeral}` | `devcontainer/codex-panel.mjs`, `vs.md`, `checks_18` | argv pins; tool-disable set pinned; nonce assertion against stub rollouts; live proof recorded as Martin-gated | opus |
+ | 9 | Usage ledger: helper appends one JSONL line per call (runtime, model, billing, tokens, ISO time; no payload, no ids) to `.vibe/delegate-usage.jsonl` (untracked); `/budget` reports `claude -p` and Astra separately | `vibe-delegate.mjs`, `budget.md`, `.gitignore` block, `checks_17` | record shape asserted; ledger contains no payload bytes; failed calls log `error` rows | sonnet |
+ | 10 | `$vs`, `$vss`, `$vsss` in Claude Code: CLAUDE.md fragment synced by `install-claude-extras.sh`; command files gain a one-line "alias form" note | `devcontainer/claude-md/dollar-prefix.md`, `vs.md`, `vss.md`, `vsss.md`, `checks_13` | fragment synced by the installer test; each command file names its `$` form | sonnet |
+@@ -319,7 +319,9 @@ for the prefix rewrite table. Items 9 and 10 are independent of everything.
+   vibe never modifies the user's own Codex configuration; the `/prompts:vs`
+   route in D3 is his call.
+ - The live blind-panel nonce proof (N Astra calls) and the first Codex-led
+-  trial (item 7 on real Docker).
++  trial (item 7 on real Docker): item 7's code, gate and docs shipped in
++  task_049, but nothing in it has ever started a real Codex session — that is
++  MANUAL-TESTS Test 55's Codex-led block, and it is Martin's to run.
+ 
+ ## 5. Astra call budget
+ 
+diff --git a/smoke/checks_18_codex_runtime.py b/smoke/checks_18_codex_runtime.py
+index a52ce74..d874085 100644
+--- a/smoke/checks_18_codex_runtime.py
++++ b/smoke/checks_18_codex_runtime.py
+@@ -26,6 +26,7 @@ CONFIG_TOML = REPO / "devcontainer" / "codex" / "config.toml"
+ HOOKS_JSON = REPO / "devcontainer" / "codex" / "hooks" / "hooks.json"
+ ADAPTER = REPO / "devcontainer" / "codex-guard-adapter.sh"
+ LIVENESS = REPO / "devcontainer" / "codex-guard-liveness.sh"
++CODEX_ENTRY = REPO / "devcontainer" / "codex-entry.sh"
+ CODEX_TOOL_INVENTORY_MD = REPO / "docs" / "codex-tool-inventory.md"
+ 
+ # ── task_047: $vs/$vss/$vsss Codex skills + vibe-delegate role dispatch ──────
+@@ -112,8 +113,11 @@ def _assert_adapter_allow(r, label: str) -> None:
+ 
+ def _codex_liveness_fixture(tmp: Path) -> tuple[Path, Path]:
+     """A fixture policy root + bin dir: verbatim copies of the real
+-    requirements.toml, hooks.json, adapter and both guards, owned by
+-    whichever user this test process runs as."""
++    requirements.toml, hooks.json, adapter, both guards and the Codex-led
++    entry point, owned by whichever user this test process runs as.
++
++    codex-entry joined the liveness gate's ownership list in task_049, so it
++    has to be here too or every liveness check below fails on its absence."""
+     root = tmp / "etc-codex"
+     (root / "hooks").mkdir(parents=True)
+     bin_dir = tmp / "usr-local-bin"
+@@ -132,6 +136,7 @@ def _codex_liveness_fixture(tmp: Path) -> tuple[Path, Path]:
+         ("codex-guard-adapter", ADAPTER),
+         ("guard-bash.sh", GUARD_BASH),
+         ("guard-fs.sh", GUARD_FS),
++        ("codex-entry", CODEX_ENTRY),
+     ):
+         dst = bin_dir / name
+         dst.write_text(src.read_text())
+diff --git a/vibe b/vibe
+index 8c94d1a..92d196a 100755
+--- a/vibe
++++ b/vibe
+@@ -13,6 +13,9 @@
+ #   vibe --model <id>        # launch on a specific Claude model id
+ #   vibe --profile <name>    # build/use a language-profile child image
+ #                            # (shipped: none, python; --profile none disables)
++#   vibe --agent <claude|codex>  # choose the lead runtime for this launch
++#                            # (default claude; codex needs the Codex login
++#                            # mount — see the Codex setup section of README)
+ #   vibe --list              # list available projects
+ #   vibe --version           # print the vibe version and exit
+ #   vibe --help              # show this help
+@@ -3729,6 +3732,7 @@ parse_vibe_args() {
+   PROJECT_ARG=""
+   MODEL_ARG=""
+   PROFILE_ARG=""
++  AGENT_ARG=""
+   while [ "$#" -gt 0 ]; do
+     case "$1" in
+       --rebuild) REBUILD=true; shift ;;
+@@ -3750,6 +3754,20 @@ parse_vibe_args() {
+         fi
+         PROFILE_ARG="$1"; shift
+         ;;
++      --agent)
++        shift
++        # Validated HERE, in the parser, so `vibe --agent bogus` dies on the
++        # usage line before workspace resolution, preflight or any Docker
++        # call — _agent_resolve's job is precedence, not argv hygiene.
++        case "${1:-}" in
++          claude|codex) ;;
++          *)
++            echo "--agent needs 'claude' or 'codex', got: '${1:-}'" >&2
++            exit 1
++            ;;
++        esac
++        AGENT_ARG="$1"; shift
++        ;;
+       --resume)
+         RESUME=true; shift
+         if is_uuid "${1:-}"; then
+@@ -4074,6 +4092,97 @@ profile_suggestion() {
+   return 0
+ }
+ 
++# ── Lead runtime selection (task_049, `vibe --agent`) ────────────────────────
++# Which CLI leads the session inside the container: Claude Code (the default,
++# and still the recommended lead) or Codex. One container, one firewall, one
++# set of mounts and one single-repo PAT either way — the only difference is
++# which binary `devcontainer exec` starts and which backstops have to prove
++# themselves first. Defined here, ABOVE the VIBE_SOURCE_ONLY guard, so
++# smoke-test.py can unit-test it via _source_vibe_call.
++
++# _agent_resolve <flag_value> <workspace>
++# Echoes `claude` or `codex`. Precedence, first hit wins:
++#   <flag_value> (--agent, already validated by parse_vibe_args)
++#   > <workspace>/.vibe/agent
++#   > VIBE_AGENT (from ~/.vibe/config)
++#   > claude
++#
++# The FILE rung carries the same untrackedness requirement as .vibe/domains,
++# plus an explicit symlink test on both the file and the .vibe directory
++# itself. Why stricter here than for a profile name: the agent choice decides
++# which runtime's guard chain has to hold, so a committed .vibe/agent would
++# let a pull request choose the lead runtime of every container that clones
++# the repo, and a symlink would let a path outside the project (or outside
++# the work tree git can vouch for) do the same. Every rejection prints ONE
++# `⚠ .vibe/agent ignored: <reason>` line and falls through to the next rung —
++# never fails the launch, and never silently.
++_agent_resolve() {
++  local flag="${1:-}" ws="${2:-}" f="" raw="" value="" reason=""
++  if [ -n "$flag" ]; then
++    case "$flag" in
++      claude|codex)
++        printf '%s' "$flag"
++        return 0
++        ;;
++      *)
++        echo "  ⚠ --agent ignored: '${flag}' is neither 'claude' nor 'codex'." >&2
++        ;;
++    esac
++  fi
++  f="$ws/.vibe/agent"
++  # -e OR -L: a dangling symlink is not -e, and it is exactly the case that
++  # must be reported rather than skipped in silence.
++  if [ -n "$ws" ] && { [ -e "$f" ] || [ -L "$f" ]; }; then
++    if [ -L "$f" ]; then
++      reason="it is a symlink (the lead-runtime choice must be a real file inside the project)"
++    elif [ -L "$ws/.vibe" ]; then
++      reason=".vibe is a symlink (the lead-runtime choice must be a real file inside the project)"
++    elif [ ! -f "$f" ]; then
++      reason="it is not a regular file"
++    elif [ "$(git -C "$ws" rev-parse --is-inside-work-tree 2>/dev/null)" != "true" ]; then
++      reason="this workspace isn't a verifiable git work tree (use VIBE_AGENT in ~/.vibe/config instead)"
++    elif git -C "$ws" ls-files --error-unmatch ':(icase).vibe/agent' >/dev/null 2>&1; then
++      reason="it is COMMITTED to this repo (the lead runtime must be a local, untracked choice)"
++    elif [ -z "$(git -C "$ws" ls-files -o -- ':(icase).vibe/agent' 2>/dev/null)" ]; then
++      reason="it could not be positively verified as an untracked file (fail closed)"
++    else
++      # First non-blank, non-comment line, CR- and whitespace-trimmed.
++      while IFS= read -r raw || [ -n "$raw" ]; do
++        raw="${raw//$'\r'/}"
++        raw="${raw#"${raw%%[![:space:]]*}"}"
++        raw="${raw%"${raw##*[![:space:]]}"}"
++        case "$raw" in
++          ""|"#"*) continue ;;
++        esac
++        value="$raw"
++        break
++      done < "$f"
++      case "$value" in
++        claude|codex)
++          printf '%s' "$value"
++          return 0
++          ;;
++        *)
++          reason="its first content line is '${value}', not 'claude' or 'codex'"
++          ;;
++      esac
++    fi
++    echo "  ⚠ .vibe/agent ignored: ${reason}" >&2
++  fi
++  case "${VIBE_AGENT:-}" in
++    "") : ;;
++    claude|codex)
++      printf '%s' "${VIBE_AGENT}"
++      return 0
++      ;;
++    *)
++      echo "  ⚠ VIBE_AGENT ignored: '${VIBE_AGENT}' is neither 'claude' nor 'codex'." >&2
++      ;;
++  esac
++  printf '%s' "claude"
++  return 0
++}
++
+ # Allow smoke-test.py to source this file for pure unit-testing of helpers
+ # without running the main launch logic below.
+ [ "${VIBE_SOURCE_ONLY:-}" = "1" ] && return 0 2>/dev/null
+@@ -4312,6 +4421,22 @@ if [ -z "$PROFILE" ] && [ "$PROFILE_ARG" != "none" ]; then
+   profile_suggestion "$WORKSPACE" "$HOME/.vibe"
+ fi
+ 
++# ── Lead runtime resolution + Codex gate (task_049) ──────────────────────────
++# Resolved here for the same reason the profile is: BEFORE any docker call, so
++# a refused Codex launch costs nothing and leaves nothing behind. VIBE_AGENT
++# arrives as a plain (unexported) shell variable from the sourced CONFIG_FILE.
++LEAD_AGENT="$(_agent_resolve "$AGENT_ARG" "$WORKSPACE")"
++# A Codex-led session without the Codex login is useless: the TUI starts, the
++# first request fails on authentication, and the user is left guessing which
++# of the two switches they missed. So refuse here, naming BOTH halves of the
++# task_045 gate — the in-project marker (the request) and the host-side
++# registry (the consent). VIBE_CODEX_PATH=off lands here too, which is
++# correct: it is the machine-wide "never mount the ChatGPT login" switch.
++if [ "$LEAD_AGENT" = "codex" ] && [ -z "$(_codex_desired_source "$WORKSPACE" 2>/dev/null)" ]; then
++  echo "  ✗ --agent codex needs the Codex login mount: create the untracked .vibe-allow-codex marker in the project and run 'vibe codex allow' on the Mac, then relaunch" >&2
++  exit 1
++fi
++
+ # ── Build the image if missing, stale, or --rebuild ──────────────────────────
+ # Auto-rebuild when any file in $DEVCONTAINER_DIR is newer than $IMAGE_MARKER
+ # (touched after each successful build) — EXCLUDING profiles/ (base_is_stale
+@@ -4712,8 +4837,14 @@ if [ -n "$_zotero_banner" ] && [ -d "$_zotero_banner" ]; then
+   echo "     zotero  : /zotero (ro) @ ${_zotero_banner}"
+ fi
+ _codex_banner="$(_codex_desired_source "$WORKSPACE" 2>/dev/null)"
++# The agent line (task_049) sits immediately under the mount line it depends
++# on — a Codex-led launch is refused above unless the mount is granted, so it
++# can never appear without one. Spelt `[ … ] || echo` rather than an if/fi
++# block deliberately: one statement, so `set -e` cannot trip on the false
++# branch, and no extra `fi` between the header line and the mode warning.
+ if [ -n "$_codex_banner" ]; then
+   echo "     codex   : /home/node/.codex (rw, ChatGPT login) @ ${_codex_banner} (opted in via .vibe-allow-codex)"
++  [ "$LEAD_AGENT" != "codex" ] || echo "     agent   : codex (policy: /etc/codex, gate: codex-guard-liveness)"
+   _codex_dir_mode_warning "$_codex_banner"
+ fi
+ # OpenProject MCP status (task_020): only announce when this project opted in AND
+@@ -4926,6 +5057,25 @@ launch_claude() {
+     /bin/bash --noprofile --norc -c "exec env SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 claude ${1:+$1 }${CLAUDE_MODEL_ARGS:+$CLAUDE_MODEL_ARGS }--permission-mode bypassPermissions${2:+ '$2'}"
+ }
+ 
++# launch_codex — the Codex-led sibling of launch_claude (task_049). Same
++# `exec devcontainer exec` shape, same container, same override config; the
++# only difference is what it starts. Deliberately takes NO arguments and
++# passes NO model, approval or sandbox flag: every one of those is owned by
++# the root-owned system policy at /etc/codex, and a launcher-side flag would
++# be a second source of truth that nothing inside the container could audit.
++# /usr/local/bin/codex-entry runs codex-guard-liveness first and refuses to
++# start Codex at all unless the whole guard chain proves itself — so the
++# decision is made inside the container, by a root-owned file, at the moment
++# the session starts, not by this host-side script minutes earlier.
++# Backgrounded from launch_codex_plain below, exactly like launch_claude, so
++# the `exec` here makes $! the real devcontainer-exec client PID.
++launch_codex() {
++  exec devcontainer exec \
++    --workspace-folder "$WORKSPACE" \
++    --override-config "$OVERRIDE_CONFIG" \
++    /bin/bash --noprofile --norc -c "exec env SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 CODEX_HOME=/home/node/.codex /usr/local/bin/codex-entry"
++}
++
+ # VIBE_SESSION_REF — a session-start reference file, used solely for its
+ # mtime: the stall watchdog only arms its kill for a marker that was
+ # (re)written AFTER this launcher session began (portable `[ marker -nt ref ]`
+@@ -4991,6 +5141,33 @@ launch_claude_supervised() {
+   return 0
+ }
+ 
++# launch_codex_plain — launch_claude_supervised's shape minus the supervision.
++# The heartbeat, the auto-resume marker and vibe_stall_watchdog are all
++# Claude-only for now: the marker is written by the /vsss skill inside a
++# Claude Code session and the relaunch it drives is `claude --continue`, so
++# arming any of it around a Codex session would watch a file nothing writes
++# and relaunch a runtime nobody asked for. The unattended Codex path is
++# codex-supervisor, invoked INSIDE the session — hence the one line printed
++# before launch, so nobody discovers the difference the hard way.
++#
++# What is kept is the reason launch_claude is backgrounded-and-waited at all:
++# `exec devcontainer exec` in the foreground would replace this shell and
++# vibe's EXIT traps (copy-watcher teardown, lock release, terminal restore)
++# would never fire. Same FD 9 stdin re-attachment, for the same reason — an
++# async command gets /dev/null as stdin, and a TUI on a non-TTY stdin dies.
++# The exit status lands in CLAUDE_EXIT because that is the single variable
++# the launcher's final `exit` statement propagates.
++launch_codex_plain() {
++  local codex_pid rc=0
++  echo "  codex-led session: auto-resume and the stall watchdog are Claude-only; run codex-supervisor inside the session for unattended work"
++  launch_codex <&9 &
++  codex_pid=$!
++  wait "$codex_pid" || rc=$?
++  CLAUDE_EXIT="$rc"
++  restore_terminal || true
++  return 0
++}
++
+ # FD 9 = the launcher's real stdin (the terminal), duplicated once so every
+ # supervised launch can hand it to the backgrounded claude explicitly (see
+ # the HOTFIX note inside launch_claude_supervised). Guarded: nothing to dup
+@@ -5001,6 +5178,14 @@ exec 9<&0
+ # (Ctrl-C during the auto-resume countdown, errexit, etc.).
+ vibe_exit_hook_add 'restore_terminal || true'
+ 
++# A Codex-led launch ends here: no supervised claude run, and no auto-resume
++# loop below it (both are Claude-only, as the pre-launch line says). The EXIT
++# traps still fire on this path, and CLAUDE_EXIT still carries the status.
++if [ "$LEAD_AGENT" = "codex" ]; then
++  launch_codex_plain
++  exit "$CLAUDE_EXIT"
++fi
++
+ launch_claude_supervised "$CLAUDE_RESUME_ARGS" "" "$VIBE_SESSION_REF"
+ 
+ # ── Auto-resume loop ──────────────────────────────────────────────────────────

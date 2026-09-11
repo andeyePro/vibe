@@ -154,6 +154,11 @@ COPY --chown=root:root codex/ /etc/codex/
 COPY --chown=root:root codex-supervisor.mjs /usr/local/bin/codex-supervisor
 COPY --chown=root:root codex-guard-adapter.sh /usr/local/bin/codex-guard-adapter
 COPY --chown=root:root codex-guard-liveness.sh /usr/local/bin/codex-guard-liveness
+# The Codex-led session entry point (task_049): it runs codex-guard-liveness
+# and refuses to start Codex unless that gate exits 0, so it is root-owned
+# for the same reason the gate is — `node` must not be able to rewrite the
+# file that decides whether `node` gets a Codex session.
+COPY --chown=root:root codex-entry.sh /usr/local/bin/codex-entry
 # Curated Claude Code agents + slash commands. Staged under /usr/local/share
 # because /home/node/.claude is a persistent Docker volume at runtime — files
 # COPY'd there at build time would be shadowed. install-claude-extras.sh syncs
@@ -176,7 +181,7 @@ USER root
 # to a root script whose whole job is widening the firewall. The script body
 # also never reads its own argv, so this is belt and braces — but the rule is
 # what makes it true for every future version of the script.
-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/refresh-extra-domains.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/guard-bash.sh /usr/local/bin/guard-fs.sh /usr/local/bin/install-claude-extras.sh /usr/local/bin/check-sp-current.sh /usr/local/bin/register-op-mcp.sh /usr/local/bin/vibe-credential-helper /usr/local/bin/vibe-copy /usr/local/bin/codex-guard-adapter /usr/local/bin/codex-guard-liveness /usr/local/bin/codex-supervisor && \
+RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/refresh-extra-domains.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/guard-bash.sh /usr/local/bin/guard-fs.sh /usr/local/bin/install-claude-extras.sh /usr/local/bin/check-sp-current.sh /usr/local/bin/register-op-mcp.sh /usr/local/bin/vibe-credential-helper /usr/local/bin/vibe-copy /usr/local/bin/codex-guard-adapter /usr/local/bin/codex-guard-liveness /usr/local/bin/codex-supervisor /usr/local/bin/codex-entry && \
   chmod 0755 /etc/codex /etc/codex/hooks && \
   chmod 0644 /etc/codex/requirements.toml /etc/codex/config.toml /etc/codex/hooks/hooks.json && \
   chmod 0755 /etc/codex/skills /etc/codex/skills/vs /etc/codex/skills/vss /etc/codex/skills/vsss && \

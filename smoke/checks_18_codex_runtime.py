@@ -26,6 +26,7 @@ CONFIG_TOML = REPO / "devcontainer" / "codex" / "config.toml"
 HOOKS_JSON = REPO / "devcontainer" / "codex" / "hooks" / "hooks.json"
 ADAPTER = REPO / "devcontainer" / "codex-guard-adapter.sh"
 LIVENESS = REPO / "devcontainer" / "codex-guard-liveness.sh"
+CODEX_ENTRY = REPO / "devcontainer" / "codex-entry.sh"
 CODEX_TOOL_INVENTORY_MD = REPO / "docs" / "codex-tool-inventory.md"
 
 # ── task_047: $vs/$vss/$vsss Codex skills + vibe-delegate role dispatch ──────
@@ -112,8 +113,11 @@ def _assert_adapter_allow(r, label: str) -> None:
 
 def _codex_liveness_fixture(tmp: Path) -> tuple[Path, Path]:
     """A fixture policy root + bin dir: verbatim copies of the real
-    requirements.toml, hooks.json, adapter and both guards, owned by
-    whichever user this test process runs as."""
+    requirements.toml, hooks.json, adapter, both guards and the Codex-led
+    entry point, owned by whichever user this test process runs as.
+
+    codex-entry joined the liveness gate's ownership list in task_049, so it
+    has to be here too or every liveness check below fails on its absence."""
     root = tmp / "etc-codex"
     (root / "hooks").mkdir(parents=True)
     bin_dir = tmp / "usr-local-bin"
@@ -132,6 +136,7 @@ def _codex_liveness_fixture(tmp: Path) -> tuple[Path, Path]:
         ("codex-guard-adapter", ADAPTER),
         ("guard-bash.sh", GUARD_BASH),
         ("guard-fs.sh", GUARD_FS),
+        ("codex-entry", CODEX_ENTRY),
     ):
         dst = bin_dir / name
         dst.write_text(src.read_text())

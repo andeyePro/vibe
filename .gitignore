@@ -48,3 +48,8 @@ site/.astro/
 # widen the firewall of every container that clones it.
 .vibe/domains
 .vibe/review-slots
+
+# per-project lead-runtime choice (task_049) - always untracked, for the same
+# reason: a committed .vibe/agent would let a PR pick the runtime that leads
+# every container cloning this repo, so the launcher refuses a tracked one.
+.vibe/agent

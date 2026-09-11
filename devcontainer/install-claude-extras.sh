@@ -404,6 +404,13 @@ ensure_project_gitignore() {
     echo "# delete this entire block (won't be re-added once removed)."
     echo ".claude/settings.local.json"
     echo ".vibe/"
+    # Explicit despite the blanket .vibe/ line above: untrackedness is a
+    # SECURITY property for this file, not tidiness. A committed .vibe/agent
+    # would let a pull request choose the lead runtime of every container
+    # that clones the repo, so the launcher refuses a tracked one — and the
+    # entry is spelled out here so that intent survives an edit to the
+    # blanket line.
+    echo ".vibe/agent"
     echo ".vibe-signals/"
     echo ".vibe-allow-ssh"
     echo ".vibe-allow-op"

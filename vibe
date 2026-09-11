@@ -13,6 +13,9 @@
 #   vibe --model <id>        # launch on a specific Claude model id
 #   vibe --profile <name>    # build/use a language-profile child image
 #                            # (shipped: none, python; --profile none disables)
+#   vibe --agent <claude|codex>  # choose the lead runtime for this launch
+#                            # (default claude; codex needs the Codex login
+#                            # mount — see the Codex setup section of README)
 #   vibe --list              # list available projects
 #   vibe --version           # print the vibe version and exit
 #   vibe --help              # show this help
@@ -3729,6 +3732,7 @@ parse_vibe_args() {
   PROJECT_ARG=""
   MODEL_ARG=""
   PROFILE_ARG=""
+  AGENT_ARG=""
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --rebuild) REBUILD=true; shift ;;
@@ -3749,6 +3753,20 @@ parse_vibe_args() {
           exit 1
         fi
         PROFILE_ARG="$1"; shift
+        ;;
+      --agent)
+        shift
+        # Validated HERE, in the parser, so `vibe --agent bogus` dies on the
+        # usage line before workspace resolution, preflight or any Docker
+        # call — _agent_resolve's job is precedence, not argv hygiene.
+        case "${1:-}" in
+          claude|codex) ;;
+          *)
+            echo "--agent needs 'claude' or 'codex', got: '${1:-}'" >&2
+            exit 1
+            ;;
+        esac
+        AGENT_ARG="$1"; shift
         ;;
       --resume)
         RESUME=true; shift
@@ -4074,6 +4092,97 @@ profile_suggestion() {
   return 0
 }
 
+# ── Lead runtime selection (task_049, `vibe --agent`) ────────────────────────
+# Which CLI leads the session inside the container: Claude Code (the default,
+# and still the recommended lead) or Codex. One container, one firewall, one
+# set of mounts and one single-repo PAT either way — the only difference is
+# which binary `devcontainer exec` starts and which backstops have to prove
+# themselves first. Defined here, ABOVE the VIBE_SOURCE_ONLY guard, so
+# smoke-test.py can unit-test it via _source_vibe_call.
+
+# _agent_resolve <flag_value> <workspace>
+# Echoes `claude` or `codex`. Precedence, first hit wins:
+#   <flag_value> (--agent, already validated by parse_vibe_args)
+#   > <workspace>/.vibe/agent
+#   > VIBE_AGENT (from ~/.vibe/config)
+#   > claude
+#
+# The FILE rung carries the same untrackedness requirement as .vibe/domains,
+# plus an explicit symlink test on both the file and the .vibe directory
+# itself. Why stricter here than for a profile name: the agent choice decides
+# which runtime's guard chain has to hold, so a committed .vibe/agent would
+# let a pull request choose the lead runtime of every container that clones
+# the repo, and a symlink would let a path outside the project (or outside
+# the work tree git can vouch for) do the same. Every rejection prints ONE
+# `⚠ .vibe/agent ignored: <reason>` line and falls through to the next rung —
+# never fails the launch, and never silently.
+_agent_resolve() {
+  local flag="${1:-}" ws="${2:-}" f="" raw="" value="" reason=""
+  if [ -n "$flag" ]; then
+    case "$flag" in
+      claude|codex)
+        printf '%s' "$flag"
+        return 0
+        ;;
+      *)
+        echo "  ⚠ --agent ignored: '${flag}' is neither 'claude' nor 'codex'." >&2
+        ;;
+    esac
+  fi
+  f="$ws/.vibe/agent"
+  # -e OR -L: a dangling symlink is not -e, and it is exactly the case that
+  # must be reported rather than skipped in silence.
+  if [ -n "$ws" ] && { [ -e "$f" ] || [ -L "$f" ]; }; then
+    if [ -L "$f" ]; then
+      reason="it is a symlink (the lead-runtime choice must be a real file inside the project)"
+    elif [ -L "$ws/.vibe" ]; then
+      reason=".vibe is a symlink (the lead-runtime choice must be a real file inside the project)"
+    elif [ ! -f "$f" ]; then
+      reason="it is not a regular file"
+    elif [ "$(git -C "$ws" rev-parse --is-inside-work-tree 2>/dev/null)" != "true" ]; then
+      reason="this workspace isn't a verifiable git work tree (use VIBE_AGENT in ~/.vibe/config instead)"
+    elif git -C "$ws" ls-files --error-unmatch ':(icase).vibe/agent' >/dev/null 2>&1; then
+      reason="it is COMMITTED to this repo (the lead runtime must be a local, untracked choice)"
+    elif [ -z "$(git -C "$ws" ls-files -o -- ':(icase).vibe/agent' 2>/dev/null)" ]; then
+      reason="it could not be positively verified as an untracked file (fail closed)"
+    else
+      # First non-blank, non-comment line, CR- and whitespace-trimmed.
+      while IFS= read -r raw || [ -n "$raw" ]; do
+        raw="${raw//$'\r'/}"
+        raw="${raw#"${raw%%[![:space:]]*}"}"
+        raw="${raw%"${raw##*[![:space:]]}"}"
+        case "$raw" in
+          ""|"#"*) continue ;;
+        esac
+        value="$raw"
+        break
+      done < "$f"
+      case "$value" in
+        claude|codex)
+          printf '%s' "$value"
+          return 0
+          ;;
+        *)
+          reason="its first content line is '${value}', not 'claude' or 'codex'"
+          ;;
+      esac
+    fi
+    echo "  ⚠ .vibe/agent ignored: ${reason}" >&2
+  fi
+  case "${VIBE_AGENT:-}" in
+    "") : ;;
+    claude|codex)
+      printf '%s' "${VIBE_AGENT}"
+      return 0
+      ;;
+    *)
+      echo "  ⚠ VIBE_AGENT ignored: '${VIBE_AGENT}' is neither 'claude' nor 'codex'." >&2
+      ;;
+  esac
+  printf '%s' "claude"
+  return 0
+}
+
 # Allow smoke-test.py to source this file for pure unit-testing of helpers
 # without running the main launch logic below.
 [ "${VIBE_SOURCE_ONLY:-}" = "1" ] && return 0 2>/dev/null
@@ -4310,6 +4419,22 @@ export VIBE_IMAGE_TAG="${PROFILE:+$IMAGE_TAG}"
 # must stay silent, not just fall through to the base image).
 if [ -z "$PROFILE" ] && [ "$PROFILE_ARG" != "none" ]; then
   profile_suggestion "$WORKSPACE" "$HOME/.vibe"
+fi
+
+# ── Lead runtime resolution + Codex gate (task_049) ──────────────────────────
+# Resolved here for the same reason the profile is: BEFORE any docker call, so
+# a refused Codex launch costs nothing and leaves nothing behind. VIBE_AGENT
+# arrives as a plain (unexported) shell variable from the sourced CONFIG_FILE.
+LEAD_AGENT="$(_agent_resolve "$AGENT_ARG" "$WORKSPACE")"
+# A Codex-led session without the Codex login is useless: the TUI starts, the
+# first request fails on authentication, and the user is left guessing which
+# of the two switches they missed. So refuse here, naming BOTH halves of the
+# task_045 gate — the in-project marker (the request) and the host-side
+# registry (the consent). VIBE_CODEX_PATH=off lands here too, which is
+# correct: it is the machine-wide "never mount the ChatGPT login" switch.
+if [ "$LEAD_AGENT" = "codex" ] && [ -z "$(_codex_desired_source "$WORKSPACE" 2>/dev/null)" ]; then
+  echo "  ✗ --agent codex needs the Codex login mount: create the untracked .vibe-allow-codex marker in the project and run 'vibe codex allow' on the Mac, then relaunch" >&2
+  exit 1
 fi
 
 # ── Build the image if missing, stale, or --rebuild ──────────────────────────
@@ -4712,8 +4837,14 @@ if [ -n "$_zotero_banner" ] && [ -d "$_zotero_banner" ]; then
   echo "     zotero  : /zotero (ro) @ ${_zotero_banner}"
 fi
 _codex_banner="$(_codex_desired_source "$WORKSPACE" 2>/dev/null)"
+# The agent line (task_049) sits immediately under the mount line it depends
+# on — a Codex-led launch is refused above unless the mount is granted, so it
+# can never appear without one. Spelt `[ … ] || echo` rather than an if/fi
+# block deliberately: one statement, so `set -e` cannot trip on the false
+# branch, and no extra `fi` between the header line and the mode warning.
 if [ -n "$_codex_banner" ]; then
   echo "     codex   : /home/node/.codex (rw, ChatGPT login) @ ${_codex_banner} (opted in via .vibe-allow-codex)"
+  [ "$LEAD_AGENT" != "codex" ] || echo "     agent   : codex (policy: /etc/codex, gate: codex-guard-liveness)"
   _codex_dir_mode_warning "$_codex_banner"
 fi
 # OpenProject MCP status (task_020): only announce when this project opted in AND
@@ -4926,6 +5057,31 @@ launch_claude() {
     /bin/bash --noprofile --norc -c "exec env SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 claude ${1:+$1 }${CLAUDE_MODEL_ARGS:+$CLAUDE_MODEL_ARGS }--permission-mode bypassPermissions${2:+ '$2'}"
 }
 
+# launch_codex — the Codex-led sibling of launch_claude (task_049). Same
+# `exec devcontainer exec` shape, same container, same override config; the
+# only difference is what it starts. Deliberately takes NO arguments and
+# passes NO model, approval or sandbox flag: every one of those is owned by
+# the root-owned system policy at /etc/codex, and a launcher-side flag would
+# be a second source of truth that nothing inside the container could audit.
+# /usr/local/bin/codex-entry runs codex-guard-liveness first and refuses to
+# start Codex at all unless the whole guard chain proves itself — so the
+# decision is made inside the container, by a root-owned file, at the moment
+# the session starts, not by this host-side script minutes earlier.
+# Backgrounded from launch_codex_plain below, exactly like launch_claude, so
+# the `exec` here makes $! the real devcontainer-exec client PID.
+# Astra's review (2026-09-11): `--noprofile --norc` does NOT stop a
+# non-interactive Bash from sourcing an inherited BASH_ENV, which could exec
+# Codex before codex-entry ever runs — and unsetting it inside codex-entry is
+# too late for that script's own Bash start-up. So BOTH interpreters are
+# started through the absolute `/usr/bin/env -u BASH_ENV -u ENV`, and the
+# inner one also pins PATH; nothing inherited can run first.
+launch_codex() {
+  exec devcontainer exec \
+    --workspace-folder "$WORKSPACE" \
+    --override-config "$OVERRIDE_CONFIG" \
+    /usr/bin/env -u BASH_ENV -u ENV /bin/bash --noprofile --norc -c "exec /usr/bin/env -u BASH_ENV -u ENV PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/share/npm-global/bin SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 CODEX_HOME=/home/node/.codex /usr/local/bin/codex-entry"
+}
+
 # VIBE_SESSION_REF — a session-start reference file, used solely for its
 # mtime: the stall watchdog only arms its kill for a marker that was
 # (re)written AFTER this launcher session began (portable `[ marker -nt ref ]`
@@ -4991,6 +5147,33 @@ launch_claude_supervised() {
   return 0
 }
 
+# launch_codex_plain — launch_claude_supervised's shape minus the supervision.
+# The heartbeat, the auto-resume marker and vibe_stall_watchdog are all
+# Claude-only for now: the marker is written by the /vsss skill inside a
+# Claude Code session and the relaunch it drives is `claude --continue`, so
+# arming any of it around a Codex session would watch a file nothing writes
+# and relaunch a runtime nobody asked for. The unattended Codex path is
+# codex-supervisor, invoked INSIDE the session — hence the one line printed
+# before launch, so nobody discovers the difference the hard way.
+#
+# What is kept is the reason launch_claude is backgrounded-and-waited at all:
+# `exec devcontainer exec` in the foreground would replace this shell and
+# vibe's EXIT traps (copy-watcher teardown, lock release, terminal restore)
+# would never fire. Same FD 9 stdin re-attachment, for the same reason — an
+# async command gets /dev/null as stdin, and a TUI on a non-TTY stdin dies.
+# The exit status lands in CLAUDE_EXIT because that is the single variable
+# the launcher's final `exit` statement propagates.
+launch_codex_plain() {
+  local codex_pid rc=0
+  echo "  codex-led session: auto-resume and the stall watchdog are Claude-only; run codex-supervisor inside the session for unattended work"
+  launch_codex <&9 &
+  codex_pid=$!
+  wait "$codex_pid" || rc=$?
+  CLAUDE_EXIT="$rc"
+  restore_terminal || true
+  return 0
+}
+
 # FD 9 = the launcher's real stdin (the terminal), duplicated once so every
 # supervised launch can hand it to the backgrounded claude explicitly (see
 # the HOTFIX note inside launch_claude_supervised). Guarded: nothing to dup
@@ -5000,6 +5183,14 @@ exec 9<&0
 # task_031 belt-and-braces: also restore the terminal on vibe's own exit path
 # (Ctrl-C during the auto-resume countdown, errexit, etc.).
 vibe_exit_hook_add 'restore_terminal || true'
+
+# A Codex-led launch ends here: no supervised claude run, and no auto-resume
+# loop below it (both are Claude-only, as the pre-launch line says). The EXIT
+# traps still fire on this path, and CLAUDE_EXIT still carries the status.
+if [ "$LEAD_AGENT" = "codex" ]; then
+  launch_codex_plain
+  exit "$CLAUDE_EXIT"
+fi
 
 launch_claude_supervised "$CLAUDE_RESUME_ARGS" "" "$VIBE_SESSION_REF"
 

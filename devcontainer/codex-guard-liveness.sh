@@ -173,6 +173,10 @@ check_owned "$hooks_file"
 check_owned "$adapter"
 check_owned "$bin/guard-bash.sh"
 check_owned "$bin/guard-fs.sh"
+# task_049: the Codex-led entry point is part of the chain too — it is
+# the file that consults THIS gate, so a `node`-writable copy of it could
+# simply not call it.
+check_owned "$bin/codex-entry"
 # jq is a distribution binary, not part of the vibe chain: it is always
 # root-owned even when --owner relocates the chain to a test user, so root is
 # accepted for it in addition to --owner.

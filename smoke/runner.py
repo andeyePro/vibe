@@ -20,6 +20,7 @@ from smoke.checks_18_codex_runtime import *
 from smoke.checks_19_codex_supervisor import *
 from smoke.checks_20_linux_host import *
 from smoke.checks_21_codex_supervisor_c2 import *
+from smoke.checks_22_codex_agent import *
 
 
 def main() -> int:
@@ -758,6 +759,28 @@ def main() -> int:
     test_codex_supervisor_c4_wall_deadline_turn_start_never_answers()
     test_codex_supervisor_c4_wall_deadline_thread_start_never_answers()
     test_codex_supervisor_c4_stale_lastratelimits_merged_with_fresh_snapshot()
+
+    # task_049: `vibe --agent codex` — launcher flag/.vibe/agent/VIBE_AGENT
+    # precedence, the login-mount gate, launch_codex/launch_codex_plain via
+    # root-owned codex-entry.sh behind codex-guard-liveness, the agent header
+    # line, and docs (README/MANUAL-TESTS/plan). Appended after the task_048
+    # cycle-4 block above, which is frozen and unchanged.
+    test_agent_resolve_precedence_matrix()
+    test_agent_parser_errors_no_devcontainer_call()
+    test_agent_help_mentions_flag()
+    test_agent_codex_argv_granted()
+    test_agent_codex_argv_denied()
+    test_agent_claude_argv_default_and_flag()
+    test_launch_codex_source_shape()
+    test_launch_claude_unchanged_vs_head()
+    test_codex_entry_offline_refusals_and_success()
+    test_codex_entry_no_dangerously_no_dash_c()
+    test_dockerfile_codex_entry_copy_and_chmod()
+    test_liveness_checks_codex_entry_ownership()
+    test_gitignore_and_managed_block_have_vibe_agent()
+    test_readme_codex_led_sessions_section()
+    test_manual_tests_55_codex_led_block()
+    test_codex_integration_plan_item7_delivered()
 
     print()
     if FAILURES:

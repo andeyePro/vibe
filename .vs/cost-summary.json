@@ -1,17 +1,17 @@
 {
-  "task_id": "task_048",
-  "cycles": 4,
-  "subagent_calls": 8,
-  "total_tokens": 1334149,
+  "task_id": "task_049",
+  "cycles": 1,
+  "subagent_calls": 3,
+  "total_tokens": 606709,
   "by_role": {
-    "spec_critic": 142288,
-    "generator": 682235,
-    "tester": 509626
+    "spec_critic": 142166,
+    "generator": 206282,
+    "tester": 258261
   },
   "by_model": {
-    "sonnet": 965977,
-    "opus": 368172
+    "sonnet": 400427,
+    "opus": 206282
   },
-  "wall_time_ms": 5707798,
-  "astra_review_tokens": 41829
+  "wall_time_ms": 2234194,
+  "astra_review_tokens": 32429
 }

@@ -586,3 +586,9 @@ Astra re-review (22,323 tokens): FAIL, three more findings — failure retries r
 
 ## task_048 — cycle 4 — PASS (2026-09-11T22:33:05Z)
 Generator: sonnet; Tester: sonnet (+6 tests, 30 assertions); 4,155/0. Evaluator: pass — every Astra finding from both passes fixed with tests; the last three are chair-evaluated and ride in the next Astra payload.
+
+## task_049 — cycle 1 — PASS (2026-09-11T23:16:47Z)
+Generator: opus (1 cycle of 2). Tester: sonnet (new `checks_22_codex_agent.py`, 16 functions). Evaluator: Fable 5.1 chair.
+Spec Critic (draft): revise, 4 BLOCKING folded in before dispatch (backgrounded launch so EXIT traps fire; entry-script relocation flags for tests; checks_18 liveness fixture updated; explicit untracked/symlink rule for `.vibe/agent`).
+Verified: `_agent_resolve` precedence matrix and file-rung failure modes, parser refusals with zero devcontainer calls, exact `launch_codex` argv (granted), AC2 refusal (denied), unchanged `launch_claude` (vs HEAD), `launch_codex_plain` shape, `codex-entry` offline refusals/success, Dockerfile/liveness/.gitignore/docs; code-check clean (23 files); full suite green.
+Astra diff reviews (gpt-6-astra, 32,429 tokens over two calls): FAIL then FAIL — (1) `--bin` could point the entry at a writable directory's gate → the gate is authenticated (same owner as the entry, not group/other-writable); (2) inherited BASH_ENV could run before `codex-entry` → both Bash interpreters start through the absolute `/usr/bin/env -u BASH_ENV -u ENV` with PATH pinned; (3, re-review) ownership does not authenticate identity (a symlink to /usr/bin/true passes) → the gate must be a regular file in the entry's own directory. All three fixed with tests; the third is chair-evaluated (D9's one re-review spent) and rides in the next Astra payload. Astra's WARNING on the supervisor residuals was answered with the full functions; no further finding on them.
