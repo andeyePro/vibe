@@ -1,0 +1,156 @@
+diff --git a/.vs/tasks.json b/.vs/tasks.json
+index b401442..ad1e4bd 100644
+--- a/.vs/tasks.json
++++ b/.vs/tasks.json
+@@ -328,5 +328,14 @@
+     "assigned_to": "evaluator",
+     "mode": "rigorous",
+     "last_modified": "2026-09-11T19:03:53Z"
++  },
++  {
++    "id": "task_046",
++    "description": "Codex system policy layer (/etc/codex requirements+config+managed hooks), guard adapter (ask->deny, patch paths), liveness gate, tool inventory; new checks_18",
++    "implementation_status": "complete",
++    "test_status": "pending",
++    "assigned_to": "generator",
++    "mode": "rigorous",
++    "last_modified": "2026-09-11T19:30:00Z"
+   }
+ ]
+diff --git a/.vss/sessions/2026-09-11T17-11-32Z.md b/.vss/sessions/2026-09-11T17-11-32Z.md
+index f2ddb7d..6a56fd8 100644
+--- a/.vss/sessions/2026-09-11T17-11-32Z.md
++++ b/.vss/sessions/2026-09-11T17-11-32Z.md
+@@ -141,3 +141,7 @@ Spec Critic (on the draft): revise (8 concerns, 5 BLOCKING) — all folded in be
+ 
+ **Applied**: `_codex_canonical_path` refuses a newline anywhere in the argument before canonicalising, captures `pwd -P` behind a sentinel so only its own trailing newline is stripped, and refuses any newline left over; `_codex_allow`/`_codex_deny` exit 1 on that refusal. This is the one re-review D9 allows; the residual fix is chair-evaluated (tests added) and the next iteration's Astra payload carries the hunk for confirmation rather than a third call now.
+ **Files touched**: `vibe` (+~340), `README.md`, `MANUAL-TESTS.md`, `TODO.md`, `smoke/checks_17_delegation.py`, `smoke/checks_01_launcher_basics_and_codecheck.py` (fixture only), `smoke/runner.py`, `.vs/*`, `CHANGELOG.md`.
++**Commit**: b27e2b9 — /vs cycle 1: pass — task_045 host-side Codex opt-in registry. **Outcome**: success — code-check clean, full suite green (3,530 checks). fromClaude gains item 34 (T36: run `vibe codex allow` in the vibe project folder on the Mac before the next launch, or the Codex mount is refused).
++
++## Iter 4 — plan item 4: Codex system policy layer, guard adapter, liveness gate, tool inventory (task_046, `/vs` rigorous, opus Generator)
++**Plan**: `/etc/codex/{requirements.toml,config.toml,hooks/hooks.json}` baked root-owned; `codex-guard-adapter.sh` feeds Codex's Claude-shaped PreToolUse JSON to the unchanged guards (ask→deny; patch paths parsed and checked one by one); `codex-guard-liveness.sh` refuses to start Codex unless the chain is root-owned and denies known-bad fixtures; `docs/codex-tool-inventory.md`; new `smoke/checks_18_codex_runtime.py`. Spec Critic on the draft: revise (10 concerns, 4 BLOCKING: pin `unified_exec=false` so `write_stdin` disappears; prefix rules are prefix-only, mirror guard-bash exactly; liveness parses non-comment lines; drop `--force-with-lease` and `sudo`) — all folded in.
+diff --git a/MANUAL-TESTS.md b/MANUAL-TESTS.md
+index 860b2e5..cb2895b 100644
+--- a/MANUAL-TESTS.md
++++ b/MANUAL-TESTS.md
+@@ -1569,6 +1569,68 @@ Record unobserved refresh/paid-route checks explicitly, never infer success.
+ 
+ ---
+ 
++### Test 55: Codex system policy, guard adapter and liveness gate (phase 1b)
++
++Run on branch `astra` before merging its PR. These checks need a real rebuilt
++container: the smoke tests exercise copies of the chain in a temp directory and
++cannot establish that the image actually ships the policy root-owned.
++
++0. **Step 0 — the liveness gate after a rebuild.** Run `vibe --rebuild`, then in
++   the container run `codex-guard-liveness`. It must exit 0 (`echo $?`) and print
++   one `ok` line per check — ownership of each file in the chain, the
++   requirements constraints, each managed hook command, the four deny fixtures,
++   the benign allow fixture, and the `codex --version` floor. Then run
++   `ls -la /etc/codex /etc/codex/hooks`: every entry must be `root root`, the two
++   directories `drwxr-xr-x`, and `requirements.toml`, `config.toml` and
++   `hooks/hooks.json` `-rw-r--r--`. Confirm the same for
++   `ls -la /usr/local/bin/codex-guard-adapter /usr/local/bin/codex-guard-liveness`
++   (`-rwxr-xr-x root root`). As `node`, confirm the policy is genuinely
++   unwritable: `touch /etc/codex/requirements.toml` must fail with
++   `Permission denied`, and `sudo -l` must still list exactly the three existing
++   commands (`init-firewall.sh`, `refresh-extra-domains.sh` with its empty
++   argument list, and `avahi-daemon`) and nothing that reaches `/etc/codex` or
++   `/usr/local/bin`.
++1. **The adapter on real tool JSON.** Still in the container, pipe a `Bash`-shaped
++   payload naming a redirect into the Codex login directory into
++   `codex-guard-adapter bash` and confirm it exits 2 with the guard's own wording
++   on stderr. Repeat with an `apply_patch`-shaped payload whose
++   `*** Update File:` line names `/home/node/.codex/config.toml` through
++   `codex-guard-adapter patch`: expect exit 0 and a single JSON object whose
++   `permissionDecision` is `deny`. Repeat with a payload writing under
++   `/learnings` in each mode: both must come back `deny`, **not** `ask` — that
++   rewrite is the whole point, since nobody is at the prompt. Finally pipe
++   `git status` through `codex-guard-adapter bash`: exit 0 and no output.
++2. **Fail-closed, checked deliberately.** `codex-guard-adapter wat` with any
++   payload must exit 2; so must an empty stdin, and so must a copy of the adapter
++   placed in a directory with no guards beside it (`cp
++   /usr/local/bin/codex-guard-adapter /tmp/probe/ && printf '{}' |
++   /tmp/probe/codex-guard-adapter bash`). Remember why this matters: Codex fails
++   *open* on a hook it cannot spawn, so an adapter that exits 0 when confused
++   would be indistinguishable from a working one.
++3. **The liveness gate actually gates.** Copy the chain into a scratch directory
++   (`/tmp/chain/etc` and `/tmp/chain/bin`), replace the adapter copy with a
++   two-line `exit 0` stub, and run
++   `codex-guard-liveness --root /tmp/chain/etc --bin /tmp/chain/bin --owner node`.
++   It must exit 1 with `LIVENESS FAILED: fixture-deny …` — a fail-open stub must
++   never pass. Comment out `allow_managed_hooks_only` in the copied
++   `requirements.toml` and re-run: exit 1 naming the requirements check. Restore
++   the real adapter copy and re-run: exit 0. Delete the scratch directory.
++4. **Codex reads the policy.** With the login mounted (Test 54 step 1), confirm
++   `codex --version` is 0.154.0 or later and that Codex starts without a
++   requirements parse error — a malformed `[rules]` or `mcp_servers` entry fails
++   config load outright, so a clean start is the evidence that the file parsed.
++   Do **not** run `codex exec`, `codex review` or anything else that contacts a
++   model as part of this test; the delegate paths are Test 54's job.
++
++**Pass:** `codex-guard-liveness` exits 0 in a freshly rebuilt container; the whole
++policy and guard chain is root-owned and not writable by `node`; the adapter
++denies each known-bad fixture in both modes, converts `ask` to `deny`, allows
++benign work, and exits 2 whenever it cannot do its job; the liveness gate exits 1
++for a fail-open stub and for a weakened requirements file; and the sudoers block
++is unchanged. Record any check you could not run rather than inferring it.
++
++---
++
+ ## Test Summary
+ 
+ After completing all tests, check:
+diff --git a/README.md b/README.md
+index 70b442c..4261b0b 100644
+--- a/README.md
++++ b/README.md
+@@ -185,7 +185,9 @@ These use the existing per-project firewall mechanism, never the shipped allowli
+ 
+ Claude delegation has its own configurable billing route, independent of the subscription-only lead. In `~/.vibe/config`, set `VIBE_CLAUDE_P_CONFIG_DIR` to an existing container-visible Claude config directory if needed. Default `VIBE_CLAUDE_P_BILLING=subscription` pins `forceLoginMethod: claudeai`. A future `credits` or `api` route requires `VIBE_CLAUDE_P_SETTINGS` pointing at a container-visible settings JSON file; Claude itself reads that file and any `apiKeyHelper` (which is a command Claude runs, so treat that file with the care you give any config that can execute something). This takes configuration changes only, always requires explicit per-task credit consent, and adds no keys to vibe config, source or environment plumbing. Use the vendor's documented billing controls for the selected pool; vibe cannot invent or guarantee a future subscription/credit product. `/ask` reports usage per call; adding those calls to `/budget` is still follow-up work.
+ 
+-See **MANUAL-TESTS Test 54** for the post-relaunch end-to-end checks.
++**Codex-led sessions: how the backstops hold.** Everything above is Claude Code leading and Codex answering a single question. When Codex itself leads a session, the same two backstops have to hold with a different runtime behind them, and they do — through a root-owned system policy baked into the image at `/etc/codex/`, not through anything in your Mac's `~/.codex`. `requirements.toml` there is a set of constraints, not defaults: it clamps whatever a user or project config asks for, pins the unhooked tool surfaces off (unified exec's `write_stdin`, the JS REPL, sub-agents, apps), forbids every MCP server with an empty allowlist, disables hosted web search — which the firewall cannot see, since it is fetched by OpenAI rather than by this container — and declares `/etc/codex/hooks` the only place hooks may come from, so a project cannot add or disable one. Those managed hooks run `codex-guard-adapter`, which feeds Codex's `PreToolUse` JSON into the **same, unmodified** `guard-bash.sh` and `guard-fs.sh` the Claude Code hooks use (Codex's hook names are already Claude-shaped: `Bash` with `tool_input.command`, `apply_patch` aliased `Write`/`Edit`), and turns every `ask` into a `deny` — an unattended session has nobody to answer a prompt, so the safe answer is no. Stated plainly: **Codex's own sandbox cannot run here.** It is bubblewrap, it needs unprivileged user namespaces, and the container does not have them, so a mode below `danger-full-access` would fail every tool call rather than contain it. What holds instead is the container boundary, the firewall, root ownership the `node` user cannot touch, an argv-prefix exec policy for force-pushes, and those hooks — exactly the set that already holds a Claude Code session under `--permission-mode bypassPermissions`. Because Codex fails *open* when a hook binary cannot be spawned, `codex-guard-liveness` exists to refuse that silence: it checks every file in the chain for root ownership and permissions, then pushes real known-bad calls through the real adapter and requires real denials before a Codex-led session is considered safe to start. `docs/codex-tool-inventory.md` lists every Codex tool at the pinned version against the layer that mediates it, including the two rows that are honestly marked unmediated.
++
++See **MANUAL-TESTS Test 54** for the post-relaunch end-to-end checks, and **Test 55** for the Codex system policy and liveness checks.
+ 
+ ### Second brain (optional)
+ 
+diff --git a/devcontainer/Dockerfile b/devcontainer/Dockerfile
+index 549c943..9ab0d9a 100644
+--- a/devcontainer/Dockerfile
++++ b/devcontainer/Dockerfile
+@@ -132,6 +132,21 @@ COPY register-op-mcp.sh /usr/local/bin/
+ COPY credential-helper.sh /usr/local/bin/vibe-credential-helper
+ COPY vibe-copy.sh /usr/local/bin/vibe-copy
+ COPY vibe-delegate.mjs /usr/local/bin/vibe-delegate
++# Codex system policy layer (task_046). /etc/codex is Codex's system config
++# layer on Unix, so requirements.toml constrains every user/project config,
++# config.toml supplies the defaults, and hooks/hooks.json is the managed hook
++# directory the requirements pin as the ONLY source of hooks. All three, plus
++# the adapter that feeds Codex's PreToolUse JSON to the unchanged
++# guard-bash.sh / guard-fs.sh and the liveness gate that proves the chain
++# denies, are explicitly --chown=root:root: the session runs as `node`, and
++# the whole point is that `node` cannot edit the thing that polices `node`.
++# (--chown is needed even here, inside the USER node region, because COPY
++# would otherwise keep the build context's ownership.) The sudoers block
++# below still grants `node` exactly three root commands, none of which can
++# write these paths.
++COPY --chown=root:root codex/ /etc/codex/
++COPY --chown=root:root codex-guard-adapter.sh /usr/local/bin/codex-guard-adapter
++COPY --chown=root:root codex-guard-liveness.sh /usr/local/bin/codex-guard-liveness
+ # Curated Claude Code agents + slash commands. Staged under /usr/local/share
+ # because /home/node/.claude is a persistent Docker volume at runtime — files
+ # COPY'd there at build time would be shadowed. install-claude-extras.sh syncs
+@@ -154,7 +169,9 @@ USER root
+ # to a root script whose whole job is widening the firewall. The script body
+ # also never reads its own argv, so this is belt and braces — but the rule is
+ # what makes it true for every future version of the script.
+-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/refresh-extra-domains.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/guard-bash.sh /usr/local/bin/guard-fs.sh /usr/local/bin/install-claude-extras.sh /usr/local/bin/check-sp-current.sh /usr/local/bin/register-op-mcp.sh /usr/local/bin/vibe-credential-helper /usr/local/bin/vibe-copy && \
++RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/refresh-extra-domains.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/guard-bash.sh /usr/local/bin/guard-fs.sh /usr/local/bin/install-claude-extras.sh /usr/local/bin/check-sp-current.sh /usr/local/bin/register-op-mcp.sh /usr/local/bin/vibe-credential-helper /usr/local/bin/vibe-copy /usr/local/bin/codex-guard-adapter /usr/local/bin/codex-guard-liveness && \
++  chmod 0755 /etc/codex /etc/codex/hooks && \
++  chmod 0644 /etc/codex/requirements.toml /etc/codex/config.toml /etc/codex/hooks/hooks.json && \
+   echo "node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/node-firewall && \
+   echo "Defaults!/usr/local/bin/init-firewall.sh env_reset" >> /etc/sudoers.d/node-firewall && \
+   echo 'node ALL=(root) NOPASSWD: /usr/local/bin/refresh-extra-domains.sh ""' >> /etc/sudoers.d/node-firewall && \

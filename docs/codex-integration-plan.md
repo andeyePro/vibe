@@ -155,14 +155,19 @@ relies on it.
 - D1 **Vibe's Codex policy is a REQUIREMENTS file in the image, never in the
   Mac's `~/.codex`.** `/etc/codex/requirements.toml` (root-owned, baked by
   the Dockerfile) carries the constraints, not defaults (F1, F2):
-  `allowed_approval_policies = ["never"]`, `allowed_sandbox_modes`
-  (workspace-write and read-only, never danger-full-access),
-  `allowed_web_search_modes = ["disabled"]`, `features` pinning
-  `multi_agent`/`multi_agent_v2`/`apps` off, an empty `mcp_servers`
-  allowlist, `permissions.filesystem.deny_read` for the login dir and the
-  token files, `allow_managed_hooks_only = true`, `hooks.managed_dir =
-  "/etc/codex/hooks"`, and `rules` exec policy denying the same write idioms
-  the guards deny. Each key's enforcement is verified per key against the
+  `allowed_approval_policies = ["never"]`, `allowed_sandbox_modes =
+  ["read-only", "danger-full-access"]` (F11: Codex's own sandbox cannot run
+  in the container, so `workspace-write` would fail closed at exec time
+  while reading as protection; `read-only` stays for the tool-less delegate
+  runs), `allowed_web_search_modes = ["disabled"]`, `features` pinning
+  `multi_agent`/`multi_agent_v2`/`apps`/`js_repl`/`unified_exec` off
+  (`unified_exec` off removes `write_stdin`, which has no PreToolUse of its
+  own), an empty `mcp_servers` allowlist, `allow_managed_hooks_only = true`,
+  `hooks.managed_dir = "/etc/codex/hooks"`, and `rules` prefix rules
+  mirroring exactly what `guard-bash.sh` blocks (force-push), stated as a
+  prefix-only second layer. `deny_read` is deliberately omitted: the sandbox
+  that would enforce it is unavailable, so listing it would read as
+  protection that is not there. Each key's enforcement is verified per key against the
   tag's `TryFrom<ConfigRequirementsWithSources>` before it is relied on. A
   node-user session cannot edit, shadow or relax any of it. The Mac's
   `~/.codex` keeps only what Codex itself writes there (auth, sessions).

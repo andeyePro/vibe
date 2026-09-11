@@ -16,6 +16,7 @@ from smoke.checks_14_profiles import *
 from smoke.checks_15_extra_domains import *
 from smoke.checks_16_domain_refresh import *
 from smoke.checks_17_delegation import *
+from smoke.checks_18_codex_runtime import *
 
 
 
@@ -668,6 +669,22 @@ def main() -> int:
     test_codex_list_subcommand()
     test_codex_usage_and_help()
     test_codex_allow_docs()
+
+    # task_046: Codex system policy layer, guard adapter, liveness gate
+    test_codex_requirements_toml_ac1()
+    test_codex_requirements_toml_citations()
+    test_codex_config_toml_ac2()
+    test_codex_hooks_json_ac3()
+    test_codex_adapter_bash_mode()
+    test_codex_adapter_patch_mode()
+    test_codex_adapter_failure_modes()
+    test_codex_liveness_success()
+    test_codex_liveness_ownership_failure()
+    test_codex_liveness_failopen_stub_is_caught()
+    test_codex_liveness_requirements_failure()
+    test_codex_liveness_version_floor()
+    test_codex_dockerfile_ac6()
+    test_codex_docs_ac7_ac8()
 
     print()
     if FAILURES:

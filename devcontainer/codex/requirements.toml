@@ -1,0 +1,145 @@
+# vibe Codex system REQUIREMENTS — installed as /etc/codex/requirements.toml,
+# root-owned and baked into the image (the `node` user has no sudo rule that
+# can reach it; see the Dockerfile's three-command sudoers block).
+#
+# Requirements are CONSTRAINTS, not defaults: they clamp whatever the user's
+# ~/.codex/config.toml, a project config or a CLI flag asks for. A value the
+# user sets that violates a constraint is silently reset to the requirement's
+# own first-allowed value with a startup warning (`apply_requirement_
+# constrained_value`, core/src/config/mod.rs), and a pinned feature is
+# re-clamped on EVERY attempt to set the feature set
+# (`normalize_candidate`, core/src/config/managed_features.rs). That is why
+# this file — not devcontainer/codex/config.toml — is the security layer.
+#
+# Field citations below name the field of `ConfigRequirementsToml` in
+# codex-rs/config/src/config_requirements.rs at tag rust-v0.154.0 (struct at
+# line 984). No key outside that struct appears here.
+#
+# Layering note (F11): Codex's own Linux sandbox is bubblewrap and needs
+# unprivileged user namespaces, which the vibe container does not have, so no
+# sandbox mode below `danger-full-access` can execute a tool at all. The
+# container boundary, the firewall, root ownership of this policy, the
+# `[rules]` exec policy and the managed hooks are the enforcement — exactly
+# as they are for a Claude Code-led session.
+
+# ConfigRequirementsToml::allowed_approval_policies
+#   Option<Vec<AskForApproval>>; AskForApproval is kebab-cased, so the
+#   `Never` variant spells "never" (codex-rs/protocol/src/protocol.rs:984).
+#   A Codex-led vibe session is unattended: there is no human at the prompt
+#   to answer an approval, so approvals are pinned off and the hooks decide.
+allowed_approval_policies = ["never"]
+
+# ConfigRequirementsToml::allowed_sandbox_modes
+#   Option<Vec<SandboxModeRequirement>>; the enum renames its variants
+#   explicitly ("read-only", "workspace-write", "danger-full-access",
+#   "external-sandbox") at config_requirements.rs:1392.
+#   `read-only` stays allowed because the tool-less delegate runs
+#   (`/ask astra`, the `/review` codex slot) use it and never execute a tool.
+#   `danger-full-access` is the only mode under which a Codex-led session can
+#   run a tool here, for the bubblewrap reason above; `workspace-write` is
+#   excluded because it would fail closed at exec time while reading as if it
+#   were protecting something.
+allowed_sandbox_modes = ["read-only", "danger-full-access"]
+
+# ConfigRequirementsToml::allowed_web_search_modes
+#   Option<Vec<WebSearchModeRequirement>>; snake_cased, so `Disabled` spells
+#   "disabled" (config_requirements.rs:791).
+#   The container firewall is the network boundary; a hosted web-search tool
+#   would fetch through OpenAI's infrastructure, outside it.
+allowed_web_search_modes = ["disabled"]
+
+# ConfigRequirementsToml::allow_managed_hooks_only
+#   Option<bool> — a SIBLING top-level bool, not nested under [hooks]
+#   (config_requirements.rs:1002). True means only hooks from the managed
+#   directory below run: a user- or project-level hooks file cannot add,
+#   replace or disable the guard adapter.
+allow_managed_hooks_only = true
+
+# ConfigRequirementsToml::feature_requirements
+#   Option<FeatureRequirementsToml>, `#[serde(rename = "features", alias =
+#   "feature_requirements")]` (config_requirements.rs:1010); the struct is a
+#   flattened BTreeMap<String, bool> of feature key -> pinned value
+#   (config_requirements.rs:844). Keys are the `key:` strings of the
+#   `Feature` enum in codex-rs/features/src/lib.rs.
+[features]
+
+# feature key "multi_agent" (features/src/lib.rs:1260) — pinned OFF.
+#   `spawn_agent` starts a child agent whose own tool calls are hooked, but
+#   the child's prompt envelope is not something this container can audit,
+#   and openai/codex#26130 (sibling prompt envelopes leaking with
+#   `fork_turns: none`) is still open. Default is ON, so this pin matters.
+multi_agent = false
+
+# feature key "multi_agent_v2" (features/src/lib.rs:1266) — pinned OFF for
+#   the same reason as multi_agent; v2 is a separate gate.
+multi_agent_v2 = false
+
+# feature key "apps" (features/src/lib.rs:1284) — pinned OFF. App tools reach
+#   third-party surfaces that no vibe backstop mediates.
+apps = false
+
+# feature key "js_repl" (features/src/lib.rs:994) — pinned OFF. An in-process
+#   JavaScript interpreter executes code without passing through the `Bash`
+#   hook, so it would be an unmediated execution path.
+js_repl = false
+
+# feature key "unified_exec" (features/src/lib.rs:940) — pinned OFF. Unified
+#   exec keeps a live PTY session and adds `write_stdin`, which fires NO
+#   PreToolUse hook of its own (core/src/tools/handlers/unified_exec/
+#   write_stdin.rs:124-129): input typed into an already-approved shell would
+#   never reach guard-bash.sh. With it off, Codex falls back to
+#   `ExecCommandHandler::one_shot`, still named `exec_command` and still
+#   hooked as `Bash` per command, so every command is inspected.
+unified_exec = false
+
+# ConfigRequirementsToml::mcp_servers
+#   Option<BTreeMap<String, McpServerRequirement>> (config_requirements.rs:
+#   1013). Present-and-EMPTY is an allowlist with no entries, so every
+#   configured server is disabled (`filter_mcp_servers_by_requirements`,
+#   core/src/config/mod.rs:2088). OMITTING this key would allow ALL servers —
+#   the empty table is load-bearing, do not delete it.
+[mcp_servers]
+
+# ConfigRequirementsToml::hooks
+#   Option<ManagedHooksRequirementsToml> (config_requirements.rs:1012).
+[hooks]
+
+# ManagedHooksRequirementsToml::managed_dir
+#   Option<PathBuf> (codex-rs/config/src/hook_config.rs). The root-owned
+#   directory the managed hooks are read from; with
+#   allow_managed_hooks_only = true above, it is the ONLY source of hooks.
+managed_dir = "/etc/codex/hooks"
+
+# ConfigRequirementsToml::rules
+#   Option<RequirementsExecPolicyToml> (config_requirements.rs:1017); the
+#   struct is `{ prefix_rules: Vec<RequirementsExecPolicyPrefixRuleToml> }`
+#   in codex-rs/config/src/requirements_exec_policy.rs:14. A requirements
+#   policy may only TIGHTEN: `decision = "allow"` is rejected at parse
+#   (`AllowDecisionNotAllowed`), leaving "prompt" and "forbidden".
+#
+#   Scope, stated plainly: a prefix rule matches an ORDERED PREFIX of the
+#   argv tokens of a directly executed program. It never matches a substring,
+#   and it never sees inside `bash -c "…"`. It is therefore a narrow second
+#   layer for the one case worth a second layer, NOT coverage. The managed
+#   PreToolUse hooks (guard-bash.sh through codex-guard-adapter) remain the
+#   primary gate, and these two rules mirror exactly what guard-bash.sh
+#   blocks — nothing stricter. In particular there is deliberately NO `sudo`
+#   rule: the documented remedy for a stale CDN pin is
+#   `sudo /usr/local/bin/refresh-extra-domains.sh`, and forbidding it would
+#   break a supported workflow while stopping nothing the hooks do not.
+[rules]
+
+# RequirementsExecPolicyToml::prefix_rules[] — fields `pattern`, `decision`,
+#   `justification` (requirements_exec_policy.rs:24). Each `pattern` element
+#   is a RequirementsExecPolicyPatternTokenToml: exactly one of `token` (a
+#   single literal argv token) or `any_of` (alternatives).
+[[rules.prefix_rules]]
+pattern = [{ token = "git" }, { token = "push" }, { token = "--force" }]
+decision = "forbidden"
+justification = "git push --force overwrites remote history; guard-bash.sh blocks it and allows --force-with-lease. Prefix-only: this rule matches the ordered argv prefix `git push --force` of a directly executed command, so it does not see `--force` after a remote name, inside `bash -c`, or behind an alias. The PreToolUse hook is the real gate."
+
+# RequirementsExecPolicyToml::prefix_rules[] — the short flag spelling.
+[[rules.prefix_rules]]
+pattern = [{ token = "git" }, { token = "push" }, { token = "-f" }]
+decision = "forbidden"
+justification = "git push -f is the short spelling of --force and is blocked by guard-bash.sh on the same terms. Prefix-only: matches the ordered argv prefix `git push -f` and nothing else, so it is a second layer over the PreToolUse hook, not a replacement for it."

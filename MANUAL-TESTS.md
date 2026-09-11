@@ -1569,6 +1569,68 @@ Record unobserved refresh/paid-route checks explicitly, never infer success.
 
 ---
 
+### Test 55: Codex system policy, guard adapter and liveness gate (phase 1b)
+
+Run on branch `astra` before merging its PR. These checks need a real rebuilt
+container: the smoke tests exercise copies of the chain in a temp directory and
+cannot establish that the image actually ships the policy root-owned.
+
+0. **Step 0 — the liveness gate after a rebuild.** Run `vibe --rebuild`, then in
+   the container run `codex-guard-liveness`. It must exit 0 (`echo $?`) and print
+   one `ok` line per check — ownership of each file in the chain, the
+   requirements constraints, each managed hook command, the four deny fixtures,
+   the benign allow fixture, and the `codex --version` floor. Then run
+   `ls -la /etc/codex /etc/codex/hooks`: every entry must be `root root`, the two
+   directories `drwxr-xr-x`, and `requirements.toml`, `config.toml` and
+   `hooks/hooks.json` `-rw-r--r--`. Confirm the same for
+   `ls -la /usr/local/bin/codex-guard-adapter /usr/local/bin/codex-guard-liveness`
+   (`-rwxr-xr-x root root`). As `node`, confirm the policy is genuinely
+   unwritable: `touch /etc/codex/requirements.toml` must fail with
+   `Permission denied`, and `sudo -l` must still list exactly the three existing
+   commands (`init-firewall.sh`, `refresh-extra-domains.sh` with its empty
+   argument list, and `avahi-daemon`) and nothing that reaches `/etc/codex` or
+   `/usr/local/bin`.
+1. **The adapter on real tool JSON.** Still in the container, pipe a `Bash`-shaped
+   payload naming a redirect into the Codex login directory into
+   `codex-guard-adapter bash` and confirm it exits 2 with the guard's own wording
+   on stderr. Repeat with an `apply_patch`-shaped payload whose
+   `*** Update File:` line names `/home/node/.codex/config.toml` through
+   `codex-guard-adapter patch`: expect exit 0 and a single JSON object whose
+   `permissionDecision` is `deny`. Repeat with a payload writing under
+   `/learnings` in each mode: both must come back `deny`, **not** `ask` — that
+   rewrite is the whole point, since nobody is at the prompt. Finally pipe
+   `git status` through `codex-guard-adapter bash`: exit 0 and no output.
+2. **Fail-closed, checked deliberately.** `codex-guard-adapter wat` with any
+   payload must exit 2; so must an empty stdin, and so must a copy of the adapter
+   placed in a directory with no guards beside it (`cp
+   /usr/local/bin/codex-guard-adapter /tmp/probe/ && printf '{}' |
+   /tmp/probe/codex-guard-adapter bash`). Remember why this matters: Codex fails
+   *open* on a hook it cannot spawn, so an adapter that exits 0 when confused
+   would be indistinguishable from a working one.
+3. **The liveness gate actually gates.** Copy the chain into a scratch directory
+   (`/tmp/chain/etc` and `/tmp/chain/bin`), replace the adapter copy with a
+   two-line `exit 0` stub, and run
+   `codex-guard-liveness --root /tmp/chain/etc --bin /tmp/chain/bin --owner node`.
+   It must exit 1 with `LIVENESS FAILED: fixture-deny …` — a fail-open stub must
+   never pass. Comment out `allow_managed_hooks_only` in the copied
+   `requirements.toml` and re-run: exit 1 naming the requirements check. Restore
+   the real adapter copy and re-run: exit 0. Delete the scratch directory.
+4. **Codex reads the policy.** With the login mounted (Test 54 step 1), confirm
+   `codex --version` is 0.154.0 or later and that Codex starts without a
+   requirements parse error — a malformed `[rules]` or `mcp_servers` entry fails
+   config load outright, so a clean start is the evidence that the file parsed.
+   Do **not** run `codex exec`, `codex review` or anything else that contacts a
+   model as part of this test; the delegate paths are Test 54's job.
+
+**Pass:** `codex-guard-liveness` exits 0 in a freshly rebuilt container; the whole
+policy and guard chain is root-owned and not writable by `node`; the adapter
+denies each known-bad fixture in both modes, converts `ask` to `deny`, allows
+benign work, and exits 2 whenever it cannot do its job; the liveness gate exits 1
+for a fail-open stub and for a weakened requirements file; and the sudoers block
+is unchanged. Record any check you could not run rather than inferring it.
+
+---
+
 ## Test Summary
 
 After completing all tests, check:

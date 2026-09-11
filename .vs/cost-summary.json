@@ -1,17 +1,17 @@
 {
-  "task_id": "task_045",
+  "task_id": "task_046",
   "cycles": 1,
   "subagent_calls": 3,
-  "total_tokens": 451597,
+  "total_tokens": 478291,
   "by_role": {
-    "spec_critic": 107549,
-    "generator": 140258,
-    "tester": 203790
+    "spec_critic": 103113,
+    "generator": 192633,
+    "tester": 182545
   },
   "by_model": {
-    "sonnet": 311339,
-    "opus": 140258
+    "sonnet": 285658,
+    "opus": 192633
   },
-  "wall_time_ms": 1979145,
-  "astra_review_tokens": 41059
+  "wall_time_ms": 1777319,
+  "astra_review_tokens": 34543
 }

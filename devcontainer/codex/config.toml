@@ -1,0 +1,61 @@
+# vibe Codex system DEFAULTS — installed as /etc/codex/config.toml,
+# root-owned and baked into the image. This is the system config layer on
+# Unix (`SYSTEM_CONFIG_TOML_FILE_UNIX`, codex-rs/config/src/loader/mod.rs:66);
+# it is also what makes /etc/codex/skills the Admin skill root.
+#
+# This file sets DEFAULTS only. Everything here is separately CONSTRAINED by
+# the root-owned /etc/codex/requirements.toml next to it; if the two ever
+# disagree, requirements win and a startup warning is emitted. Nothing in
+# here is a security control on its own — do not move a constraint into this
+# file.
+#
+# Why sandbox_mode = "danger-full-access" (F11, verified in this container
+# 2026-09-11): Codex's Linux sandbox backend is bubblewrap, which requires
+# unprivileged user namespaces (`USER_NAMESPACE_WARNING`,
+# codex-rs/sandboxing/src/bwrap.rs:23). The vibe container does not have
+# them — `unshare -U` and `codex sandbox -- echo` both fail here — so under
+# `read-only` or `workspace-write` every tool call fails at exec time rather
+# than being contained. Naming a sandbox mode that cannot run would be
+# reassuring and false. What actually holds a Codex-led session:
+#
+#   * the container itself — the blast radius is one repo's checkout, one
+#     single-repo GitHub PAT, and nothing on the Mac except the mounts the
+#     launcher declared;
+#   * the firewall (init-firewall.sh) — egress is an allowlist;
+#   * root ownership of /etc/codex and /usr/local/bin — the `node` user the
+#     session runs as cannot edit this policy, the managed hooks, the guard
+#     adapter, or guard-bash.sh / guard-fs.sh;
+#   * the managed PreToolUse hooks in /etc/codex/hooks/hooks.json, which run
+#     every shell command through guard-bash.sh and every apply_patch path
+#     through guard-fs.sh via /usr/local/bin/codex-guard-adapter, turning
+#     every `ask` into a `deny` because nobody is at the prompt;
+#   * requirements.toml's feature pins and empty [mcp_servers] table, which
+#     remove the unhooked tool surfaces (unified exec's `write_stdin`, the
+#     JS REPL, sub-agents, apps) rather than trying to police them;
+#   * /usr/local/bin/codex-guard-liveness, which refuses to declare the chain
+#     healthy unless all of the above is root-owned and demonstrably denies
+#     known-bad fixtures.
+#
+# This is exactly the posture a Claude Code-led vibe session already runs
+# under (`--permission-mode bypassPermissions` plus hooks plus firewall); the
+# sandbox mode name is the only thing that differs.
+
+# Unattended: there is no human to answer an approval prompt, and the
+# requirements file allows no other value.
+approval_policy = "never"
+
+# See the header. Constrained to ["read-only", "danger-full-access"] by
+# requirements.toml; the delegate one-shots that need no tools still pass
+# `--sandbox read-only` explicitly on their own command line.
+sandbox_mode = "danger-full-access"
+
+# The firewall is the network boundary; a hosted search tool would fetch
+# from outside it. Constrained to ["disabled"] by requirements.toml.
+web_search = "disabled"
+
+# Deliberately NOT set here: project_doc_max_bytes. A Codex-led session must
+# still read the project's own AGENTS.md / CLAUDE.md-equivalent docs, and
+# zeroing the budget would silently starve it of the repo's conventions.
+# Deliberately NOT set here either: any [permissions] deny_read list — those
+# are enforced by the sandbox, which is unavailable (see header), so listing
+# them would read as protection that is not there.
