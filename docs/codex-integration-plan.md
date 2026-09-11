@@ -234,7 +234,18 @@ relies on it.
   The shipped test pins the argv vectors (verify vs ship differ by exactly
   `--ephemeral`) and the tool-disable set against a stub; the live nonce
   proof (each reviewer's OWN rollout, by `thread_id`, holds only its own
-  nonce) costs N Astra calls and is Martin-gated.
+  nonce) costs N Astra calls and is Martin-gated. The runner is
+  `devcontainer/codex-panel.mjs`, shipped as `/usr/local/bin/codex-panel`
+  (task_050): `codex-panel run --n <2-5> [--verify] [--out <dir>]`, diff on
+  stdin, one JSON object of per-reviewer verdicts on stdout, exit 1 for any
+  incomplete panel. `--verify` locates each reviewer's rollout with the
+  template pinned at tag `rust-v0.154.0`:
+  `$CODEX_HOME/sessions/<YYYY>/<MM>/<DD>/rollout-<YYYY-MM-DDTHH-MM-SS>-<thread_id>.jsonl`
+  (`rollout/src/rollout_file_name.rs` render, `rollout/src/recorder.rs`
+  precompute_new_rollout_path), plus the
+  `rollout-<timestamp>-<thread_id>_<rollout_id>.jsonl` variant a reverted
+  thread gets and the `.jsonl.zst` compressed sibling
+  (`rollout/src/compression.rs`). The thread id is never a filename prefix.
 - D7 **The supervisor is an app-server client, not a `codex exec` wrapper**
   (F7, F9, Astra B5): `devcontainer/codex-supervisor.mjs` (shipped as
   `/usr/local/bin/codex-supervisor`, task_048) spawns `codex app-server` on

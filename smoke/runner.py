@@ -21,6 +21,7 @@ from smoke.checks_19_codex_supervisor import *
 from smoke.checks_20_linux_host import *
 from smoke.checks_21_codex_supervisor_c2 import *
 from smoke.checks_22_codex_agent import *
+from smoke.checks_23_codex_panel import *
 
 
 def main() -> int:
@@ -781,6 +782,29 @@ def main() -> int:
     test_readme_codex_led_sessions_section()
     test_manual_tests_55_codex_led_block()
     test_codex_integration_plan_item7_delivered()
+
+    # task_050: `codex-panel run --n <N> [--verify] [--out <dir>]` — N
+    # independent tool-less `codex exec` reviewers for `/vs --panel` under
+    # Codex. Appended after the task_049 block above, which is frozen and
+    # unchanged.
+    test_codex_panel_usage_exit2_zero_calls()
+    test_codex_panel_readiness_failure_exactly_two_probes()
+    test_codex_panel_complete_run_exactly_2_plus_n()
+    test_codex_panel_incomplete_panel_exit1()
+    test_codex_panel_argv_pin_against_delegate_golden()
+    test_codex_panel_cwds_distinct_outside_repo_and_removed()
+    test_codex_panel_stdin_isolation()
+    test_codex_panel_concurrency_overlap()
+    test_codex_panel_collection_shape_and_tally()
+    test_codex_panel_verify_own_only()
+    test_codex_panel_verify_foreign_nonce_found()
+    test_codex_panel_verify_rollout_not_found()
+    test_codex_panel_verify_rollout_id_variant()
+    test_codex_panel_verify_compressed_rollout()
+    test_codex_panel_no_writes_under_repo()
+    test_codex_panel_env_never_forwards_secrets()
+    test_codex_panel_docs_strings()
+    test_codex_panel_dockerfile_copy_and_chmod()
 
     print()
     if FAILURES:
