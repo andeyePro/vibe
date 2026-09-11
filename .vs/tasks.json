@@ -337,5 +337,15 @@
     "assigned_to": "evaluator",
     "mode": "rigorous",
     "last_modified": "2026-09-11T19:46:46Z"
+  },
+  {
+    "id": "task_047",
+    "description": "Codex skills $vs/$vss/$vsss in /etc/codex/skills with a substitution table; vibe-delegate role <role> --model --cwd dispatches /vs roles as fresh codex exec / claude -p processes",
+    "implementation_status": "complete",
+    "test_status": "pass",
+    "assigned_to": "evaluator",
+    "mode": "rigorous",
+    "last_modified": "2026-09-11T20:29:54Z",
+    "cycle_1_note": "Generator (sonnet) delivered AC1-AC7 (AC8 is the Tester's per spec, AC9 verified green by this cycle). SKILL.md wrappers at devcontainer/codex/skills/{vs,vss,vsss}/SKILL.md; Dockerfile COPY --chown=root:root codex/ already covers them (verified, no extra COPY; added explicit chmod 0755/0644 for the new dirs/files alongside the existing task_046 chmod block). vibe-delegate.mjs gained the `role` operation: ask/review/slots/status refactored only via two extractions (codexEvents(), claudeBilling()+claudeReply()) that reproduce their prior bodies verbatim -- diffed byte-for-byte equivalent, confirmed by the full existing suite staying green. Read-only roles (planner/spec-critic/reviewer/evaluator) reuse ask's own read-only argv verbatim in a private temp cwd; write roles (generator/tester) use the AC4 pinned vectors verbatim (Astra: -C <workspace> + danger-full-access, no --ignore-user-config; Claude: --permission-mode bypassPermissions, fixed tool allowlist), schema/output files always in the helper's own scratch dir. AC5 reply contract implemented (Astra schema-native status; Claude STATUS: done|blocked last-line derivation, missing -> blocked). vs.md/vss.md/vsss.md each gained an 6-line Running under Codex section (total word count 14289/14300 -- no trim needed elsewhere). README Codex section, ask.md pointer, and plan D5 wording updated. TDD scratch suite at .vs/cycle-1/scratch-tests/test_role.py (standalone, no smoke import) run red (against git-stashed pre-edit vibe-delegate.mjs) then green; python3 code-check.py clean; python3 smoke-test.py < /dev/null fully green (3695 checks), 0 regressions."
   }
 ]

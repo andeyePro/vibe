@@ -16,6 +16,7 @@ Covers AC9's test list:
   - Docs: README, MANUAL-TESTS, docs/codex-tool-inventory.md.
 """
 from smoke._core import *  # noqa: F401,F403
+from smoke.checks_17_delegation import _delegate_fixture, _delegate_call
 
 import pwd
 import tomllib
@@ -26,6 +27,11 @@ HOOKS_JSON = REPO / "devcontainer" / "codex" / "hooks" / "hooks.json"
 ADAPTER = REPO / "devcontainer" / "codex-guard-adapter.sh"
 LIVENESS = REPO / "devcontainer" / "codex-guard-liveness.sh"
 CODEX_TOOL_INVENTORY_MD = REPO / "docs" / "codex-tool-inventory.md"
+
+# ── task_047: $vs/$vss/$vsss Codex skills + vibe-delegate role dispatch ──────
+CODEX_SKILLS_DIR = REPO / "devcontainer" / "codex" / "skills"
+ASK_MD = REPO / "devcontainer" / "commands" / "ask.md"
+CODEX_INTEGRATION_PLAN_MD = REPO / "docs" / "codex-integration-plan.md"
 
 CURRENT_OWNER = pwd.getpwuid(os.getuid()).pw_name
 
@@ -663,3 +669,507 @@ def test_codex_docs_ac7_ac8():
     for token in ("exec_command", "write_stdin", "apply_patch", "view_image",
                   "spawn_agent", "mcp__", "request_user_input", "web_search", "UNMEDIATED"):
         check(f"[codex] docs/codex-tool-inventory.md mentions {token!r}", token in inv, "")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# task_047: $vs/$vss/$vsss Codex skills + `vibe-delegate role` dispatch
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _parse_skill_frontmatter(text: str):
+    """Minimal YAML frontmatter reader: split on '---', parse 'key: value'
+    lines from the first block. Returns (dict_or_None, body_str)."""
+    parts = text.split("---")
+    if len(parts) < 3:
+        return None, ""
+    fm_text = parts[1]
+    body = "---".join(parts[2:])
+    data = {}
+    for line in fm_text.splitlines():
+        line = line.strip()
+        if not line or ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        data[key.strip()] = value.strip()
+    return data, body
+
+
+# ── AC1: SKILL.md frontmatter + body ─────────────────────────────────────────
+
+
+def test_codex_skill_frontmatter_ac1():
+    print("\n[codex] SKILL.md — AC1 frontmatter (name/description) and body requirements")
+    for name in ("vs", "vss", "vsss"):
+        path = CODEX_SKILLS_DIR / name / "SKILL.md"
+        if not check(f"[codex] {name}/SKILL.md exists", path.exists(), str(path)):
+            continue
+        text = path.read_text()
+        data, body = _parse_skill_frontmatter(text)
+        if not check(f"[codex] {name}/SKILL.md has --- frontmatter delimiters", data is not None, text[:120]):
+            continue
+
+        check(f"[codex] {name}/SKILL.md frontmatter has exactly the keys name, description",
+              set(data.keys()) == {"name", "description"}, str(sorted(data.keys())))
+        check(f"[codex] {name}/SKILL.md name == directory name {name!r}", data.get("name") == name, data.get("name"))
+        check(f"[codex] {name}/SKILL.md name <= 64 chars", len(data.get("name", "")) <= 64, data.get("name"))
+        description = data.get("description", "")
+        check(f"[codex] {name}/SKILL.md description is non-empty", bool(description.strip()), "")
+        check(f"[codex] {name}/SKILL.md description names the vibe command /{name}",
+              f"/{name}" in description, description)
+
+        body_lines = [l for l in body.strip("\n").splitlines()]
+        check(f"[codex] {name}/SKILL.md body is under 60 lines", len(body_lines) < 60, str(len(body_lines)))
+        flat_body = " ".join(body.split())
+
+        check(f"[codex] {name}/SKILL.md body names the command file /usr/local/share/vibe/commands/{name}.md",
+              f"/usr/local/share/vibe/commands/{name}.md" in body, "")
+
+        for token in ("vibe-delegate role", "vibe-delegate review codex",
+                      "ScheduleWakeup", "/learnings", "Grep", "Glob"):
+            check(f"[codex] {name}/SKILL.md body carries substitution-table entry {token!r}", token in body, "")
+
+        for role in ("planner", "spec-critic", "generator", "tester", "reviewer", "evaluator"):
+            check(f"[codex] {name}/SKILL.md substitution table names role {role!r}", role in body, "")
+
+        check(f"[codex] {name}/SKILL.md carries the nested-step instruction ('in this same turn')",
+              "in this same turn" in body, "")
+
+        # AC1c: states that ONLY the $ form exists in Codex's own terminal
+        # (composer rejects an unknown /<name> before submission), and that
+        # /<name> IS the same command in Claude Code — never that $ and /
+        # are interchangeable inside Codex's own terminal.
+        check(f"[codex] {name}/SKILL.md states only the ${name} form exists in Codex's own terminal",
+              f"only `${name}`" in flat_body or f"only ${name}" in flat_body, flat_body[-400:])
+        check(f"[codex] {name}/SKILL.md names the composer rejecting the unknown / form before submission",
+              "composer" in flat_body and "rejects" in flat_body and "submit" in flat_body.lower(), flat_body[-400:])
+        check(f"[codex] {name}/SKILL.md states /{name} IS the same command in Claude Code (not in Codex's terminal)",
+              "same command in Claude Code" in flat_body, flat_body[-400:])
+
+
+# ── AC2: Dockerfile COPY covers codex/skills/; no Mac-home COPY ─────────────
+
+
+def test_codex_skills_dockerfile_ac2():
+    print("\n[codex] Dockerfile — AC2 codex/ COPY covers skills; no ~/.codex or ~/.agents COPY")
+    text = DOCKERFILE.read_text()
+
+    check("[codex] Dockerfile: COPY --chown=root:root codex/ /etc/codex/ present",
+          "COPY --chown=root:root codex/ /etc/codex/" in text, "")
+    check("[codex] Dockerfile: comment confirms codex/skills/ ships via this same COPY",
+          "codex/skills/" in text, "")
+
+    copy_lines = [l for l in text.splitlines() if l.strip().startswith("COPY")]
+    check("[codex] Dockerfile: no COPY line targets /home/node/.codex",
+          not any("/home/node/.codex" in l for l in copy_lines), str(copy_lines))
+    check("[codex] Dockerfile: no COPY line targets ~/.agents / .agents",
+          not any(".agents" in l for l in copy_lines), str(copy_lines))
+
+    check("[codex] Dockerfile: skills dirs chmod 0755, root-owned",
+          "chmod 0755 /etc/codex/skills /etc/codex/skills/vs /etc/codex/skills/vss /etc/codex/skills/vsss" in text, "")
+    check("[codex] Dockerfile: SKILL.md files chmod 0644",
+          "chmod 0644 /etc/codex/skills/vs/SKILL.md /etc/codex/skills/vss/SKILL.md "
+          "/etc/codex/skills/vsss/SKILL.md" in text, "")
+
+
+# ── AC3: `role` refusals — fail closed, zero vendor calls ───────────────────
+
+
+def test_delegate_role_refusals_ac3():
+    print("\n[delegate] role: AC3 refusals fail closed with zero vendor calls")
+    with tempfile.TemporaryDirectory() as td:
+        workspace, home, env = _delegate_fixture(Path(td))
+        cases = [
+            ("unknown role", ["role", "bogus", "--model", "astra", "--cwd", str(workspace)], "brief"),
+            ("unknown model", ["role", "planner", "--model", "bogus", "--cwd", str(workspace)], "brief"),
+            ("missing --cwd", ["role", "planner", "--model", "astra"], "brief"),
+            ("relative --cwd", ["role", "planner", "--model", "astra", "--cwd", "relative/dir"], "brief"),
+            ("--cwd outside a git work tree", ["role", "planner", "--model", "astra", "--cwd", str(home)], "brief"),
+            ("empty payload", ["role", "planner", "--model", "astra", "--cwd", str(workspace)], ""),
+        ]
+        for label, args, payload in cases:
+            r, calls = _delegate_call(workspace, home, env, args, payload=payload)
+            check(f"[delegate] role: {label} exits non-zero", r.returncode != 0 and not r.stdout, r.stdout + r.stderr)
+            check(f"[delegate] role: {label} makes zero vendor calls", not calls, str(calls))
+
+        # fable without --consent-credits: refused before any vendor process,
+        # even though it is a write role (generator) and the payload is read.
+        r, calls = _delegate_call(workspace, home, env,
+            ["role", "generator", "--model", "fable", "--cwd", str(workspace)])
+        check("[delegate] role: fable without --consent-credits is refused, zero vendor calls",
+              r.returncode != 0 and not calls, r.stderr)
+
+        # codex=off policy refuses an Astra role exactly like `ask astra`.
+        policy = workspace / ".vibe" / "review-slots"
+        policy.write_text("codex=off\n")
+        r, calls = _delegate_call(workspace, home, env,
+            ["role", "planner", "--model", "astra", "--cwd", str(workspace)])
+        check("[delegate] role: codex=off refuses an Astra role, zero vendor calls",
+              r.returncode != 0 and not calls, r.stderr)
+        r, calls = _delegate_call(workspace, home, env,
+            ["role", "generator", "--model", "astra", "--cwd", str(workspace)])
+        check("[delegate] role: codex=off refuses an Astra write role too, zero vendor calls",
+              r.returncode != 0 and not calls, r.stderr)
+        policy.unlink()
+
+
+# ── AC4: golden argv vectors ─────────────────────────────────────────────────
+
+
+_ASTRA_DONE = {"answer": {"report": "did the thing", "status": "done"}}
+_CLAUDE_DONE = {"response": {"type": "result", "subtype": "success", "is_error": False,
+    "result": "did the thing\nSTATUS: done", "modelUsage": {"served-fixture": {}},
+    "usage": {"input_tokens": 100, "cache_creation_input_tokens": 20000,
+              "cache_read_input_tokens": 7000, "output_tokens": 30,
+              "cache_creation": {"ephemeral_5m_input_tokens": 40}}}}
+
+
+def test_delegate_role_golden_astra_ac4():
+    print("\n[delegate] role: AC4 golden argv — Astra read-only and write roles")
+    with tempfile.TemporaryDirectory() as td:
+        workspace, home, env = _delegate_fixture(Path(td))
+
+        # Read-only role (planner): byte-identical to `ask astra`'s own argv,
+        # confined to a private temp dir, never -C <cwd>.
+        r, calls = _delegate_call(workspace, home, env,
+            ["role", "planner", "--model", "astra", "--cwd", str(workspace)], _ASTRA_DONE)
+        check("[delegate] role planner/astra succeeds", r.returncode == 0, r.stderr)
+        if r.returncode == 0:
+            check("[delegate] role planner/astra: version + login + exec (3 calls)", len(calls) == 3, str(calls))
+            call = calls[-1]
+            argv = call["args"]
+            schema_path = argv[argv.index("--output-schema") + 1]
+            output_path = argv[argv.index("--output-last-message") + 1]
+            golden = ["exec", "-m", "gpt-6-astra", "--ignore-user-config", "--ignore-rules",
+                "--ephemeral", "--skip-git-repo-check", "--sandbox", "read-only",
+                "-c", 'approval_policy="never"', "-c", 'forced_login_method="chatgpt"',
+                "-c", 'cli_auth_credentials_store="file"', "-c", "project_doc_max_bytes=0",
+                "-c", "agents.enabled=false", "-c", 'web_search="disabled"',
+                "-c", "apps._default.enabled=false",
+                "--disable", "shell_tool", "--disable", "unified_exec",
+                "--disable", "apply_patch_freeform", "--disable", "multi_agent",
+                "--disable", "apps", "--disable", "js_repl",
+                "--output-schema", schema_path, "--output-last-message", output_path,
+                "--json", "-"]
+            check("[delegate] role planner/astra: argv equals the read-only (ask-astra) golden exactly",
+                  argv == golden, str(argv))
+            check("[delegate] role planner/astra: no -C <cwd> in argv", "-C" not in argv, str(argv))
+            check("[delegate] role planner/astra: schema/output are absolute, outside --cwd",
+                  os.path.isabs(schema_path) and os.path.isabs(output_path) and
+                  not schema_path.startswith(str(workspace)) and not output_path.startswith(str(workspace)),
+                  f"{schema_path} {output_path}")
+            check("[delegate] role planner/astra: process cwd is a private temp dir outside the repo",
+                  call["cwd"] != str(workspace) and not call["cwd"].startswith(str(workspace)), call["cwd"])
+            check("[delegate] role planner/astra: private cwd cleaned up afterwards",
+                  not Path(call["cwd"]).exists(), call["cwd"])
+            result = json.loads(r.stdout)
+            check("[delegate] role planner/astra: usage accounted like ask (cache not double counted)",
+                  result["usage"]["total_tokens"] == 5044, r.stdout)
+
+        # Write role (generator): the AC4 pinned vector verbatim.
+        before = sorted(str(p.relative_to(workspace)) for p in workspace.rglob("*"))
+        r, calls = _delegate_call(workspace, home, env,
+            ["role", "generator", "--model", "astra", "--cwd", str(workspace)], _ASTRA_DONE)
+        check("[delegate] role generator/astra succeeds", r.returncode == 0, r.stderr)
+        if r.returncode == 0:
+            call = calls[-1]
+            argv = call["args"]
+            schema_path = argv[argv.index("--output-schema") + 1]
+            output_path = argv[argv.index("--output-last-message") + 1]
+            golden = ["exec", "-m", "gpt-6-astra", "-C", str(workspace), "--sandbox", "danger-full-access",
+                "--ephemeral", "--skip-git-repo-check", "--json",
+                "-c", 'approval_policy="never"', "-c", 'forced_login_method="chatgpt"',
+                "-c", 'cli_auth_credentials_store="file"', "-c", 'web_search="disabled"',
+                "--disable", "multi_agent", "--disable", "apps", "--disable", "js_repl",
+                "--output-schema", schema_path, "--output-last-message", output_path, "-"]
+            check("[delegate] role generator/astra: argv equals the AC4 write vector exactly",
+                  argv == golden, str(argv))
+            check("[delegate] role generator/astra: no -a, no --ignore-user-config, no dangerously-* flag",
+                  "-a" not in argv and "--ignore-user-config" not in argv and
+                  not any("dangerously" in x for x in argv), str(argv))
+            check("[delegate] role generator/astra: schema/output are absolute, outside --cwd",
+                  os.path.isabs(schema_path) and os.path.isabs(output_path) and
+                  not schema_path.startswith(str(workspace)) and not output_path.startswith(str(workspace)),
+                  f"{schema_path} {output_path}")
+            check("[delegate] role generator/astra: process cwd equals --cwd (the real workspace)",
+                  call["cwd"] == str(workspace), call["cwd"])
+            result = json.loads(r.stdout)
+            check("[delegate] role generator/astra: usage accounted like ask (cache not double counted)",
+                  result["usage"]["total_tokens"] == 5044, r.stdout)
+        after = sorted(str(p.relative_to(workspace)) for p in workspace.rglob("*"))
+        check("[delegate] role generator/astra: nothing written under --cwd by the helper",
+              before == after, f"before={before}\nafter={after}")
+
+
+def test_delegate_role_golden_claude_ac4():
+    print("\n[delegate] role: AC4 golden argv — Claude read-only and write roles")
+    with tempfile.TemporaryDirectory() as td:
+        workspace, home, env = _delegate_fixture(Path(td))
+
+        # Read-only role (reviewer, haiku): byte-identical to `ask haiku`'s argv.
+        r, calls = _delegate_call(workspace, home, env,
+            ["role", "reviewer", "--model", "haiku", "--cwd", str(workspace)], _CLAUDE_DONE)
+        check("[delegate] role reviewer/haiku succeeds, one call", r.returncode == 0 and len(calls) == 1, r.stderr)
+        if r.returncode == 0:
+            argv = calls[0]["args"]
+            golden = ["-p", "--model", "haiku", "--output-format", "json", "--safe-mode",
+                "--tools", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
+                "--setting-sources", "user", "--permission-mode", "plan",
+                "--permission-prompts", "none", "--no-session-persistence",
+                "--disable-slash-commands", "--settings", '{"forceLoginMethod":"claudeai"}']
+            check("[delegate] role reviewer/haiku: argv equals the read-only (ask-haiku) golden exactly",
+                  argv == golden, str(argv))
+            check("[delegate] role reviewer/haiku: no -C <cwd> in argv", "-C" not in argv, str(argv))
+            check("[delegate] role reviewer/haiku: process cwd is a private temp dir, not the workspace",
+                  calls[0]["cwd"] != str(workspace), calls[0]["cwd"])
+            check("[delegate] role reviewer/haiku: private cwd cleaned up afterwards",
+                  not Path(calls[0]["cwd"]).exists(), calls[0]["cwd"])
+            result = json.loads(r.stdout)
+            check("[delegate] role reviewer/haiku: usage includes all cache components (same rules as ask)",
+                  result["usage"]["total_tokens"] == 27130 and
+                  result["usage"]["ephemeral_5m_input_tokens"] == 40, r.stdout)
+
+        # Write role (tester, sonnet): the AC4 pinned Claude write vector verbatim.
+        before = sorted(str(p.relative_to(workspace)) for p in workspace.rglob("*"))
+        r, calls = _delegate_call(workspace, home, env,
+            ["role", "tester", "--model", "sonnet", "--cwd", str(workspace)], _CLAUDE_DONE)
+        check("[delegate] role tester/sonnet succeeds, one call", r.returncode == 0 and len(calls) == 1, r.stderr)
+        if r.returncode == 0:
+            argv = calls[0]["args"]
+            golden = ["-p", "--model", "sonnet", "--output-format", "json",
+                "--permission-mode", "bypassPermissions",
+                "--tools", "Bash,Read,Write,Edit,Glob,Grep",
+                "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
+                "--setting-sources", "user", "--no-session-persistence",
+                "--disable-slash-commands", "--settings",
+                # Astra review (iter 5): the project's guard hooks are excluded by
+                # --setting-sources user, so the write role carries them INLINE with
+                # disableAllHooks pinned false.
+                json.dumps({"forceLoginMethod": "claudeai", "disableAllHooks": False, "hooks": {"PreToolUse": [
+                    {"matcher": "Bash", "hooks": [{"type": "command", "command": "/usr/local/bin/guard-bash.sh"}]},
+                    {"matcher": "Write|Edit|MultiEdit", "hooks": [{"type": "command", "command": "/usr/local/bin/guard-fs.sh"}]},
+                ]}}, separators=(",", ":"))]
+            check("[delegate] role tester/sonnet: argv equals the AC4 write vector verbatim",
+                  argv == golden, str(argv))
+            inline = json.loads(argv[argv.index("--settings") + 1])
+            check("[delegate] role tester/sonnet: inline settings carry both guards and pin disableAllHooks false",
+                  inline.get("disableAllHooks") is False and
+                  [h["hooks"][0]["command"] for h in inline["hooks"]["PreToolUse"]] ==
+                  ["/usr/local/bin/guard-bash.sh", "/usr/local/bin/guard-fs.sh"], str(inline))
+            # Billed mode: the user's settings file is merged with the pinned keys
+            # into a private scratch copy; the pinned keys win.
+            route = home / "route.json"
+            route.write_text(json.dumps({"apiKeyHelper": "/x", "disableAllHooks": True, "hooks": {}}))
+            paid_env = {**env, "VIBE_CLAUDE_P_BILLING": "credits", "VIBE_CLAUDE_P_SETTINGS": str(route),
+                        "VIBE_CLAUDE_P_CONFIG_DIR": str(home / "paid-config")}
+            r2, calls2 = _delegate_call(workspace, home, paid_env,
+                ["role", "tester", "--model", "opus", "--cwd", str(workspace), "--consent-credits"], _CLAUDE_DONE)
+            check("[delegate] role tester/opus billed: one call", r2.returncode == 0 and len(calls2) == 1, r2.stderr)
+            if r2.returncode == 0:
+                sarg = calls2[0]["args"][calls2[0]["args"].index("--settings") + 1]
+                seen = json.loads((home / "settings-seen.json").read_text())
+                check("[delegate] role tester/opus billed: --settings is a private merged copy, not the user's file",
+                      sarg != str(route) and sarg.endswith("role-settings.json") and not Path(sarg).exists(), sarg)
+                check("[delegate] role tester/opus billed: merged copy keeps the user's routing and pins the guards",
+                      seen.get("apiKeyHelper") == "/x" and seen.get("disableAllHooks") is False and
+                      [h["hooks"][0]["command"] for h in seen["hooks"]["PreToolUse"]] ==
+                      ["/usr/local/bin/guard-bash.sh", "/usr/local/bin/guard-fs.sh"], str(seen))
+            check("[delegate] role tester/sonnet: no --safe-mode, no dangerously, hooks never disabled (hooks stay ON)",
+                  "--safe-mode" not in argv and '"disableAllHooks":true' not in str(argv) and
+                  not any("dangerously" in x for x in argv), str(argv))
+            tools_arg = argv[argv.index("--tools") + 1]
+            check("[delegate] role tester/sonnet: tool allowlist excludes Agent/Task, WebFetch, WebSearch, NotebookEdit",
+                  not any(t in tools_arg for t in ("Agent", "Task", "WebFetch", "WebSearch", "NotebookEdit")),
+                  tools_arg)
+            check("[delegate] role tester/sonnet: process cwd equals --cwd (the real workspace)",
+                  calls[0]["cwd"] == str(workspace), calls[0]["cwd"])
+            result = json.loads(r.stdout)
+            check("[delegate] role tester/sonnet: usage includes all cache components (same rules as ask)",
+                  result["usage"]["total_tokens"] == 27130 and
+                  result["usage"]["ephemeral_5m_input_tokens"] == 40, r.stdout)
+        after = sorted(str(p.relative_to(workspace)) for p in workspace.rglob("*"))
+        check("[delegate] role tester/sonnet: nothing written under --cwd by the helper",
+              before == after, f"before={before}\nafter={after}")
+
+
+def test_delegate_role_readonly_no_dash_c():
+    print("\n[delegate] role: every read-only role, either model family, never gets -C <cwd>")
+    with tempfile.TemporaryDirectory() as td:
+        workspace, home, env = _delegate_fixture(Path(td))
+        for role in ("planner", "spec-critic", "reviewer", "evaluator"):
+            for model, fixture in (("astra", _ASTRA_DONE), ("haiku", _CLAUDE_DONE)):
+                r, calls = _delegate_call(workspace, home, env,
+                    ["role", role, "--model", model, "--cwd", str(workspace)], fixture)
+                check(f"[delegate] role {role}/{model} succeeds", r.returncode == 0, r.stderr)
+                if r.returncode == 0 and calls:
+                    argv = calls[-1]["args"]
+                    check(f"[delegate] role {role}/{model}: no -C flag", "-C" not in argv, str(argv))
+                    check(f"[delegate] role {role}/{model}: process cwd is not the workspace",
+                          calls[-1]["cwd"] != str(workspace), calls[-1]["cwd"])
+
+
+def test_delegate_role_write_roles_use_cwd():
+    print("\n[delegate] role: every write role, either model family, runs in --cwd")
+    with tempfile.TemporaryDirectory() as td:
+        workspace, home, env = _delegate_fixture(Path(td))
+        for role in ("generator", "tester"):
+            for model, fixture in (("astra", _ASTRA_DONE), ("sonnet", _CLAUDE_DONE)):
+                r, calls = _delegate_call(workspace, home, env,
+                    ["role", role, "--model", model, "--cwd", str(workspace)], fixture)
+                check(f"[delegate] role {role}/{model} succeeds", r.returncode == 0, r.stderr)
+                if r.returncode == 0 and calls:
+                    call = calls[-1]
+                    check(f"[delegate] role {role}/{model}: process cwd equals --cwd",
+                          call["cwd"] == str(workspace), call["cwd"])
+                    if model == "astra":
+                        check(f"[delegate] role {role}/{model}: -C <cwd> present",
+                              "-C" in call["args"] and
+                              call["args"][call["args"].index("-C") + 1] == str(workspace), str(call["args"]))
+
+
+# ── AC5: role reply contract — status derivation, output shape ─────────────
+
+
+def _claude_response(result_text: str, is_error: bool = False):
+    return {"type": "result", "subtype": "success", "is_error": is_error,
+        "result": result_text, "modelUsage": {"served-fixture": {}},
+        "usage": {"input_tokens": 100, "cache_creation_input_tokens": 20000,
+                  "cache_read_input_tokens": 7000, "output_tokens": 30,
+                  "cache_creation": {"ephemeral_5m_input_tokens": 40}}}
+
+
+def test_delegate_role_status_ac5():
+    print("\n[delegate] role: AC5 status derivation and output shape {runtime,model,role,status,report,usage}")
+    with tempfile.TemporaryDirectory() as td:
+        workspace, home, env = _delegate_fixture(Path(td))
+
+        # Astra: {report, status: done} -> done, exit 0.
+        r, calls = _delegate_call(workspace, home, env,
+            ["role", "planner", "--model", "astra", "--cwd", str(workspace)],
+            {"answer": {"report": "the plan", "status": "done"}})
+        check("[delegate] role astra done: exit 0", r.returncode == 0, r.stderr)
+        if r.returncode == 0:
+            result = json.loads(r.stdout)
+            check("[delegate] role astra done: status == done", result.get("status") == "done", r.stdout)
+            check("[delegate] role astra: output keys exactly {runtime, model, role, status, report, usage}",
+                  set(result.keys()) == {"runtime", "model", "role", "status", "report", "usage"},
+                  str(sorted(result.keys())))
+            check("[delegate] role astra done: report/role carried through",
+                  result.get("report") == "the plan" and result.get("role") == "planner", r.stdout)
+
+        # Astra: {report, status: blocked} -> blocked, STILL exit 0 (helper
+        # succeeded; the role itself reported a block).
+        r, calls = _delegate_call(workspace, home, env,
+            ["role", "planner", "--model", "astra", "--cwd", str(workspace)],
+            {"answer": {"report": "could not proceed", "status": "blocked"}})
+        check("[delegate] role astra blocked: exit 0", r.returncode == 0, r.stderr)
+        if r.returncode == 0:
+            check("[delegate] role astra blocked: status == blocked",
+                  json.loads(r.stdout).get("status") == "blocked", r.stdout)
+
+        # Astra: missing schema field (no status) -> non-zero.
+        r, calls = _delegate_call(workspace, home, env,
+            ["role", "planner", "--model", "astra", "--cwd", str(workspace)],
+            {"answer": {"report": "no status field"}})
+        check("[delegate] role astra missing status field: non-zero exit, no stdout",
+              r.returncode != 0 and not r.stdout, r.stdout)
+
+        # Astra: invalid status enum value -> non-zero.
+        r, calls = _delegate_call(workspace, home, env,
+            ["role", "planner", "--model", "astra", "--cwd", str(workspace)],
+            {"answer": {"report": "x", "status": "maybe"}})
+        check("[delegate] role astra invalid status enum: non-zero exit, no stdout",
+              r.returncode != 0 and not r.stdout, r.stdout)
+
+        # Astra: a turn.failed event -> non-zero, never 'done'.
+        r, calls = _delegate_call(workspace, home, env,
+            ["role", "planner", "--model", "astra", "--cwd", str(workspace)],
+            {"events": [{"type": "turn.failed"}]})
+        check("[delegate] role astra turn.failed event: non-zero exit, no stdout",
+              r.returncode != 0 and not r.stdout, r.stdout)
+
+        # Claude: report ending "STATUS: done" -> done.
+        r, calls = _delegate_call(workspace, home, env,
+            ["role", "reviewer", "--model", "haiku", "--cwd", str(workspace)],
+            {"response": _claude_response("Reviewed everything.\nSTATUS: done")})
+        check("[delegate] role claude 'STATUS: done': exit 0, status done",
+              r.returncode == 0 and json.loads(r.stdout).get("status") == "done", r.stdout + r.stderr)
+        if r.returncode == 0:
+            check("[delegate] role claude: output keys exactly {runtime, model, role, status, report, usage}",
+                  set(json.loads(r.stdout).keys()) ==
+                  {"runtime", "model", "role", "status", "report", "usage"}, r.stdout)
+
+        # Claude: report ending "STATUS: blocked" -> blocked.
+        r, calls = _delegate_call(workspace, home, env,
+            ["role", "reviewer", "--model", "haiku", "--cwd", str(workspace)],
+            {"response": _claude_response("Could not finish.\nSTATUS: blocked")})
+        check("[delegate] role claude 'STATUS: blocked': exit 0, status blocked",
+              r.returncode == 0 and json.loads(r.stdout).get("status") == "blocked", r.stdout + r.stderr)
+
+        # Claude: no STATUS line at all -> defaults to blocked.
+        r, calls = _delegate_call(workspace, home, env,
+            ["role", "reviewer", "--model", "haiku", "--cwd", str(workspace)],
+            {"response": _claude_response("Just some prose with no status line.")})
+        check("[delegate] role claude no STATUS line: exit 0, defaults to blocked",
+              r.returncode == 0 and json.loads(r.stdout).get("status") == "blocked", r.stdout + r.stderr)
+
+        # Claude: a mid-report "STATUS: done" that is NOT the final line must
+        # not count -- only the last non-empty line is examined.
+        r, calls = _delegate_call(workspace, home, env,
+            ["role", "reviewer", "--model", "haiku", "--cwd", str(workspace)],
+            {"response": _claude_response("STATUS: done\nBut then I kept going and got stuck.")})
+        check("[delegate] role claude mid-report 'STATUS: done' (not final line): defaults to blocked",
+              r.returncode == 0 and json.loads(r.stdout).get("status") == "blocked", r.stdout + r.stderr)
+
+        # Claude: is_error: true -> non-zero, never 'done'.
+        r, calls = _delegate_call(workspace, home, env,
+            ["role", "reviewer", "--model", "haiku", "--cwd", str(workspace)],
+            {"response": _claude_response("quota exceeded", is_error=True)})
+        check("[delegate] role claude is_error true: non-zero exit, no stdout",
+              r.returncode != 0 and not r.stdout, r.stdout)
+
+
+# ── AC6/AC7: docs ────────────────────────────────────────────────────────────
+
+
+def test_codex_commands_running_under_codex_ac6():
+    print("\n[codex] vs.md / vss.md / vsss.md — AC6 'Running under Codex' section")
+    for path, name in ((VS_MD, "vs"), (VSS_MD, "vss"), (VSSS_MD, "vsss")):
+        text = path.read_text()
+        m = re.search(r"^## Running under Codex\n(.*?)\n---\n", text, re.DOTALL | re.MULTILINE)
+        check(f"[codex] {name}.md has a 'Running under Codex' heading", m is not None, "")
+        if not m:
+            continue
+        section = m.group(1)
+        content_lines = [l for l in section.splitlines() if l.strip()]
+        check(f"[codex] {name}.md 'Running under Codex' section is <= 8 lines",
+              len(content_lines) <= 8, str(len(content_lines)))
+        check(f"[codex] {name}.md 'Running under Codex' section names vibe-delegate role",
+              "vibe-delegate role" in section, section)
+
+
+def test_codex_docs_ac7():
+    print("\n[codex] README / ask.md / codex-integration-plan.md — AC7 docs")
+    readme = README_MD.read_text()
+    check("[codex] README has a 'Skills in a Codex-led container' paragraph",
+          "Skills in a Codex-led container" in readme, "")
+    if "Skills in a Codex-led container" in readme:
+        section = readme.split("Skills in a Codex-led container", 1)[-1][:2000]
+        check("[codex] README's skills paragraph names where the skills live (/etc/codex/skills)",
+              "/etc/codex/skills" in section, "")
+        check("[codex] README's skills paragraph says the Mac's ~/.codex/~/.agents are never touched",
+              "~/.codex" in section and "~/.agents" in section, "")
+        check("[codex] README's skills paragraph names vibe-delegate role",
+              "vibe-delegate role" in section, "")
+        check("[codex] README's skills paragraph points at the live trial (Test 55)",
+              "Test 55" in section, "")
+
+    ask = ASK_MD.read_text()
+    check("[codex] ask.md mentions the `role` operation", "`role`" in ask, "")
+    check("[codex] ask.md points at the SKILL.md substitution tables",
+          "SKILL.md" in ask, "")
+
+    plan = CODEX_INTEGRATION_PLAN_MD.read_text()
+    check("[codex] docs/codex-integration-plan.md D5 names vibe-delegate role",
+          "vibe-delegate role" in plan, "")
+    check("[codex] docs/codex-integration-plan.md D5 states 'thin wrapper' is no longer accurate",
+          "no longer accurate" in plan, "")

@@ -68,3 +68,7 @@ values in `~/.vibe/config` and relaunch. Never put keys in vibe files or copy OA
 between runtimes. The subscription route pins `forceLoginMethod: claudeai`;
 the lead's login policy is unchanged. `/budget` integration is follow-up work;
 this command reports each call's usage directly.
+
+The same helper also has a `role` operation for `/vs`'s subagent dispatch under a
+Codex-led session (`vibe-delegate role <role> --model <model> --cwd <workspace>`,
+payload on stdin) — see the `$vs`/`$vss`/`$vsss` SKILL.md substitution tables.

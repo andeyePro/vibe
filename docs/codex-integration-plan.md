@@ -206,10 +206,21 @@ relies on it.
   the hook is listed for him.
 - D5 **Codex skills ship as SKILL.md wrappers in the system skill root**
   (`/etc/codex/skills/{vs,vss,vsss}/SKILL.md`, path settled in-iteration per
-  F5 with an offline discovery probe) whose body says "follow
-  `/usr/local/share/vibe/commands/<name>.md` exactly, substituting Codex
-  tool names"; the command bodies stay single-sourced. Nothing is written
-  into the Mac's `~/.codex` or `~/.agents`.
+  F5 with an offline discovery probe), landed in item 5 (task_047). "Thin
+  wrapper" is no longer accurate: each SKILL.md names
+  `/usr/local/share/vibe/commands/<name>.md` as the text to follow verbatim
+  and carries the fixed substitution table those bodies need for every
+  Claude-only primitive they use — `Agent`, `Skill(skill: "code-review")`, a
+  nested `/vs`/`/vss` mention, `Read`/`Write`/`Edit`, `Bash`/`Grep`/`Glob`,
+  `ScheduleWakeup`, and `/learnings` writes. What actually makes the wrapper
+  usable is that table plus `vibe-delegate role <role> --model <astra|opus|
+  sonnet|haiku|fable> --cwd <workspace>` (`vibe-delegate.mjs`'s new `role`
+  operation): one fresh top-level `codex exec` or `claude -p` process per
+  `/vs` role — read-only roles (planner, spec-critic, reviewer, evaluator)
+  tool-less exactly like `ask`; write roles (generator, tester) run in the
+  workspace with tools on, under the same hooks and firewall as the lead.
+  The command bodies stay single-sourced. Nothing is written into the Mac's
+  `~/.codex` or `~/.agents`.
 - D6 **Reviewer isolation = separate top-level (unprivileged `node`)
   sessions with NO tools at all.** Distinct `CODEX_HOME` per reviewer would
   require copying `auth.json` (F8), which vibe never does. The panel runner

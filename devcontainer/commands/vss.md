@@ -182,6 +182,13 @@ Default is no push. Always.
 
 `/vss` is the autonomous wrapper: pick the right tool, run it, deal with the predictable in-flow choices the way Martin would. Use `/vss` when you want to step away. Use `/vs` or `/sp` directly when you want to drive.
 
+## Running under Codex
+
+`$vss` (`/etc/codex/skills/vss/SKILL.md`) wraps this file for a Codex-led
+session and carries the substitution table for `Agent(...)` and the other
+Claude-only primitives it and the wrapped `/vs` use. Role dispatch becomes
+`vibe-delegate role <role> --model <model> --cwd <workspace>`.
+
 ---
 
 Read `$ARGUMENTS` below. If empty, start at Mode A. If non-empty, start at Mode B Step 1.

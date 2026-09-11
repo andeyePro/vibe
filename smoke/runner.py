@@ -686,6 +686,18 @@ def main() -> int:
     test_codex_dockerfile_ac6()
     test_codex_docs_ac7_ac8()
 
+    # task_047: $vs/$vss/$vsss Codex skills + vibe-delegate role dispatch
+    test_codex_skill_frontmatter_ac1()
+    test_codex_skills_dockerfile_ac2()
+    test_delegate_role_refusals_ac3()
+    test_delegate_role_golden_astra_ac4()
+    test_delegate_role_golden_claude_ac4()
+    test_delegate_role_readonly_no_dash_c()
+    test_delegate_role_write_roles_use_cwd()
+    test_delegate_role_status_ac5()
+    test_codex_commands_running_under_codex_ac6()
+    test_codex_docs_ac7()
+
     print()
     if FAILURES:
         print(f"✗ {len(FAILURES)} check(s) failed:")

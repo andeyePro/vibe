@@ -447,6 +447,13 @@ Superpowers is complementary discipline, not a rival harness — `/vs` supplies 
 - User declines both Step-1 options (tighten brief or `--fuzzy`) — stop, don't guess.
 - Plateau across three consecutive cycles — surface to user before ceiling.
 
+## Running under Codex
+
+`$vs` (`/etc/codex/skills/vs/SKILL.md`) wraps this file for a Codex-led
+session and carries the substitution table for `Agent(...)` and the other
+Claude-only primitives above. Role dispatch becomes `vibe-delegate role
+<role> --model <model> --cwd <workspace>`, one fresh process per role.
+
 ---
 
 Read the user's prompt below this line. Start at Step 1.

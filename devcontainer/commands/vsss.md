@@ -363,6 +363,13 @@ When the loop ends (any reason), report to the user:
 
 Lead with `---` before the report block.
 
+## Running under Codex
+
+`$vsss` (`/etc/codex/skills/vsss/SKILL.md`) wraps this file for a Codex-led
+session and carries the substitution table for `Agent(...)` and the other
+Claude-only primitives it and the wrapped `/vss`/`/vs` use. Role dispatch
+becomes `vibe-delegate role <role> --model <model> --cwd <workspace>`.
+
 ---
 
 Read `$ARGUMENTS` below. Run iter 1 of the loop.

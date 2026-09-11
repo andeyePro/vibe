@@ -143,7 +143,10 @@ COPY vibe-delegate.mjs /usr/local/bin/vibe-delegate
 # (--chown is needed even here, inside the USER node region, because COPY
 # would otherwise keep the build context's ownership.) The sudoers block
 # below still grants `node` exactly three root commands, none of which can
-# write these paths.
+# write these paths. This line also copies codex/skills/ (task_047): the
+# whole codex/ tree lands under /etc/codex/, so /etc/codex/skills is the
+# system (Admin) skill root with no extra COPY needed, root-owned like
+# everything else here.
 COPY --chown=root:root codex/ /etc/codex/
 COPY --chown=root:root codex-guard-adapter.sh /usr/local/bin/codex-guard-adapter
 COPY --chown=root:root codex-guard-liveness.sh /usr/local/bin/codex-guard-liveness
@@ -172,6 +175,8 @@ USER root
 RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/refresh-extra-domains.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/guard-bash.sh /usr/local/bin/guard-fs.sh /usr/local/bin/install-claude-extras.sh /usr/local/bin/check-sp-current.sh /usr/local/bin/register-op-mcp.sh /usr/local/bin/vibe-credential-helper /usr/local/bin/vibe-copy /usr/local/bin/codex-guard-adapter /usr/local/bin/codex-guard-liveness && \
   chmod 0755 /etc/codex /etc/codex/hooks && \
   chmod 0644 /etc/codex/requirements.toml /etc/codex/config.toml /etc/codex/hooks/hooks.json && \
+  chmod 0755 /etc/codex/skills /etc/codex/skills/vs /etc/codex/skills/vss /etc/codex/skills/vsss && \
+  chmod 0644 /etc/codex/skills/vs/SKILL.md /etc/codex/skills/vss/SKILL.md /etc/codex/skills/vsss/SKILL.md && \
   echo "node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/node-firewall && \
   echo "Defaults!/usr/local/bin/init-firewall.sh env_reset" >> /etc/sudoers.d/node-firewall && \
   echo 'node ALL=(root) NOPASSWD: /usr/local/bin/refresh-extra-domains.sh ""' >> /etc/sudoers.d/node-firewall && \

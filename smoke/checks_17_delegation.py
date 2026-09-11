@@ -33,6 +33,12 @@ data = sys.stdin.read()
 with (home / "calls.jsonl").open("a") as f:
     f.write(json.dumps({"vendor": vendor, "args": args, "input": data,
         "cwd": os.getcwd(), "env": dict(os.environ)}) + "\n")
+# A --settings value that is a FILE is private to the helper's scratch dir and
+# gone after the call: snapshot it while it exists so tests can inspect it.
+if "--settings" in args:
+    _sp = args[args.index("--settings") + 1]
+    if os.path.isfile(_sp):
+        (home / "settings-seen.json").write_text(Path(_sp).read_text())
 if vendor == "codex" and args == ["--version"]:
     print(fixture.get("version", "codex-cli 0.154.0"))
     sys.exit(0)
