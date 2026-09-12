@@ -46,7 +46,8 @@
     "POWERLEVEL9K_DISABLE_GITSTATUS": "true",
     "VIBE_SSH_AUTO": "${localEnv:VIBE_SSH_AUTO}",
     "VIBE_EXTRA_DOMAINS": "${localEnv:VIBE_EXTRA_DOMAINS}",
-    "GIT_OPTIONAL_LOCKS": "0"
+    "GIT_OPTIONAL_LOCKS": "0",
+    "DISABLE_AUTOUPDATER": "1"
   },
   "remoteEnv": {
     "GITHUB_TOKEN": "${localEnv:GITHUB_TOKEN}",
@@ -64,7 +65,8 @@
     "CLAUDE_CONFIG_DIR": "/home/node/.claude",
     "POWERLEVEL9K_DISABLE_GITSTATUS": "true",
     "VIBE_SSH_AUTO": "${localEnv:VIBE_SSH_AUTO}",
-    "GIT_OPTIONAL_LOCKS": "0"
+    "GIT_OPTIONAL_LOCKS": "0",
+    "DISABLE_AUTOUPDATER": "1"
   },
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
   "workspaceFolder": "/workspace",

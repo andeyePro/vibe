@@ -1185,3 +1185,50 @@ def test_vibe_copy_warn_at_8kib_plus_one() -> None:
             content = scratch_file.read_bytes()
             check("[copy] 8k+1 scratch written", content == input_bytes,
                   f"got {len(content)} bytes")
+
+
+def test_disable_autoupdater_set_for_container() -> None:
+    """Item 6: DISABLE_AUTOUPDATER=1 must reach the container, either via
+    devcontainer.json's containerEnv block or a Dockerfile ENV line placed
+    outside the USER node region (the region between a `USER node` line and
+    the next `USER` change)."""
+    print("\n[item6] DISABLE_AUTOUPDATER=1 set for the container")
+
+    devcontainer_json = REPO / "devcontainer" / "devcontainer.json"
+    data = json.loads(devcontainer_json.read_text())
+    container_env = data.get("containerEnv", {}) or {}
+    set_via_json = container_env.get("DISABLE_AUTOUPDATER") == "1"
+
+    env_line_re = re.compile(r'^\s*ENV\s+DISABLE_AUTOUPDATER=(?:"1"|1)\s*$')
+    dockerfile_lines = DOCKERFILE.read_text().splitlines()
+    current_user = None
+    env_line_users: list = []
+    for line in dockerfile_lines:
+        stripped = line.strip()
+        m = re.match(r'^USER\s+(\S+)', stripped)
+        if m:
+            current_user = m.group(1)
+            continue
+        if env_line_re.match(line):
+            env_line_users.append(current_user)
+
+    set_via_dockerfile = len(env_line_users) > 0
+    dockerfile_outside_node_region = all(u != "node" for u in env_line_users)
+
+    check(
+        "[item6] DISABLE_AUTOUPDATER=1 present via containerEnv or Dockerfile ENV",
+        set_via_json or set_via_dockerfile,
+        f"containerEnv={container_env}, dockerfile ENV lines found={len(env_line_users)}",
+    )
+
+    if set_via_dockerfile:
+        check(
+            "[item6] Dockerfile ENV DISABLE_AUTOUPDATER=1 is outside the USER node region",
+            dockerfile_outside_node_region,
+            f"ENV line(s) found under USER context(s): {env_line_users}",
+        )
+        check(
+            "[item6] exactly one Dockerfile ENV DISABLE_AUTOUPDATER=1 line",
+            len(env_line_users) == 1,
+            f"found {len(env_line_users)} matching ENV lines",
+        )
