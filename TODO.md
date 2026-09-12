@@ -74,6 +74,8 @@ Two vibe-wide behaviour changes shipped and took effect on this rebuild — surf
 
 ## Open
 
+- [ ] **Guard bare `"${arr[@]}"` expansions of possibly-empty arrays in `vibe`** (2026-09-12, from the `TASK_BIND_ENV` launch break fixed this session): `vibe` targets bash 3.2 (`#!/bin/bash`, see the note at `vibe:172`) where a bare `"${arr[@]}"` on an empty array aborts under `set -u`. Add a smoke check that flags any array assigned `=()` anywhere in `vibe` whose expansions are not all in the `${arr[@]+"${arr[@]}"}` form. Cheap and purely textual. Related: the Dockerfile USER-region guard below — both are build/launch breakage that reached Martin because nothing tested for it.
+
 - [ ] **Guard against build-time writes to /usr/local/bin in the `USER node` region** (2026-09-12, from the `ln -s taskandi-client` build break fixed in `ec64ada`): `smoke/` has no check that `devcontainer/Dockerfile` never puts a `RUN` that writes a root-owned path between `USER node` (line ~89) and the `USER root` that follows it. Parse the Dockerfile in `smoke/checks_18_codex_runtime.py`, track the active `USER`, and fail on any `RUN` in a node region whose body writes `/usr/local/bin`, `/usr/local/share` or `/etc/codex` (`ln`, `cp`, `mv`, `install`, `chmod`, `chown`, `touch`, `>` redirection). Cheap, and it catches the exact failure that cost two launches. Awaiting Martin's `y` (fromClaude item 25).
 
 - [x] **Plain-vibe Codex onboarding** (2026-09-12): remember the per-folder runtime and guide interactive host login, local Git and scoped project setup; preserve credential gates and noninteractive refusal.
