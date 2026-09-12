@@ -78,7 +78,10 @@ def _extract_lines(src: str, start_line: str, end_line: str = "fi") -> str:
     return "\n".join(lines[start:end + 1])
 
 
-GATE_START = 'if [ "$LEAD_AGENT" = "codex" ] && [ -z "$(_codex_desired_source "$WORKSPACE" 2>/dev/null)" ]; then'
+# Review item 11 (2026-09-12) removed the `2>/dev/null` from this line: the ⚠
+# lines _codex_opted_in prints are the only thing that names WHICH gate refused,
+# and suppressing them left one fixed sentence that diagnosed nothing.
+GATE_START = 'if [ "$LEAD_AGENT" = "codex" ] && [ -z "$(_codex_desired_source "$WORKSPACE")" ]; then'
 HEADER_START = '_codex_banner="$(_codex_desired_source "$WORKSPACE" 2>/dev/null)"'
 
 
@@ -464,20 +467,37 @@ def test_launch_codex_source_shape():
 
 
 def test_launch_claude_unchanged_vs_head():
-    print("\n[agent] AC3: launch_claude is byte-for-byte unchanged vs HEAD (no pinned sha)")
-    r = run(["git", "show", "HEAD:vibe"], cwd=REPO)
-    check("[agent] git show HEAD:vibe succeeds", r.returncode == 0, r.stderr)
-    if r.returncode != 0:
-        return
-    head_func = _extract_func(r.stdout, "launch_claude")
+    # Name kept for runner.py's explicit call site; the body no longer
+    # compares against HEAD (see below) - only the label is historical.
+    print("\n[agent] AC3: launch_claude body matches a documented golden fragment (no HEAD pin)")
+    # Was `git show HEAD:vibe` vs the working tree (item 31, 2026-09-12 max
+    # review): that only catches drift while HEAD points at a commit that
+    # precedes this branch. Once this branch's own commits become HEAD (as
+    # 23ae4c4 already is), `git show HEAD:vibe` IS the working tree, so the
+    # comparison degenerates into the file against itself and can never fail
+    # again - a dead test that still prints PASS. Embed the golden body
+    # literally instead: it cannot rot as HEAD moves, and per
+    # HISTORICAL_PINS_ALLOWED's no-fixed-sha-pin rule (smoke/_core.py) this
+    # is the preferred fix over registering a pin. Task binding (checks_29)
+    # adds one opt-in argv prefix; its empty/default expansion and validated
+    # bound value are exercised behaviourally there, so it is stripped
+    # before comparing here - the golden below is what remains, i.e. what
+    # launch_claude looked like immediately before task_049/the task-binding
+    # work touched it.
+    golden = (
+        'launch_claude() {\n'
+        '  exec devcontainer exec \\\n'
+        '    --workspace-folder "$WORKSPACE" \\\n'
+        '    --override-config "$OVERRIDE_CONFIG" \\\n'
+        '    /bin/bash --noprofile --norc -c "exec env SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 claude '
+        '${1:+$1 }${CLAUDE_MODEL_ARGS:+$CLAUDE_MODEL_ARGS }--permission-mode bypassPermissions${2:+ \'$2\'}"\n'
+        '}'
+    )
+    without_binding = lambda value: value.replace('${TASK_BIND_ENV[@]+"${TASK_BIND_ENV[@]}"} ', '')
     working_func = _extract_func(VIBE.read_text(), "launch_claude")
-    # Task binding adds one opt-in argv prefix. Its empty/default expansion and
-    # validated bound value are exercised behaviourally in checks_29; the
-    # existing Claude invocation must otherwise remain byte-identical.
-    without_binding = lambda value: value.replace('"${TASK_BIND_ENV[@]}" ', '')
-    check("[agent] launch_claude unchanged apart from optional task-binding argv",
-          without_binding(head_func) == without_binding(working_func),
-          f"HEAD:\n{head_func}\n---\nworking tree:\n{working_func}")
+    check("[agent] launch_claude unchanged apart from optional task-binding argv (vs golden fragment)",
+          without_binding(working_func) == golden,
+          f"golden:\n{golden}\n---\nworking tree (binding stripped):\n{without_binding(working_func)}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════

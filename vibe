@@ -18,6 +18,7 @@
 #   vibe <project> --task <ref>  # override the local Task&I node binding for this launch
 #   vibe --codex-run <file>  # run a project-local prompt under the Codex supervisor
 #   vibe --codex-resume <file> # resume that prompt using its saved supervisor state
+#   vibe --codex-run <file> --new-run  # archive any saved supervisor state first
 #   vibe --list              # list available projects
 #   vibe --version           # print the vibe version and exit
 #   vibe --help              # show this help
@@ -328,26 +329,32 @@ create_github_repo() {
   local answer
   answer=$(ask_yes_no_never "Create a GitHub repo for it?")
 
+  # Review item 3 (2026-09-12): every DECLINE path below returns 0 explicitly.
+  # A bare `return` carries the status of the last command run, so "no" and
+  # "never" used to hand the caller a non-zero status; the sole caller is a
+  # bare statement under `set -e`, so declining GitHub killed the launch.
   case "$answer" in
-    never) mark_github_skipped; return ;;
-    no)    echo "  Skipping — launching without GitHub."; return ;;
+    never) mark_github_skipped || true; return 0 ;;
+    no)    echo "  Skipping — launching without GitHub."; return 0 ;;
   esac
 
   if ! command -v gh >/dev/null 2>&1; then
     printf '%s\n' '  Install GitHub CLI from https://cli.github.com, then run vibe again.'
-    return 1
+    printf '%s\n' '  Continuing without GitHub for this launch.'
+    return 0
   fi
   local gh_user
   if _vibe_interactive && ! gh auth status >/dev/null 2>&1; then
     if ask_yes_no 'Sign in to GitHub CLI to continue GitHub setup?' n; then
-      gh auth login || return
+      gh auth login || { echo "  Skipping — launching without GitHub."; return 0; }
     else
-      return
+      echo "  Skipping — launching without GitHub."
+      return 0
     fi
   fi
   gh_user=$(gh api user --jq '.login' 2>/dev/null) || {
     echo "  ✗ Not logged in to GitHub CLI. Run: gh auth login"
-    return
+    return 0
   }
 
   local repo_name
@@ -3748,6 +3755,11 @@ parse_vibe_args() {
   AGENT_ARG=""
   CODEX_ACTION=""
   CODEX_PROMPT_ARG=""
+  # --new-run is passed straight to codex-supervisor, which archives a
+  # completed or prompt-mismatched state file instead of refusing to start
+  # (review item 10, 2026-09-12 — the flag existed in the supervisor but no
+  # launcher route reached it, so a finished run could never be re-run).
+  CODEX_NEW_RUN=false
   TASK_REF_ARG=""
   # Stays EMPTY unless --task binds one. Every expansion of it below must
   # use the ${arr[@]+"${arr[@]}"} form: macOS ships bash 3.2, where a plain
@@ -3794,6 +3806,7 @@ parse_vibe_args() {
         [ -n "${1:-}" ] && [[ "$1" != --* ]] || { echo "Codex run/resume needs a project-local prompt file" >&2; exit 1; }
         CODEX_PROMPT_ARG=$1; shift
         ;;
+      --new-run) CODEX_NEW_RUN=true; shift ;;
       --agent)
         shift
         # Validated HERE, in the parser, so `vibe --agent bogus` dies on the
@@ -4235,6 +4248,20 @@ _vibe_host_onboarding() {
 
 _vibe_interactive() { [ -t 0 ] && [ -t 1 ]; }
 
+# _vibe_onboard_soft <what> <subcommand> [args...] — run a host-onboarding
+# subcommand whose failure must NOT abort the launch (review item 5,
+# 2026-09-12). host-onboarding.py exits 1 on any OSError/ValueError, and every
+# interactive call site used to be `|| return 1` feeding a `|| exit 1`, so one
+# unrelated refusal (an unsafe-looking ancestor, unreadable host state) turned
+# into "vibe simply will not start". Stdout still flows to the caller's command
+# substitution; a failure prints one ⚠ line naming <what> and yields nothing.
+# Always returns 0.
+_vibe_onboard_soft() {
+  local what="$1"; shift
+  _vibe_host_onboarding "$@" || printf '  ⚠ %s unavailable — continuing without it.\n' "$what" >&2
+  return 0
+}
+
 # Shared by both runtimes. Docker stays on the host, outside the YOLO mount.
 vibe_docker_preflight() {
   local attempt
@@ -4256,13 +4283,13 @@ vibe_onboard_agent() {
   local requested=""
   if [ -n "$flag" ]; then
     # A new explicit host choice supersedes any queued in-session choice.
-    _vibe_host_onboarding cancel-agent "$ws" || return 1
+    _vibe_onboard_soft 'cancelling the queued agent switch' cancel-agent "$ws"
   else
-    requested="$(_vibe_host_onboarding take-agent "$ws")" || return 1
+    requested="$(_vibe_onboard_soft 'the queued agent switch' take-agent "$ws")"
     if [ -n "$requested" ]; then LEAD_AGENT="$requested"; return 0; fi
   fi
   if [ -z "$flag" ]; then
-    remembered="$(_vibe_host_onboarding memory-get "$ws")" || return 1
+    remembered="$(_vibe_onboard_soft "this folder's remembered runtime" memory-get "$ws")"
     if [ -n "$remembered" ]; then LEAD_AGENT="$remembered"; return 0; fi
   fi
   resolved="$(_agent_resolve "$flag" "$ws")"
@@ -4272,7 +4299,7 @@ vibe_onboard_agent() {
   if [ -n "$flag" ] || [ "$probe" = claude ] || [ "$resolved" = codex ] || [ "${VIBE_AGENT:-}" = claude ]; then
     LEAD_AGENT="$resolved"
   else
-    remembered="$(_vibe_host_onboarding memory-get "$ws")" || return 1
+    remembered="$(_vibe_onboard_soft "this folder's remembered runtime" memory-get "$ws")"
     if [ -n "$remembered" ]; then
       LEAD_AGENT="$remembered"
     elif _vibe_interactive; then
@@ -4283,13 +4310,13 @@ vibe_onboard_agent() {
         codex) LEAD_AGENT=codex ;;
         *) printf '%s\n' 'Choose claude or codex, then run vibe again.' >&2; return 1 ;;
       esac
-      _vibe_host_onboarding memory-set "$ws" "$LEAD_AGENT" || return 1
+      _vibe_onboard_soft "remembering this folder's runtime" memory-set "$ws" "$LEAD_AGENT"
     else
       LEAD_AGENT=claude
     fi
   fi
   if [ -n "$flag" ]; then
-    _vibe_host_onboarding memory-set "$ws" "$LEAD_AGENT" || return 1
+    _vibe_onboard_soft "remembering this folder's runtime" memory-set "$ws" "$LEAD_AGENT"
   fi
 }
 
@@ -4311,6 +4338,28 @@ vibe_onboard_git() {
 
 # Vendor file-store status/login only; run outside project config discovery.
 # Status text is consumed, never printed, and no credential file is read here.
+# _codex_auth_file_login <codex-home> — true iff <codex-home>/auth.json holds a
+# file-stored ChatGPT login (a `tokens` object carrying an access or id token).
+# Review item 12 (2026-09-12): vibe_onboard_codex short-circuited on the HOST
+# codex binary, so a Mac with a perfectly good ~/.codex/auth.json but no host
+# CLI was pushed into `npm install -g @openai/codex` or an abort — even though
+# the CONTAINER ships its own codex and only ever needs the credential file.
+# Read-only: it never writes, and never prints a token.
+_codex_auth_file_login() {
+  local src="$1"
+  [ -n "$src" ] && [ -f "$src/auth.json" ] || return 1
+  python3 - "$src/auth.json" <<'PY' >/dev/null 2>&1
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        d = json.load(f)
+except Exception:
+    sys.exit(1)
+t = d.get('tokens') if isinstance(d, dict) else None
+sys.exit(0 if isinstance(t, dict) and (t.get('access_token') or t.get('id_token')) else 1)
+PY
+}
+
 vibe_codex_login_status() {
   (cd / && CODEX_HOME="$1" codex -c 'cli_auth_credentials_store="file"' \
     -c 'forced_login_method="chatgpt"' login status 2>&1) | grep -q 'Logged in using ChatGPT'
@@ -4331,12 +4380,21 @@ vibe_onboard_codex() {
   for d in chatgpt.com auth.openai.com api.openai.com; do
     case " $domains " in *" $d "*) : ;; *) ready=0 ;; esac
   done
-  if [ "$have_cli" = 1 ] && vibe_codex_login_status "$source"; then logged=1; else ready=0; fi
+  if [ "$have_cli" = 1 ] && vibe_codex_login_status "$source"; then
+    logged=1
+  elif [ "$have_cli" != 1 ] && _codex_auth_file_login "$source"; then
+    # No host CLI to ask, but the credential file is already a ChatGPT login.
+    logged=1
+  else
+    ready=0
+  fi
   [ "$ready" = 1 ] && return 0
   if ! ask_yes_no "Set up Codex here? Its file-stored ChatGPT login at $source will be readable/writable by this project's container; allow chatgpt.com, auth.openai.com and api.openai.com install the host Codex CLI and sign in if needed." n; then
     return 1
   fi
-  if [ "$have_cli" != 1 ]; then
+  # Only install a host CLI when one is actually needed — i.e. there is no
+  # usable login yet and `codex login` has to be run here (review item 12).
+  if [ "$have_cli" != 1 ] && [ "$logged" != 1 ]; then
     command -v npm >/dev/null 2>&1 || { printf '%s\n' 'Install Node.js/npm on the host, then run vibe again.' >&2; return 1; }
     (cd / && npm install -g @openai/codex) || { printf '%s\n' 'Host Codex installation failed; resolve the npm error above and run vibe again.' >&2; return 1; }
     command -v codex >/dev/null 2>&1 || { printf '%s\n' 'Codex installed but is not on PATH. Open a new terminal and run vibe again.' >&2; return 1; }
@@ -4352,12 +4410,19 @@ vibe_onboard_codex() {
 
 # Apply an explicit in-session request only after the TUI has exited cleanly.
 # Cleanup the old launcher before re-entering; never transfer vendor histories.
+# _vibe_switch_warn — one line explaining that a queued runtime switch did not
+# happen, without ending the launcher (review item 4, 2026-09-12).
+_vibe_switch_warn() {
+  printf '%s\n' '  ⚠ queued agent switch not applied (see the message above). This project keeps its current runtime; re-request the switch next session.' >&2
+  return 0
+}
+
 vibe_switch_after_exit() {
   local next=""
   _vibe_interactive || return 0
   [ "${CLAUDE_EXIT:-1}" = 0 ] || return 0
   [ -z "${CODEX_ACTION:-}" ] || return 0
-  next="$(_vibe_host_onboarding take-agent "$WORKSPACE")" || return 1
+  next="$(_vibe_onboard_soft 'the queued agent switch' take-agent "$WORKSPACE")"
   [ -n "$next" ] || return 0
   printf '  Reopening this project with %s.\n' "$next"
   vibe_on_exit
@@ -4438,37 +4503,12 @@ if [ "$CONTINUE" = true ] && [ "$RESUME" = true ]; then
   exit 1
 fi
 
-# ── Model selection: config default + Fable billing gate ─────────────────────
-# Flags win over the VIBE_MODEL config default. An invalid VIBE_MODEL is
-# ignored with a warning rather than blocking the launch.
-if [ -z "$CODEX_ACTION" ] && [ -z "$MODEL_ARG" ] && [ -n "${VIBE_MODEL:-}" ]; then
-  if is_model_id "$VIBE_MODEL"; then
-    MODEL_ARG="$VIBE_MODEL"
-  else
-    echo "  ⚠ Ignoring invalid VIBE_MODEL in config: '$VIBE_MODEL'" >&2
-  fi
-fi
-
-# Fable 5 left Pro/Max subscription cover on 8 Jul 2026 (usage credits at API
-# list rates from then on). vibe's default posture is subscription-only spend,
-# so from the cutover the launch needs a per-run confirm or a standing opt-in
-# (VIBE_FABLE_CREDITS_OK=1 in ~/.vibe/config). Before the cutover it's free.
-if [ -z "$CODEX_ACTION" ] && [ "$MODEL_ARG" = "$FABLE_MODEL_ID" ]; then
-  if [ "$(fable_billing_phase)" = "free" ]; then
-    echo "  ◆ Fable 5: included in your Pro/Max subscription at no extra cost until 7 Jul 2026."
-  elif [ "${VIBE_FABLE_CREDITS_OK:-}" = "1" ]; then
-    echo "  ◆ Fable 5: billing usage credits at API rates (VIBE_FABLE_CREDITS_OK=1)."
-  else
-    echo "  ⚠ Fable 5 is no longer included in Pro/Max subscriptions (since 8 Jul 2026)."
-    echo "    Sessions bill usage credits at API list rates (\$10/MTok in, \$50/MTok out)"
-    echo "    ON TOP of your subscription. vibe's default is subscription-only spend."
-    if ask_yes_no "Launch with Fable 5 anyway?" n; then
-      echo "  ◆ Launching on Fable 5 (usage credits). Set VIBE_FABLE_CREDITS_OK=1 in ~/.vibe/config to skip this ask."
-    else
-      MODEL_ARG=""
-      echo "  ◆ Launching on your default model instead."
-    fi
-  fi
+# --new-run archives the supervisor's saved state, so it only means anything
+# on the run path: pairing it with --codex-resume asks for both "resume this
+# state" and "throw this state away" (review item 10, 2026-09-12).
+if [ "$CODEX_NEW_RUN" = true ] && [ "$CODEX_ACTION" != run ]; then
+  echo "  ✗ --new-run only applies to --codex-run." >&2
+  exit 1
 fi
 
 # ── Resolve workspace ─────────────────────────────────────────────────────────
@@ -4487,6 +4527,17 @@ else
     PROJECT_NAME="$(basename "$WORKSPACE")"
   else
     WORKSPACE="$PROJECTS_DIR/$PROJECT_NAME"
+    # Canonicalise exactly like the two branches above (review item 7,
+    # 2026-09-12). Every consumer of $WORKSPACE — the Codex allow-registry
+    # lookup (codex_allowed greps for the raw string), the runtime-memory key
+    # (host-onboarding hashes the canonical path), the mount comparator —
+    # compares against a `pwd -P` path that the WRITERS recorded. A
+    # PROJECTS_DIR carrying a symlink or differing in case made `vibe <name>`
+    # miss grants that `cd <dir> && vibe` found.
+    if [ -d "$WORKSPACE" ]; then
+      WORKSPACE="$(cd "$WORKSPACE" && pwd -P)"
+      PROJECT_NAME="$(basename "$WORKSPACE")"
+    fi
     if [ ! -d "$WORKSPACE" ]; then
       echo "  Error: Project not found: $WORKSPACE"
       echo ""
@@ -4539,20 +4590,75 @@ if [ -n "$CODEX_ACTION" ]; then
 fi
 if _vibe_interactive; then
   _vibe_host_onboarding host-check || exit 1
-  _onboard_flag="$AGENT_ARG"
-  [ -z "$CODEX_ACTION" ] || _onboard_flag=codex
-  vibe_onboard_agent "$_onboard_flag" "$WORKSPACE" || exit 1
+  # Review item 8 (2026-09-12): --codex-run/--codex-resume is a ONE-OFF
+  # supervised run. Passing `codex` to vibe_onboard_agent as an explicit flag
+  # made it cancel any queued switch AND persist `codex` as this folder's
+  # remembered runtime, so a single supervised run silently reassigned the
+  # project. LEAD_AGENT is already pinned to codex above for this path, so
+  # onboarding has nothing left to decide — skip it.
+  if [ -z "$CODEX_ACTION" ]; then
+    vibe_onboard_agent "$AGENT_ARG" "$WORKSPACE" || exit 1
+  fi
   vibe_onboard_git "$WORKSPACE" || exit 1
   if [ "$LEAD_AGENT" = codex ]; then vibe_onboard_codex "$WORKSPACE" || exit 1; fi
 else
   # Explicit CI choices are remembered on hosts, but never grant credentials.
   if [ -n "$AGENT_ARG" ] && _vibe_host_onboarding host-check 2>/dev/null; then
-    _vibe_host_onboarding memory-set "$WORKSPACE" "$AGENT_ARG" || exit 1
+    _vibe_onboard_soft "remembering this folder's runtime" memory-set "$WORKSPACE" "$AGENT_ARG"
   fi
   # Read-only memory lookup: unavailable host state preserves CI defaults.
   _remembered_agent="$(_vibe_host_onboarding memory-get "$WORKSPACE" 2>/dev/null)" || _remembered_agent=""
   if [ -n "$_remembered_agent" ] && [ -z "$CODEX_ACTION" ]; then
     LEAD_AGENT="$(_agent_resolve "${AGENT_ARG:-$_remembered_agent}" "$WORKSPACE")"
+  fi
+fi
+
+# ── Claude-only flags vs. the resolved lead runtime ──────────────────────────
+# Review item 9 (2026-09-12): LEAD_AGENT is only final HERE, after onboarding.
+# --continue/--resume/--model are Claude-only, and for a Codex-led launch they
+# used to be dropped in silence (the CODEX_ACTION-only guard above catches the
+# supervised forms, never a Codex lead that came from --agent codex or from
+# this folder's remembered runtime). Refuse them loudly instead.
+if [ "$LEAD_AGENT" = codex ] \
+   && { [ "$CONTINUE" = true ] || [ "$RESUME" = true ] || [ -n "$MODEL_ARG" ]; }; then
+  echo "  ✗ --continue, --resume and --model are Claude-only; this project's runtime is codex." >&2
+  echo "    Use 'vibe --agent claude …' for a Claude session, or drop the flag." >&2
+  exit 1
+fi
+
+# ── Model selection: config default + Fable billing gate ─────────────────────
+# Flags win over the VIBE_MODEL config default. An invalid VIBE_MODEL is
+# ignored with a warning rather than blocking the launch. Moved below the
+# onboarding block (review item 9, 2026-09-12) so the gates key on the
+# RESOLVED lead runtime, not just on CODEX_ACTION: a Codex-led interactive
+# launch used to be offered the Fable consent prompt it can never act on.
+if [ "$LEAD_AGENT" != codex ] && [ -z "$MODEL_ARG" ] && [ -n "${VIBE_MODEL:-}" ]; then
+  if is_model_id "$VIBE_MODEL"; then
+    MODEL_ARG="$VIBE_MODEL"
+  else
+    echo "  ⚠ Ignoring invalid VIBE_MODEL in config: '$VIBE_MODEL'" >&2
+  fi
+fi
+
+# Fable 5 left Pro/Max subscription cover on 8 Jul 2026 (usage credits at API
+# list rates from then on). vibe's default posture is subscription-only spend,
+# so from the cutover the launch needs a per-run confirm or a standing opt-in
+# (VIBE_FABLE_CREDITS_OK=1 in ~/.vibe/config). Before the cutover it's free.
+if [ "$LEAD_AGENT" != codex ] && [ "$MODEL_ARG" = "$FABLE_MODEL_ID" ]; then
+  if [ "$(fable_billing_phase)" = "free" ]; then
+    echo "  ◆ Fable 5: included in your Pro/Max subscription at no extra cost until 7 Jul 2026."
+  elif [ "${VIBE_FABLE_CREDITS_OK:-}" = "1" ]; then
+    echo "  ◆ Fable 5: billing usage credits at API rates (VIBE_FABLE_CREDITS_OK=1)."
+  else
+    echo "  ⚠ Fable 5 is no longer included in Pro/Max subscriptions (since 8 Jul 2026)."
+    echo "    Sessions bill usage credits at API list rates (\$10/MTok in, \$50/MTok out)"
+    echo "    ON TOP of your subscription. vibe's default is subscription-only spend."
+    if ask_yes_no "Launch with Fable 5 anyway?" n; then
+      echo "  ◆ Launching on Fable 5 (usage credits). Set VIBE_FABLE_CREDITS_OK=1 in ~/.vibe/config to skip this ask."
+    else
+      MODEL_ARG=""
+      echo "  ◆ Launching on your default model instead."
+    fi
   fi
 fi
 
@@ -4610,7 +4716,10 @@ elif GITHUB_REPO=$(detect_github_repo); then
     maybe_reprompt_stored_token "$GITHUB_REPO" "$GITHUB_TOKEN"
   fi
 else
-  create_github_repo
+  # `|| true`: GitHub setup is optional, so nothing it does — a decline, a
+  # missing gh, a failed `gh repo create` — may abort the launch under
+  # `set -e` (review item 3, 2026-09-12).
+  create_github_repo || true
   if [ -n "$GITHUB_REPO" ]; then
     setup_token "$GITHUB_REPO"
   fi
@@ -4657,7 +4766,20 @@ fi
 # task_045 gate — the in-project marker (the request) and the host-side
 # registry (the consent). VIBE_CODEX_PATH=off lands here too, which is
 # correct: it is the machine-wide "never mount the ChatGPT login" switch.
-if [ "$LEAD_AGENT" = "codex" ] && [ -z "$(_codex_desired_source "$WORKSPACE" 2>/dev/null)" ]; then
+# Review item 11 (2026-09-12): stderr is NO LONGER suppressed here. The three
+# marker branches and the registry branch of _codex_opted_in each print a ⚠
+# line naming the exact refusal (committed marker, unverifiable marker, not in
+# ~/.vibe/codex-allow); `2>/dev/null` swallowed all of them and left one fixed
+# sentence that named two causes and diagnosed neither. The `if` chain below
+# covers the cases _codex_opted_in stays silent about.
+if [ "$LEAD_AGENT" = "codex" ] && [ -z "$(_codex_desired_source "$WORKSPACE")" ]; then
+  if [ "${VIBE_CODEX_PATH:-}" = off ]; then
+    echo "  ⚠ VIBE_CODEX_PATH=off in ~/.vibe/config disables the Codex login mount on this machine." >&2
+  elif [ ! -d "$(_codex_source)" ]; then
+    echo "  ⚠ no Codex login directory at $(_codex_source) — run 'codex login' on the Mac first (vibe never creates it)." >&2
+  elif [ ! -f "$WORKSPACE/.vibe-allow-codex" ]; then
+    echo "  ⚠ this project has no .vibe-allow-codex marker — 'touch .vibe-allow-codex' in the project (leave it untracked)." >&2
+  fi
   echo "  ✗ --agent codex needs the Codex login mount: create the untracked .vibe-allow-codex marker in the project and run 'vibe codex allow' on the Mac, then relaunch" >&2
   exit 1
 fi
@@ -5301,11 +5423,17 @@ launch_claude() {
 # started through the absolute `/usr/bin/env -u BASH_ENV -u ENV`, and the
 # inner one also pins PATH; nothing inherited can run first.
 launch_codex() {
+  # bash 3.2: an empty array MUST expand through ${arr[@]+"${arr[@]}"} under
+  # `set -u` (see the TASK_BIND_ENV note in the flag parser).
+  local CODEX_SUPERVISE_EXTRA
+  CODEX_SUPERVISE_EXTRA=()
+  [ "${CODEX_NEW_RUN:-false}" != true ] || CODEX_SUPERVISE_EXTRA=(--new-run)
   if [ -n "${CODEX_ACTION:-}" ]; then
     exec devcontainer exec --workspace-folder "$WORKSPACE" --override-config "$OVERRIDE_CONFIG" \
       ${TASK_BIND_ENV[@]+"${TASK_BIND_ENV[@]}"} /usr/bin/env -u BASH_ENV -u ENV PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/share/npm-global/bin \
       SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 CODEX_HOME=/home/node/.codex \
-      /usr/local/bin/codex-entry --supervise -- run --cwd /workspace --prompt-file "/workspace/$CODEX_PROMPT_REL"
+      /usr/local/bin/codex-entry --supervise -- run --cwd /workspace --prompt-file "/workspace/$CODEX_PROMPT_REL" \
+      ${CODEX_SUPERVISE_EXTRA[@]+"${CODEX_SUPERVISE_EXTRA[@]}"}
   fi
   exec devcontainer exec \
     --workspace-folder "$WORKSPACE" \
@@ -5424,12 +5552,17 @@ vibe_exit_hook_add 'restore_terminal || true'
 # traps still fire on this path, and CLAUDE_EXIT still carries the status.
 if [ "$LEAD_AGENT" = "codex" ]; then
   launch_codex_plain
-  vibe_switch_after_exit || exit 1
+  vibe_switch_after_exit || _vibe_switch_warn
   exit "$CLAUDE_EXIT"
 fi
 
 launch_claude_supervised "$CLAUDE_RESUME_ARGS" "" "$VIBE_SESSION_REF"
-vibe_switch_after_exit || exit 1
+# Review item 4 (2026-09-12): a refused switch must NOT exit here. This line
+# sits ABOVE the /vsss auto-resume loop, so a queued switch that take-agent
+# rejects (an active .vss/auto-resume marker is one of its refusal reasons —
+# see host-onboarding.py's switch_ready) used to kill the launcher outright
+# and the autonomous run was never resumed. Warn and fall through.
+vibe_switch_after_exit || _vibe_switch_warn
 
 # ── Auto-resume loop ──────────────────────────────────────────────────────────
 # Engages only when /vsss left an active marker (default persistence since

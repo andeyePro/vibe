@@ -25,8 +25,18 @@ from smoke.checks_23_codex_panel import *
 from smoke.checks_24_codex_context import *
 from smoke.checks_25_codex_supervised_launch import *
 from smoke.checks_27_supervisor_control import *
-from smoke.checks_28_taskandi_client import test_taskandi_fixture_contract
-from smoke.checks_29_taskandi_binding_usage import test_launcher_parser_and_task_binding, test_client_binding_and_usage, test_installed_taskandi_symlink_executes_commands
+from smoke.checks_28_taskandi_client import (
+    test_taskandi_fixture_contract, test_cost_estimate_validation,
+    test_usage_help_names_usage_subcommand,
+)
+from smoke.checks_29_taskandi_binding_usage import (
+    test_launcher_parser_and_task_binding, test_client_binding_and_usage,
+    test_installed_taskandi_symlink_executes_commands,
+    test_wave0_no_bare_assert_in_hardened_smoke_files,
+    test_wave0_checks27_communicate_calls_guarded,
+    test_wave0_item28_absent_probe_survives_ambient_task_ref,
+    test_wave0_supervisor_state_reads_no_bare_double_subscript,
+)
 
 from smoke.checks_26_mac_build import *
 from smoke.checks_31_mac_build_recovery import *
@@ -54,18 +64,20 @@ def main() -> int:
     test_docker_install_hardens_vendor_and_shared_tree_before_final_user()
     test_liveness_managed_prefix_protected_fixture_and_mutability_refusals()
     test_entry_clears_caller_node_environment_before_cli()
-    test_codex_supervisor_c30_lost_start_never_dispatches_again_before_reconciliation()
-    test_codex_supervisor_c30_reconciliation_rejects_stale_or_invalid_evidence()
-    test_codex_supervisor_c30_final_marker_is_final_unindented_plain_text_only()
-    test_codex_supervisor_c30_existing_mode0644_log_is_repaired_before_first_dispatch()
-    test_codex_supervisor_c30_subreaper_reaps_detached_descendants()
-    test_codex_supervisor_c30_unconfirmed_cleanup_retains_ownership_lock()
-    test_codex_supervisor_c30_task_ref_is_forwarded_and_bound_on_resume()
-    test_codex_supervisor_c30_hostile_workspace_python_modules_never_run()
-    test_codex_supervisor_c30_hardlinked_and_foreign_logs_refuse_before_server()
-    test_codex_supervisor_c30_fsync_failure_prevents_dispatch()
-    test_codex_supervisor_c30_default_mapping_and_endpoint_changes_refuse_resume()
-    test_codex_supervisor_c30_pinned_client_rejects_changed_config()
+    run_supervisor_tests([
+        test_codex_supervisor_c30_lost_start_never_dispatches_again_before_reconciliation,
+        test_codex_supervisor_c30_reconciliation_rejects_stale_or_invalid_evidence,
+        test_codex_supervisor_c30_final_marker_is_final_unindented_plain_text_only,
+        test_codex_supervisor_c30_existing_mode0644_log_is_repaired_before_first_dispatch,
+        test_codex_supervisor_c30_subreaper_reaps_detached_descendants,
+        test_codex_supervisor_c30_unconfirmed_cleanup_retains_ownership_lock,
+        test_codex_supervisor_c30_task_ref_is_forwarded_and_bound_on_resume,
+        test_codex_supervisor_c30_hostile_workspace_python_modules_never_run,
+        test_codex_supervisor_c30_hardlinked_and_foreign_logs_refuse_before_server,
+        test_codex_supervisor_c30_fsync_failure_prevents_dispatch,
+        test_codex_supervisor_c30_default_mapping_and_endpoint_changes_refuse_resume,
+        test_codex_supervisor_c30_pinned_client_rejects_changed_config,
+    ])
     test_client_retains_snapshot_and_private_evidence_across_disconnect_and_replay()
     test_host_receipt_identity_unknown_recovery_and_config_rejection()
     test_symlink_descriptors_and_detached_child_cleanup()
@@ -82,14 +94,16 @@ def main() -> int:
     test_launcher_parser_and_task_binding()
     test_client_binding_and_usage()
     test_installed_taskandi_symlink_executes_commands()
-    test_codex_supervisor_c27_live_lock_rejects_duplicate_and_new_run()
-    test_codex_supervisor_c27_stale_lock_needs_explicit_reconciliation()
-    test_codex_supervisor_c27_stop_is_token_scoped_and_cancellable()
-    test_codex_supervisor_c27_final_marker_and_matching_identity_only()
-    test_codex_supervisor_c27_stop_during_active_turn_is_bounded()
-    test_codex_supervisor_c27_status_and_unsafe_persistence_fail_closed()
-    test_codex_supervisor_c27_killed_active_turn_requires_reconciliation_not_replay()
-    test_codex_supervisor_c27_unconfirmed_turn_start_is_not_automatically_retried()
+    run_supervisor_tests([
+        test_codex_supervisor_c27_live_lock_rejects_duplicate_and_new_run,
+        test_codex_supervisor_c27_stale_lock_needs_explicit_reconciliation,
+        test_codex_supervisor_c27_stop_is_token_scoped_and_cancellable,
+        test_codex_supervisor_c27_final_marker_and_matching_identity_only,
+        test_codex_supervisor_c27_stop_during_active_turn_is_bounded,
+        test_codex_supervisor_c27_status_and_unsafe_persistence_fail_closed,
+        test_codex_supervisor_c27_killed_active_turn_requires_reconciliation_not_replay,
+        test_codex_supervisor_c27_unconfirmed_turn_start_is_not_automatically_retried,
+    ])
     test_codex_supervised_parser()
     test_codex_supervised_entry_requires_gate()
     test_codex_context_discovery_defaults_and_git_root()
@@ -786,63 +800,65 @@ def main() -> int:
 
     # task_048: codex-supervisor as an app-server client (offline against a
     # stub codex app-server; smoke/checks_19_codex_supervisor.py)
-    test_codex_supervisor_rewrites_table()
-    test_codex_supervisor_prefix_rewrite_cli()
-    test_codex_supervisor_handshake_argv_env()
-    test_codex_supervisor_usage_errors_no_spawn()
-    test_codex_supervisor_relative_cwd_exit2_no_spawn()
-    test_codex_supervisor_missing_codex_home_exit2_no_spawn()
-    test_codex_supervisor_normal_completion()
-    test_codex_supervisor_continue_then_exit()
-    test_codex_supervisor_quota_known_resets_at()
-    test_codex_supervisor_quota_blind_backoff()
-    test_codex_supervisor_transient_429_backoff()
-    test_codex_supervisor_turn_failure_retries_same_text()
-    test_codex_supervisor_session_budget_exceeded_exit1()
-    test_codex_supervisor_interrupted_exit1()
-    test_codex_supervisor_approval_request_answered()
-    test_codex_supervisor_sigterm_then_resume()
-    test_codex_supervisor_prompthash_mismatch_and_new_run()
-    test_codex_supervisor_ceiling_max_turns()
-    test_codex_supervisor_ceiling_max_quota_waits()
-    test_codex_supervisor_ceiling_max_wall_seconds_during_quota_wait()
-    test_codex_supervisor_status_with_and_without_state()
-    test_codex_supervisor_dockerfile_lines()
-    test_codex_supervisor_vsss_md_exit_section()
-    test_codex_supervisor_readme_mentions()
-    test_codex_supervisor_plan_d7_methods()
+    run_supervisor_tests([
+        test_codex_supervisor_rewrites_table,
+        test_codex_supervisor_prefix_rewrite_cli,
+        test_codex_supervisor_handshake_argv_env,
+        test_codex_supervisor_usage_errors_no_spawn,
+        test_codex_supervisor_relative_cwd_exit2_no_spawn,
+        test_codex_supervisor_missing_codex_home_exit2_no_spawn,
+        test_codex_supervisor_normal_completion,
+        test_codex_supervisor_continue_then_exit,
+        test_codex_supervisor_quota_known_resets_at,
+        test_codex_supervisor_quota_blind_backoff,
+        test_codex_supervisor_transient_429_backoff,
+        test_codex_supervisor_turn_failure_retries_same_text,
+        test_codex_supervisor_session_budget_exceeded_exit1,
+        test_codex_supervisor_interrupted_exit1,
+        test_codex_supervisor_approval_request_answered,
+        test_codex_supervisor_sigterm_then_resume,
+        test_codex_supervisor_prompthash_mismatch_and_new_run,
+        test_codex_supervisor_ceiling_max_turns,
+        test_codex_supervisor_ceiling_max_quota_waits,
+        test_codex_supervisor_ceiling_max_wall_seconds_during_quota_wait,
+        test_codex_supervisor_status_with_and_without_state,
+        test_codex_supervisor_dockerfile_lines,
+        test_codex_supervisor_vsss_md_exit_section,
+        test_codex_supervisor_readme_mentions,
+        test_codex_supervisor_plan_d7_methods,
 
-    # task_048 CYCLE 2: amended AC4/AC6/AC7 (resume semantics + terminal
-    # state, wall deadline while awaiting a turn, waits capped by the wall
-    # budget, the turnFailures gate + --max-* >= 1, an outstanding wait
-    # honoured on resume). Appended after the cycle-1 block above, which is
-    # frozen and unchanged.
-    test_codex_supervisor_c2_terminal_state_no_spawn()
-    test_codex_supervisor_c2_terminal_state_new_run_starts_fresh()
-    test_codex_supervisor_c2_resume_after_sigterm_sends_continue()
-    test_codex_supervisor_c2_resume_never_started_sends_rewritten_prompt()
-    test_codex_supervisor_c2_wall_deadline_during_turn_sends_interrupt()
-    test_codex_supervisor_c2_quota_wait_capped_by_wall_budget()
-    test_codex_supervisor_c2_transient_wait_capped_by_wall_budget()
-    test_codex_supervisor_c2_turn_failures_gate_exit1_then_exit3_on_resume()
-    test_codex_supervisor_c2_max_flags_zero_exit2_no_spawn()
-    test_codex_supervisor_c2_outstanding_wait_honoured_then_resumes()
-    test_codex_supervisor_c2_outstanding_wait_exceeds_deadline_exit3_no_spawn()
+        # task_048 CYCLE 2: amended AC4/AC6/AC7 (resume semantics + terminal
+        # state, wall deadline while awaiting a turn, waits capped by the
+        # wall budget, the turnFailures gate + --max-* >= 1, an outstanding
+        # wait honoured on resume). Appended after the cycle-1 block above,
+        # which is frozen and unchanged.
+        test_codex_supervisor_c2_terminal_state_no_spawn,
+        test_codex_supervisor_c2_terminal_state_new_run_starts_fresh,
+        test_codex_supervisor_c2_resume_after_sigterm_sends_continue,
+        test_codex_supervisor_c2_resume_never_started_sends_rewritten_prompt,
+        test_codex_supervisor_c2_wall_deadline_during_turn_sends_interrupt,
+        test_codex_supervisor_c2_quota_wait_capped_by_wall_budget,
+        test_codex_supervisor_c2_transient_wait_capped_by_wall_budget,
+        test_codex_supervisor_c2_turn_failures_gate_exit1_then_exit3_on_resume,
+        test_codex_supervisor_c2_max_flags_zero_exit2_no_spawn,
+        test_codex_supervisor_c2_outstanding_wait_honoured_then_resumes,
+        test_codex_supervisor_c2_outstanding_wait_exceeds_deadline_exit3_no_spawn,
 
-    # task_048 CYCLE 4: AC4/AC5/AC7 amended again after the reviewer's
-    # second pass (rewritten prompt sent exactly once per thread across
-    # all retry paths; the wall deadline bounds outstanding requests too,
-    # not just the wait for a turn's completion; a fresh rateLimits
-    # snapshot is merged into lastRateLimits field-wise on every run,
-    # including a resume, so a stale persisted value never wins).
-    # Appended after the cycle-2 block above, which is frozen and
-    # unchanged.
-    test_codex_supervisor_c4_quota_before_completion_then_success_continue_text()
-    test_codex_supervisor_c4_transient_before_completion_then_success_continue_text()
-    test_codex_supervisor_c4_failed_turn_before_completion_then_success_continue_text()
-    test_codex_supervisor_c4_wall_deadline_turn_start_never_answers()
-    test_codex_supervisor_c4_wall_deadline_thread_start_never_answers()
-    test_codex_supervisor_c4_stale_lastratelimits_merged_with_fresh_snapshot()
+        # task_048 CYCLE 4: AC4/AC5/AC7 amended again after the reviewer's
+        # second pass (rewritten prompt sent exactly once per thread across
+        # all retry paths; the wall deadline bounds outstanding requests
+        # too, not just the wait for a turn's completion; a fresh
+        # rateLimits snapshot is merged into lastRateLimits field-wise on
+        # every run, including a resume, so a stale persisted value never
+        # wins). Appended after the cycle-2 block above, which is frozen
+        # and unchanged.
+        test_codex_supervisor_c4_quota_before_completion_then_success_continue_text,
+        test_codex_supervisor_c4_transient_before_completion_then_success_continue_text,
+        test_codex_supervisor_c4_failed_turn_before_completion_then_success_continue_text,
+        test_codex_supervisor_c4_wall_deadline_turn_start_never_answers,
+        test_codex_supervisor_c4_wall_deadline_thread_start_never_answers,
+        test_codex_supervisor_c4_stale_lastratelimits_merged_with_fresh_snapshot,
+    ])
 
     # task_049: `vibe --agent codex` — launcher flag/.vibe/agent/VIBE_AGENT
     # precedence, the login-mount gate, launch_codex/launch_codex_plain via
@@ -910,6 +926,75 @@ def main() -> int:
     test_codex_readme_prompt_prefix_ac5()
     test_codex_integration_plan_prompt_prefix_ac5()
     test_manual_tests_55_leading_space_vs_ac5()
+
+    # review-fixes-2026-09-12 wave0: items 27 (check()-half)/28/29/30 —
+    # harness-robustness guards so a bare assert/subscript/communicate()
+    # timeout in the smoke suite itself reports via check() instead of
+    # aborting the whole run. Appended after the task_053 block above, which
+    # is frozen and unchanged.
+    test_wave0_no_bare_assert_in_hardened_smoke_files()
+    test_wave0_checks27_communicate_calls_guarded()
+    test_wave0_item28_absent_probe_survives_ambient_task_ref()
+    test_wave0_supervisor_state_reads_no_bare_double_subscript()
+
+    # review-fixes-2026-09-12 wave3b: item 27 (platform-skip half) — the
+    # ~55 supervisor tests above are wired through run_supervisor_tests(),
+    # which skips them off Linux with a printed notice instead of failing
+    # or raising. This proves the gate itself is platform-keyed, not
+    # error-keyed. Appended after the wave0 block above, which is frozen
+    # and unchanged.
+    test_wave3b_item27_supervisor_tests_skip_off_linux_platform_gate()
+
+    # ── review-fixes-2026-09-12: the remaining regression tests ──────────────
+    # One call per new test function, grouped by the subsystem whose fix it
+    # guards. runner.py calls tests by explicit name (there is no
+    # auto-discovery), so a new test that is never listed here silently never
+    # runs — which is the same class of defect item 32 was about.
+    test_disable_autoupdater_set_for_container()                       # item 6
+    test_no_silent_skip_conditionals_in_checks_13_and_17()             # item 32
+    test_directory_allows_self_owned_group_or_other_writable_ancestor()  # item 1
+    test_storage_no_longer_treats_projects_dir_as_a_container_mount()  # item 2
+    test_mac_build_main_guard_survives_spaced_invocation_path()        # item 20
+    test_mac_build_transport_surfaces_host_json_failure_body()         # item 22
+    test_mac_build_transport_decodes_split_multibyte_utf8_and_still_caps_bytes()  # item 23
+    test_lock_busy_is_not_persisted_terminal_and_same_jobid_later_succeeds()      # item 21
+    test_create_github_repo_decline_paths_all_return_zero()            # item 3
+    test_create_github_repo_caller_tolerates_failure()                 # item 3
+    test_vibe_switch_warn_prints_and_returns_zero()                    # item 4
+    test_vibe_switch_after_exit_callsites_no_longer_fatal()            # item 4
+    test_second_switch_callsite_precedes_auto_resume_loop()            # item 4
+    test_vibe_onboard_soft_survives_failing_host_onboarding()          # item 5
+    test_vibe_onboard_agent_survives_failing_host_onboarding()         # item 5
+    test_onboarding_hard_failure_callsites_unchanged()                 # item 5
+    test_resolve_workspace_symlinked_projects_dir_is_canonicalised()   # item 7
+    test_codex_allowed_matches_only_the_canonical_registry_path()      # item 7
+    test_codex_run_skips_persistent_agent_onboarding()                 # item 8
+    test_model_selection_moved_after_lead_agent_resolution()           # item 9
+    test_model_and_fable_gates_key_on_lead_agent_not_codex_action()    # item 9
+    test_claude_only_flags_refused_for_codex_lead()                    # item 9
+    test_new_run_flag_parsing_and_default()                            # item 10
+    test_new_run_refused_without_codex_run_action()                    # item 10
+    test_new_run_flag_reaches_supervisor_argv()                        # item 10
+    test_help_documents_new_run_flag()                                 # item 10
+    test_codex_gate_no_longer_suppresses_stderr()                      # item 11
+    test_codex_gate_reason_branches()                                  # item 11
+    test_codex_auth_file_login_truth_table()                           # item 12
+    test_npm_install_only_when_login_still_needed()                    # item 12
+    test_onboard_codex_treats_file_login_as_logged_in_without_host_cli()  # item 12
+    test_cost_estimate_validation()                                    # item 26
+    test_usage_help_names_usage_subcommand()                           # taskandi usage line
+    # Items 13-18 drive the real codex-supervisor, so they go through the
+    # same platform gate as the rest of the supervisor block; item 19 drives
+    # codex-panel, which does not.
+    run_supervisor_tests([
+        test_codex_supervisor_review13_exit_code_never_a_string,        # item 13
+        test_codex_supervisor_review14_stale_resets_at_reread_and_floor,  # item 14
+        test_codex_supervisor_review15_sighup_cooperative_stop,         # item 15
+        test_codex_supervisor_review16_binding_resets_at_prefers_soonest,  # item 16
+        test_codex_supervisor_review17_stop_mid_turn_drains_before_message,  # item 17
+        test_codex_supervisor_review18_interrupted_confirms_boundary,   # item 18
+    ])
+    test_codex_panel_review19_partial_startup_failure_cleans_up()      # item 19
 
     print()
     if FAILURES:
