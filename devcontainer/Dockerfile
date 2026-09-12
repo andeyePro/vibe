@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   less \
   git \
   procps \
+  python3 \
   sudo \
   fzf \
   zsh \
@@ -51,9 +52,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # carry the duplicate; the fix only lands on a cache-busted `vibe --rebuild`.
 RUN sed -i '/^hosts:/{/mdns4_minimal/!s/\(hosts:.*\)dns/\1mdns4_minimal [NOTFOUND=return] dns/}' /etc/nsswitch.conf
 
-# Ensure default node user has access to /usr/local/share
+# Permit package installation during the image build only.
 RUN mkdir -p /usr/local/share/npm-global && \
-  chown -R node:node /usr/local/share
+  chown -R node:node /usr/local/share/npm-global
 
 ARG USERNAME=node
 
@@ -132,6 +133,8 @@ COPY register-op-mcp.sh /usr/local/bin/
 COPY credential-helper.sh /usr/local/bin/vibe-credential-helper
 COPY vibe-copy.sh /usr/local/bin/vibe-copy
 COPY vibe-delegate.mjs /usr/local/bin/vibe-delegate
+COPY --chown=root:root codex-context.mjs /usr/local/bin/codex-context
+COPY --chown=root:root codex/context.md /usr/local/share/vibe/codex-context.md
 # Codex system policy layer (task_046). /etc/codex is Codex's system config
 # layer on Unix, so requirements.toml constrains every user/project config,
 # config.toml supplies the defaults, and hooks/hooks.json is the managed hook
@@ -152,6 +155,12 @@ COPY --chown=root:root codex/ /etc/codex/
 # Codex-led `$vsss` run, so like the guard chain it is root-owned — `node`
 # must not be able to rewrite the thing that decides when to stop.
 COPY --chown=root:root codex-supervisor.mjs /usr/local/bin/codex-supervisor
+COPY --chown=root:root supervisor-control.mjs /usr/local/bin/supervisor-control.mjs
+COPY --chown=root:root taskandi-client.mjs /usr/local/bin/taskandi-client.mjs
+RUN ln -s taskandi-client.mjs /usr/local/bin/taskandi-client
+COPY --chown=root:root taskandi-usage.mjs /usr/local/bin/taskandi-usage.mjs
+COPY --chown=root:root mac-build.mjs /usr/local/bin/mac-build
+COPY --chown=root:root mac-build-protocol.mjs /usr/local/bin/mac-build-protocol.mjs
 # The `/vs --panel` runner (task_050): N independent, tool-less `codex exec`
 # reviewers as N top-level processes, since Codex has no blind subagents.
 # Root-owned next to the other Codex scripts — `node` must not be able to
@@ -179,6 +188,12 @@ COPY claude-md /usr/local/share/vibe/claude-md/
 COPY hooks/ /usr/local/share/vibe/hooks/
 COPY git-hooks/ /usr/local/share/vibe/git-hooks/
 USER root
+# Managed CLI code and command documents must not be replaceable by a session.
+# Lock the shared ancestor too: a root-owned leaf below a writable parent is
+# still renameable. Vendor updates are installed by rebuilding the image.
+RUN chown -R root:root /usr/local/share/npm-global /usr/local/share/vibe && \
+  chmod -R go-w /usr/local/share/npm-global /usr/local/share/vibe && \
+  chown root:root /usr/local/share && chmod go-w /usr/local/share
 # refresh-extra-domains.sh (task_042) gets its OWN sudoers entry rather than a
 # widening of the init-firewall.sh rule: it can only ADD to the existing ipset,
 # so granting it does not also grant a whole firewall rebuild. It exists because
@@ -191,7 +206,7 @@ USER root
 # to a root script whose whole job is widening the firewall. The script body
 # also never reads its own argv, so this is belt and braces — but the rule is
 # what makes it true for every future version of the script.
-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/refresh-extra-domains.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/guard-bash.sh /usr/local/bin/guard-fs.sh /usr/local/bin/install-claude-extras.sh /usr/local/bin/check-sp-current.sh /usr/local/bin/register-op-mcp.sh /usr/local/bin/vibe-credential-helper /usr/local/bin/vibe-copy /usr/local/bin/codex-guard-adapter /usr/local/bin/codex-guard-liveness /usr/local/bin/codex-supervisor /usr/local/bin/codex-panel /usr/local/bin/codex-entry /usr/local/bin/codex-prompt-prefix && \
+RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/refresh-extra-domains.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/guard-bash.sh /usr/local/bin/guard-fs.sh /usr/local/bin/install-claude-extras.sh /usr/local/bin/check-sp-current.sh /usr/local/bin/register-op-mcp.sh /usr/local/bin/vibe-credential-helper /usr/local/bin/vibe-copy /usr/local/bin/vibe-delegate /usr/local/bin/codex-context /usr/local/bin/codex-guard-adapter /usr/local/bin/codex-guard-liveness /usr/local/bin/codex-supervisor /usr/local/bin/mac-build /usr/local/bin/taskandi-client /usr/local/bin/codex-panel /usr/local/bin/codex-entry /usr/local/bin/codex-prompt-prefix && \
   chmod 0755 /etc/codex /etc/codex/hooks && \
   chmod 0644 /etc/codex/requirements.toml /etc/codex/config.toml /etc/codex/hooks/hooks.json && \
   chmod 0755 /etc/codex/skills /etc/codex/skills/vs /etc/codex/skills/vss /etc/codex/skills/vsss && \

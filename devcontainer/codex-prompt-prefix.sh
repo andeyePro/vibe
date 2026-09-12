@@ -21,6 +21,12 @@ unset BASH_ENV ENV
 command -v jq >/dev/null 2>&1 || exit 0
 
 payload=$(cat) || exit 0
+event=$(printf '%s' "$payload" | jq -r '.hook_event_name // empty' 2>/dev/null) || exit 0
+if [ "$event" = "SessionStart" ]; then
+  jq -n '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext:
+    "Read /usr/local/share/vibe/codex-context.md for project context discovery and FM2C asynchronous answers. Run codex-context to locate configured references. Read project AGENTS.md and CLAUDE.md before work; preserve active task state on resume."}}' || true
+  exit 0
+fi
 # Sentinel capture (Astra re-review): `$(...)` would strip trailing newlines,
 # which are argument content; the marker keeps them.
 prompt=$(printf '%s' "$payload" | jq -r '.prompt // empty' 2>/dev/null; printf x) || exit 0
@@ -32,13 +38,21 @@ prompt=${prompt%$'\n'}   # jq -r's own line terminator, not prompt content
 # leading whitespace; the remainder keeps every later line intact and loses
 # only the whitespace that separated it from the token.
 stripped=${prompt#"${prompt%%[![:space:]]*}"}
+fm2c=0
+if [[ "$stripped" =~ (^|[[:space:]])[Ff][Mm]2[Cc]([[:space:][:punct:]]|$) ]]; then fm2c=1; fi
+fm2c_note='FM2C means the configured Codex answer file (vibe-fromMartin-toCodex.md). Read /usr/local/share/vibe/codex-context.md and that channel now; apply answers and continue the active objective, preserving concurrent edits and archiving safely.'
 first=${stripped%%[[:space:]]*}
 rest=${stripped#"$first"}
 rest=${rest#"${rest%%[![:space:]]*}"}
 
 case "$first" in
   /vs | /vss | /vsss) name=${first#/} ;;
-  *) exit 0 ;;
+  *)
+    if [ "$fm2c" = 1 ]; then
+      jq -n --arg note "$fm2c_note" '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: $note}}' || true
+    fi
+    exit 0 ;;
+
 esac
 
 if [ -n "$rest" ]; then
@@ -56,5 +70,8 @@ else
        $name + " skill now with no arguments.")}}' 2>/dev/null) || exit 0
 fi
 [ -n "$out" ] || exit 0
+if [ "$fm2c" = 1 ]; then
+  out=$(printf '%s' "$out" | jq --arg note "$fm2c_note" '.hookSpecificOutput.additionalContext += ("\n" + $note)') || exit 0
+fi
 printf '%s\n' "$out"
 exit 0

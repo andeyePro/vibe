@@ -16,6 +16,9 @@
 #   vibe --agent <claude|codex>  # choose the lead runtime for this launch
 #                            # (default claude; codex needs the Codex login
 #                            # mount — see the Codex setup section of README)
+#   vibe <project> --task <ref>  # override the local Task&I node binding for this launch
+#   vibe --codex-run <file>  # run a project-local prompt under the Codex supervisor
+#   vibe --codex-resume <file> # resume that prompt using its saved supervisor state
 #   vibe --list              # list available projects
 #   vibe --version           # print the vibe version and exit
 #   vibe --help              # show this help
@@ -3733,6 +3736,10 @@ parse_vibe_args() {
   MODEL_ARG=""
   PROFILE_ARG=""
   AGENT_ARG=""
+  CODEX_ACTION=""
+  CODEX_PROMPT_ARG=""
+  TASK_REF_ARG=""
+  TASK_BIND_ENV=()
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --rebuild) REBUILD=true; shift ;;
@@ -3753,6 +3760,23 @@ parse_vibe_args() {
           exit 1
         fi
         PROFILE_ARG="$1"; shift
+        ;;
+      --task)
+        shift
+        if ! [[ "${1:-}" =~ ^[A-Za-z][A-Za-z0-9]*-[0-9]+$|^taskandeye://node/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+          echo "--task needs an ABBR-number or taskandeye://node/UUID reference" >&2; exit 1
+        fi
+        [ -z "$TASK_REF_ARG" ] || { echo "Only one --task binding is allowed" >&2; exit 1; }
+        TASK_REF_ARG=$1
+        TASK_BIND_ENV=(/usr/bin/env "VIBE_TASK_REF=$TASK_REF_ARG")
+        shift
+        ;;
+      --codex-run|--codex-resume)
+        [ -z "$CODEX_ACTION" ] || { echo "Only one Codex run/resume flag is allowed" >&2; exit 1; }
+        CODEX_ACTION=${1#--codex-}
+        shift
+        [ -n "${1:-}" ] && [[ "$1" != --* ]] || { echo "Codex run/resume needs a project-local prompt file" >&2; exit 1; }
+        CODEX_PROMPT_ARG=$1; shift
         ;;
       --agent)
         shift
@@ -4254,7 +4278,7 @@ fi
 # ── Model selection: config default + Fable billing gate ─────────────────────
 # Flags win over the VIBE_MODEL config default. An invalid VIBE_MODEL is
 # ignored with a warning rather than blocking the launch.
-if [ -z "$MODEL_ARG" ] && [ -n "${VIBE_MODEL:-}" ]; then
+if [ -z "$CODEX_ACTION" ] && [ -z "$MODEL_ARG" ] && [ -n "${VIBE_MODEL:-}" ]; then
   if is_model_id "$VIBE_MODEL"; then
     MODEL_ARG="$VIBE_MODEL"
   else
@@ -4266,7 +4290,7 @@ fi
 # list rates from then on). vibe's default posture is subscription-only spend,
 # so from the cutover the launch needs a per-run confirm or a standing opt-in
 # (VIBE_FABLE_CREDITS_OK=1 in ~/.vibe/config). Before the cutover it's free.
-if [ "$MODEL_ARG" = "$FABLE_MODEL_ID" ]; then
+if [ -z "$CODEX_ACTION" ] && [ "$MODEL_ARG" = "$FABLE_MODEL_ID" ]; then
   if [ "$(fable_billing_phase)" = "free" ]; then
     echo "  ◆ Fable 5: included in your Pro/Max subscription at no extra cost until 7 Jul 2026."
   elif [ "${VIBE_FABLE_CREDITS_OK:-}" = "1" ]; then
@@ -4426,6 +4450,25 @@ fi
 # a refused Codex launch costs nothing and leaves nothing behind. VIBE_AGENT
 # arrives as a plain (unexported) shell variable from the sourced CONFIG_FILE.
 LEAD_AGENT="$(_agent_resolve "$AGENT_ARG" "$WORKSPACE")"
+if [ -n "$CODEX_ACTION" ]; then
+  if [ "$AGENT_ARG" = "claude" ] || [ "$CONTINUE" = true ] || [ "$RESUME" = true ] || [ -n "$MODEL_ARG" ]; then
+    echo "Codex supervision cannot combine with Claude agent/model/continue/resume flags" >&2
+    exit 1
+  fi
+  LEAD_AGENT=codex
+  # Resolve before Docker work; prompt content is never interpolated into shell code.
+  CODEX_PROMPT_REL=$(node -e '
+    const fs=require("fs"),p=require("path");
+    const root=fs.realpathSync(process.argv[1]);
+    const file=fs.realpathSync(p.resolve(root,process.argv[2]));
+    const rel=p.relative(root,file);
+    if(!rel||/[\x00-\x1f\x7f]/.test(rel)||rel.startsWith(".."+p.sep)||p.isAbsolute(rel)||!fs.statSync(file).isFile()) process.exit(1);
+    process.stdout.write(rel);
+  ' "$WORKSPACE" "$CODEX_PROMPT_ARG") || { echo "Prompt must be a readable file inside the project" >&2; exit 1; }
+  if [ "$CODEX_ACTION" = resume ] && [ ! -f "$WORKSPACE/.vss/codex-supervisor.json" ]; then
+    echo "No Codex supervisor checkpoint exists for this project" >&2; exit 1
+  fi
+fi
 # A Codex-led session without the Codex login is useless: the TUI starts, the
 # first request fails on authentication, and the user is left guessing which
 # of the two switches they missed. So refuse here, naming BOTH halves of the
@@ -5054,7 +5097,7 @@ launch_claude() {
   exec devcontainer exec \
     --workspace-folder "$WORKSPACE" \
     --override-config "$OVERRIDE_CONFIG" \
-    /bin/bash --noprofile --norc -c "exec env SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 claude ${1:+$1 }${CLAUDE_MODEL_ARGS:+$CLAUDE_MODEL_ARGS }--permission-mode bypassPermissions${2:+ '$2'}"
+    "${TASK_BIND_ENV[@]}" /bin/bash --noprofile --norc -c "exec env SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 claude ${1:+$1 }${CLAUDE_MODEL_ARGS:+$CLAUDE_MODEL_ARGS }--permission-mode bypassPermissions${2:+ '$2'}"
 }
 
 # launch_codex — the Codex-led sibling of launch_claude (task_049). Same
@@ -5076,10 +5119,16 @@ launch_claude() {
 # started through the absolute `/usr/bin/env -u BASH_ENV -u ENV`, and the
 # inner one also pins PATH; nothing inherited can run first.
 launch_codex() {
+  if [ -n "${CODEX_ACTION:-}" ]; then
+    exec devcontainer exec --workspace-folder "$WORKSPACE" --override-config "$OVERRIDE_CONFIG" \
+      "${TASK_BIND_ENV[@]}" /usr/bin/env -u BASH_ENV -u ENV PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/share/npm-global/bin \
+      SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 CODEX_HOME=/home/node/.codex \
+      /usr/local/bin/codex-entry --supervise -- run --cwd /workspace --prompt-file "/workspace/$CODEX_PROMPT_REL"
+  fi
   exec devcontainer exec \
     --workspace-folder "$WORKSPACE" \
     --override-config "$OVERRIDE_CONFIG" \
-    /usr/bin/env -u BASH_ENV -u ENV /bin/bash --noprofile --norc -c "exec /usr/bin/env -u BASH_ENV -u ENV PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/share/npm-global/bin SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 CODEX_HOME=/home/node/.codex /usr/local/bin/codex-entry"
+    "${TASK_BIND_ENV[@]}" /usr/bin/env -u BASH_ENV -u ENV /bin/bash --noprofile --norc -c "exec /usr/bin/env -u BASH_ENV -u ENV PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/share/npm-global/bin SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 CODEX_HOME=/home/node/.codex /usr/local/bin/codex-entry"
 }
 
 # VIBE_SESSION_REF — a session-start reference file, used solely for its
@@ -5165,7 +5214,11 @@ launch_claude_supervised() {
 # the launcher's final `exit` statement propagates.
 launch_codex_plain() {
   local codex_pid rc=0
-  echo "  codex-led session: auto-resume and the stall watchdog are Claude-only; run codex-supervisor inside the session for unattended work"
+  if [ -n "${CODEX_ACTION:-}" ]; then
+    echo "  codex-led session: supervised run; checkpoint .vss/codex-supervisor.json"
+  else
+    echo "  codex-led session: interactive; use --codex-run <prompt-file> for supervised work"
+  fi
   launch_codex <&9 &
   codex_pid=$!
   wait "$codex_pid" || rc=$?

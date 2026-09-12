@@ -81,3 +81,21 @@ tool (`hooks/src/events/common.rs:143-174`).
   ordered prefix of a directly executed argv — never a substring, never
   inside `bash -c`. It is a narrow second layer for the force-push case. The
   hooks are primary.
+
+
+## 2026-09-12 source trust-chain update
+
+The follow-on source image makes the vendor npm prefix and shared Vibe command
+files root-owned and removes group/other write access after installation. The
+`/usr/local/share` ancestor is protected against replacement of those trees.
+Codex liveness checks the resolved CLI before invoking it and scans managed npm
+code for mutable dependencies. Entry/liveness remove `NODE_OPTIONS` and
+`NODE_PATH`; supervisor/delegate children retain their existing restricted
+environment construction. Global vendor updates now require an image rebuild;
+project dependencies remain local project installs. This source change has not
+modified the current installed prefix. Container boundaries, existing guards and
+the limitations above still apply; immutable CLI files are not an OS sandbox.
+
+Startup context, supervision and scoped Mac/Task&I tools are documented in
+`codex-development.md` and `codex-taskandi-readiness.md`. Their offline evidence
+is separate from rebuilt-container and native-service acceptance.

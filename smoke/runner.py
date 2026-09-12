@@ -22,9 +22,65 @@ from smoke.checks_20_linux_host import *
 from smoke.checks_21_codex_supervisor_c2 import *
 from smoke.checks_22_codex_agent import *
 from smoke.checks_23_codex_panel import *
+from smoke.checks_24_codex_context import *
+from smoke.checks_25_codex_supervised_launch import *
+from smoke.checks_27_supervisor_control import *
+from smoke.checks_28_taskandi_client import test_taskandi_fixture_contract
+from smoke.checks_29_taskandi_binding_usage import test_launcher_parser_and_task_binding, test_client_binding_and_usage, test_installed_taskandi_symlink_executes_commands
 
+from smoke.checks_26_mac_build import *
+from smoke.checks_31_mac_build_recovery import *
+from smoke.checks_30_supervisor_reconciliation import *
+from smoke.checks_32_managed_vendor_trust import *
 
 def main() -> int:
+    test_docker_install_hardens_vendor_and_shared_tree_before_final_user()
+    test_liveness_managed_prefix_protected_fixture_and_mutability_refusals()
+    test_entry_clears_caller_node_environment_before_cli()
+    test_codex_supervisor_c30_lost_start_never_dispatches_again_before_reconciliation()
+    test_codex_supervisor_c30_reconciliation_rejects_stale_or_invalid_evidence()
+    test_codex_supervisor_c30_final_marker_is_final_unindented_plain_text_only()
+    test_codex_supervisor_c30_existing_mode0644_log_is_repaired_before_first_dispatch()
+    test_codex_supervisor_c30_subreaper_reaps_detached_descendants()
+    test_codex_supervisor_c30_unconfirmed_cleanup_retains_ownership_lock()
+    test_codex_supervisor_c30_task_ref_is_forwarded_and_bound_on_resume()
+    test_codex_supervisor_c30_hostile_workspace_python_modules_never_run()
+    test_codex_supervisor_c30_hardlinked_and_foreign_logs_refuse_before_server()
+    test_codex_supervisor_c30_fsync_failure_prevents_dispatch()
+    test_codex_supervisor_c30_default_mapping_and_endpoint_changes_refuse_resume()
+    test_codex_supervisor_c30_pinned_client_rejects_changed_config()
+    test_client_retains_snapshot_and_private_evidence_across_disconnect_and_replay()
+    test_host_receipt_identity_unknown_recovery_and_config_rejection()
+    test_symlink_descriptors_and_detached_child_cleanup()
+    test_cleanup_failure_retains_unknown_receipt_and_cancellation_is_bounded()
+    test_ssh_config_parser_preserves_spaced_and_quoted_known_host_path()
+    test_mac_build_client_snapshot_and_config_boundary()
+    test_mac_build_client_git_and_symlink_ancestor_boundaries()
+    test_mac_build_protocol_rejects_malformed_snapshot_before_stage()
+    test_mac_build_transport_fixed_argv_and_no_shell_injection()
+    test_mac_build_transport_lifecycle_and_response_binding()
+    test_mac_build_host_atomic_execution_replay_and_evidence()
+    test_mac_build_host_failure_artifact_and_doctor_fixtures()
+    test_taskandi_fixture_contract()
+    test_launcher_parser_and_task_binding()
+    test_client_binding_and_usage()
+    test_installed_taskandi_symlink_executes_commands()
+    test_codex_supervisor_c27_live_lock_rejects_duplicate_and_new_run()
+    test_codex_supervisor_c27_stale_lock_needs_explicit_reconciliation()
+    test_codex_supervisor_c27_stop_is_token_scoped_and_cancellable()
+    test_codex_supervisor_c27_final_marker_and_matching_identity_only()
+    test_codex_supervisor_c27_stop_during_active_turn_is_bounded()
+    test_codex_supervisor_c27_status_and_unsafe_persistence_fail_closed()
+    test_codex_supervisor_c27_killed_active_turn_requires_reconciliation_not_replay()
+    test_codex_supervisor_c27_unconfirmed_turn_start_is_not_automatically_retried()
+    test_codex_supervised_parser()
+    test_codex_supervised_entry_requires_gate()
+    test_codex_context_discovery_defaults_and_git_root()
+    test_codex_context_config_constraints()
+    test_codex_context_missing_helpers_are_false()
+    test_codex_context_prompt_prefix_routes_session_and_fm2c()
+    test_codex_context_docker_installs_delegate()
+    test_codex_context_openai_roles_route_usage_and_policy()
     test_help()
     test_help_is_header_only()
     test_version()

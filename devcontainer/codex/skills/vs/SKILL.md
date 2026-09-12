@@ -33,3 +33,7 @@ this `$vs` skill with the rest of the line as arguments, verbatim; that is
 model-mediated, not deterministic, so `$vs …` remains the reliable form.
 `/vs` is the same command in Claude Code, and, once the supervisor lands, in
 unattended Codex runs too.
+
+## Runtime-native roles and FM2C
+
+Read `/usr/local/share/vibe/codex-context.md` at startup and on resumption. `FM2C` means the configured Codex answer channel; check it between tasks and on a user reminder. Codex-led roles default to OpenAI models: `luna` for bounded mechanical tests, `terra` or `sol` for ordinary implementation and spec/diff review, `astra` for difficult design, security and evaluation. These are `vibe-delegate role --model` aliases; verify model access at dispatch and log actual usage. Use only available subscription routes. A Claude model in a shared command's example is not the Codex default: substitute by task class. Cross-vendor roles require explicit user opt-in. Never silently use paid/API fallback.

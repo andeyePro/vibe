@@ -138,6 +138,9 @@ def _codex_liveness_fixture(tmp: Path) -> tuple[Path, Path]:
         ("guard-bash.sh", GUARD_BASH),
         ("guard-fs.sh", GUARD_FS),
         ("codex-entry", CODEX_ENTRY),
+        ("codex-supervisor", REPO / "devcontainer/codex-supervisor.mjs"),
+        ("supervisor-control.mjs", REPO / "devcontainer/supervisor-control.mjs"),
+        ("taskandi-client.mjs", REPO / "devcontainer/taskandi-client.mjs"),
         # task_053: the UserPromptSubmit prefix hook joined the ownership
         # list codex-guard-liveness checks, so the fixture chain needs a
         # copy too or every liveness check below fails on its absence.
@@ -336,8 +339,8 @@ def test_codex_hooks_json_ac3():
     check("[codex] hooks.json parses as JSON", True)
 
     hooks = data.get("hooks", {})
-    check("[codex] exactly two events: PreToolUse, UserPromptSubmit",
-          set(hooks.keys()) == {"PreToolUse", "UserPromptSubmit"}, str(hooks.keys()))
+    check("[codex] guard, prompt and session-start events",
+          set(hooks.keys()) == {"PreToolUse", "UserPromptSubmit", "SessionStart"}, str(hooks.keys()))
     entries = hooks.get("PreToolUse", [])
     check("[codex] exactly two matcher groups", len(entries) == 2, str(entries))
 
@@ -1313,7 +1316,7 @@ def test_codex_prompt_prefix_script_shape_ac5():
     print("\n[codex] codex-prompt-prefix.sh — AC1 script shape")
     text = PROMPT_PREFIX.read_text()
     lines = text.splitlines()
-    check("[codex] codex-prompt-prefix.sh <= 60 lines", len(lines) <= 60, str(len(lines)))
+    check("[codex] codex-prompt-prefix.sh <= 90 lines", len(lines) <= 90, str(len(lines)))
     check("[codex] codex-prompt-prefix.sh starts #!/bin/bash",
           text.startswith("#!/bin/bash\n"), text[:20])
     check("[codex] codex-prompt-prefix.sh has no 'dangerously'", "dangerously" not in text, "")

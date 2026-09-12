@@ -332,9 +332,8 @@ def test_agent_codex_argv_granted():
               r.stdout)
         check("[agent] granted --agent codex: codex mount banner also printed",
               f"@ {home / '.codex'}" in r.stdout, r.stdout)
-        check("[agent] granted --agent codex: pre-launch Claude-only line printed",
-              "codex-led session: auto-resume and the stall watchdog are Claude-only; "
-              "run codex-supervisor inside the session for unattended work" in r.stdout,
+        check("[agent] granted --agent codex: interactive supervision hint printed",
+              "codex-led session: interactive; use --codex-run <prompt-file> for supervised work" in r.stdout,
               r.stdout)
         calls = _agent_calls(log)
         check("[agent] granted --agent codex: exactly one devcontainer call", len(calls) == 1, str(calls))
@@ -460,8 +459,8 @@ def test_launch_codex_source_shape():
           "AUTO_RESUME_MARKER" not in plain and "auto_resume_heartbeat_write" not in plain, plain)
     check("[agent] launch_codex_plain sets CLAUDE_EXIT",
           "CLAUDE_EXIT=" in plain, plain)
-    check("[agent] launch_codex_plain prints the Claude-only pre-launch line before backgrounding",
-          "auto-resume and the stall watchdog are Claude-only" in plain, plain)
+    check("[agent] launch_codex_plain prints the explicit supervision hint",
+          "use --codex-run <prompt-file> for supervised work" in plain, plain)
 
 
 def test_launch_claude_unchanged_vs_head():
@@ -472,8 +471,12 @@ def test_launch_claude_unchanged_vs_head():
         return
     head_func = _extract_func(r.stdout, "launch_claude")
     working_func = _extract_func(VIBE.read_text(), "launch_claude")
-    check("[agent] launch_claude byte-identical between HEAD and the working tree",
-          head_func == working_func,
+    # Task binding adds one opt-in argv prefix. Its empty/default expansion and
+    # validated bound value are exercised behaviourally in checks_29; the
+    # existing Claude invocation must otherwise remain byte-identical.
+    without_binding = lambda value: value.replace('"${TASK_BIND_ENV[@]}" ', '')
+    check("[agent] launch_claude unchanged apart from optional task-binding argv",
+          without_binding(head_func) == without_binding(working_func),
           f"HEAD:\n{head_func}\n---\nworking tree:\n{working_func}")
 
 
@@ -655,10 +658,10 @@ def test_readme_codex_led_sessions_section():
           "Codex-led sessions" in readme, "")
     check("[agent] README documents the --agent <claude|codex> flag",
           "`vibe --agent <claude|codex>`" in readme, "")
-    check("[agent] README states Claude Code remains the default and recommended lead",
-          "Claude Code remains the default and the recommended lead" in readme, "")
-    check("[agent] README states auto-resume/stall-watchdog are Claude-only",
-          "auto-resume and the stall watchdog are Claude-only" in readme, "")
+    check("[agent] README states Claude Code remains the default lead",
+          "Claude Code remains the default lead" in readme, "")
+    check("[agent] README documents explicit Codex supervision",
+          "--codex-run" in readme and "--codex-resume" in readme, "")
 
 
 def test_manual_tests_55_codex_led_block():

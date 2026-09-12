@@ -71,7 +71,7 @@ set -euo pipefail
 # on this fixed PATH only so `codex --version` can be found (check f), and
 # --codex can name the binary explicitly instead.
 export PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/share/npm-global/bin
-unset BASH_ENV ENV
+unset BASH_ENV ENV NODE_OPTIONS NODE_PATH
 
 CANONICAL_BIN=/usr/local/bin
 codex_bin=codex
@@ -180,6 +180,24 @@ check_owned "$bin/guard-fs.sh"
 # the file that consults THIS gate, so a `node`-writable copy of it could
 # simply not call it.
 check_owned "$bin/codex-entry"
+check_owned "$bin/codex-supervisor"
+check_owned "$bin/supervisor-control.mjs"
+check_owned "$bin/taskandi-client.mjs"
+# Verify the CLI before asking it to attest its own version. Production npm
+# modules must be immutable too; checking only the bin symlink misses imports.
+vendor_entry=$(command -v "$codex_bin") || fail "ownership — Codex CLI is missing"
+check_owned "$vendor_entry"
+vendor_real=$(readlink -f -- "$vendor_entry") || fail "ownership — cannot resolve Codex CLI"
+check_owned "$vendor_real"
+case "$vendor_entry:$vendor_real" in
+  */usr/local/share/npm-global/*)
+    check_owned /usr/local root
+    check_owned /usr/local/share root
+    check_owned /usr/local/share/npm-global
+    unsafe_vendor=$(find /usr/local/share/npm-global -xdev \( ! -user "$owner" -o \( ! -type l -a -perm /022 \) \) -print -quit) || fail "ownership — cannot inspect managed CLI tree"
+    [ -z "$unsafe_vendor" ] || fail "ownership — mutable managed CLI dependency: $unsafe_vendor"
+    ;;
+esac
 # task_053: the UserPromptSubmit hook that points the model at $vs/$vss/
 # $vsss for a leading-space ` /vs …` line is part of the same chain — it
 # runs with the same hardened env -i form, so it must be just as

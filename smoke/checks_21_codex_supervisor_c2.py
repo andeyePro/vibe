@@ -34,6 +34,7 @@ from smoke._core import *  # noqa: F401,F403
 
 import signal
 import time
+import hashlib
 
 from smoke.checks_19_codex_supervisor import (
     SUPERVISOR,
@@ -158,7 +159,7 @@ def test_codex_supervisor_c2_terminal_state_new_run_starts_fresh():
 # ── AC4 (c2): resume input — 'continue' vs the rewritten prompt ─────────
 
 def test_codex_supervisor_c2_resume_after_sigterm_sends_continue():
-    print("\n[codex-supervisor] AC4 (c2) resume input after a mid-turn SIGTERM is the literal 'continue'")
+    print("\n[codex-supervisor] AC4 (c2) active-turn SIGTERM requires evidence before 'continue'")
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         home, codex_home, workspace, env = _supervisor_fixture(tmp)
@@ -182,7 +183,7 @@ def test_codex_supervisor_c2_resume_after_sigterm_sends_continue():
         saw_turn_start = False
         while time.time() < deadline:
             log_text = "\n".join(_stub_log_lines(stub_dir1)).replace(" ", "")
-            if '"method":"turn/start"' in log_text:
+            if '"method":"turn/start"' in log_text and (_read_state(workspace).get("unresolvedTurn") or {}).get("turnId"):
                 saw_turn_start = True
                 break
             time.sleep(0.1)
@@ -208,12 +209,34 @@ def test_codex_supervisor_c2_resume_after_sigterm_sends_continue():
               state1.get("turns") == [], str(state1))
 
         stub_dir2 = tmp / "stub2"
-        fixture2 = {"threadId": state1.get("threadId", "unknown"),
-                    "turns": [{"events": _DONE_TURN_EVENTS("i2", "done2")}]}
+        fixture2 = {
+            "threadId": state1.get("threadId", "unknown"),
+            "turns": [{"events": _DONE_TURN_EVENTS("i2", "done2")}],
+        }
         stub_path2 = _write_stub(stub_dir2, fixture2)
-        r2 = _run_supervisor(["run", "--cwd", str(workspace), "--prompt-file", str(prompt),
-                               "--codex-bin", str(stub_path2)], env)
-        check("[codex-supervisor] c2 second run (resume) exits 0", r2.returncode == 0, r2.stderr)
+        resume_args = ["run", "--cwd", str(workspace), "--prompt-file", str(prompt),
+                       "--codex-bin", str(stub_path2)]
+        refused = _run_supervisor(resume_args, env)
+        check("[codex-supervisor] c2 first resume refuses with zero RPCs",
+              refused.returncode != 0 and not (stub_dir2 / "meta.json").exists(), refused.stderr)
+        state_path = workspace / ".vss" / "codex-supervisor.json"
+        lock = Path(f"{state_path}.lock")
+        if lock.exists():
+            lock.unlink()
+        checkpoint = state_path.read_bytes()
+        evidence = tmp / "reconciliation.json"
+        evidence.write_text(json.dumps({
+            "stateHash": hashlib.sha256(checkpoint).hexdigest(),
+            "threadId": state1["threadId"], "turnId": state1["unresolvedTurn"]["turnId"],
+            "outcome": "interrupted", "effectsReviewed": True, "safeToContinue": True,
+            "evidence": "operator reviewed the persisted active-turn checkpoint",
+        }))
+        reconciled = _run_supervisor(["reconcile", "--state", str(state_path),
+                                      "--evidence-file", str(evidence)], env)
+        check("[codex-supervisor] c2 reconciliation accepts exact turn/thread/checkpoint evidence",
+              reconciled.returncode == 0 and not (stub_dir2 / "meta.json").exists(), reconciled.stderr)
+        r2 = _run_supervisor(resume_args, env)
+        check("[codex-supervisor] c2 reconciled second run (resume) exits 0", r2.returncode == 0, r2.stderr)
         turn_starts = [m for m in _in_messages(stub_dir2) if m.get("method") == "turn/start"]
         check("[codex-supervisor] c2 resume run sends exactly one turn/start", len(turn_starts) == 1,
               str(turn_starts))

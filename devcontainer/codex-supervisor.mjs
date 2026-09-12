@@ -9,13 +9,15 @@
 //
 // Safety contract (AC8): never passes `--dangerously-bypass-approvals-and-
 // sandbox`, never sets `-c`, never reads or copies `auth.json`, writes only
-// the state file and the log beside it, and sends no prompt other than the
+// the state, adjacent ownership/stop files and log, and sends no prompt other than the
 // user's (prefix-rewritten) text and the literal `continue`.
-import { spawn, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { loadConfig, bindingFingerprint } from './taskandi-client.mjs';
+import { acquire, canonicalPath, readRegular, atomicWrite, requestStop, closeServer, ownershipFresh, appendRegular, spawnOwnedServer } from './supervisor-control.mjs';
+import { spawnSync } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
 import {
-  appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync,
-  renameSync, statSync, writeFileSync,
+  existsSync, mkdirSync, readFileSync, realpathSync,
+  renameSync, statSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
@@ -65,6 +67,12 @@ const USAGE = [
   '      [--max-turn-failures N] [--max-wall-seconds N] [--model <id>]',
   '      [--codex-bin <path>] [--now-source <file>] [--new-run]',
   '  codex-supervisor status --state <file>',
+  '  codex-supervisor stop --state <file>',
+  '  codex-supervisor reconcile --state <file> --evidence-file <file>',
+  'Reconciliation requires a private JSON record: stateHash (SHA-256 of the exact state file),',
+  'threadId, turnId (null only for not-started), outcome (completed/failed/interrupted/not-started),',
+  'effectsReviewed: true, safeToContinue: true, and evidence (nonempty observation/reference).',
+  'Idle detection: wall deadline is the safe bound; tool silence is not an idle stall.',
 ].join('\n');
 
 // --- small helpers -----------------------------------------------------
@@ -143,7 +151,11 @@ class Clock {
   async sleep(seconds) {
     if (this.sourcePath) { this.offset += seconds; return; }
     if (seconds <= 0) return;
-    await new Promise((resolve) => { setTimeout(resolve, seconds * 1000); });
+    const end = Date.now() + seconds * 1000;
+    while (Date.now() < end) {
+      this.checkStop?.();
+      await new Promise(resolve => setTimeout(resolve, Math.min(100, end - Date.now())));
+    }
   }
 }
 
@@ -164,6 +176,10 @@ class AppServer {
 
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk) => this.onData(chunk));
+    child.stdout.on('end', () => {
+      this.exitNote ||= 'app-server connection closed (stdout EOF)';
+      this.shutdown();
+    });
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk) => this.log(`[server-stderr] ${String(chunk).trimEnd()}`));
     child.stdin.on('error', () => { this.stdinOpen = false; });
@@ -362,9 +378,22 @@ export function classifyError(info) {
 // AC7: the exit line must stand alone at the start of a line.
 export function exitReasonFrom(text) {
   if (typeof text !== 'string') return null;
-  const match = /^VSSS-EXIT:[ \t]*(.*)$/m.exec(text);
-  if (!match) return null;
-  return match[1].trim();
+  const lines = text.trimEnd().split(/\r?\n/);
+  let fence = null;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const marker = /^ {0,3}(\`{3,}|~{3,})(.*)$/.exec(line);
+    if (marker) {
+      if (!fence) fence = marker[1];
+      else if (marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) fence = null;
+      continue;
+    }
+    if (i === lines.length - 1 && !fence) {
+      const match = /^VSSS-EXIT: +(.+)$/.exec(line);
+      return match && match[1].trim() ? match[1].trim() : null;
+    }
+  }
+  return null;
 }
 
 function lastAgentMessageText(turn) {
@@ -385,6 +414,7 @@ const STRING_FLAGS = {
   '--model': 'model',
   '--codex-bin': 'codexBin',
   '--now-source': 'nowSource',
+  '--evidence-file': 'evidenceFile',
 };
 const NUMBER_FLAGS = {
   '--max-turns': 'maxTurns',
@@ -400,7 +430,7 @@ export function parseArgs(argv) {
   if (command === undefined || command === '--help' || command === '-h' || command === 'help') {
     throw usageError(USAGE);
   }
-  if (command !== 'run' && command !== 'status') throw usageError(`unknown command: ${command}\n${USAGE}`);
+  if (!['run', 'status', 'stop', 'reconcile'].includes(command)) throw usageError(`unknown command: ${command}\n${USAGE}`);
   const options = { command, newRun: false, ...DEFAULTS };
   for (let i = 1; i < argv.length; i += 1) {
     const flag = argv[i];
@@ -415,10 +445,16 @@ export function parseArgs(argv) {
     // AC7 (Astra review): every ceiling must be ≥ 1 — a 0 ceiling would be
     // breached before the first turn and is always a mistake, not a request.
     if (!/^\d+$/.test(value)) throw usageError(`${flag} needs a positive integer, got: ${value}`);
-    if (Number(value) < 1) throw usageError(`${flag} must be at least 1, got: ${value}`);
+    if (!Number.isSafeInteger(Number(value)) || Number(value) < 1) throw usageError(`${flag} must be at least 1, got: ${value}`);
     options[numberKey] = Number(value);
   }
-  if (command === 'status') {
+  if (command === 'reconcile') {
+    if (!options.state || !options.evidenceFile) throw usageError(USAGE);
+    if (argv.slice(1).some((value, i) => i % 2 === 0 && !['--state', '--evidence-file'].includes(value))) throw usageError('reconcile takes only --state and --evidence-file');
+    return options;
+  }
+  if (options.evidenceFile) throw usageError('--evidence-file is only valid for reconcile');
+  if (command === 'status' || command === 'stop') {
     if (!options.state) throw usageError('status needs --state <file>');
     if (options.cwd || options.promptFile || options.newRun) {
       throw usageError('status takes only --state');
@@ -430,6 +466,7 @@ export function parseArgs(argv) {
   if (!isAbsolute(options.cwd)) throw usageError(`--cwd must be an absolute path: ${options.cwd}`);
   if (!isDirectory(options.cwd)) throw usageError(`--cwd is not a directory: ${options.cwd}`);
   if (!insideGitWorkTree(options.cwd)) throw usageError(`--cwd is not inside a git work tree: ${options.cwd}`);
+  options.cwd = realpathSync(options.cwd);
   if (!options.state) options.state = join(options.cwd, '.vss', 'codex-supervisor.json');
   if (!options.codexBin) options.codexBin = 'codex';
   if (options.nowSource && !existsSync(options.nowSource)) {
@@ -454,15 +491,74 @@ function freshState(threadId, cwd, promptHash, startedAt) {
     turnFailures: 0,
     lastRateLimits: null,
     waits: [],
+    turnSafetyVersion: 1,
+    unresolvedTurn: null,
   };
 }
 
 // AC4: every counter change lands on disk, and it lands atomically —
 // a torn state file would strand the next resume.
 function writeStateFile(path, state) {
-  const temporary = `${path}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`);
-  renameSync(temporary, path);
+  atomicWrite(path, `${JSON.stringify(state, null, 2)}\n`);
+}
+
+function needsTurnReconciliation(state) {
+  return state.unresolvedTurn != null || state.activeTurn != null
+    || ['turn/start', 'turn'].includes(state.operation)
+    || (state.turnSafetyVersion !== 1 && Number(state.turnsStarted || 0) > (state.turns?.length || 0));
+}
+
+// Explicit operator evidence, bound to the exact checkpoint under its lock.
+// This operation sends no RPC and never replays the ambiguous input.
+function reconcileTurn(options) {
+  const path = canonicalPath(options.state);
+  if (/\.(log|lock)$/.test(path) || /\.stop\./.test(path)) throw usageError('state path conflicts with a reserved log/control path');
+  const owner = acquire(path);
+  try {
+    const raw = readRegular(path);
+    const state = JSON.parse(raw);
+    if (!isRecord(state) || !needsTurnReconciliation(state)) throw usageError('no unresolved turn to reconcile');
+    if (state.statePath !== undefined && state.statePath !== path) throw usageError('state path binding mismatch');
+    const evidence = JSON.parse(readRegular(options.evidenceFile));
+    if (!isRecord(evidence)
+      || evidence.stateHash !== createHash('sha256').update(raw).digest('hex')
+      || typeof state.threadId !== 'string' || !state.threadId || evidence.threadId !== state.threadId
+      || !['completed', 'failed', 'interrupted', 'not-started'].includes(evidence.outcome)
+      || evidence.effectsReviewed !== true || evidence.safeToContinue !== true
+      || typeof evidence.evidence !== 'string' || !evidence.evidence.trim()) {
+      throw usageError('reconciliation requires matching checkpoint evidence and explicit review of effects; see help');
+    }
+    const knownId = state.unresolvedTurn?.turnId ?? state.activeTurn;
+    if (evidence.outcome === 'not-started'
+      ? evidence.turnId !== null || knownId != null
+      : typeof evidence.turnId !== 'string' || !evidence.turnId || (knownId != null && evidence.turnId !== knownId)) {
+      throw usageError('reconciliation turn identity/outcome mismatch');
+    }
+    if (!Array.isArray(state.reconciliations ?? [])) throw usageError('invalid reconciliation history');
+    if (state.turnsStarted === undefined && Array.isArray(state.turns)) state.turnsStarted = state.turns.length;
+    if (!Array.isArray(state.turns) || !Number.isSafeInteger(state.turnsStarted)
+      || state.turnsStarted < state.turns.length || !Number.isSafeInteger(state.turnFailures)
+      || state.turnFailures < 0) throw usageError('invalid persisted turn counters');
+    state.reconciliations = [...(state.reconciliations || []), {
+      at: Math.floor(Date.now() / 1000), unresolvedTurn: state.unresolvedTurn ?? null, ...evidence,
+    }];
+    if (evidence.outcome === 'completed' && !state.turns.some(turn => turn.turnId === evidence.turnId)) {
+      state.turns.push({ turnId: evidence.turnId, status: 'completed', at: Math.floor(Date.now() / 1000) });
+    }
+    if (evidence.outcome === 'failed') state.turnFailures += 1;
+    // A resolved attempt still consumed the initial prompt slot: even evidence
+    // of non-start does not authorize automatic replay of that prompt.
+    state.turnsStarted = Math.max(1, Number(state.turnsStarted || 0), state.turns?.length || 0);
+    state.turnSafetyVersion = 1;
+    state.unresolvedTurn = null;
+    delete state.activeTurn;
+    state.operation = 'turn-boundary';
+    state.lifecycle = 'checkpointed';
+    state.recoveryReason = 'turn-reconciled';
+    writeStateFile(path, state);
+    process.stdout.write('turn reconciled; no turn submitted\n');
+    return EXIT_OK;
+  } finally { owner.release(); }
 }
 
 // --- the supervisor ----------------------------------------------------
@@ -470,10 +566,17 @@ function writeStateFile(path, state) {
 class Supervisor {
   constructor(options) {
     this.options = options;
-    this.statePath = options.state;
+    this.statePath = canonicalPath(options.state, true);
+    options.state = this.statePath;
+    if (/\.(log|lock)$/.test(this.statePath) || /\.stop\./.test(this.statePath)) throw usageError('state path conflicts with a reserved log/control path');
     this.stateDir = dirname(this.statePath);
     this.logPath = join(this.stateDir, 'codex-supervisor.log');
+    if (!this.statePath.endsWith('/codex-supervisor.json')) this.logPath = `${this.statePath}.log`;
+    canonicalPath(this.logPath);
+    const inputs = [options.promptFile, options.nowSource].filter(Boolean).map(p => realpathSync(p));
+    if ([this.statePath, this.logPath, `${this.statePath}.lock`].some(p => inputs.includes(p))) throw usageError('state/log/control paths must be distinct from input files');
     this.clock = new Clock(options.nowSource);
+    this.clock.checkStop = () => this.checkStop();
     this.state = null;
     this.server = null;
     this.quotaBlindIndex = 0;
@@ -481,14 +584,43 @@ class Supervisor {
 
   log(line) {
     const stamp = new Date(this.clock.now() * 1000).toISOString();
-    try { appendFileSync(this.logPath, `\n[${stamp}] ${line}\n`); } catch { /* logging is best effort */ }
+    try { appendRegular(this.logPath, `\n[${stamp}] ${line}\n`); } catch { /* logging is best effort */ }
   }
 
   logRaw(text) {
-    try { appendFileSync(this.logPath, text); } catch { /* logging is best effort */ }
+    try { appendRegular(this.logPath, text); } catch { /* logging is best effort */ }
   }
 
-  persist() { writeStateFile(this.statePath, this.state); }
+  persist() {
+    this.state.statePath = this.statePath;
+    this.state.lifecycle = this.state.exitReason !== undefined ? 'complete' : (this.finishing ? 'checkpointed' : 'running');
+    this.state.operation = this.operation || 'starting';
+    writeStateFile(this.statePath, this.state);
+  }
+
+  checkStop() {
+    if (this.stopRequested || this.owner?.stopped()) {
+      this.stopRequested = true;
+      if (this.activeTurn && this.server) this.server.send('turn/interrupt', { threadId: this.state.threadId, turnId: this.activeTurn });
+      throw new SupervisorError(EXIT_SIGNAL, 'stop requested; checkpoint saved; resume with the same run arguments');
+    }
+  }
+
+  async cancellable(promise) {
+    this.checkStop();
+    let timer;
+    try {
+      return await Promise.race([promise, new Promise((_, reject) => {
+        timer = setInterval(() => { try { this.checkStop(); } catch (e) { reject(e); } }, 100);
+      })]);
+    } finally { clearInterval(timer); }
+  }
+
+  async sleep(seconds) {
+    this.checkStop();
+    await this.cancellable(this.clock.sleep(seconds));
+  }
+
 
   // The instant the wall ceiling bites, in the clock's own units. Every
   // deadline decision (awaiting a turn, capping a wait, honouring an
@@ -512,17 +644,21 @@ class Supervisor {
   async boundedRequest(method, params, { timeoutMs = REQUEST_TIMEOUT_MS, timeoutMessage = null } = {}) {
     const remainingMs = Math.max(0, (this.deadline() - this.clock.now()) * 1000);
     const wallBound = remainingMs < timeoutMs;
-    return this.server.request(method, params, {
+    this.checkStop();
+    this.operation = method;
+    if (this.state) this.persist();
+    return this.cancellable(this.server.request(method, params, {
       timeoutMs: Math.min(timeoutMs, remainingMs),
       onTimeout: () => (wallBound
         ? ceilingError(`ceiling reached: max-wall-seconds (${this.options.maxWallSeconds}) `
           + `while awaiting ${method}`)
         : failError(timeoutMessage || `${method} timeout`)),
-    });
+    }));
   }
 
   // AC7: every ceiling is checked at every decision point.
   checkGates(state = this.state) {
+    this.checkStop();
     const o = this.options;
     if (state.turns.length >= o.maxTurns) throw ceilingError(`ceiling reached: max-turns (${o.maxTurns})`);
     if (state.resumes >= o.maxResumes) throw ceilingError(`ceiling reached: max-resumes (${o.maxResumes})`);
@@ -549,14 +685,14 @@ class Supervisor {
       HOME: process.env.HOME || homedir(),
       CODEX_HOME: this.codexHome,
       LANG: process.env.LANG || 'C.UTF-8',
+      ...(this.taskRef ? { VIBE_TASK_REF: this.taskRef } : {}),
+      VIBE_TASK_BINDING: this.taskBinding,
     };
     // argv is exactly ['app-server']: no `-c`, so the image's system
     // requirements and managed hooks apply unmodified. The server's working
     // directory is deliberately left alone — the workspace travels in
     // `thread/start.cwd`.
-    const child = spawn(this.options.codexBin, ['app-server'], {
-      env, stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    const child = spawnOwnedServer(this.options.codexBin, env);
     this.server = new AppServer(child, (line) => this.log(line));
   }
 
@@ -591,7 +727,7 @@ class Supervisor {
   loadState() {
     if (!existsSync(this.statePath)) return null;
     let parsed;
-    try { parsed = JSON.parse(readFileSync(this.statePath, 'utf8')); }
+    try { parsed = JSON.parse(readRegular(this.statePath)); }
     catch { parsed = null; }
     if (!isRecord(parsed)) {
       if (this.options.newRun) return { corrupt: true };
@@ -603,7 +739,10 @@ class Supervisor {
   archiveState(previous) {
     const startedAt = Number(previous?.startedAt);
     const stamp = Number.isFinite(startedAt) ? startedAt : this.clock.now();
-    const archive = join(this.stateDir, `codex-supervisor.${stamp}.json`);
+    const archive = this.statePath.endsWith('/codex-supervisor.json')
+      ? join(this.stateDir, `codex-supervisor.${stamp}.json`)
+      : `${this.statePath}.${stamp}.archive.json`;
+    if (existsSync(archive)) throw usageError(`archive already exists: ${archive}; reconcile explicitly`);
     renameSync(this.statePath, archive);
     this.log(`--new-run: archived previous state to ${archive}`);
     return archive;
@@ -612,28 +751,44 @@ class Supervisor {
   // AC4: a state file only resumes when BOTH cwd and promptHash match.
   adoptState(previous, promptHash) {
     if (!previous) return null;
+    if (needsTurnReconciliation(previous)) throw failError('unresolved turn: review prior effects and use reconcile --state <file> --evidence-file <file> before run or --new-run');
     if (this.options.newRun) { this.archiveState(previous.corrupt ? null : previous); return null; }
     if (previous.cwd !== this.options.cwd) {
       throw usageError(`state file cwd mismatch: state has ${previous.cwd}, --cwd is ${this.options.cwd} `
         + '(pass --new-run to archive it and start fresh)');
     }
+    if ((previous.taskBinding || 'unbound') !== this.taskBinding) throw usageError('effective Task&I binding changed; resume with the original endpoint and node mapping');
+    if ((previous.taskRef || '') !== this.taskRef) throw usageError('state task binding mismatch; resume with the original --task reference');
     if (previous.promptHash !== promptHash) {
       throw usageError(`state file promptHash mismatch: state has ${previous.promptHash}, prompt hashes to `
         + `${promptHash} (pass --new-run to archive it and start fresh)`);
     }
     if (typeof previous.threadId !== 'string' || !previous.threadId) {
-      throw usageError(`state file has no threadId: ${this.statePath} (pass --new-run to start fresh)`);
+      throw usageError(`state file has no threadId: ${this.statePath} (reconcile the unconfirmed thread/start in Codex before explicitly using --new-run)`);
+    }
+    if (previous.statePath !== undefined && previous.statePath !== this.statePath) throw usageError('state path binding mismatch');
+    if (!Number.isSafeInteger(previous.startedAt) || previous.startedAt < 0 || !Array.isArray(previous.turns) || !Array.isArray(previous.waits)) throw usageError('invalid persisted state');
+    for (const key of ['resumes', 'quotaWaits', 'transientRetries', 'turnFailures']) {
+      if (!Number.isSafeInteger(previous[key]) || previous[key] < 0) throw usageError(`invalid persisted counter: ${key}`);
+    }
+    // Legacy snapshots predate turnsStarted. Completed turns are a conservative lower bound.
+    if (previous.turnsStarted === undefined) previous.turnsStarted = previous.turns.length;
+    if (!Number.isSafeInteger(previous.turnsStarted) || previous.turnsStarted < previous.turns.length) throw usageError('invalid persisted turnsStarted');
+    for (const wait of previous.waits) {
+      if (!isRecord(wait) || !Number.isFinite(wait.until) || !Number.isFinite(wait.seconds) || wait.seconds < 0) throw usageError('invalid persisted wait');
     }
     const state = freshState(previous.threadId, previous.cwd, previous.promptHash,
-      Number(previous.startedAt) || this.clock.now());
+      previous.startedAt);
     state.turns = Array.isArray(previous.turns) ? previous.turns : [];
     state.waits = Array.isArray(previous.waits) ? previous.waits : [];
     for (const key of ['turnsStarted', 'resumes', 'quotaWaits', 'transientRetries', 'turnFailures']) {
       state[key] = Number.isFinite(Number(previous[key])) ? Number(previous[key]) : 0;
     }
     state.lastRateLimits = previous.lastRateLimits ?? null;
+    state.reconciliations = previous.reconciliations ?? [];
     // AC4 (Astra review): `exitReason` makes the state TERMINAL. It must
     // survive adoption, or a finished run would silently start over.
+    if (previous.exitReason !== undefined && (typeof previous.exitReason !== 'string' || !previous.exitReason.trim())) throw usageError('invalid persisted terminal reason');
     if (previous.exitReason !== undefined && previous.exitReason !== null) {
       state.exitReason = previous.exitReason;
     }
@@ -658,7 +813,7 @@ class Supervisor {
     }
     this.log(`honouring the outstanding ${last.reason} wait: ${until - now}s left until `
       + `${new Date(until * 1000).toISOString()}`);
-    await this.clock.sleep(until - now);
+    await this.sleep(until - now);
   }
 
   async startThread(promptHash) {
@@ -669,10 +824,13 @@ class Supervisor {
       ephemeral: false,
     };
     if (this.options.model) params.model = this.options.model;
+    this.state.recoveryReason = 'thread-start-unconfirmed';
+    this.persist();
     const result = await this.boundedRequest('thread/start', params);
     const threadId = result?.thread?.id;
     if (typeof threadId !== 'string' || !threadId) throw failError('thread/start returned no thread id');
-    this.state = freshState(threadId, this.options.cwd, promptHash, this.startedAtAnchor);
+    this.state.threadId = threadId;
+    delete this.state.recoveryReason;
     if (this.pendingRateLimits !== undefined) this.state.lastRateLimits = this.pendingRateLimits;
     this.persist();
     this.log(`thread/start → ${threadId}`);
@@ -691,9 +849,10 @@ class Supervisor {
     // Gates first: a run that is already over a ceiling must not touch the
     // server at all.
     this.checkGates(state);
-    await this.boundedRequest('thread/resume', { threadId: state.threadId });
     this.state.resumes += 1;
     this.persist();
+    const result = await this.boundedRequest('thread/resume', { threadId: state.threadId });
+    if (result?.thread?.id !== state.threadId) throw failError('thread/resume returned a mismatched thread');
     this.log(`thread/resume → ${state.threadId} (resume ${this.state.resumes})`);
   }
 
@@ -711,15 +870,15 @@ class Supervisor {
       if (this.clock.sourcePath) {
         timer = setInterval(() => { if (this.clock.now() >= deadline) resolve(); }, 100);
       } else {
-        timer = setTimeout(resolve, Math.max(0, (deadline - this.clock.now()) * 1000));
+        timer = setInterval(() => { if (this.clock.now() >= deadline) resolve(); }, 100);
       }
       if (typeof timer.unref === 'function') timer.unref();
     });
     try {
-      return await Promise.race([
+      return await this.cancellable(Promise.race([
         this.server.nextNotification().then((message) => ({ message })),
         expiry.then(() => ({ expired: true })),
-      ]);
+      ]));
     } finally {
       clearTimeout(timer);
       clearInterval(timer);
@@ -740,18 +899,28 @@ class Supervisor {
 
   // One turn: start it, then drain notifications until its `turn/completed`.
   async runTurn(text) {
+    if (needsTurnReconciliation(this.state)) throw failError('unresolved turn requires explicit reconciliation');
     // AC4 (cycle-2 Tester finding): incremented and persisted ATOMICALLY
     // immediately before every `turn/start` — including re-sends after a
     // quota/transient/turn-failure wait — so a turn killed mid-flight
     // (leaving `turns` empty) is still distinguishable on resume from a
     // turn that was never started.
     this.state.turnsStarted = Number(this.state.turnsStarted || 0) + 1;
+    this.state.unresolvedTurn = {
+      attemptId: randomUUID(), threadId: this.state.threadId,
+      turnId: null, at: this.clock.now(),
+    };
     this.persist();
     const result = await this.boundedRequest('turn/start', {
       threadId: this.state.threadId,
       input: [{ type: 'text', text }],
     });
     const turnId = typeof result?.turn?.id === 'string' ? result.turn.id : null;
+    if (!turnId) throw failError('turn/start returned no turn id; resume requires reconciliation');
+    this.activeTurn = turnId;
+    this.state.unresolvedTurn.turnId = turnId;
+    this.operation = 'turn';
+    this.persist();
     this.log(`turn/start → ${turnId || '(no id)'}`);
     let lastAgentMessage = null;
     for (;;) {
@@ -759,15 +928,18 @@ class Supervisor {
       if (next.expired) this.expireDuringTurn(turnId);
       const message = next.message;
       const params = isRecord(message.params) ? message.params : {};
-      const sameTurn = !turnId || !params.turnId || params.turnId === turnId;
+      if (['turn/completed', 'item/completed'].includes(message.method) && params.threadId !== this.state.threadId) continue;
+      if (params.threadId !== undefined && params.threadId !== this.state.threadId) continue;
+      const sameTurn = params.turnId === turnId;
       switch (message.method) {
         case 'turn/completed': {
           const turn = isRecord(params.turn) ? params.turn : {};
-          if (turnId && typeof turn.id === 'string' && turn.id !== turnId) {
+          if (turn.id !== turnId || (params.turnId !== undefined && !sameTurn)) {
             this.log(`[warn] turn/completed for another turn (${turn.id})`);
             break;
           }
-          const text0 = lastAgentMessage ?? lastAgentMessageText(turn);
+          this.activeTurn = null;
+          const text0 = lastAgentMessageText(turn) ?? lastAgentMessage;
           return { turn, turnId: turnId || turn.id || null, agentMessage: text0 };
         }
         case 'item/completed': {
@@ -803,6 +975,7 @@ class Supervisor {
   // of a sleep that could never have been useful.
   recordWait(reason, seconds, detail) {
     const until = this.clock.now() + seconds;
+    this.operation = `${reason}-wait`;
     this.state.waits.push({ reason, seconds, until });
     this.persist();
     this.log(`wait ${seconds}s (${reason}${detail ? `: ${detail}` : ''}) until `
@@ -829,7 +1002,7 @@ class Supervisor {
     this.state.quotaWaits += 1;
     this.persist();
     this.recordWait('quota', seconds, name);
-    await this.clock.sleep(seconds);
+    await this.sleep(seconds);
     // A blind wait learns nothing from the clock, so re-read the snapshot
     // before the next attempt (AC6).
     if (blind) await this.readRateLimits();
@@ -841,7 +1014,18 @@ class Supervisor {
     this.state.transientRetries += 1;
     this.persist();
     this.recordWait('transient', seconds, name);
-    await this.clock.sleep(seconds);
+    await this.sleep(seconds);
+  }
+
+  confirmTurnBoundary() {
+    const unresolved = this.state.unresolvedTurn;
+    this.state.unresolvedTurn = null;
+    this.operation = 'turn-boundary';
+    try { this.persist(); }
+    catch (error) {
+      this.state.unresolvedTurn = unresolved;
+      throw error;
+    }
   }
 
   async loop(firstText) {
@@ -864,11 +1048,10 @@ class Supervisor {
           status: 'completed',
           at: this.clock.now(),
         });
-        this.persist();
         const reason = exitReasonFrom(agentMessage);
+        if (reason !== null) this.state.exitReason = reason;
+        this.confirmTurnBoundary();
         if (reason !== null) {
-          this.state.exitReason = reason;
-          this.persist();
           this.log(`VSSS-EXIT: ${reason}`);
           return EXIT_OK;
         }
@@ -881,12 +1064,14 @@ class Supervisor {
       if (status !== 'failed') {
         throw failError(`unexpected turn status: ${String(status)}`);
       }
+      this.confirmTurnBoundary();
       const error = isRecord(turn.error) ? turn.error : {};
       const info = classifyError(error.codexErrorInfo);
       const detail = typeof error.message === 'string' ? error.message : '';
       this.log(`turn failed: ${info.name} (${info.kind})${detail ? ` — ${detail}` : ''}`);
       if (info.kind === 'fatal') {
-        throw failError(`turn failed: ${info.name}; waiting cannot help — rerun with --new-run`);
+        this.state.recoveryReason = info.name === 'contextWindowExceeded' ? 'context-exhausted' : 'budget-exhausted';
+        throw failError(`turn failed: ${info.name}; checkpoint saved. Resume this thread after compacting context or resolving its budget; ceilings are preserved.`);
       }
       if (info.kind === 'quota') { await this.quotaWait(info.name); continue; }
       if (info.kind === 'transient') { await this.transientWait(info.name); continue; }
@@ -904,6 +1089,9 @@ class Supervisor {
     let promptRaw;
     try { promptRaw = readFileSync(options.promptFile, 'utf8'); }
     catch { throw usageError(`--prompt-file cannot be read: ${options.promptFile}`); }
+    this.taskRef = process.env.VIBE_TASK_REF || '';
+    if (this.taskRef && !/^(?:[A-Za-z][A-Za-z0-9]*-[0-9]+|taskandeye:\/\/node\/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/.test(this.taskRef)) throw usageError('invalid launch task binding');
+    this.taskBinding = bindingFingerprint(loadConfig(options.cwd));
     const promptHash = createHash('sha256').update(promptRaw).digest('hex');
     const promptText = rewritePrompt(promptRaw.replace(/\s+$/, ''));
     if (!promptText) throw usageError(`--prompt-file is empty: ${options.promptFile}`);
@@ -924,6 +1112,9 @@ class Supervisor {
       return EXIT_OK;
     }
     if (resumed) {
+      this.state = resumed;
+      this.state.taskRef = this.taskRef;
+      this.state.taskBinding = this.taskBinding;
       // Gates BEFORE anything is sent, then any wait the previous process
       // still owed — both without spawning a server we may never use.
       this.checkGates(resumed);
@@ -937,8 +1128,15 @@ class Supervisor {
     // persists this same instant as the new state's startedAt.
     this.startedAtAnchor = resumed ? Number(resumed.startedAt) : this.clock.now();
 
+    if (!this.state) {
+      this.state = freshState(null, options.cwd, promptHash, this.startedAtAnchor);
+      this.state.taskRef = this.taskRef;
+      this.state.taskBinding = this.taskBinding;
+      this.state.recoveryReason = 'thread-start-unconfirmed';
+      this.persist();
+    }
     this.spawnServer();
-    installSignalHandlers(this);
+
     try {
       await this.handshake();
       await this.readRateLimits();
@@ -957,7 +1155,24 @@ class Supervisor {
       } else {
         await this.startThread(promptHash);
       }
-      return await this.loop(firstText);
+      for (;;) {
+        try { return await this.loop(firstText); }
+        catch (error) {
+          // Only a confirmed turn boundary permits automatic restart. A lost
+          // turn/start reply or active turn is ambiguous and is never replayed.
+          if (!this.server.closed || this.activeTurn || needsTurnReconciliation(this.state) || this.stopRequested) throw error;
+          this.state.recoveryReason = 'connection-lost-at-turn-boundary';
+          this.persist();
+          await closeServer(this.server);
+          await this.transientWait('connection-lost');
+          this.checkGates();
+          this.spawnServer();
+          await this.handshake();
+          await this.readRateLimits();
+          await this.resumeThread(this.state);
+          firstText = 'continue';
+        }
+      }
     } finally {
       if (this.state) { try { this.persist(); } catch { /* best effort */ } }
       this.server.closeStdin();
@@ -968,14 +1183,9 @@ class Supervisor {
 // --- signals -----------------------------------------------------------
 
 function installSignalHandlers(supervisor) {
-  for (const signal of ['SIGTERM', 'SIGINT']) {
-    process.on(signal, () => {
-      try { if (supervisor.server) supervisor.server.closeStdin(); } catch { /* already gone */ }
-      try { if (supervisor.state) supervisor.persist(); } catch { /* best effort */ }
-      try { supervisor.log(`${signal}: stdin closed, state saved`); } catch { /* best effort */ }
-      process.exit(EXIT_SIGNAL);
-    });
-  }
+  const handler = () => { supervisor.stopRequested = true; };
+  for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, handler);
+  return () => { for (const signal of ['SIGTERM', 'SIGINT']) process.off(signal, handler); };
 }
 
 // --- status ------------------------------------------------------------
@@ -987,36 +1197,34 @@ function stamp(seconds) {
 }
 
 export function statusReport(state) {
+  // Explicit allowlist: never print model text, paths, IDs, errors, or rate-limit metadata.
+  const complete = state.exitReason !== undefined;
+  const allowed = new Set(['starting', 'turn', 'turn-boundary', 'initialize', 'thread/start', 'thread/resume', 'turn/start', 'account/rateLimits/read', 'quota-wait', 'transient-wait', 'stopped']);
   const rows = [
-    ['thread', state.threadId ?? '-'],
-    ['cwd', state.cwd ?? '-'],
-    ['prompt sha256', state.promptHash ?? '-'],
-    ['started', stamp(state.startedAt)],
-    ['turns', String(Array.isArray(state.turns) ? state.turns.length : 0)],
-    ['turns started', String(state.turnsStarted ?? 0)],
-    ['resumes', String(state.resumes ?? 0)],
-    ['quota waits', String(state.quotaWaits ?? 0)],
-    ['transient retries', String(state.transientRetries ?? 0)],
-    ['turn failures', String(state.turnFailures ?? 0)],
-    ['waits', String(Array.isArray(state.waits) ? state.waits.length : 0)],
+    ['state', complete ? 'complete' : state.lifecycle === 'running' ? 'running' : 'checkpointed'],
+    ['operation', complete ? 'complete' : allowed.has(state.operation) ? state.operation : 'stopped'],
+    ['thread', typeof state.threadId === 'string' ? 'recorded' : 'unknown'],
+    ['unresolved turn', needsTurnReconciliation(state) ? 'reconciliation required' : 'none'],
   ];
-  const waits = Array.isArray(state.waits) ? state.waits : [];
-  if (waits.length) {
-    const last = waits[waits.length - 1];
-    rows.push(['last wait', `${last.reason} ${last.seconds}s until ${stamp(last.until)}`]);
+  for (const key of ['turnsStarted', 'resumes', 'quotaWaits', 'transientRetries', 'turnFailures']) {
+    rows.push([key, Number.isSafeInteger(state[key]) ? state[key] : 'unknown']);
   }
-  const limits = state.lastRateLimits;
-  if (isRecord(limits)) {
-    for (const key of ['primary', 'secondary']) {
-      const window = limits[key];
-      if (isRecord(window)) {
-        rows.push([`${key} window`, `${window.usedPercent}% used, resets ${stamp(window.resetsAt)}`]);
-      }
-    }
+  rows.push(['turns', Array.isArray(state.turns) ? state.turns.length : 0]);
+  if (complete) {
+    // Only fixed, benign completion vocabulary is public. Arbitrary agent
+    // explanations can contain credentials, so they remain in private state.
+    const summaries = new Set(['done', 'complete', 'completed', 'all good', 'success', 'successful']);
+    const summary = typeof state.exitReason === 'string' ? state.exitReason.trim().toLowerCase() : '';
+    rows.push(['exit reason', summaries.has(summary) ? summary : 'terminal marker recorded']);
   }
-  if (state.exitReason !== undefined) rows.push(['exit reason', String(state.exitReason)]);
-  const width = Math.max(...rows.map(([label]) => label.length));
-  return rows.map(([label, value]) => `${label.padEnd(width)}  ${value}`).join('\n');
+  else {
+    const reasons = new Set(['stop-requested', 'ceiling-reached', 'connection-or-protocol-failure', 'context-exhausted', 'budget-exhausted', 'thread-start-unconfirmed', 'connection-lost-at-turn-boundary']);
+    rows.push(['checkpoint reason', reasons.has(state.recoveryReason) ? state.recoveryReason : 'owner-ended-or-unconfirmed']);
+    rows.push(['recovery', needsTurnReconciliation(state)
+      ? 'review prior effects, then use reconcile --state <file> --evidence-file <file>; reconcile any stale ownership lock first'
+      : 'resume using the same run arguments; reconcile any stale ownership lock first']);
+  }
+  return rows.map(([key, value]) => `${key}  ${value}`).join('\n');
 }
 
 function runStatus(options) {
@@ -1025,9 +1233,10 @@ function runStatus(options) {
     return EXIT_FAIL;
   }
   let state;
-  try { state = JSON.parse(readFileSync(options.state, 'utf8')); }
+  try { state = JSON.parse(readRegular(options.state)); }
   catch { process.stdout.write('no run\n'); return EXIT_FAIL; }
   if (!isRecord(state)) { process.stdout.write('no run\n'); return EXIT_FAIL; }
+  if (state.lifecycle === 'running' && !ownershipFresh(options.state)) state.lifecycle = 'checkpointed';
   process.stdout.write(`${statusReport(state)}\n`);
   return EXIT_OK;
 }
@@ -1048,14 +1257,40 @@ export async function main(argv) {
       return error.code ?? EXIT_FAIL;
     }
   }
-  const supervisor = new Supervisor(options);
+  let supervisor;
+  let removeSignals;
   try {
+    if (options.command === 'reconcile') return reconcileTurn(options);
+    if (options.command === 'stop') {
+      requestStop(canonicalPath(options.state));
+      process.stdout.write('stop requested\n');
+      return EXIT_OK;
+    }
+    supervisor = new Supervisor(options);
+    supervisor.owner = acquire(supervisor.statePath);
+    removeSignals = installSignalHandlers(supervisor);
     return await supervisor.run();
   } catch (error) {
     const code = error.code ?? EXIT_FAIL;
     process.stderr.write(`${error.message}\n`);
-    try { supervisor.log(`exit ${code}: ${error.message}`); } catch { /* best effort */ }
+    if (supervisor?.state) supervisor.state.recoveryReason ||= supervisor.stopRequested ? 'stop-requested' : code === EXIT_CEILING ? 'ceiling-reached' : 'connection-or-protocol-failure';
+    try { if (supervisor?.owner) supervisor.log(`exit ${code}: ${error.message}`); } catch { /* best effort */ }
     return code;
+  } finally {
+    if (supervisor?.owner) {
+      supervisor.finishing = true;
+      if (supervisor.state) { try { supervisor.persist(); } catch {} }
+      try {
+        await closeServer(supervisor.server);
+        supervisor.owner.release();
+      } catch (error) {
+        supervisor.owner.retain();
+        removeSignals?.();
+        process.stderr.write(`${error.message}\n`);
+        return EXIT_FAIL;
+      }
+    }
+    removeSignals?.();
   }
 }
 

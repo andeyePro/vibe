@@ -41,6 +41,7 @@ from smoke._core import *  # noqa: F401,F403
 
 import signal
 import time
+import hashlib
 
 SUPERVISOR = REPO / "devcontainer" / "codex-supervisor.mjs"
 CODEX_INTEGRATION_PLAN_MD = REPO / "docs" / "codex-integration-plan.md"
@@ -385,8 +386,9 @@ def test_codex_supervisor_handshake_argv_env():
         if meta is not None:
             check("[codex-supervisor] argv is exactly ['app-server']",
                   meta["argv"] == ["app-server"], str(meta["argv"]))
-            check("[codex-supervisor] child env key set is exactly {PATH,HOME,CODEX_HOME,LANG}",
-                  set(meta["env"].keys()) == {"PATH", "HOME", "CODEX_HOME", "LANG"},
+            check("[codex-supervisor] child env is the allowlisted base plus unbound Task&I fingerprint",
+                  set(meta["env"].keys()) == {"PATH", "HOME", "CODEX_HOME", "LANG", "VIBE_TASK_BINDING"}
+                  and meta["env"].get("VIBE_TASK_BINDING") == "unbound",
                   str(sorted(meta["env"].keys())))
             check("[codex-supervisor] child CODEX_HOME matches --cwd's env",
                   meta["env"].get("CODEX_HOME") == str(codex_home), meta["env"].get("CODEX_HOME"))
@@ -745,8 +747,8 @@ def test_codex_supervisor_approval_request_answered():
 # ── AC4/AC8: state, resume, SIGTERM, --new-run ────────────────────────────
 
 def test_codex_supervisor_sigterm_then_resume():
-    print("\n[codex-supervisor] AC8 mid-run SIGTERM -> exit 130 -> resume sends "
-          "thread/resume + turn/start, never turn/steer")
+    print("\n[codex-supervisor] AC8 mid-run SIGTERM -> refuse unproven resume -> "
+          "evidence reconciliation -> continue-only resume")
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         home, codex_home, workspace, env = _supervisor_fixture(tmp)
@@ -770,7 +772,7 @@ def test_codex_supervisor_sigterm_then_resume():
         saw_turn_start = False
         while time.time() < deadline:
             log_text = "\n".join(_stub_log_lines(stub_dir1)).replace(" ", "")
-            if '"method":"turn/start"' in log_text:
+            if '"method":"turn/start"' in log_text and (_read_state(workspace).get("unresolvedTurn") or {}).get("turnId"):
                 saw_turn_start = True
                 break
             time.sleep(0.1)
@@ -801,9 +803,26 @@ def test_codex_supervisor_sigterm_then_resume():
         fixture2 = {"threadId": state1.get("threadId", "unknown"),
                     "turns": [{"events": _DONE_TURN_EVENTS("i2", "done")}]}
         stub_path2 = _write_stub(stub_dir2, fixture2)
-        r2 = _run_supervisor(["run", "--cwd", str(workspace), "--prompt-file", str(prompt),
-                               "--codex-bin", str(stub_path2)], env)
-        check("[codex-supervisor] second run (resume) exits 0", r2.returncode == 0, r2.stderr)
+        resume_args = ["run", "--cwd", str(workspace), "--prompt-file", str(prompt),
+                       "--codex-bin", str(stub_path2)]
+        refused = _run_supervisor(resume_args, env)
+        check("[codex-supervisor] first active-turn resume refuses before any RPC",
+              refused.returncode != 0 and not (stub_dir2 / "meta.json").exists(), refused.stderr)
+        checkpoint = state1_path.read_bytes()
+        evidence = tmp / "reconciliation.json"
+        evidence.write_text(json.dumps({
+            "stateHash": hashlib.sha256(checkpoint).hexdigest(),
+            "threadId": state1["threadId"],
+            "turnId": state1["unresolvedTurn"]["turnId"],
+            "outcome": "interrupted", "effectsReviewed": True,
+            "safeToContinue": True, "evidence": "reviewed the actual interrupted turn",
+        }))
+        reconciled = _run_supervisor(["reconcile", "--state", str(state1_path),
+                                      "--evidence-file", str(evidence)], env)
+        check("[codex-supervisor] exact checkpoint evidence reconciles without dispatch",
+              reconciled.returncode == 0 and not (stub_dir2 / "meta.json").exists(), reconciled.stderr)
+        r2 = _run_supervisor(resume_args, env)
+        check("[codex-supervisor] reconciled second run (resume) exits 0", r2.returncode == 0, r2.stderr)
         msgs2 = _in_messages(stub_dir2)
         methods2 = [m.get("method") for m in msgs2]
         check("[codex-supervisor] resume run sends thread/resume", "thread/resume" in methods2, str(methods2))
@@ -816,6 +835,10 @@ def test_codex_supervisor_sigterm_then_resume():
             check("[codex-supervisor] thread/resume threadId matches the persisted one",
                   resume_msg.get("params", {}).get("threadId") == state1.get("threadId"), str(resume_msg))
         check("[codex-supervisor] never sends turn/steer", "turn/steer" not in methods2, str(methods2))
+        starts2 = [m for m in msgs2 if m.get("method") == "turn/start"]
+        check("[codex-supervisor] reconciled active-turn input is literal continue",
+              len(starts2) == 1 and starts2[0].get("params", {}).get("input", [{}])[0].get("text") == "continue",
+              str(starts2))
         state2 = _read_state(workspace)
         check("[codex-supervisor] state.resumes == 1 after one resume", state2.get("resumes") == 1, str(state2))
 

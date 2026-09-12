@@ -1681,6 +1681,57 @@ any check you could not run rather than inferring it.
 
 ---
 
+## Test 56: Codex development environment rollout (host/service checks pending)
+
+Use a disposable project and stop existing work deliberately before rebuilding.
+These checks require the reviewed source image; offline smoke results do not
+establish that an older installed container supports them.
+
+1. Record source commit, image identity and installed Codex version. Launch the
+   disposable project with Codex; verify the root-owned liveness gate succeeds,
+   a harmless command works and existing denied operations remain denied.
+   Confirm `codex-context` reports actual helper executability, and the startup
+   instructions name the configured FM2C file without exposing private content.
+2. Put a fixture prompt at a path containing spaces. Launch `--codex-run` and
+   inspect status. Request stop during both an active tool and a quota wait.
+   Verify bounded cleanup and durable state. A competing run and `--new-run`
+   must refuse an existing owner. An ambiguous interrupted turn requires
+   reviewed effects and reconciliation evidence before another turn starts.
+   Check a final nonempty, unindented `VSSS-EXIT:` marker stops; code examples,
+   fenced markers and another thread's events do not.
+3. Resume a confirmed boundary with the original prompt. Verify the next turn
+   is `continue`, completed work is not automatically replayed, ceilings persist
+   and an altered prompt/task binding refuses. Deliberately crash only this
+   fixture; reconcile stale ownership only after verifying all descendants are
+   gone. Never infer cleanup from a PID or timestamp alone.
+4. Follow `docs/mac-build-protocol.md` to install the reviewed forced-command
+   runner under the existing `claude` account with a project-specific key and
+   verified host key. Confirm root-owned trusted files and safe ancestry. Run
+   `doctor`, build and test against an explicitly allowlisted fixture snapshot.
+   Record job ID, content fingerprint, toolchain, exit result, logs and artifacts.
+   Verify source changes change the fingerprint; failed tests, timeout,
+   disconnect and concurrent requests cannot produce a false pass. Confirm
+   simulator availability separately. Screenshots count as application evidence
+   only if the approved pipeline builds, installs and launches this snapshot.
+5. Before Task&I traffic, compare the provisional input/output schemas with the
+   authoritative server and verify token scopes and per-task usage attribution.
+   Use an isolated test task. Set a local mapping, override it with `--task`,
+   enqueue one question and answer it. Verify boundary polling, local durability,
+   consumed-answer archiving, duplicate/reordered answers, cursor conflicts,
+   disconnect uncertainty and evidence-based retry. No binding must preserve
+   the original Markdown workflow and produce no Task&I request.
+6. In the isolated fixture, combine context discovery, one reviewed change,
+   independent testing, native build evidence, one FM2C answer and a controlled
+   interruption/resumption. Compare usage rows with the explicit session JSONL;
+   missing usage stays unknown. Record precisely which parts remain unverified.
+7. Roll back by selecting the previous source/image and relaunching after a clean
+   stop. Preserve outbox, Q&A and supervisor evidence; never delete ambiguous
+   state to make a previous version run. Remove the local endpoint/binding only
+   after pending requests are reconciled. Revoke the project build key if retiring
+   the bridge, with host administration handled separately.
+
+---
+
 ## Test Summary
 
 After completing all tests, check:

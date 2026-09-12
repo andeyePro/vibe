@@ -368,3 +368,16 @@ Plus tier: 5-45 Astra messages per 5 hours. This run spends one call on the
 plan review (done: 15,137 tokens) and one per delivered iteration (plus at
 most one re-review on a FAIL), and no calls on plumbing verification, which
 uses stubs.
+
+
+## 2026-09-12 source implementation addendum
+
+The earlier delivery queue is a historical baseline. The scoped follow-on run
+adds supervised launch/resume through `codex-entry`, exclusive supervisor
+ownership and cooperative controls, context/FM2C startup instructions,
+OpenAI-native role aliases, a restricted Mac snapshot bridge and a provisional
+Task&I Action Window client. See `docs/codex-development.md` and the live-versus-
+fixture acceptance matrix in `docs/codex-taskandi-readiness.md` for the current
+state. Source changes do not replace the active managed container or prove live
+Mac/service compatibility. The existing domain opt-in remains the route for
+Apple, Swift and OpenAI documentation access.

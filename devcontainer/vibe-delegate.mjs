@@ -24,13 +24,14 @@ const REVIEW_SCHEMA = object({
 // pinned argv vector — see docs/codex-integration-plan.md D5/AC4.
 const ROLES = ['planner', 'spec-critic', 'generator', 'tester', 'reviewer', 'evaluator'];
 const WRITE_ROLES = new Set(['generator', 'tester']);
-const ROLE_MODELS = ['astra', 'opus', 'sonnet', 'haiku', 'fable'];
+const OPENAI_ROLE_MODELS = Object.freeze({ astra: 'gpt-6-astra', sol: 'gpt-5.6-sol', terra: 'gpt-5.6-terra', luna: 'gpt-5.6-luna' });
+const ROLE_MODELS = [...Object.keys(OPENAI_ROLE_MODELS), 'opus', 'sonnet', 'haiku', 'fable'];
 const ROLE_STATUSES = ['done', 'blocked'];
 const ROLE_SCHEMA = object({ report: string, status: { type: 'string', enum: ROLE_STATUSES } });
 const USAGE = 'Usage: node /usr/local/bin/vibe-delegate slots | review codex | ' +
   'ask <astra|opus|sonnet|haiku|fable> [--consent-credits] | ' +
   'role <planner|spec-critic|generator|tester|reviewer|evaluator> ' +
-  '--model <astra|opus|sonnet|haiku|fable> --cwd <abs dir> [--consent-credits]; payload on stdin';
+  '--model <astra|sol|terra|luna|opus|sonnet|haiku|fable> --cwd <abs dir> [--consent-credits]; payload on stdin';
 
 // `usage`, when supplied, is attached to the thrown Error so a caller several
 // stack frames up (task_052's ledger write) can still recover it even though
@@ -372,7 +373,9 @@ function codex(payload, review, cwd) {
 // tools ON, `-C <cwd>` is the real workspace, no --ignore-user-config (system
 // requirements + managed hooks mediate every write), schema/output files
 // still live in the helper's own scratch dir, never inside the workspace.
-function codexRole(payload, roleName, cwd, scratch) {
+function codexRole(payload, roleName, cwd, scratch, model = 'astra') {
+  const modelId = OPENAI_ROLE_MODELS[model];
+  if (!modelId) fail('Unknown OpenAI role model');
   const env = codexEnv();
   const write = WRITE_ROLES.has(roleName);
   const runCwd = write ? cwd : scratch;
@@ -381,13 +384,13 @@ function codexRole(payload, roleName, cwd, scratch) {
   const outputPath = join(scratch, 'answer.json');
   writeFileSync(schemaPath, JSON.stringify(ROLE_SCHEMA), { mode: 0o600 });
   const args = write
-    ? ['exec', '-m', 'gpt-6-astra', '-C', cwd, '--sandbox', 'danger-full-access',
+    ? ['exec', '-m', modelId, '-C', cwd, '--sandbox', 'danger-full-access',
         '--ephemeral', '--skip-git-repo-check', '--json',
         '-c', 'approval_policy="never"', '-c', 'forced_login_method="chatgpt"',
         '-c', 'cli_auth_credentials_store="file"', '-c', 'web_search="disabled"',
         '--disable', 'multi_agent', '--disable', 'apps', '--disable', 'js_repl',
         '--output-schema', schemaPath, '--output-last-message', outputPath, '-']
-    : ['exec', '-m', 'gpt-6-astra', '--ignore-user-config', '--ignore-rules',
+    : ['exec', '-m', modelId, '--ignore-user-config', '--ignore-rules',
         '--ephemeral', '--skip-git-repo-check', '--sandbox', 'read-only',
         '-c', 'approval_policy="never"', '-c', 'forced_login_method="chatgpt"',
         '-c', 'cli_auth_credentials_store="file"', '-c', 'project_doc_max_bytes=0',
@@ -408,13 +411,13 @@ function codexRole(payload, roleName, cwd, scratch) {
     const reply = parse(readFileSync(outputPath, 'utf8'), 'Codex role reply');
     if (!exact(reply, ['report', 'status']) || typeof reply.report !== 'string' || !reply.report.trim() ||
         !ROLE_STATUSES.includes(reply.status)) fail('Codex role reply does not match its schema');
-    const result = { runtime: 'codex', model: 'gpt-6-astra', role: roleName, status: reply.status,
+    const result = { runtime: 'codex', model: modelId, role: roleName, status: reply.status,
       report: reply.report, usage, billing: 'subscription', served_models: null };
-    appendLedgerLine(ledgerEntry({ op: 'role', runtime: 'codex', model: 'gpt-6-astra', servedModels: null,
+    appendLedgerLine(ledgerEntry({ op: 'role', runtime: 'codex', model: modelId, servedModels: null,
       role: roleName, billing: 'subscription', usage, ok: true, error: null }));
     return result;
   } catch (error) {
-    appendLedgerLine(ledgerEntry({ op: 'role', runtime: 'codex', model: 'gpt-6-astra', servedModels: null,
+    appendLedgerLine(ledgerEntry({ op: 'role', runtime: 'codex', model: modelId, servedModels: null,
       role: roleName, billing: 'subscription', usage, ok: false, error: errorCategory(error) }));
     throw error;
   }
@@ -618,15 +621,15 @@ function runRole(roleName, rest) {
   if (!insideGitWorkTree(flags.cwd)) fail('--cwd must be inside a git work tree; no vendor process was started');
   // codex=off is this project's "no OpenAI egress" switch (see slots() call
   // in main()): an Astra role must refuse it identically to `ask astra`.
-  if (flags.model === 'astra' && !slots(flags.cwd).codex) {
+  if (Object.hasOwn(OPENAI_ROLE_MODELS, flags.model) && !slots(flags.cwd).codex) {
     fail('codex disabled by .vibe/review-slots (codex=off)');
   }
   const payload = readFileSync(0, 'utf8');
   if (!payload.trim() || Buffer.byteLength(payload) > MAX_BYTES) fail('Supply a non-empty payload of at most 8 MiB on stdin');
   const scratch = mkdtempSync(join(tmpdir(), 'vibe-delegate-'));
   try {
-    const result = flags.model === 'astra'
-      ? codexRole(payload, roleName, flags.cwd, scratch)
+    const result = Object.hasOwn(OPENAI_ROLE_MODELS, flags.model)
+      ? codexRole(payload, roleName, flags.cwd, scratch, flags.model)
       : claudeRole(payload, roleName, flags.model, flags.consentCredits, flags.cwd, scratch);
     console.log(JSON.stringify(result));
   } finally { rmSync(scratch, { recursive: true, force: true }); }

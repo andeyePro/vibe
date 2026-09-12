@@ -51,13 +51,14 @@
 # the gate.
 set -euo pipefail
 export PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/share/npm-global/bin
-unset BASH_ENV ENV
+unset BASH_ENV ENV NODE_OPTIONS NODE_PATH
 
 root=/etc/codex
 bin=/usr/local/bin
 login_dir=/home/node/.codex
 codex_bin=codex
 codex_bin_given=0
+supervise=0
 
 refuse() {
   printf 'codex-led session refused: %s\n' "$1" >&2
@@ -70,6 +71,9 @@ usage() {
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --supervise)
+      supervise=1; shift
+      ;;
     --root)
       [ "$#" -ge 2 ] || refuse "--root needs a directory"
       root=$2
@@ -182,5 +186,10 @@ fi
 # (b) proven: hand over to the unmodified vendor binary, in the cwd
 # `devcontainer exec` put us in (the workspace), with only the arguments the
 # caller passed after `--`.
+if [ "$supervise" = 1 ]; then
+  [ -x "$bin/codex-supervisor" ] || refuse "codex-supervisor is missing or not executable"
+  printf 'codex-led session: guard chain proven, starting supervisor\n'
+  exec "$bin/codex-supervisor" "$@"
+fi
 printf 'codex-led session: guard chain proven, starting codex\n'
 exec "$codex_bin" "$@"
