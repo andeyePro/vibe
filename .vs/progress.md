@@ -604,3 +604,9 @@ Generator: sonnet (1 cycle of 1). Tester: sonnet (7 functions, 50 checks in chec
 Spec Critic (draft): revise, 5 BLOCKING folded in before dispatch.
 Verified: exact ledger key set, per-runtime rows, role rows, refusals append nothing, failure rows with/without usage, no payload/ids, modes, auto-create, symlink refusal, outside-work-tree behaviour, docs; code-check clean; full suite green (4,406).
 Astra diff reviews (gpt-6-astra, 27,333 tokens over two calls): FAIL then FAIL — (1) error messages could leak scratch paths → fixed categories; (2) symlinked `.vibe` dir / check-then-append race → dir lstat + O_NOFOLLOW|O_NONBLOCK + fstat; (3) a FIFO could block a completed call → refused; (4) an unvalidated usage sub-field → tokenCountOrNull; (5, re-review) the directory race survives O_NOFOLLOW → narrowed by post-open identity re-checks (Node has no openat), chair-evaluated and carried to the next payload. task_049's gate block confirmed closed by Astra.
+
+## task_051 — cycle 1 — PASS (2026-09-12T01:06:28Z)
+Generator: sonnet. Tester: sonnet (checks_09 pins widened, checks_03 sync test, 37 checks in checks_13). Evaluator: Fable 5.1 chair.
+Spec Critic (draft): revise, 2 BLOCKING folded in (checks_09 pins; sync test location).
+Verified: fragment size/content, alias lines under each H1 (vs.md exact +1 line), README, plan, TODO hook line; code-check clean; full suite green (4,445).
+Astra diff review (gpt-6-astra, 17,075 tokens): PASS, no findings.

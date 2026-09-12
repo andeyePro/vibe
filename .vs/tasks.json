@@ -390,5 +390,15 @@
     "assigned_to": "evaluator",
     "mode": "rigorous",
     "last_modified": "2026-09-12T00:33:01Z"
+  },
+  {
+    "id": "task_051",
+    "description": "$vs/$vss/$vsss aliases in Claude Code via a synced CLAUDE.md fragment plus one alias line per command file; hook route Martin-gated",
+    "implementation_status": "complete",
+    "test_status": "pass",
+    "assigned_to": "evaluator",
+    "mode": "rigorous",
+    "last_modified": "2026-09-12T01:06:28Z",
+    "cycle_1_tester_note": "Tester (haiku) AC5: updated the two checks_09_openproject_and_scanner.py pins (AC1 fragment count 14->15, expected_names gains dollar-prefix.md; AC2's 6,700-word cap left unchanged since the 15-fragment total is 6,563 words -- the new fragment fit, so per task_042's precedent only a comment was added, not a raise) with no other edits to that function. Extended the fixture-isolated fragment-sync test (task_007/t3 in smoke/checks_03_vibecopy_and_watcher.py) with a new test_task051_ac2_dollar_prefix_synced_like_web_research(), same isolation pattern with two fragments in source, asserting dollar-prefix.md's header and body sync exactly like web-research.md's; added a DOLLAR_PREFIX_MD constant to smoke/_core.py's __all__. Added test_dollar_prefix_fragment_and_aliases() to smoke/checks_13_spec_first.py (37 checks): fragment <=25 lines/<=200 words and contains $vs/$vss/$vsss/'first'/'case-sensitive'/literal $vss:foo; each of vs.md/vss.md/vsss.md has its own-named alias line immediately under its H1 pointing at claude-md/dollar-prefix.md; vs.md's line count is exactly HEAD+1; vss.md and vsss.md get only the alias-line and vsss.md's two protected-phrase checks ('never be reported as a perfection gate', 'VSSS-EXIT:'), per the spec's allowance that vss.md's rationale prose was trimmed to fit a word cap; README's $ spelling sentence and dollar-prefix.md pointer; the plan's section 3 'DELIVERED (task_051)' marker on item 10; TODO.md's UserPromptSubmit/Martin-gated/task_051 sentinels. Both new test functions registered in smoke/runner.py in a new task_051 block after task_050's. python3 code-check.py: clean, shellcheck across 23 files, exit 0. python3 smoke-test.py < /dev/null: fully green, exit 0, 4,445 check() lines passing, 0 failed. Not covered, with reason: the live/manual side of the deterministic UserPromptSubmit hook alternative is out of scope for this task (instructional-route-only; the hook itself is Martin-gated future work per TODO.md), so only its documented sentinel words were asserted, not a live hook trial. Full output: .vs/cycle-1/test-output.log. Summary: .vs/cycle-1/summary.md."
   }
 ]

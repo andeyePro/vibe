@@ -816,6 +816,14 @@ def main() -> int:
     test_codex_panel_docs_strings()
     test_codex_panel_dockerfile_copy_and_chmod()
 
+    # task_051: `$vs`/`$vss`/`$vsss` alias for Claude Code — CLAUDE.md
+    # fragment (dollar-prefix.md) synced by install-claude-extras.sh like any
+    # other fragment, plus a one-line alias note in each of vs.md/vss.md/
+    # vsss.md. Appended after the task_050 block above, which is frozen and
+    # unchanged.
+    test_task051_ac2_dollar_prefix_synced_like_web_research()
+    test_dollar_prefix_fragment_and_aliases()
+
     print()
     if FAILURES:
         print(f"✗ {len(FAILURES)} check(s) failed:")

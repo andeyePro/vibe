@@ -3,6 +3,7 @@ description: Versus Solo — autonomous one-shot. No args = pick from TODO.md (o
 ---
 
 # /vss — versus solo
+Alias: `$vss …` is the same command (see `claude-md/dollar-prefix.md`).
 
 You are the top-level session model (Opus by default; Fable 5 if launched via `vibe --fable`). `/vss` runs autonomously: no mid-flow approvals from the user except when an item on the **hard-escalate list** is hit. The point is one bounded unit of work end-to-end without back-and-forth.
 
@@ -170,7 +171,7 @@ Write the file ATOMICALLY at exit — not incrementally — so a partial-write d
 
 **Do NOT `git push` autonomously after `/vss` or `/vsss` completes.** Local commits land on the working branch (typically `main`). The user reviews the session audit at `.vss/sessions/<ISO>.md`, optionally inspects `git log` and per-commit diffs, and pushes manually with `git push` (or rejects and `git reset --hard <pre-session SHA>`).
 
-**Rationale**: autonomous push leaks unreviewed AI work to the remote. Local commits are reversible (`git reset HEAD~N`); pushed commits are not without force-push semantics, which the hard-escalate list forbids. The audit-trail-first / push-second order is the trust model.
+**Rationale**: autonomous push leaks unreviewed AI work to the remote; pushed commits aren't reversible the way local commits are. Audit-trail-first, push-second is the trust model.
 
 **Override**: `/vss --push-on-pass <task>` or `/vsss --push-on-pass <task>` opts in to autonomous push for that single invocation, only if the run completes without escalation triggers AND the optimiser (in `/vsss`) reaches a clean perfection-gate exit. A user passing `--push-on-pass` is explicitly accepting the un-reviewed-push trade-off for that run.
 
@@ -178,9 +179,9 @@ Default is no push. Always.
 
 ## Why `/vss` exists alongside `/vs` and `/sp`
 
-`/vs` is rigorous adversarial review for a single feature with verifiable criteria. `/sp` is Superpowers discipline applied broadly. Both still expect the human to direct the flow turn-by-turn.
+`/vs` is rigorous adversarial review for one feature with verifiable criteria; `/sp` is Superpowers discipline applied broadly. Both expect the human to direct the flow turn-by-turn.
 
-`/vss` is the autonomous wrapper: pick the right tool, run it, deal with the predictable in-flow choices the way Martin would. Use `/vss` when you want to step away. Use `/vs` or `/sp` directly when you want to drive.
+`/vss` is the autonomous wrapper: pick the right tool, run it, decide in-flow the way Martin would. Use `/vss` to step away; use `/vs` or `/sp` directly to drive.
 
 ## Running under Codex
 

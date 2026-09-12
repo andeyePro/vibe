@@ -8,37 +8,40 @@ def test_task028_fragment_merges_and_fable_grant() -> None:
     """task_028 AC1-AC10, AC12, AC13: fragment merges, word counts, sentinels, Fable grant."""
     print("\n[task_028: CLAUDE.md fragment merges + single Fable-grant definition]")
     
-    # AC1: Exactly 14 .md files in devcontainer/claude-md/
+    # AC1: Exactly 15 .md files in devcontainer/claude-md/
     # (13 at task_028; extra-domains-refresh.md added by task_042 — the
     #  CDN-staleness fix, gated on VIBE_EXTRA_DOMAINS so most projects
     #  never see it. The AC2 word budget was NOT raised to make room:
-    #  the fragment was written to fit inside it.)
+    #  the fragment was written to fit inside it. dollar-prefix.md added by
+    #  task_051 — the `$vs`/`$vss`/`$vsss` alias instruction for Claude Code;
+    #  at 163 words it still fits under the existing 6,700 cap, so that cap
+    #  was NOT raised either — see the AC2 comment below.)
     # Three deleted absent: learn-hook.md, feedback-auto-promote.md, conversation-history.md
     # Three survivors present: learnings.md, auto-memory-scope.md, content-guard.md
     # Ten untouched: web-research, ssh-discipline, brain2, shared-repos, harness-routing,
     #                output-consolidation, project-hygiene, todo-changelog, vibe-cli, workspace-is-the-repo
     claude_md_dir = REPO / "devcontainer" / "claude-md"
     all_md_files = sorted([f.name for f in claude_md_dir.glob("*.md")])
-    check("[ac1] exactly 14 .md files in claude-md/", len(all_md_files) == 14, f"found {len(all_md_files)}")
-    
+    check("[ac1] exactly 15 .md files in claude-md/", len(all_md_files) == 15, f"found {len(all_md_files)}")
+
     deleted_names = ["learn-hook.md", "feedback-auto-promote.md", "conversation-history.md"]
     for name in deleted_names:
         check(f"[ac1] {name} does not exist", not (claude_md_dir / name).exists(), "")
-    
+
     required_names = ["learnings.md", "auto-memory-scope.md", "content-guard.md"]
     for name in required_names:
         check(f"[ac1] {name} exists", (claude_md_dir / name).exists(), "")
-    
+
     expected_names = {
         "web-research.md", "ssh-discipline.md", "brain2.md", "shared-repos.md",
         "harness-routing.md", "output-consolidation.md", "project-hygiene.md",
         "todo-changelog.md", "vibe-cli.md", "workspace-is-the-repo.md",
         "learnings.md", "auto-memory-scope.md", "content-guard.md",
-        "extra-domains-refresh.md",
+        "extra-domains-refresh.md", "dollar-prefix.md",
     }
     check("[ac1] all expected fragment names present", set(all_md_files) == expected_names,
           f"diff: {set(all_md_files).symmetric_difference(expected_names)}")
-    
+
     # AC2: Total words <= 6700
     # Raised from 6400 by task_042 (precedent: task_036 raised the vs/vss/vsss
     # pins the same way). extra-domains-refresh.md was trimmed to land the sum
@@ -49,6 +52,10 @@ def test_task028_fragment_merges_and_fable_grant() -> None:
     # extra-domains-refresh) and never all install together. Keep the headroom
     # small and deliberate: this is still the gate that stops the shared
     # CLAUDE.md sprawling.
+    # task_051 added dollar-prefix.md (163 words), bringing the 15-fragment
+    # total to 6,563 — still under 6,700, so this cap was NOT raised (unlike
+    # task_042's squeeze, where the new fragment did not fit and the cap moved
+    # by exactly its word count).
     all_text = "".join((claude_md_dir / f).read_text() for f in all_md_files)
     total_words = len(all_text.split())
     check("[ac2] total fragment words <= 6700", total_words <= 6700, f"found {total_words}")

@@ -3,6 +3,7 @@ description: Versus Super Solo — runs /vss on the given args, then optimises a
 ---
 
 # /vsss — versus super solo
+Alias: `$vsss …` is the same command (see `claude-md/dollar-prefix.md`).
 
 Autonomous loop wrapper around `/vss`. Higher blast radius — read this whole file before invoking.
 

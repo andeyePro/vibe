@@ -3,6 +3,7 @@ description: Adversarial agentic harness — Planner + Evaluator (session model)
 ---
 
 # /vs — adversarial harness
+Alias: `$vs …` is the same command (see `claude-md/dollar-prefix.md`).
 
 You (top-level, whatever model this session launched on — Opus by default, Fable 5 via `vibe --fable`) play two roles: **Planner** (Step 1–2, plus revision in Step 3) and **Evaluator** (Step 6–7). Between them, you dispatch independent subagents: a Sonnet **Spec Critic** that audits the spec before any code runs, a **Generator** that writes the feature (tier per the Model plan, Sonnet default), and — depending on mode — either a Haiku 4.5 **Tester** (default rigorous mode) or a Sonnet **Reviewer** (`--fuzzy` mode). Generator never sees Tester's / Reviewer's output; Tester / Reviewer never sees Generator's report. That separation is the point.
 

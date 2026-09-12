@@ -891,3 +891,128 @@ def test_codex_switch_docs() -> None:
                 
                 check("[codex] Test 54 step 4 mentions --permission-prompts none",
                       has_none, "")
+
+
+def test_dollar_prefix_fragment_and_aliases() -> None:
+    """task_051: `$vs`/`$vss`/`$vsss` alias for Claude Code.
+
+    Covers:
+      - dollar-prefix.md exists, is small (<=25 lines, <=200 words), and
+        names the three tokens, the FIRST-token/case-sensitive/exact-match
+        rule (with the `$vss:foo` counter-example), and the word "first".
+      - vs.md, vss.md, vsss.md each carry an `Alias:` line immediately under
+        their H1, naming their own command.
+      - vs.md's line count grew by EXACTLY one against `git show HEAD:...`
+        (the Generator changed nothing else in that file). vss.md and
+        vsss.md were allowed to trim rationale prose to stay under a word
+        cap, so for those two only the alias line and two protected
+        sentinel phrases are checked, not an exact line-count delta.
+      - README's Codex section gains the `$` spelling sentence.
+      - docs/codex-integration-plan.md § 3 marks item 10 delivered.
+      - TODO.md carries a Martin-gated UserPromptSubmit hook line.
+    """
+    print("\n[task_051: $vs/$vss/$vsss alias — fragment, command docs, plan, TODO]")
+
+    frag_path = DOLLAR_PREFIX_MD
+    check("[task051] dollar-prefix.md exists", frag_path.exists(), str(frag_path))
+    if not frag_path.exists():
+        return
+
+    frag_text = frag_path.read_text()
+    frag_lines = frag_text.splitlines()
+    frag_words = frag_text.split()
+
+    check("[task051] dollar-prefix.md <= 25 lines", len(frag_lines) <= 25,
+          f"found {len(frag_lines)} lines")
+    check("[task051] dollar-prefix.md <= 200 words", len(frag_words) <= 200,
+          f"found {len(frag_words)} words")
+
+    for token in ("$vs", "$vss", "$vsss"):
+        check(f"[task051] dollar-prefix.md contains '{token}'", token in frag_text, "")
+
+    check("[task051] dollar-prefix.md contains 'first'", "first" in frag_text.lower(), "")
+    check("[task051] dollar-prefix.md contains 'case-sensitive'",
+          "case-sensitive" in frag_text, "")
+    check("[task051] dollar-prefix.md contains literal '$vss:foo'",
+          "$vss:foo" in frag_text, "")
+
+    # Command files: each gains an Alias: line immediately under its H1,
+    # naming its own command.
+    command_files = {
+        "vs": (VS_MD, "vs"),
+        "vss": (VSS_MD, "vss"),
+        "vsss": (VSSS_MD, "vsss"),
+    }
+    for label, (path, name) in command_files.items():
+        text = path.read_text()
+        lines = text.splitlines()
+        h1_idx = None
+        for i, line in enumerate(lines):
+            if line.startswith("# "):
+                h1_idx = i
+                break
+        check(f"[task051] {label}.md has an H1 heading", h1_idx is not None, "")
+        if h1_idx is None:
+            continue
+
+        alias_idx = h1_idx + 1
+        alias_line = lines[alias_idx] if alias_idx < len(lines) else ""
+        expected_alias_open = f"Alias: `${name} "
+        check(f"[task051] {label}.md alias line immediately under H1 names '${name}'",
+              alias_line.startswith(expected_alias_open), f"line: {alias_line!r}")
+        check(f"[task051] {label}.md alias line points at claude-md/dollar-prefix.md",
+              "claude-md/dollar-prefix.md" in alias_line, f"line: {alias_line!r}")
+
+    # vs.md: exact one-line growth against HEAD (nothing else in the body
+    # changed for this task).
+    head_vs = run(["git", "show", "HEAD:devcontainer/commands/vs.md"], cwd=REPO)
+    check("[task051] git show HEAD:vs.md succeeds", head_vs.returncode == 0, head_vs.stderr)
+    if head_vs.returncode == 0:
+        head_vs_lines = head_vs.stdout.splitlines()
+        current_vs_lines = VS_MD.read_text().splitlines()
+        check("[task051] vs.md line count grew by exactly one vs HEAD",
+              len(current_vs_lines) == len(head_vs_lines) + 1,
+              f"HEAD had {len(head_vs_lines)} lines, now {len(current_vs_lines)}")
+
+    # vss.md and vsss.md: no exact-growth check (rationale prose trimmed to
+    # stay under a word cap) — only the alias line (already checked above)
+    # and the protected phrases that prove the rest of vsss.md's substance
+    # survived the edit.
+    vsss_text = VSSS_MD.read_text()
+    for phrase in ("never be reported as a perfection gate", "VSSS-EXIT:"):
+        check(f"[task051] vsss.md still contains '{phrase}'", phrase in vsss_text, "")
+
+    # README's Codex section gains the $ spelling sentence.
+    readme_text = README_MD.read_text()
+    check("[task051] README mentions the $vs/$vss/$vsss spelling in Claude Code",
+          "$vs" in readme_text and "$vss" in readme_text and "$vsss" in readme_text
+          and "Claude Code" in readme_text, "")
+    check("[task051] README points at claude-md/dollar-prefix.md",
+          "dollar-prefix.md" in readme_text, "")
+
+    # docs/codex-integration-plan.md § 3 marks item 10 delivered.
+    plan_path = REPO / "docs" / "codex-integration-plan.md"
+    check("[task051] codex-integration-plan.md exists", plan_path.exists(), str(plan_path))
+    if plan_path.exists():
+        plan_text = plan_path.read_text()
+        section_3_idx = plan_text.find("## 3. Ordered delivery queue")
+        check("[task051] plan has '## 3. Ordered delivery queue'", section_3_idx >= 0, "")
+        if section_3_idx >= 0:
+            next_section_idx = plan_text.find("\n## 4.", section_3_idx)
+            if next_section_idx == -1:
+                next_section_idx = len(plan_text)
+            section_3_text = plan_text[section_3_idx:next_section_idx]
+            check("[task051] plan § 3 item 10 marked DELIVERED (task_051)",
+                  "DELIVERED (task_051)" in section_3_text, "")
+
+    # TODO.md carries a Martin-gated UserPromptSubmit hook line.
+    todo_path = REPO / "TODO.md"
+    check("[task051] TODO.md exists", todo_path.exists(), str(todo_path))
+    if todo_path.exists():
+        todo_text = todo_path.read_text()
+        check("[task051] TODO.md contains 'UserPromptSubmit'",
+              "UserPromptSubmit" in todo_text, "")
+        check("[task051] TODO.md contains 'Martin-gated'",
+              "Martin-gated" in todo_text, "")
+        check("[task051] TODO.md references task_051",
+              "task_051" in todo_text, "")

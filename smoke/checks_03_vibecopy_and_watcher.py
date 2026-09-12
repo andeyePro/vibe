@@ -610,6 +610,57 @@ def test_task007_t3_install_basics_one_fragment() -> None:
               f"ending check: {repr(content[-50:])}")
 
 
+def test_task051_ac2_dollar_prefix_synced_like_web_research() -> None:
+    """task_051 AC2: dollar-prefix.md syncs through install-claude-extras.sh
+    exactly like web-research.md — same fixture-isolated pattern as t3, but
+    with two fragments in source, to prove no special-casing was added for
+    the new fragment (it goes through the same `for mdfile in "$src_dir"/*.md`
+    loop as every other fragment)."""
+    print("\n[task_051 AC2: dollar-prefix.md synced like web-research.md]")
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+
+        fixture_src = tmp / "fixture_src" / "claude-md"
+        fixture_src.mkdir(parents=True)
+        (fixture_src / "web-research.md").write_text("# Test Fragment\nTest content for web research\n")
+        (fixture_src / "dollar-prefix.md").write_text("# Test Fragment\nTest content for dollar prefix\n")
+
+        dest_dir = tmp / "dest_config"
+        dest_dir.mkdir()
+
+        env = {
+            **os.environ,
+            "VIBE_EXTRAS_SRC_ROOT": str(tmp / "fixture_src"),
+            "CLAUDE_CONFIG_DIR": str(dest_dir),
+        }
+
+        r = run(["bash", str(INSTALL_EXTRAS)], env=_isolate_extras_env(env))
+        check("[task051/ac2] install exit 0", r.returncode == 0,
+              f"exit={r.returncode} stderr={r.stderr}")
+
+        claude_md = dest_dir / "CLAUDE.md"
+        check("[task051/ac2] CLAUDE.md created", claude_md.exists(), str(claude_md))
+
+        if not claude_md.exists():
+            return
+
+        content = claude_md.read_text()
+
+        check("[task051/ac2] web-research.md fragment header present",
+              "<!-- vibe-md: web-research.md -->" in content,
+              "header check")
+        check("[task051/ac2] dollar-prefix.md fragment header present",
+              "<!-- vibe-md: dollar-prefix.md -->" in content,
+              "header check")
+
+        # Both fragments' bodies made it through, unmodified
+        check("[task051/ac2] web-research.md body present",
+              "Test content for web research" in content, "")
+        check("[task051/ac2] dollar-prefix.md body present",
+              "Test content for dollar prefix" in content, "")
+
+
 def test_task007_t4_create_from_scratch() -> None:
     """t4: install creates CLAUDE.md from scratch when absent."""
     print("\n[task_007/t4: create CLAUDE.md from scratch]")

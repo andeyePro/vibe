@@ -43,6 +43,7 @@ SHARED_REPOS_MD = REPO / "devcontainer" / "claude-md" / "shared-repos.md"
 TODO_CHANGELOG_MD = REPO / "devcontainer" / "claude-md" / "todo-changelog.md"
 PROJECT_HYGIENE_MD = REPO / "devcontainer" / "claude-md" / "project-hygiene.md"
 AUTO_MEMORY_SCOPE_MD = REPO / "devcontainer" / "claude-md" / "auto-memory-scope.md"
+DOLLAR_PREFIX_MD = REPO / "devcontainer" / "claude-md" / "dollar-prefix.md"
 CHANGELOG_MD = REPO / "CHANGELOG.md"
 SECURITY_MD = REPO / "SECURITY.md"
 BUG_TEMPLATE = REPO / ".github" / "ISSUE_TEMPLATE" / "bug_report.md"
@@ -1360,6 +1361,7 @@ __all__ = [
     'CYCLE_1_DIFF',
     'C_MD',
     'DOCKERFILE',
+    'DOLLAR_PREFIX_MD',
     'FAILURES',
     'FEATURE_TEMPLATE',
     'GUARD_BASH',
