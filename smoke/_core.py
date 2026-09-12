@@ -201,6 +201,37 @@ def run_bytes(cmd: list[str], env: dict[str, str] | None = None, cwd: Path | Non
     )
 
 
+def smoke_platform() -> str:
+    """The platform this run should treat itself as. Reads
+    VIBE_SMOKE_FORCE_PLATFORM first — a test-only injection point so a
+    regression test can force the darwin/linux branch of a platform gate
+    without an actual non-Linux host — then falls back to sys.platform.
+    """
+    return os.environ.get("VIBE_SMOKE_FORCE_PLATFORM") or sys.platform
+
+
+def run_supervisor_tests(tests: list) -> None:
+    """Run a block of tests that exec the real
+    devcontainer/codex-supervisor.mjs, unless smoke_platform() is not
+    'linux' (review item 27, 2026-09-12): the supervisor refuses to run
+    off Linux (devcontainer/supervisor-control.mjs:139, 'Owned
+    process-tree cleanup requires Linux'), so on a macOS host every one of
+    these ~55 tests across checks_19/21/27/30 fails or raises, and there
+    was no platform skip at all. Gated on the PLATFORM only, never on "the
+    supervisor errored" — a genuine failure on Linux must still fail the
+    suite. Off Linux, prints a notice naming why and how many test
+    functions were skipped instead of silently passing.
+    """
+    if smoke_platform() != "linux":
+        print(f"  (skipped: {len(tests)} codex-supervisor test(s) require "
+              f"Linux — devcontainer/codex-supervisor.mjs refuses to run "
+              f"off Linux (supervisor-control.mjs: 'Owned process-tree "
+              f"cleanup requires Linux'); smoke_platform()={smoke_platform()!r})")
+        return
+    for t in tests:
+        t()
+
+
 VERSION_FILE = REPO / "VERSION"
 WEB_VIBE_ANDEYE_MD = REPO / "web" / "vibe-andeye.md"
 
@@ -1486,7 +1517,9 @@ __all__ = [
     're',
     'run',
     'run_bytes',
+    'run_supervisor_tests',
     'shlex',
+    'smoke_platform',
     'subprocess',
     'sys',
     'tempfile',

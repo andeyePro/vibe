@@ -36,6 +36,19 @@ def _start(args, env):
                             stderr=subprocess.PIPE, text=True)
 
 
+def _communicate_or_kill(proc: subprocess.Popen, timeout: float = 15):
+    """communicate() with the try/except-kill pattern already used at
+    smoke/checks_19_codex_supervisor.py:781 (item 30). A hung/unresponsive
+    supervisor child must never let subprocess.TimeoutExpired escape
+    uncaught here — that would abort the entire smoke suite instead of
+    failing just the one test in progress."""
+    try:
+        return proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        return proc.communicate()
+
+
 def test_codex_supervisor_c27_live_lock_rejects_duplicate_and_new_run():
     print("\n[codex-supervisor] C27 exclusive ownership precedes new-run/state changes")
     with tempfile.TemporaryDirectory() as td:
@@ -52,7 +65,7 @@ def test_codex_supervisor_c27_live_lock_rejects_duplicate_and_new_run():
         check("[codex-supervisor] duplicate live run refuses", duplicate.returncode != 0 and "lock" in duplicate.stderr.lower(), duplicate.stderr)
         check("[codex-supervisor] --new-run also refuses live owner", new_run.returncode != 0 and "lock" in new_run.stderr.lower(), new_run.stderr)
         owner.send_signal(signal.SIGTERM)
-        owner.communicate(timeout=15)
+        _communicate_or_kill(owner)
 
 
 def test_codex_supervisor_c27_stale_lock_needs_explicit_reconciliation():
@@ -96,7 +109,7 @@ def test_codex_supervisor_c27_stop_is_token_scoped_and_cancellable():
         check("[codex-supervisor] stop without unrelated lock fails", no_owner.returncode != 0, no_owner.stderr)
         stopped = _run_supervisor(["stop", "--state", str(state)], env)
         started = time.monotonic()
-        proc.communicate(timeout=15)
+        _communicate_or_kill(proc)
         check("[codex-supervisor] stop request accepted", stopped.returncode == 0, stopped.stderr)
         check("[codex-supervisor] quota sleep exits promptly", proc.returncode == 130 and time.monotonic() - started < 3, f"rc={proc.returncode}")
         saved = _read_state(ws)
@@ -137,7 +150,7 @@ def test_codex_supervisor_c27_stop_during_active_turn_is_bounded():
         check("[codex-supervisor] active turn checkpoint exists", _wait_for(state, lambda p: p.exists() and '"operation": "turn"' in p.read_text()), "no active checkpoint")
         started = time.monotonic()
         stop = _run_supervisor(["stop", "--state", str(state)], env)
-        proc.communicate(timeout=15)
+        _communicate_or_kill(proc)
         saved = _read_state(ws)
         # The owned app-server may be in a non-interruptible tool operation;
         # supervisor-control bounds its EOF/TERM/KILL shutdown sequence to 8s.
@@ -181,7 +194,7 @@ def test_codex_supervisor_c27_killed_active_turn_requires_reconciliation_not_rep
         check("[codex-supervisor] active-turn fixture records its acknowledged identity before interruption",
               _wait_for(state, lambda p: p.exists() and (json.loads(p.read_text()).get("unresolvedTurn") or {}).get("turnId") is not None),
               "missing acknowledged turn ID")
-        proc.kill(); proc.communicate(timeout=10)
+        proc.kill(); _communicate_or_kill(proc, timeout=10)
         state = ws / ".vss" / "codex-supervisor.json"
         lock = Path(f"{state}.lock")
         check("[codex-supervisor] killed process leaves lock requiring explicit reconciliation", lock.exists(), "missing crash lock")
@@ -194,11 +207,15 @@ def test_codex_supervisor_c27_killed_active_turn_requires_reconciliation_not_rep
         lock.unlink()
         checkpoint = state.read_bytes()
         saved = _read_state(ws)
+        unresolved = saved.get("unresolvedTurn") or {}
+        if not check("[codex-supervisor] killed state has threadId and unresolvedTurn.turnId for reconciliation",
+                      bool(saved.get("threadId") and unresolved.get("turnId")), str(saved)):
+            return
         evidence = tmp / "reconciliation.json"
         evidence.write_text(json.dumps({
             "stateHash": hashlib.sha256(checkpoint).hexdigest(),
             "threadId": saved["threadId"],
-            "turnId": saved["unresolvedTurn"]["turnId"],
+            "turnId": unresolved["turnId"],
             "outcome": "interrupted",
             "effectsReviewed": True,
             "safeToContinue": True,

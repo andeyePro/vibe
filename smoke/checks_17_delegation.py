@@ -428,19 +428,28 @@ def test_codex_dir_mode_warning() -> None:
               r.returncode == 0 and not r.stderr,
               f"stderr={r.stderr}")
     
-    # SOURCE-TEXT adjacency: check that the banner call is wired correctly
+    # SOURCE-TEXT adjacency: check that the banner call is wired correctly.
+    # Item 32 (2026-09-12 max review): this whole scanner used to be keyed on
+    # exact-spelling substrings, and worse, the `if in_if_block:` / (formerly
+    # implicit) `if_end` gates below had no check() on the condition itself -
+    # a spelling drift in the launcher's banner block would silently skip
+    # every assertion here rather than fail. Matching is now done with
+    # regexes tolerant of the whitespace/bracket-style/quote-style variants
+    # that are legitimate bash, and every gate is checked before it's used
+    # to gate anything.
     vibe_text = VIBE.read_text()
     lines = vibe_text.splitlines()
-    
-    # Find the line echoing the codex header
+
+    # Find the line echoing the codex header.
+    _codex_header_re = re.compile(r'codex\s*:\s*/home/node/\.codex\s*\(rw,\s*ChatGPT login\)')
     codex_header_line = None
     for i, line in enumerate(lines):
-        if 'echo' in line and 'codex   : /home/node/.codex (rw, ChatGPT login)' in line:
+        if 'echo' in line and _codex_header_re.search(line):
             codex_header_line = i
             break
-    
+
     check("[codex] launcher has codex header line", codex_header_line is not None, "")
-    
+
     if codex_header_line is not None:
         # Find the _codex_dir_mode_warning call within 5 lines after the header
         call_found = False
@@ -448,37 +457,48 @@ def test_codex_dir_mode_warning() -> None:
             if '_codex_dir_mode_warning "$_codex_banner"' in lines[i]:
                 call_found = True
                 break
-        
+
         check("[codex] _codex_dir_mode_warning called within 5 lines of header",
               call_found, "")
-        
-        # Check that it's inside the _codex_banner conditional
+
+        # Check that it's inside the _codex_banner conditional. Bracket style
+        # ([ ] vs [[ ]]) and the variable's quoting are both free to vary.
+        _codex_if_re = re.compile(r'if\s*\[\[?\s*-n\s+["\']?\$_codex_banner["\']?\s*\]\]?\s*;\s*then')
         in_if_block = False
+        if_start = None
         for i in range(0, codex_header_line):
-            if 'if [ -n "$_codex_banner" ]' in lines[i]:
+            if _codex_if_re.search(lines[i]):
                 in_if_block = True
                 if_start = i
-        
+
+        check("[codex] found the '$_codex_banner' if-guard before the header line",
+              in_if_block, "")
+
         if in_if_block:
             # Find the matching fi
             depth = 0
+            if_end = None
             for i in range(if_start, len(lines)):
-                if 'if [ -n "$_codex_banner" ]' in lines[i]:
+                if _codex_if_re.search(lines[i]):
                     depth += 1
                 elif lines[i].strip().startswith('fi'):
                     depth -= 1
                     if depth == 0:
                         if_end = i
                         break
-            
-            call_in_if = False
-            for i in range(if_start, if_end + 1):
-                if '_codex_dir_mode_warning "$_codex_banner"' in lines[i]:
-                    call_in_if = True
-                    break
-            
-            check("[codex] _codex_dir_mode_warning inside _codex_banner if block",
-                  call_in_if, "")
+
+            check("[codex] found the matching 'fi' for the '$_codex_banner' if-guard",
+                  if_end is not None, "")
+
+            if if_end is not None:
+                call_in_if = False
+                for i in range(if_start, if_end + 1):
+                    if '_codex_dir_mode_warning "$_codex_banner"' in lines[i]:
+                        call_in_if = True
+                        break
+
+                check("[codex] _codex_dir_mode_warning inside _codex_banner if block",
+                      call_in_if, "")
 
 
 # ── task_045: host-side Codex opt-in registry (~/.vibe/codex-allow) ──────────

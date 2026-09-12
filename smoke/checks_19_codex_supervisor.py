@@ -39,9 +39,11 @@ LANG} (AC3), so the stub cannot receive scenario data via environment
 variables and instead reads sibling files."""
 from smoke._core import *  # noqa: F401,F403
 
+import io
 import signal
 import time
 import hashlib
+from contextlib import redirect_stdout
 
 SUPERVISOR = REPO / "devcontainer" / "codex-supervisor.mjs"
 CODEX_INTEGRATION_PLAN_MD = REPO / "docs" / "codex-integration-plan.md"
@@ -808,12 +810,16 @@ def test_codex_supervisor_sigterm_then_resume():
         refused = _run_supervisor(resume_args, env)
         check("[codex-supervisor] first active-turn resume refuses before any RPC",
               refused.returncode != 0 and not (stub_dir2 / "meta.json").exists(), refused.stderr)
-        checkpoint = state1_path.read_bytes()
+        checkpoint = state1_path.read_bytes() if state1_path.exists() else b""
+        unresolved1 = state1.get("unresolvedTurn") or {}
+        if not check("[codex-supervisor] killed state has threadId and unresolvedTurn.turnId for reconciliation",
+                      bool(state1.get("threadId") and unresolved1.get("turnId")), str(state1)):
+            return
         evidence = tmp / "reconciliation.json"
         evidence.write_text(json.dumps({
             "stateHash": hashlib.sha256(checkpoint).hexdigest(),
             "threadId": state1["threadId"],
-            "turnId": state1["unresolvedTurn"]["turnId"],
+            "turnId": unresolved1["turnId"],
             "outcome": "interrupted", "effectsReviewed": True,
             "safeToContinue": True, "evidence": "reviewed the actual interrupted turn",
         }))
@@ -1047,3 +1053,57 @@ def test_codex_supervisor_plan_d7_methods():
     section = text[d7_idx:d7_idx + 3000] if d7_idx != -1 else ""
     for token in ("thread/start", "turn/start", "thread/resume", "codex-supervisor.mjs", "app-server"):
         check(f"[codex-supervisor] D7 section mentions {token!r}", token in section, section[:200])
+
+
+# ── review-fixes-2026-09-12 item 27 (platform-skip half) ─────────────────
+#
+# devcontainer/codex-supervisor.mjs refuses to run off Linux
+# (devcontainer/supervisor-control.mjs:139, "Owned process-tree cleanup
+# requires Linux"), so every test across checks_19/21/27/30 that execs the
+# real binary (~55 tests, wired into smoke/runner.py's supervisor blocks
+# via _core.run_supervisor_tests) fails or raises on a macOS host with no
+# platform skip. This test proves the gate is keyed on the PLATFORM only —
+# never on "the supervisor errored" — using fake, non-spawning test
+# functions so it needs no real host-platform change and cannot be
+# satisfied by masking a genuine Linux failure.
+
+def test_wave3b_item27_supervisor_tests_skip_off_linux_platform_gate():
+    print("\n[codex-supervisor] item 27: run_supervisor_tests gates on "
+          "platform, prints a notice when skipped, still runs on Linux")
+    calls = []
+
+    def fake_test():
+        calls.append(1)
+
+    old = os.environ.get("VIBE_SMOKE_FORCE_PLATFORM")
+    try:
+        os.environ["VIBE_SMOKE_FORCE_PLATFORM"] = "darwin"
+        check("[codex-supervisor] forced darwin: smoke_platform() reflects the override",
+              smoke_platform() == "darwin", smoke_platform())
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            run_supervisor_tests([fake_test, fake_test, fake_test])
+        out = buf.getvalue()
+        check("[codex-supervisor] darwin: block is skipped — no test function invoked",
+              calls == [], str(calls))
+        check("[codex-supervisor] darwin: a notice IS printed (never a silent pass)",
+              out.strip() != "", "")
+        check("[codex-supervisor] darwin: notice names Linux as the reason",
+              "linux" in out.lower(), out)
+        check("[codex-supervisor] darwin: notice names the skip word",
+              "skip" in out.lower(), out)
+        check("[codex-supervisor] darwin: notice names how many test functions were skipped (3)",
+              "3" in out, out)
+
+        calls.clear()
+        os.environ["VIBE_SMOKE_FORCE_PLATFORM"] = "linux"
+        check("[codex-supervisor] forced linux: smoke_platform() reflects the override",
+              smoke_platform() == "linux", smoke_platform())
+        run_supervisor_tests([fake_test, fake_test, fake_test])
+        check("[codex-supervisor] linux: block runs — every test function invoked",
+              calls == [1, 1, 1], str(calls))
+    finally:
+        if old is None:
+            os.environ.pop("VIBE_SMOKE_FORCE_PLATFORM", None)
+        else:
+            os.environ["VIBE_SMOKE_FORCE_PLATFORM"] = old

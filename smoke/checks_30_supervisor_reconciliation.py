@@ -24,10 +24,13 @@ def _drop_start_reply_stub(tmp: Path) -> Path:
 
 def _evidence(state: Path, saved: dict, **overrides) -> Path:
     evidence = state.parent / "evidence.json"
+    unresolved = saved.get("unresolvedTurn") or {}
+    check("[codex-supervisor] c30 reconciliation evidence source state has threadId and unresolvedTurn.turnId",
+          bool(saved.get("threadId") and unresolved.get("turnId")), str(saved))
     payload = {
         "stateHash": hashlib.sha256(state.read_bytes()).hexdigest(),
-        "threadId": saved["threadId"],
-        "turnId": saved["unresolvedTurn"]["turnId"],
+        "threadId": saved.get("threadId"),
+        "turnId": unresolved.get("turnId"),
         "outcome": "interrupted", "effectsReviewed": True,
         "safeToContinue": True, "evidence": "reviewed recorded effects",
     }

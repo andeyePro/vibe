@@ -857,27 +857,45 @@ def test_codex_switch_docs() -> None:
         # Check for Test 54 step 8
         import re
         test_54_match = re.search(r'### Test 54:.*?(?=### Test \d+:|$)', manual_text, re.DOTALL)
+        # Item 32 (2026-09-12 max review): this used to gate every assertion
+        # below in a bare `if test_54_match:` with no check() on the match
+        # itself, so a regex that stopped matching (e.g. Test 54 renumbered,
+        # or the "### Test N:" heading style changed) silently skipped every
+        # assertion in this block and the suite still reported success.
+        check("[codex] MANUAL-TESTS.md has a Test 54 section", test_54_match is not None, "")
         if test_54_match:
             test_54_text = test_54_match.group(0)
-            
-            # Step 8 should not mention "explicitly /ask astra ... still works"
+
+            # Step 8 should not mention "explicitly /ask astra ... still works".
+            # re.DOTALL added (item 32): without it this regex fails as soon
+            # as the matched phrase spans a newline in the manual, which is
+            # the normal case for prose wrapped across lines.
             check("[codex] Test 54 step 8 removes 'explicitly works' language",
                   "explicitly" not in test_54_text or "/ask astra" not in test_54_text or
-                  "still works" not in test_54_text or 
-                  not re.search(r'explicitly.*ask astra.*still works|still works.*ask astra.*explicitly', test_54_text),
+                  "still works" not in test_54_text or
+                  not re.search(r'explicitly.*ask astra.*still works|still works.*ask astra.*explicitly',
+                                test_54_text, re.DOTALL),
                   "")
-            
+
             # Step 8 should mention codex=off refuses
             check("[codex] Test 54 step 8 mentions codex=off refuses /ask astra",
                   re.search(r'codex=off.*refus.*astra|astra.*refus.*codex=off', test_54_text, re.IGNORECASE) is not None,
                   "")
-        
+
         # Check for Test 54 step 4: re-confirm real claude -p one-shot behavior
         if test_54_match:
             test_54_text = test_54_match.group(0)
-            
-            # Step 4 should mention --permission-mode plan and --permission-prompts none
-            step_4_match = re.search(r'(?:^|\n).*step 4.*$', test_54_text, re.IGNORECASE | re.MULTILINE)
+
+            # Step 4 should mention --permission-mode plan and --permission-prompts none.
+            # Was `r'(?:^|\n).*step 4.*$'` (item 32, 2026-09-12 review): the
+            # manual numbers its steps "4. Run ..." rather than spelling out
+            # the word "step", so that regex never matched anything and the
+            # missing check(step_4_match is not None) hid the failure - once
+            # that check was added, THIS is exactly the failure it caught.
+            # Match the actual numbered-list format instead: from the "4. "
+            # marker to the next "N. " marker (or end of the Test 54 text).
+            step_4_match = re.search(r'(?:^|\n)4\.\s.*?(?=\n\d+\.\s|\Z)', test_54_text, re.DOTALL)
+            check("[codex] Test 54 section has a step 4 line", step_4_match is not None, "")
             if step_4_match:
                 # Find text after step 4
                 step_4_start = step_4_match.start()
@@ -1018,3 +1036,80 @@ def test_dollar_prefix_fragment_and_aliases() -> None:
               "Martin-gated" in todo_text, "")
         check("[task051] TODO.md references task_051",
               "task_051" in todo_text, "")
+
+
+# ── item 32 regression guard (2026-09-12 max review) ────────────────────────
+# Three sites (checks_13_spec_first.py:864/880 and checks_17_delegation.py:462)
+# had the same defect: a bare `if <name>:` (or `if <name> is not None:`)
+# gating one or more check() calls, with no check() anywhere above it in the
+# same function naming <name>. When the guarded regex/scan stops matching,
+# every assertion inside silently vanishes and the suite still reports
+# success having checked nothing. This scans both files' source text for any
+# (re)occurrence of that class, so a new instance fails loudly instead of
+# shipping quiet.
+
+_SILENT_SKIP_IF_RE = re.compile(
+    r'^(?P<indent>[ \t]*)if (?P<name>[A-Za-z_][A-Za-z0-9_]*)(?:\s+is not None)?:\s*$')
+
+
+def _silent_skip_sites(path: Path) -> list[tuple[int, str]]:
+    """Static scan for the item-32 silent-skip pattern in one file. Returns
+    a list of (1-based line number, variable name) violations: a bare
+    `if <name>:` whose body contains check() calls, has no matching `else:`
+    (both branches checked = not a silent skip), and is not preceded - in
+    the same function - by any check() call that itself names <name>."""
+    lines = path.read_text().splitlines()
+    violations: list[tuple[int, str]] = []
+    func_start = 0
+    for i, line in enumerate(lines):
+        if re.match(r'^def [A-Za-z_]', line):
+            func_start = i
+        m = _SILENT_SKIP_IF_RE.match(line)
+        if not m:
+            continue
+        name, indent = m.group("name"), m.group("indent")
+        # Collect the if-block's body: subsequent lines indented deeper than
+        # the `if`, stopping when indentation returns to <= the if's own.
+        body: list[str] = []
+        j = i + 1
+        while j < len(lines):
+            raw = lines[j]
+            if raw.strip() == "":
+                body.append(raw)
+                j += 1
+                continue
+            cur_indent = len(raw) - len(raw.lstrip(" \t"))
+            if cur_indent <= len(indent):
+                break
+            body.append(raw)
+            j += 1
+        has_else = (j < len(lines) and lines[j].strip() == "else:" and
+                    (len(lines[j]) - len(lines[j].lstrip(" \t"))) == len(indent))
+        gates_checks = any(re.search(r'\bcheck\s*\(', b) for b in body)
+        if has_else or not gates_checks:
+            continue  # both outcomes handled, or nothing being gated
+        # A guarding check() call and the name it names can land on different
+        # source lines (this codebase wraps check() calls across 2-3 lines),
+        # so look at a short window of lines starting at each `check(` call
+        # rather than requiring both on one line.
+        preceding = lines[func_start:i]
+        guarded = False
+        for k, w in enumerate(preceding):
+            if re.search(r'\bcheck\s*\(', w):
+                window_text = "\n".join(preceding[k:k + 4])
+                if re.search(r'\b' + re.escape(name) + r'\b', window_text):
+                    guarded = True
+                    break
+        if not guarded:
+            violations.append((i + 1, name))
+    return violations
+
+
+def test_no_silent_skip_conditionals_in_checks_13_and_17():
+    print("\n[hygiene] item 32 guard: scanning checks_13/checks_17 for unguarded "
+          "silent-skip `if <name>:` blocks")
+    for path in (Path(__file__), REPO / "smoke" / "checks_17_delegation.py"):
+        violations = _silent_skip_sites(path)
+        check(f"[hygiene] {path.name}: no unguarded silent-skip conditionals",
+              not violations,
+              f"{path.name}: {violations}")

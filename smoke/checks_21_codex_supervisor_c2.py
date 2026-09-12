@@ -224,10 +224,14 @@ def test_codex_supervisor_c2_resume_after_sigterm_sends_continue():
         if lock.exists():
             lock.unlink()
         checkpoint = state_path.read_bytes()
+        unresolved1 = state1.get("unresolvedTurn") or {}
+        if not check("[codex-supervisor] c2 killed state has threadId and unresolvedTurn.turnId for reconciliation",
+                      bool(state1.get("threadId") and unresolved1.get("turnId")), str(state1)):
+            return
         evidence = tmp / "reconciliation.json"
         evidence.write_text(json.dumps({
             "stateHash": hashlib.sha256(checkpoint).hexdigest(),
-            "threadId": state1["threadId"], "turnId": state1["unresolvedTurn"]["turnId"],
+            "threadId": state1["threadId"], "turnId": unresolved1["turnId"],
             "outcome": "interrupted", "effectsReviewed": True, "safeToContinue": True,
             "evidence": "operator reviewed the persisted active-turn checkpoint",
         }))
