@@ -13,13 +13,31 @@ Run only this module with:
 from __future__ import annotations
 
 import json
+import os
+import re
 import subprocess
+import sys
+import tempfile
 import textwrap
 from pathlib import Path
+
+# Allow both `python3 smoke/checks_28_taskandi_client.py` (this module's own
+# documented standalone entry point) and package import via runner.py: a
+# direct script invocation puts smoke/ on sys.path[0], not the repo root, so
+# `import smoke` would otherwise fail.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from smoke._core import check, FAILURES
 
 
 REPO = Path(__file__).resolve().parent.parent
 CLIENT = REPO / "devcontainer" / "taskandi-client.mjs"
+
+
+def _sanitized_env() -> dict:
+    """A subprocess env with every ambient VIBE_TASK_* stripped, so a nested
+    vibe session (or this very suite running under a bound task) cannot
+    change what loadConfig() resolves inside the child process."""
+    return {k: v for k, v in os.environ.items() if not k.startswith("VIBE_TASK_")}
 
 
 HARNESS = r'''
@@ -138,6 +156,44 @@ globalThis.fetch = async (_url, init) => ({ status:302, headers:new Headers(), b
 await rejected(() => fetchTransport({ url:'https://fixture.invalid/mcp', origin:'https://fixture.invalid', headers:{}, body:{} }), 'redirects');
 await rejected(() => fetchTransport({ url:'https://other.invalid/mcp', origin:'https://fixture.invalid', headers:{}, body:{} }), 'left the configured origin');
 globalThis.fetch = savedFetch;
+
+// Item 24: a transport failure tagged PREDISPATCH (the same code
+// validateTool already uses for "never reached the network") must never be
+// classified as sent - the job stays queued, not uncertain, and the
+// surfaced error keeps its own text rather than a generic 'outcome
+// unknown' string. Runs in a fresh worktree so the leftover queued jobs
+// from the sections above cannot interfere with which job gets dispatched
+// first.
+{
+  const predispatchRoot = mkdtempSync(join(tmpdir(), 'taskandi-predispatch-'));
+  const prun = (...args) => execFileSync(args[0], args.slice(1), { cwd: predispatchRoot, stdio: 'ignore' });
+  prun('git', 'init', '-q'); prun('git', 'config', 'user.email', 'fixture@example.invalid'); prun('git', 'config', 'user.name', 'fixture');
+  const pvibe = join(predispatchRoot, '.vibe'); mkdirSync(pvibe, { mode: 0o700 });
+  writeFileSync(join(pvibe, 'taskandi.json'), JSON.stringify(cfg('predispatch-task')));
+  writeFileSync(join(pvibe, 'taskandi-token'), 'fixture-token'); chmodSync(join(pvibe, 'taskandi-token'), 0o600);
+  let predispatchCalls = 0;
+  const predispatchTransport = async request => {
+    if (request.body.method === 'tools/call') {
+      predispatchCalls++;
+      const err = new Error('simulated: request rejected before it reached the wire');
+      err.code = 'PREDISPATCH';
+      throw err;
+    }
+    return transport(request);
+  };
+  const predispatchClient = createClient({ cwd: predispatchRoot, transport: predispatchTransport });
+  await predispatchClient.enqueue('ask', 'predispatch-1', { to: 'owner', question: 'q', default: 'd' });
+  let predispatchError = null;
+  try { await predispatchClient.flush(); } catch (error) { predispatchError = error; }
+  assert.notEqual(predispatchError, null);
+  assert.equal(String(predispatchError.message).includes('rejected before it reached the wire'), true, String(predispatchError && predispatchError.message));
+  const predispatchState = JSON.parse(readFileSync(join(pvibe, 'taskandi-outbox', 'state.json')));
+  const predispatchJob = predispatchState.jobs.find(j => j.key === 'predispatch-1');
+  assert.equal(predispatchJob.state, 'queued');
+  assert.equal(predispatchJob.lastError.includes('rejected before it reached the wire'), true, predispatchJob.lastError);
+  assert.equal(predispatchJob.lastError.includes('pre-dispatch'), true, predispatchJob.lastError);
+  assert.equal(predispatchCalls, 1);
+}
 console.log('fixture contract checks passed');
 '''
 
@@ -151,14 +207,63 @@ def test_taskandi_fixture_contract() -> None:
         text=True,
         capture_output=True,
         timeout=600,
+        env=_sanitized_env(),
     )
-    assert result.returncode == 0, result.stdout + result.stderr
+    check("[taskandi-client] fixture contract node harness passes", result.returncode == 0, result.stdout + result.stderr)
+
+
+def test_cost_estimate_validation() -> None:
+    """Item 26: Number('') is 0, so an empty or whitespace --cost-estimate
+    used to silently become a zero cost estimate. Require a non-empty
+    decimal string and reject anything else with a clear usage error."""
+    with tempfile.TemporaryDirectory() as td:
+        transcript = Path(td) / "empty-transcript.jsonl"
+        transcript.write_text("")
+        env = _sanitized_env()
+        for bad in ["", "  ", "abc", "-1", "1.2.3"]:
+            try:
+                result = subprocess.run(
+                    ["node", str(CLIENT), "usage", "--transcript", str(transcript),
+                     "--session", "s", "--account", "a", "--cost-estimate", bad],
+                    cwd=REPO, capture_output=True, text=True, timeout=30,
+                    stdin=subprocess.DEVNULL, env=env,
+                )
+            except subprocess.TimeoutExpired as exc:
+                check(f"[taskandi] --cost-estimate {bad!r} did not hang", False, str(exc))
+                continue
+            check(f"[taskandi] --cost-estimate {bad!r} refused with a non-zero exit",
+                  result.returncode != 0, result.stdout + result.stderr)
+            check(f"[taskandi] --cost-estimate {bad!r} error names cost-estimate",
+                  "cost-estimate" in result.stderr, result.stderr)
+        try:
+            good = subprocess.run(
+                ["node", str(CLIENT), "usage", "--transcript", str(transcript),
+                 "--session", "s", "--account", "a", "--cost-estimate", "12.34"],
+                cwd=REPO, capture_output=True, text=True, timeout=30,
+                stdin=subprocess.DEVNULL, env=env,
+            )
+        except subprocess.TimeoutExpired as exc:
+            check("[taskandi] --cost-estimate 12.34 did not hang", False, str(exc))
+            return
+        check("[taskandi] --cost-estimate 12.34 is accepted", good.returncode == 0, good.stdout + good.stderr)
+
+
+def test_usage_help_names_usage_subcommand() -> None:
+    """One-line fix: the usage/help string omitted the `usage` subcommand."""
+    result = subprocess.run(["node", str(CLIENT), "not-a-command"], cwd=REPO,
+                             capture_output=True, text=True, timeout=10,
+                             stdin=subprocess.DEVNULL, env=_sanitized_env())
+    check("[taskandi] usage/help text names the usage subcommand",
+          bool(re.search(r'\busage --transcript\b', result.stderr)), result.stderr)
 
 
 if __name__ == "__main__":
-    try:
-        test_taskandi_fixture_contract()
-    except Exception as error:
-        print(f"FAIL: {error}")
+    test_taskandi_fixture_contract()
+    test_cost_estimate_validation()
+    test_usage_help_names_usage_subcommand()
+    if FAILURES:
+        print(f"FAIL: {len(FAILURES)} check(s) failed")
+        for name, detail in FAILURES:
+            print(f"  - {name}: {detail}")
         raise SystemExit(1)
     print("PASS: Task&I fixture contract smoke checks")

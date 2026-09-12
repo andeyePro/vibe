@@ -6,12 +6,23 @@ is local; no Task&I transport or vendor credential is contacted or read.
 """
 from __future__ import annotations
 
+import ast
+import os
+import re
 import subprocess
+import sys
 import tempfile
 import shutil
 import json
 import textwrap
 from pathlib import Path
+
+# Allow both `python3 smoke/checks_29_taskandi_binding_usage.py` (this
+# module's own documented standalone entry point) and package import via
+# runner.py: a direct script invocation puts smoke/ on sys.path[0], not the
+# repo root, so `import smoke` would otherwise fail.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from smoke._core import check, FAILURES
 
 
 REPO = Path(__file__).resolve().parent.parent
@@ -98,7 +109,24 @@ assert.deepEqual(records.map(r => r.payload), [
   { account:'acct', model:'gpt-fixture', input:5, output:5, cache_read:2, cache_write:1, cost_estimate:0.125 },
 ]);
 assert.throws(() => usageRecords((snap(1,0,0,1)).trim().split('\n'), {session:'s',account:'a',costEstimate:1}), /no preceding model/);
-assert.throws(() => usageRecords((model + snap(10,0,0,1) + snap(9,0,0,1)).trim().split('\n'), {session:'s',account:'a',costEstimate:1}), /regressing/);
+// Item 25: a regressing cumulative count (a legitimate context-compaction
+// reset) must start a fresh baseline instead of throwing and discarding
+// every delta already computed - both the pre-regression and
+// post-regression deltas must survive, and the regression is still
+// recorded (to stderr) so it stays visible even though the import keeps
+// going rather than aborting.
+{
+  const stderrChunks = [];
+  const savedStderrWrite = process.stderr.write.bind(process.stderr);
+  process.stderr.write = chunk => { stderrChunks.push(String(chunk)); return true; };
+  let regressed;
+  try { regressed = usageRecords((model + snap(10,0,0,1) + snap(9,0,0,1)).trim().split('\n'), {session:'s',account:'a',costEstimate:1}); }
+  finally { process.stderr.write = savedStderrWrite; }
+  assert.equal(regressed.length, 2);
+  assert.equal(regressed[0].payload.input, 10);
+  assert.equal(regressed[1].payload.input, 9);
+  assert.equal(stderrChunks.some(chunk => /regressed/i.test(chunk)), true, stderrChunks.join(''));
+}
 assert.deepEqual(usageRecords([model.trim(), JSON.stringify({type:'event_msg', payload:{type:'token_count'}})], {session:'s',account:'a',costEstimate:1}), []);
 assert.throws(() => usageRecords([model.trim(), snap(1,2,0,0).trim()], {session:'s',account:'a',costEstimate:1}), /cached input/);
 assert.throws(() => usageRecords([model.trim()], {session:'s',account:'a',costEstimate:undefined}), /explicit/);
@@ -133,26 +161,41 @@ def test_launcher_parser_and_task_binding() -> None:
     good = ["AB-42", "taskandeye://node/12345678-1234-1234-1234-123456789abc"]
     for ref in good:
         result = subprocess.run(["bash", "-c", script, "probe", "--task", ref], capture_output=True, text=True, stdin=subprocess.DEVNULL)
-        assert result.returncode == 0, result.stdout + result.stderr
-        assert f"TASK_REF=[{ref}]" in result.stdout
-        assert "ENV_COUNT=[2]" in result.stdout
-        assert f"CHILD_REF=[{ref}]" in result.stdout
+        check(f"[taskandi] --task {ref!r} parses and exits 0", result.returncode == 0, result.stdout + result.stderr)
+        check(f"[taskandi] --task {ref!r} echoes TASK_REF", f"TASK_REF=[{ref}]" in result.stdout, result.stdout)
+        check(f"[taskandi] --task {ref!r} binds exactly 2 env args", "ENV_COUNT=[2]" in result.stdout, result.stdout)
+        check(f"[taskandi] --task {ref!r} forwards VIBE_TASK_REF to the child", f"CHILD_REF=[{ref}]" in result.stdout, result.stdout)
     for bad in ["AB-0;touch /tmp/pwn", "taskandeye://node/not-a-uuid", "--continue", "AB", "AB-1\nX"]:
         result = subprocess.run(["bash", "-c", script, "probe", "--task", bad], capture_output=True, text=True, stdin=subprocess.DEVNULL)
-        assert result.returncode != 0, f"accepted malformed/injection ref: {bad!r}"
+        check(f"[taskandi] malformed/injection ref refused: {bad!r}", result.returncode != 0, result.stdout + result.stderr)
     duplicate = subprocess.run(["bash", "-c", script, "probe", "--task", "AB-1", "--task", "CD-2"], capture_output=True, text=True, stdin=subprocess.DEVNULL)
-    assert duplicate.returncode != 0 and "Only one --task" in duplicate.stderr
-    absent = subprocess.run(["bash", "-c", script, "probe"], capture_output=True, text=True, stdin=subprocess.DEVNULL)
-    assert absent.returncode == 0, absent.stdout + absent.stderr
-    assert "TASK_REF=[]" in absent.stdout and "ENV_COUNT=[0]" in absent.stdout
+    check("[taskandi] duplicate --task refused with a clear message",
+          duplicate.returncode != 0 and "Only one --task" in duplicate.stderr, duplicate.stderr)
+    # AC28: the absent-flag probe must see no ambient VIBE_TASK_REF regardless
+    # of what the real environment running this test suite happens to carry
+    # (e.g. a nested vibe session, or this very test run under a bound
+    # task) — otherwise the probe's own `env | grep ... && exit 9` fires and
+    # a bare assert on returncode used to abort the whole suite instead of
+    # failing just this one check.
+    sanitized_env = {k: v for k, v in os.environ.items() if not k.startswith("VIBE_TASK_")}
+    absent = subprocess.run(["bash", "-c", script, "probe"], capture_output=True, text=True,
+                             stdin=subprocess.DEVNULL, env=sanitized_env)
+    check("[taskandi] no --task and no ambient VIBE_TASK_REF exits 0", absent.returncode == 0, absent.stdout + absent.stderr)
+    check("[taskandi] no --task leaves TASK_REF/ENV_COUNT empty",
+          "TASK_REF=[]" in absent.stdout and "ENV_COUNT=[0]" in absent.stdout, absent.stdout)
 
 
 def test_client_binding_and_usage() -> None:
+    # An ambient VIBE_TASK_* in the parent (a nested vibe session, or this
+    # very suite running under a bound task) must not change what loadConfig()
+    # resolves inside the child - see AC28's sanitized_env below for the
+    # same reasoning applied to the launcher probe.
+    sanitized_env = {k: v for k, v in os.environ.items() if not k.startswith("VIBE_TASK_")}
     result = subprocess.run(
         ["node", "--input-type=module", "--eval", textwrap.dedent(HARNESS), "taskandi-29", str(CLIENT), str(USAGE)],
         cwd=REPO, capture_output=True, text=True, timeout=30,
-     stdin=subprocess.DEVNULL)
-    assert result.returncode == 0, result.stdout + result.stderr
+        stdin=subprocess.DEVNULL, env=sanitized_env)
+    check("[taskandi] binding/usage node harness passes", result.returncode == 0, result.stdout + result.stderr)
 
 
 def test_installed_taskandi_symlink_executes_commands():
@@ -168,21 +211,150 @@ def test_installed_taskandi_symlink_executes_commands():
         response = subprocess.run([str(executable), "enqueue", "ask", "--key", "symlink-test"],
                                   input=json.dumps({"to": "fixture", "question": "q", "default": "d"}),
                                   cwd=root, text=True, capture_output=True, timeout=10)
-        assert response.returncode == 0, response.stderr
-        assert json.loads(response.stdout)["enqueued"] is True
-        state = json.loads((root / ".vibe/taskandi-outbox/state.json").read_text())
-        assert state["jobs"][0]["key"] == "symlink-test"
+        if check("[taskandi] symlinked client enqueue exits 0", response.returncode == 0, response.stderr):
+            try:
+                enqueued = json.loads(response.stdout).get("enqueued")
+            except json.JSONDecodeError:
+                enqueued = None
+            check("[taskandi] symlinked client reports enqueued: true", enqueued is True, response.stdout)
+            state_path = root / ".vibe" / "taskandi-outbox" / "state.json"
+            try:
+                state = json.loads(state_path.read_text())
+            except (OSError, json.JSONDecodeError):
+                state = {}
+            jobs = state.get("jobs") or []
+            key = jobs[0].get("key") if jobs else None
+            check("[taskandi] queued job carries the symlink-test key", key == "symlink-test", str(state))
         invalid = subprocess.run([str(executable), "not-a-command"], cwd=root,
                                  text=True, capture_output=True, timeout=10, stdin=subprocess.DEVNULL)
-        assert invalid.returncode != 0 and "usage:" in invalid.stderr
+        check("[taskandi] unknown subcommand refuses with usage text",
+              invalid.returncode != 0 and "usage:" in invalid.stderr, invalid.stderr)
+
+
+# ── wave0 review-fix regression guards (items 27/28/29/30) ───────────────
+#
+# These are harness-robustness guards, not behavioural tests: each one fails
+# against the pre-wave0 source and passes against the post-wave0 source.
+# See /workspace/.vs/briefs/review-fixes-2026-09-12.md section F.
+
+_SMOKE_DIR = Path(__file__).resolve().parent
+_HARDENED_FILES = [
+    "checks_27_supervisor_control.py",
+    "checks_28_taskandi_client.py",
+    "checks_29_taskandi_binding_usage.py",
+    "checks_33_host_onboarding.py",
+]
+
+
+def test_wave0_no_bare_assert_in_hardened_smoke_files() -> None:
+    """Items 28/29: none of the four smoke files hardened in this wave may
+    contain a bare Python ``assert`` statement outside the embedded node.js
+    HARNESS fixture strings (those are JS ``assert`` calls, out of scope). A
+    bare assert raises AssertionError uncaught and aborts the entire smoke
+    suite instead of failing one check()."""
+    assert_re = re.compile(r'^\s*assert(\s|\()')
+    offenders: list[str] = []
+    for name in _HARDENED_FILES:
+        path = _SMOKE_DIR / name
+        in_js = False
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith("HARNESS = r'''") or stripped.startswith("HARNESS = '''"):
+                in_js = True
+                continue
+            if in_js:
+                if stripped == "'''":
+                    in_js = False
+                continue
+            if assert_re.match(line):
+                offenders.append(f"{name}:{lineno}: {line.strip()}")
+    check("[wave0] no bare `assert` statement survives in the item-28/29 hardened smoke files",
+          not offenders, "; ".join(offenders) if offenders else "none found")
+
+
+def test_wave0_checks27_communicate_calls_guarded() -> None:
+    """Item 30: every ``.communicate(timeout=...)`` call in
+    checks_27_supervisor_control.py must route through the
+    ``_communicate_or_kill`` helper (the try/except-kill pattern already
+    used at smoke/checks_19_codex_supervisor.py:781), never a raw call that
+    can let subprocess.TimeoutExpired escape uncaught and abort the suite."""
+    target = _SMOKE_DIR / "checks_27_supervisor_control.py"
+    text = target.read_text()
+    tree = ast.parse(text)
+    helper = next((n for n in ast.walk(tree)
+                   if isinstance(n, ast.FunctionDef) and n.name == "_communicate_or_kill"), None)
+    if not check("[wave0] checks_27 defines the _communicate_or_kill guard helper", helper is not None, str(target)):
+        return
+    lo, hi = helper.lineno, helper.end_lineno
+    lines = text.splitlines()
+    stray = [f"{target.name}:{i}: {line.strip()}"
+             for i, line in enumerate(lines, 1)
+             if ".communicate(timeout=" in line and not (lo <= i <= hi)]
+    check("[wave0] every communicate(timeout=) call site in checks_27 routes through the guarded helper",
+          not stray, "; ".join(stray) if stray else "none found outside the helper")
+    helper_src = "\n".join(lines[lo - 1:hi])
+    check("[wave0] the guarded helper wraps communicate(timeout=) in try/except with kill()",
+          "try:" in helper_src and "except subprocess.TimeoutExpired" in helper_src and ".kill()" in helper_src,
+          helper_src)
+
+
+def test_wave0_item28_absent_probe_survives_ambient_task_ref() -> None:
+    """Item 28: re-run the launcher parser/binding test with VIBE_TASK_REF
+    set in the parent environment (simulating a nested vibe session, or this
+    very suite running under a bound task) and confirm it still reports
+    success through check() rather than inheriting the ambient var and
+    tripping the probe's `exit 9` behind a bare assert."""
+    old = os.environ.get("VIBE_TASK_REF")
+    os.environ["VIBE_TASK_REF"] = "AMBIENT-999"
+    try:
+        before = len(FAILURES)
+        test_launcher_parser_and_task_binding()
+        new_failures = FAILURES[before:]
+    finally:
+        if old is None:
+            os.environ.pop("VIBE_TASK_REF", None)
+        else:
+            os.environ["VIBE_TASK_REF"] = old
+    check("[wave0] launcher parser/binding checks still pass with VIBE_TASK_REF set in the parent",
+          not new_failures, "; ".join(f"{n}: {d}" for n, d in new_failures) if new_failures else "none")
+
+
+def test_wave0_supervisor_state_reads_no_bare_double_subscript() -> None:
+    """Item 27 (check()-half): none of the supervisor state-reading smoke
+    files may chain a bare double subscript
+    ``["unresolvedTurn"]["turnId"]`` off freshly-parsed supervisor state -
+    that raised KeyError (missing key) or TypeError (unresolvedTurn is
+    None) and aborted the suite whenever the supervisor did not write what
+    the test expected. The converted sites read through a pre-defaulted
+    ``.get("unresolvedTurn") or {}`` first."""
+    targets = [
+        "checks_19_codex_supervisor.py",
+        "checks_21_codex_supervisor_c2.py",
+        "checks_27_supervisor_control.py",
+        "checks_30_supervisor_reconciliation.py",
+    ]
+    needle = '["unresolvedTurn"]["turnId"]'
+    offenders = []
+    for name in targets:
+        path = _SMOKE_DIR / name
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            if needle in line:
+                offenders.append(f"{name}:{lineno}: {line.strip()}")
+    check("[wave0] no bare chained subscript into parsed supervisor state remains",
+          not offenders, "; ".join(offenders) if offenders else "none found")
 
 
 if __name__ == "__main__":
-    try:
-        test_launcher_parser_and_task_binding()
-        test_client_binding_and_usage()
-        test_installed_taskandi_symlink_executes_commands()
-    except Exception as error:
-        print(f"FAIL: {error}")
+    test_launcher_parser_and_task_binding()
+    test_client_binding_and_usage()
+    test_installed_taskandi_symlink_executes_commands()
+    test_wave0_no_bare_assert_in_hardened_smoke_files()
+    test_wave0_checks27_communicate_calls_guarded()
+    test_wave0_item28_absent_probe_survives_ambient_task_ref()
+    test_wave0_supervisor_state_reads_no_bare_double_subscript()
+    if FAILURES:
+        print(f"FAIL: {len(FAILURES)} check(s) failed")
+        for name, detail in FAILURES:
+            print(f"  - {name}: {detail}")
         raise SystemExit(1)
     print("PASS: Task&I binding and usage smoke checks")

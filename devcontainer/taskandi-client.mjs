@@ -369,8 +369,9 @@ export function createClient({ cwd = process.cwd(), transport = fetchTransport }
       const token = readBounded(tokenPath, 16 * 1024, 'Task&I token', { ownerOnly: true }).trim();
       if (!token || /[\r\n]/.test(token)) fail('Task&I token is empty or contains newlines');
       const guardedTransport = request => {
-        if (new URL(request.url).origin !== config.origin) fail('credential target left configured origin');
-        return Promise.resolve(transport({ ...request, headers: { ...request.headers, authorization: `Bearer ${token}` } })).catch(() => fail('MCP transport failed'));
+        if (new URL(request.url).origin !== config.origin) fail('credential target left configured origin', 'PREDISPATCH');
+        return Promise.resolve(transport({ ...request, headers: { ...request.headers, authorization: `Bearer ${token}` } }))
+          .catch(error => fail(`MCP transport failed: ${error?.message ?? error}`, error?.code === 'PREDISPATCH' ? 'PREDISPATCH' : 'TRANSPORT'));
       };
       const mcp = createMcp(config, guardedTransport); const tools = await mcp.discover();
       const byName = new Map(tools.map(tool => [tool?.name, tool]));
@@ -382,9 +383,23 @@ export function createClient({ cwd = process.cwd(), transport = fetchTransport }
           if (job.binding !== digest({ endpoint: config.endpoint, task: config.task, contractRevision: config.contractRevision })) fail('queued job binding changed; reconcile explicitly before delivery', 'BINDING_CHANGED');
           validateTool(byName.get(job.kind), job.kind);
           job.state = 'dispatching'; job.dispatchedAt = new Date().toISOString(); atomicJson(statePath, state); dispatched++;
-          let sent = false;
-          try { sent = true; await mcp.call(job.kind, job.payload); job.state = 'done'; job.doneAt = new Date().toISOString(); delete job.lastError; done++; }
-          catch (error) { job.state = sent ? 'uncertain' : 'queued'; job.lastError = sent ? 'outcome unknown; reconcile explicitly' : 'pre-dispatch failure'; if (sent) uncertain++; atomicJson(statePath, state); if (sent) break; throw error; }
+          // Item 24: `dispatched` reflects whether the request genuinely reached the
+          // transport, decided from the caught error itself (a 'PREDISPATCH'-coded
+          // error - the same code validateTool already uses - means it never went
+          // out) rather than a flag pre-set to true before the call. A failure that
+          // never reached the transport takes the pre-dispatch branch (job stays
+          // queued, safe to retry); anything else is genuinely uncertain. Either way
+          // the original error's own message survives into lastError.
+          try { await mcp.call(job.kind, job.payload); job.state = 'done'; job.doneAt = new Date().toISOString(); delete job.lastError; done++; }
+          catch (error) {
+            const reachedTransport = error?.code !== 'PREDISPATCH';
+            job.state = reachedTransport ? 'uncertain' : 'queued';
+            job.lastError = reachedTransport ? `outcome unknown; reconcile explicitly: ${error.message}` : `pre-dispatch failure: ${error.message}`;
+            if (reachedTransport) uncertain++;
+            atomicJson(statePath, state);
+            if (reachedTransport) break;
+            throw error;
+          }
           atomicJson(statePath, state);
         }
         return { bound: true, dispatched, done, uncertain };
@@ -405,8 +420,9 @@ export function createClient({ cwd = process.cwd(), transport = fetchTransport }
       if (trackedCaseInsensitive(cwd, tokenPath)) fail('Task&I token must be untracked'); const token = readBounded(tokenPath, 16 * 1024, 'Task&I token', { ownerOnly: true }).trim();
       if (!token || /[\r\n]/.test(token)) fail('Task&I token is empty or contains newlines');
       const mcp = createMcp(config, request => {
-        if (new URL(request.url).origin !== config.origin) fail('credential target left configured origin');
-        return Promise.resolve(transport({ ...request, headers: { ...request.headers, authorization: `Bearer ${token}` } })).catch(() => fail('MCP transport failed'));
+        if (new URL(request.url).origin !== config.origin) fail('credential target left configured origin', 'PREDISPATCH');
+        return Promise.resolve(transport({ ...request, headers: { ...request.headers, authorization: `Bearer ${token}` } }))
+          .catch(error => fail(`MCP transport failed: ${error?.message ?? error}`, error?.code === 'PREDISPATCH' ? 'PREDISPATCH' : 'TRANSPORT'));
       });
       const tools = await mcp.discover(); validateTool(tools.find(tool => tool?.name === 'list_asks'), 'list_asks');
       const prior = await withState(cwd, async (state, statePath) => { bindAnswers(state, config); atomicJson(statePath, state); return state.cursor ?? { sequence: 0, value: '' }; });
@@ -445,6 +461,13 @@ async function readStdinJson() {
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { fail('stdin is not valid JSON'); }
 }
 function argValue(args, name) { const index = args.indexOf(name); if (index < 0 || index + 1 >= args.length) fail(`${name} is required`); return args[index + 1]; }
+// Item 26: `Number('')` and `Number('  ')` are both 0, so an empty or
+// whitespace `--cost-estimate` used to silently become a zero cost estimate
+// instead of a usage error. Require a non-empty decimal string.
+function costEstimateValue(raw) {
+  if (typeof raw !== 'string' || !/^\d+(\.\d+)?$/.test(raw)) fail(`--cost-estimate must be a non-negative decimal number (e.g. 0.125), got ${JSON.stringify(raw)}`);
+  return Number(raw);
+}
 export async function main(argv = process.argv.slice(2)) {
   const client = createClient(); const command = argv[0]; let result;
   if (command === 'enqueue') result = await client.enqueue(argv[1], argValue(argv, '--key'), await readStdinJson());
@@ -455,11 +478,11 @@ export async function main(argv = process.argv.slice(2)) {
     const { enqueueTranscriptUsage } = await import('./taskandi-usage.mjs');
     result = await enqueueTranscriptUsage(client, argValue(argv, '--transcript'), {
       session: argValue(argv, '--session'), account: argValue(argv, '--account'),
-      costEstimate: Number(argValue(argv, '--cost-estimate')),
+      costEstimate: costEstimateValue(argValue(argv, '--cost-estimate')),
     });
   }
   else if (command === 'reconcile') result = await client.reconcile(argValue(argv, '--key'), argValue(argv, '--action'), argValue(argv, '--evidence'));
-  else fail('usage: taskandi-client.mjs enqueue ask|record_usage --key ID | flush | poll | status | reconcile --key ID --action done|retry --evidence TEXT');
+  else fail('usage: taskandi-client.mjs enqueue ask|record_usage --key ID | flush | poll | status | usage --transcript FILE --session ID --account ID --cost-estimate N | reconcile --key ID --action done|retry --evidence TEXT');
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 

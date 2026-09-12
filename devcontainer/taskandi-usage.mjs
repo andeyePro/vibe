@@ -16,7 +16,20 @@ export function usageRecords(lines, { session, account, costEstimate }) {
     const usage = event.payload.info?.total_token_usage;
     if (!usage) continue; // Missing metadata is unknown, never invented usage.
     if (!model) throw new Error('token usage has no preceding model identity');
-    for (const key of fields) if (!Number.isSafeInteger(usage[key]) || usage[key] < totals[key]) throw new Error('unsupported or regressing transcript usage; reconcile instead of reposting');
+    if (!fields.every(key => Number.isSafeInteger(usage[key]))) throw new Error('unsupported transcript usage');
+    // Item 25: a regressing cumulative count is not necessarily corrupt data
+    // - a context compaction legitimately resets the transcript's own
+    // running counters mid-session. Aborting on one regressing line used to
+    // discard every delta already computed, permanently un-importing the
+    // whole session. Chosen fix: treat the regression as the start of a
+    // fresh baseline (rather than skipping the line outright), so the
+    // tokens already spent in the new segment are still captured instead of
+    // silently undercounted; the event is still written to stderr so the
+    // regression stays visible even though the import keeps going.
+    if (fields.some(key => usage[key] < totals[key])) {
+      process.stderr.write(`taskandi-usage: cumulative usage regressed for session ${session} (model ${model}); starting a new baseline instead of aborting the import\n`);
+      totals = Object.fromEntries(fields.map(key => [key, 0]));
+    }
     const delta = Object.fromEntries(fields.map(key => [key, usage[key] - totals[key]]));
     if (!fields.some(key => delta[key])) continue;
     if (delta.cached_input_tokens > delta.input_tokens) throw new Error('cached input exceeds input usage');
