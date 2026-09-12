@@ -43,6 +43,16 @@ const TRANSIENT_BACKOFF = [60, 120, 240, 480, 960, 1920];
 const QUOTA_BACKOFF = [300, 600, 1200, 2400];
 const BACKOFF_CAP = 3600;
 const QUOTA_GRACE_SECONDS = 120;
+// task_048 review item 14: a `resetsAt` already in the past is stale data,
+// not proof the quota is free right now — floor a re-checked-and-still-stale
+// wait here so a bad snapshot can never zero out max-quota-waits instantly.
+const QUOTA_STALE_FLOOR_SECONDS = 30;
+// task_048 review item 17: bounded real-wall-time grace to wait for
+// turn/completed after OUR OWN turn/interrupt on a cooperative stop, before
+// conceding the turn is unresolved. Real time, not the virtual clock: this
+// is a short interrupt-latency window, not a quota/wall-ceiling wait a test
+// needs to fast-forward.
+const STOP_DRAIN_MS = 2000;
 // Externally-tagged CodexErrorInfo (protocol/v2/shared.rs:70-113): unit
 // variants are bare strings, struct variants single-key objects.
 const QUOTA_ERRORS = new Set(['usageLimitExceeded', 'rateLimitExceeded']);
@@ -323,23 +333,37 @@ export function mergeRateLimits(previous, update) {
 }
 
 // AC6: the binding window is the exhausted one (the later reset if both are
-// exhausted), otherwise the window that resets later. Returns its resetsAt
-// in unix SECONDS, or null when no reset time is known.
+// exhausted), otherwise — task_048 review item 16 — the window that resets
+// SOONEST (never the one that resets later: at e.g. 99% used the near window
+// is the one actually gating a real caller, and preferring the far/weekly
+// window made the supervisor wait days and trip max-wall-seconds). Returns
+// its resetsAt in unix SECONDS, or null when no reset time is known.
 export function bindingResetsAt(snapshot) {
   const windows = [];
   if (isRecord(snapshot?.primary)) windows.push(snapshot.primary);
   if (isRecord(snapshot?.secondary)) windows.push(snapshot.secondary);
   const exhausted = windows.filter((w) => Number(w.usedPercent) >= 100);
-  const pool = exhausted.length ? exhausted : windows;
-  let latest = null;
-  for (const window of pool) {
-    // `resetsAt` is Option<i64> on the wire: an absent window reset arrives
-    // as null, and Number(null) is 0 — never treat that as a reset time.
+  if (exhausted.length) {
+    // Both windows exhausted: still blocked until the LATER of the two clears.
+    let latest = null;
+    for (const window of exhausted) {
+      // `resetsAt` is Option<i64> on the wire: an absent window reset arrives
+      // as null, and Number(null) is 0 — never treat that as a reset time.
+      if (window.resetsAt === null || window.resetsAt === undefined) continue;
+      const resets = Number(window.resetsAt);
+      if (Number.isFinite(resets) && (latest === null || resets > latest)) latest = resets;
+    }
+    return latest;
+  }
+  // No window is fully exhausted: prefer whichever resets SOONEST, since
+  // that is the window a near-100% caller is actually waiting on.
+  let soonest = null;
+  for (const window of windows) {
     if (window.resetsAt === null || window.resetsAt === undefined) continue;
     const resets = Number(window.resetsAt);
-    if (Number.isFinite(resets) && (latest === null || resets > latest)) latest = resets;
+    if (Number.isFinite(resets) && (soonest === null || resets < soonest)) soonest = resets;
   }
-  return latest;
+  return soonest;
 }
 
 export function backoffSeconds(ladder, index) {
@@ -897,6 +921,52 @@ class Supervisor {
       + `${elapsed}s) while awaiting a turn; sent turn/interrupt`);
   }
 
+  // task_048 review item 17: after our own turn/interrupt on a cooperative
+  // stop, wait a BOUNDED real-time window for the matching turn/completed
+  // before conceding the turn is unresolved. Reads directly off the same
+  // notification queue nextNotificationOrDeadline() was already waiting on
+  // (single-consumer: the caller's own pending read already lost the race
+  // that got us here, so re-registering the waiter here is safe — nothing
+  // else is listening).
+  async drainForTurnBoundary(turnId, boundMs) {
+    const deadline = Date.now() + boundMs;
+    for (;;) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return false;
+      let message;
+      try {
+        message = await Promise.race([
+          this.server.nextNotification(),
+          new Promise((resolve) => {
+            const timer = setTimeout(() => resolve(null), remaining);
+            if (typeof timer.unref === 'function') timer.unref();
+          }),
+        ]);
+      } catch { return false; }
+      if (!message) return false;
+      const params = isRecord(message.params) ? message.params : {};
+      if (message.method === 'turn/completed') {
+        const turn = isRecord(params.turn) ? params.turn : {};
+        if (turn.id === turnId || params.turnId === turnId) return true;
+      }
+    }
+  }
+
+  // Decides which instruction the stop error should carry: "resume" is only
+  // true once the turn boundary is actually confirmed; otherwise the state
+  // machine will refuse a plain resume and reconciliation is the honest
+  // instruction (the same form used elsewhere in this file).
+  async stopDuringTurn(turnId, stopError) {
+    const drained = await this.drainForTurnBoundary(turnId, STOP_DRAIN_MS);
+    if (!drained) {
+      return new SupervisorError(EXIT_SIGNAL, 'stop requested; checkpoint saved; unresolved turn — '
+        + 'review prior effects and use reconcile --state <file> --evidence-file <file> before resuming');
+    }
+    this.activeTurn = null;
+    this.confirmTurnBoundary();
+    return stopError;
+  }
+
   // One turn: start it, then drain notifications until its `turn/completed`.
   async runTurn(text) {
     if (needsTurnReconciliation(this.state)) throw failError('unresolved turn requires explicit reconciliation');
@@ -924,7 +994,19 @@ class Supervisor {
     this.log(`turn/start → ${turnId || '(no id)'}`);
     let lastAgentMessage = null;
     for (;;) {
-      const next = await this.nextNotificationOrDeadline();
+      let next;
+      try {
+        next = await this.nextNotificationOrDeadline();
+      } catch (error) {
+        // task_048 review item 17: a cooperative stop that lands mid-turn
+        // has already sent turn/interrupt (checkStop()) and is about to
+        // claim "resume with the same run arguments" — true only if the
+        // turn actually reaches its boundary. Drain for it before deciding.
+        if (error instanceof SupervisorError && error.code === EXIT_SIGNAL && this.activeTurn === turnId) {
+          throw await this.stopDuringTurn(turnId, error);
+        }
+        throw error;
+      }
       if (next.expired) this.expireDuringTurn(turnId);
       const message = next.message;
       const params = isRecord(message.params) ? message.params : {};
@@ -989,7 +1071,16 @@ class Supervisor {
 
   async quotaWait(name) {
     this.checkGates();
-    const resetsAt = bindingResetsAt(this.state.lastRateLimits);
+    let resetsAt = bindingResetsAt(this.state.lastRateLimits);
+    // task_048 review item 14: a known resetsAt already in the past is a
+    // STALE snapshot, not proof the quota is free right now — the server may
+    // simply not have rolled the window yet. Re-read before trusting a wait
+    // of zero (or negative), or `max-quota-waits` gets consumed in a
+    // fraction of a second on repeated stale reads.
+    if (resetsAt !== null && (resetsAt + QUOTA_GRACE_SECONDS) - this.clock.now() <= 0) {
+      await this.readRateLimits();
+      resetsAt = bindingResetsAt(this.state.lastRateLimits);
+    }
     let seconds;
     let blind = false;
     if (resetsAt === null) {
@@ -997,7 +1088,13 @@ class Supervisor {
       seconds = backoffSeconds(QUOTA_BACKOFF, this.quotaBlindIndex);
       this.quotaBlindIndex += 1;
     } else {
-      seconds = Math.max(0, (resetsAt + QUOTA_GRACE_SECONDS) - this.clock.now());
+      seconds = (resetsAt + QUOTA_GRACE_SECONDS) - this.clock.now();
+      if (seconds <= 0) {
+        // Still not positive after a fresh read: floor it rather than
+        // sleeping zero seconds and looping straight back into a ceiling.
+        blind = true;
+        seconds = QUOTA_STALE_FLOOR_SECONDS;
+      }
     }
     this.state.quotaWaits += 1;
     this.persist();
@@ -1059,6 +1156,15 @@ class Supervisor {
         continue;
       }
       if (status === 'interrupted') {
+        // task_048 review item 18: confirm the boundary BEFORE throwing, like
+        // the completed/failed branches beside it — otherwise a cleanly
+        // interrupted turn is left recorded as unresolved forever. Name the
+        // recovery reason for what it actually is; left unset here it would
+        // fall through to the generic top-level 'connection-or-protocol-
+        // failure' label, which is simply wrong for a turn we know completed
+        // (albeit interrupted).
+        this.confirmTurnBoundary();
+        this.state.recoveryReason = 'turn-interrupted';
         throw failError('turn interrupted by someone else; not restarting');
       }
       if (status !== 'failed') {
@@ -1184,8 +1290,12 @@ class Supervisor {
 
 function installSignalHandlers(supervisor) {
   const handler = () => { supervisor.stopRequested = true; };
-  for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, handler);
-  return () => { for (const signal of ['SIGTERM', 'SIGINT']) process.off(signal, handler); };
+  // task_048 review item 15: SIGHUP is a cooperative-stop signal too — a
+  // hangup (controlling terminal closed, e.g. an SSH session dropping) must
+  // persist state and release the lock the same way SIGTERM/SIGINT do,
+  // never kill the process outright and leave the next run to trip the lock.
+  for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(signal, handler);
+  return () => { for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.off(signal, handler); };
 }
 
 // --- status ------------------------------------------------------------
@@ -1218,7 +1328,7 @@ export function statusReport(state) {
     rows.push(['exit reason', summaries.has(summary) ? summary : 'terminal marker recorded']);
   }
   else {
-    const reasons = new Set(['stop-requested', 'ceiling-reached', 'connection-or-protocol-failure', 'context-exhausted', 'budget-exhausted', 'thread-start-unconfirmed', 'connection-lost-at-turn-boundary']);
+    const reasons = new Set(['stop-requested', 'ceiling-reached', 'connection-or-protocol-failure', 'context-exhausted', 'budget-exhausted', 'thread-start-unconfirmed', 'connection-lost-at-turn-boundary', 'turn-interrupted']);
     rows.push(['checkpoint reason', reasons.has(state.recoveryReason) ? state.recoveryReason : 'owner-ended-or-unconfirmed']);
     rows.push(['recovery', needsTurnReconciliation(state)
       ? 'review prior effects, then use reconcile --state <file> --evidence-file <file>; reconcile any stale ownership lock first'
@@ -1271,7 +1381,11 @@ export async function main(argv) {
     removeSignals = installSignalHandlers(supervisor);
     return await supervisor.run();
   } catch (error) {
-    const code = error.code ?? EXIT_FAIL;
+    // task_048 review item 13: `error.code` on a plain filesystem error
+    // (e.g. ENOENT from a bad --prompt-file) is a STRING, and
+    // `process.exit('ENOENT')` throws ERR_INVALID_ARG_TYPE — only trust a
+    // numeric exit code when it actually came from our own SupervisorError.
+    const code = error instanceof SupervisorError && Number.isInteger(error.code) ? error.code : EXIT_FAIL;
     process.stderr.write(`${error.message}\n`);
     if (supervisor?.state) supervisor.state.recoveryReason ||= supervisor.stopRequested ? 'stop-requested' : code === EXIT_CEILING ? 'ceiling-reached' : 'connection-or-protocol-failure';
     try { if (supervisor?.owner) supervisor.log(`exit ${code}: ${error.message}`); } catch { /* best effort */ }

@@ -330,29 +330,36 @@ function nonceCheck(codexHome, threadId, nonce, others) {
 // a sequential await would silently turn the panel into a relay.
 function startReviewer(k, nonce, diff, verify, env) {
   const cwd = mkdtempSync(join(tmpdir(), 'codex-panel-'));
-  const schemaPath = join(cwd, 'schema.json');
-  const outputPath = join(cwd, 'answer.json');
-  writeFileSync(schemaPath, JSON.stringify(REVIEW_SCHEMA), { mode: 0o600 });
-  const child = spawn('codex', reviewArgs(schemaPath, outputPath, verify),
-    { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
-  let stdout = '';
-  let overflow = false;
-  child.stdout.setEncoding('utf8');
-  child.stdout.on('data', (chunk) => {
-    if (stdout.length + chunk.length > MAX_EVENT_BYTES) { overflow = true; child.kill('SIGKILL'); return; }
-    stdout += chunk;
-  });
-  // Vendor stderr can contain request details: drained, never kept or echoed.
-  child.stderr.resume();
-  const timer = setTimeout(() => child.kill('SIGKILL'), REVIEWER_TIMEOUT_MS);
-  const settled = new Promise((resolve) => {
-    child.on('error', (error) => { clearTimeout(timer); resolve({ code: null, signal: null, spawnError: error.code || 'spawn failed', stdout, overflow }); });
-    child.on('close', (code, signal) => { clearTimeout(timer); resolve({ code, signal, spawnError: null, stdout, overflow }); });
-  });
-  // A reviewer that exits before reading its stdin must not crash the panel.
-  child.stdin.on('error', () => {});
-  child.stdin.end(reviewerInput(nonce, diff));
-  return { k, nonce, cwd, outputPath, settled };
+  try {
+    const schemaPath = join(cwd, 'schema.json');
+    const outputPath = join(cwd, 'answer.json');
+    writeFileSync(schemaPath, JSON.stringify(REVIEW_SCHEMA), { mode: 0o600 });
+    const child = spawn('codex', reviewArgs(schemaPath, outputPath, verify),
+      { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let overflow = false;
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => {
+      if (stdout.length + chunk.length > MAX_EVENT_BYTES) { overflow = true; child.kill('SIGKILL'); return; }
+      stdout += chunk;
+    });
+    // Vendor stderr can contain request details: drained, never kept or echoed.
+    child.stderr.resume();
+    const timer = setTimeout(() => child.kill('SIGKILL'), REVIEWER_TIMEOUT_MS);
+    const settled = new Promise((resolve) => {
+      child.on('error', (error) => { clearTimeout(timer); resolve({ code: null, signal: null, spawnError: error.code || 'spawn failed', stdout, overflow }); });
+      child.on('close', (code, signal) => { clearTimeout(timer); resolve({ code, signal, spawnError: null, stdout, overflow }); });
+    });
+    // A reviewer that exits before reading its stdin must not crash the panel.
+    child.stdin.on('error', () => {});
+    child.stdin.end(reviewerInput(nonce, diff));
+    return { k, nonce, cwd, outputPath, child, settled };
+  } catch (error) {
+    // item 19 (task_048 review): this reviewer's OWN temp dir must not leak
+    // just because ITS setup failed partway through.
+    rmSync(cwd, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 function collect(reviewer, outcome) {
@@ -418,7 +425,24 @@ async function main() {
 
   // 16 random bytes, rendered as the 32 lowercase hex the rollout proof looks for.
   const nonces = Array.from({ length: flags.n }, () => randomBytes(16).toString('hex'));
-  const reviewers = nonces.map((nonce, i) => startReviewer(i + 1, nonce, diff, flags.verify, env));
+  // item 19 (task_048 review): starting reviewers must happen INSIDE a
+  // try/finally that tracks what has already started — the original code
+  // ran nonces.map(startReviewer) unguarded, so if reviewer k's setup threw,
+  // reviewers 1..k-1 (each a live metered `codex exec` process with its own
+  // temp dir already created) were leaked: nothing killed them or removed
+  // their directories.
+  const reviewers = [];
+  try {
+    for (let i = 0; i < nonces.length; i++) {
+      reviewers.push(startReviewer(i + 1, nonces[i], diff, flags.verify, env));
+    }
+  } catch (error) {
+    for (const reviewer of reviewers) {
+      try { reviewer.child.kill('SIGKILL'); } catch { /* best effort */ }
+      try { rmSync(reviewer.cwd, { recursive: true, force: true }); } catch { /* best effort */ }
+    }
+    throw error;
+  }
   let records;
   try {
     const outcomes = await Promise.all(reviewers.map(r => r.settled));

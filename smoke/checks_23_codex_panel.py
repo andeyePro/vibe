@@ -20,12 +20,32 @@ per-call arrival index, sleeps 0.5s per `exec` call, and — in verify
 scenarios — writes a fake rollout file under `$CODEX_HOME/sessions/...`
 using the nonces the fixture dictates, so the panel's OWN rollout-search and
 nonce-proof logic runs against real files on disk.
+
+review-fixes-2026-09-12 wave 1, items 13-18 (codex-supervisor.mjs) and 19
+(codex-panel.mjs): per the dispatch's explicit override of the brief's file
+list, ALL SEVEN regression tests for this wave live in THIS file (not split
+across checks_21_codex_supervisor_c2.py) — reusing checks_19's real stub
+app-server, fixture and invocation helpers read-only, never modifying them.
 """
 import shutil
+import signal
+import time
 
 from smoke._core import *  # noqa: F401,F403
 from smoke._core import _isolate_extras_env
 from smoke.checks_17_delegation import _delegate_fixture, _delegate_call, _codex_git_ws
+from smoke.checks_19_codex_supervisor import (
+    SUPERVISOR,
+    _DONE_TURN_EVENTS,
+    _in_messages,
+    _read_state,
+    _run_supervisor,
+    _stub_log_lines,
+    _supervisor_fixture,
+    _turn_completed_event,
+    _turn_started_event,
+    _write_stub,
+)
 
 CODEX_PANEL = REPO / "devcontainer" / "codex-panel.mjs"
 CODEX_INTEGRATION_PLAN_MD = REPO / "docs" / "codex-integration-plan.md"
@@ -577,3 +597,305 @@ def test_codex_panel_dockerfile_copy_and_chmod():
     chmod_lines = [l for l in dockerfile.splitlines() if l.strip().startswith("RUN chmod +x")]
     check("[codex-panel] a chmod +x line includes /usr/local/bin/codex-panel",
           any("/usr/local/bin/codex-panel" in l for l in chmod_lines), "\n".join(chmod_lines))
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# review-fixes-2026-09-12 wave 1, items 13-18: devcontainer/codex-supervisor.mjs
+#
+# Drives the REAL supervisor through checks_19's stub app-server, fixture and
+# invocation helpers (imported read-only, never modified). Time-dependent
+# cases (14, 16) use --now-source / a pure-function call instead of the real
+# clock; item 17's bounded drain is a short REAL-wall-time grace window
+# (2s), so its tests use real sleeps in the stub script, well inside the
+# communicate() timeouts below.
+# ═══════════════════════════════════════════════════════════════════════
+
+def test_codex_supervisor_review13_exit_code_never_a_string():
+    print("\n[codex-supervisor] review item 13: a raw fs error's string .code never reaches "
+          "process.exit (ENOENT --prompt-file exits cleanly, no ERR_INVALID_ARG_TYPE crash)")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        home, codex_home, workspace, env = _supervisor_fixture(tmp)
+        missing_prompt = tmp / "does-not-exist.txt"
+        r = _run_supervisor(["run", "--cwd", str(workspace), "--prompt-file", str(missing_prompt),
+                              "--codex-bin", "/bin/true"], env)
+        check("[codex-supervisor] missing --prompt-file exits 1 (EXIT_FAIL), not a Node crash code",
+              r.returncode == 1, f"rc={r.returncode} stderr={r.stderr}")
+        check("[codex-supervisor] stderr is the clean ENOENT message, never a process.exit crash trace",
+              "ENOENT" in r.stderr and "ERR_INVALID_ARG_TYPE" not in r.stderr and "TypeError" not in r.stderr,
+              r.stderr)
+
+
+def test_codex_supervisor_review14_stale_resets_at_reread_and_floor():
+    print("\n[codex-supervisor] review item 14: a resetsAt already in the past is re-read, "
+          "never trusted as a zero-second wait")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        home, codex_home, workspace, env = _supervisor_fixture(tmp)
+        prompt = tmp / "prompt.txt"
+        prompt.write_text("/vsss go review14")
+        stub_dir = tmp / "stub"
+        now_source = tmp / "now.txt"
+        T0 = 1700000000
+        now_source.write_text(str(T0))
+        fixture = {
+            "rateLimits": [{"primary": {"usedPercent": 100, "windowDurationMins": 300,
+                                         "resetsAt": T0 - 500}, "secondary": None}],
+            "turns": [
+                {"events": [_turn_started_event(),
+                            _turn_completed_event("failed", {"message": "usage limit hit",
+                                                              "codexErrorInfo": "usageLimitExceeded"})]},
+                {"events": _DONE_TURN_EVENTS("i2", "done")},
+            ],
+        }
+        stub_path = _write_stub(stub_dir, fixture)
+        r = _run_supervisor(["run", "--cwd", str(workspace), "--prompt-file", str(prompt),
+                              "--codex-bin", str(stub_path), "--now-source", str(now_source)], env)
+        check("[codex-supervisor] stale-resetsAt run exits 0", r.returncode == 0, r.stderr)
+        state = _read_state(workspace)
+        waits = state.get("waits", [])
+        check("[codex-supervisor] exactly one wait recorded, quota, floored to 30s (never 0)",
+              len(waits) == 1 and waits[0].get("reason") == "quota" and waits[0].get("seconds") == 30,
+              str(waits))
+        msgs = _in_messages(stub_dir)
+        rl_reads = [m for m in msgs if m.get("method") == "account/rateLimits/read"]
+        check("[codex-supervisor] the stale reading triggers a fresh account/rateLimits/read "
+              "beyond just the initial startup read",
+              len(rl_reads) > 1, str(rl_reads))
+
+
+def test_codex_supervisor_review15_sighup_cooperative_stop():
+    print("\n[codex-supervisor] review item 15: SIGHUP is a cooperative-stop signal, not a silent "
+          "kill (checkpoint saved, lock released, exit 130)")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        home, codex_home, workspace, env = _supervisor_fixture(tmp)
+        prompt = tmp / "prompt.txt"
+        prompt.write_text("/vsss go review15")
+        stub_dir = tmp / "stub"
+        fixture = {"turns": [{"events": [
+            _turn_started_event(), {"sleep": 6}, _turn_completed_event("completed")]}]}
+        stub_path = _write_stub(stub_dir, fixture)
+        proc = subprocess.Popen(
+            ["node", str(SUPERVISOR), "run", "--cwd", str(workspace), "--prompt-file", str(prompt),
+             "--codex-bin", str(stub_path)],
+            env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        deadline = time.time() + 15
+        saw_turn_start = False
+        while time.time() < deadline:
+            log_text = "\n".join(_stub_log_lines(stub_dir)).replace(" ", "")
+            if ('"method":"turn/start"' in log_text
+                    and (_read_state(workspace).get("unresolvedTurn") or {}).get("turnId")):
+                saw_turn_start = True
+                break
+            time.sleep(0.1)
+        check("[codex-supervisor] review15: reached turn/start before the signal", saw_turn_start, "")
+
+        proc.send_signal(signal.SIGHUP)
+        try:
+            _, stderr = proc.communicate(timeout=15)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            _, stderr = proc.communicate()
+        check("[codex-supervisor] SIGHUP exits 130 (cooperative stop), not killed by the OS default",
+              proc.returncode == 130, f"rc={proc.returncode} stderr={stderr}")
+        lock_path = workspace / ".vss" / "codex-supervisor.json.lock"
+        check("[codex-supervisor] SIGHUP releases the ownership lock (no stale lock left behind)",
+              not lock_path.exists(), "")
+        state = _read_state(workspace)
+        check("[codex-supervisor] SIGHUP checkpoint: state carries a recovery reason",
+              state.get("recoveryReason") == "stop-requested", str(state))
+
+
+def test_codex_supervisor_review16_binding_resets_at_prefers_soonest():
+    print("\n[codex-supervisor] review item 16: bindingResetsAt prefers the SOONEST reset when no "
+          "window is fully exhausted, and the LATEST when both are")
+    script = (
+        "import('" + SUPERVISOR.as_posix() + "').then(m => {"
+        "const cases = ["
+        "{primary: {usedPercent: 99, resetsAt: 5000}, secondary: {usedPercent: 40, resetsAt: 999999}},"
+        "{primary: {usedPercent: 100, resetsAt: 100}, secondary: {usedPercent: 100, resetsAt: 200}},"
+        "{primary: null, secondary: null},"
+        "];"
+        "console.log(JSON.stringify(cases.map(c => m.bindingResetsAt(c))));"
+        "});"
+    )
+    r = subprocess.run(["node", "-e", script], capture_output=True, text=True,
+                        stdin=subprocess.DEVNULL, timeout=30)
+    check("[codex-supervisor] node import for bindingResetsAt succeeds", r.returncode == 0, r.stderr)
+    if r.returncode != 0:
+        return
+    try:
+        results = json.loads(r.stdout.strip().splitlines()[-1])
+    except (json.JSONDecodeError, IndexError) as exc:
+        check("[codex-supervisor] bindingResetsAt output is valid JSON", False, f"{exc}: {r.stdout}")
+        return
+    if not check("[codex-supervisor] bindingResetsAt returned exactly 3 results", len(results) == 3, str(results)):
+        return
+    check("[codex-supervisor] near-100% window (99%) beats a far-future exhausted-looking secondary: "
+          "picks the SOONEST reset, not the latest",
+          results[0] == 5000, str(results))
+    check("[codex-supervisor] both windows exhausted: picks the LATER of the two (unchanged behaviour)",
+          results[1] == 200, str(results))
+    check("[codex-supervisor] neither window has a known resetsAt: null",
+          results[2] is None, str(results))
+
+
+def test_codex_supervisor_review17_stop_mid_turn_drains_before_message():
+    print("\n[codex-supervisor] review item 17: a cooperative stop mid-turn drains for the turn "
+          "boundary before choosing the 'resume' vs 'reconcile' instruction")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+
+        def run_scenario(label, sleep_s, status):
+            sub = tmp / label
+            sub.mkdir()
+            home, codex_home, workspace, env = _supervisor_fixture(sub)
+            prompt = sub / "prompt.txt"
+            prompt.write_text(f"/vsss go {label}")
+            stub_dir = sub / "stub"
+            fixture = {"turns": [{"events": [
+                _turn_started_event(), {"sleep": sleep_s}, _turn_completed_event(status)]}]}
+            stub_path = _write_stub(stub_dir, fixture)
+            proc = subprocess.Popen(
+                ["node", str(SUPERVISOR), "run", "--cwd", str(workspace), "--prompt-file", str(prompt),
+                 "--codex-bin", str(stub_path)],
+                env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            )
+            deadline = time.time() + 15
+            saw = False
+            while time.time() < deadline:
+                log_text = "\n".join(_stub_log_lines(stub_dir)).replace(" ", "")
+                if ('"method":"turn/start"' in log_text
+                        and (_read_state(workspace).get("unresolvedTurn") or {}).get("turnId")):
+                    saw = True
+                    break
+                time.sleep(0.05)
+            check(f"[codex-supervisor] review17 {label}: reached turn/start before the signal", saw, "")
+            proc.send_signal(signal.SIGTERM)
+            try:
+                _, stderr = proc.communicate(timeout=15)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                _, stderr = proc.communicate()
+            check(f"[codex-supervisor] review17 {label}: exits 130", proc.returncode == 130,
+                  f"rc={proc.returncode} stderr={stderr}")
+            return stderr, _read_state(workspace)
+
+        # Fast: the stub answers turn/completed(interrupted) at 0.5s, well
+        # inside the 2s drain bound — the turn boundary IS reached.
+        stderr_fast, state_fast = run_scenario("drained", 0.5, "interrupted")
+        check("[codex-supervisor] review17 drained: message says RESUME (the boundary was confirmed)",
+              "resume with the same run arguments" in stderr_fast, stderr_fast)
+        check("[codex-supervisor] review17 drained: state has NO unresolved turn",
+              state_fast.get("unresolvedTurn") is None, str(state_fast))
+
+        # Slow: the stub does not answer within the 6s sleep — well past the
+        # 2s drain bound — so the boundary is NEVER reached during the drain.
+        stderr_slow, state_slow = run_scenario("notdrained", 6, "completed")
+        check("[codex-supervisor] review17 not-drained: message says RECONCILE, never the bare "
+              "resume instruction the state machine would refuse",
+              "reconcile --state" in stderr_slow and "resume with the same run arguments" not in stderr_slow,
+              stderr_slow)
+        check("[codex-supervisor] review17 not-drained: state STILL has the unresolved turn "
+              "(consistent with what the message says)",
+              (state_slow.get("unresolvedTurn") or {}).get("turnId") is not None, str(state_slow))
+
+
+def test_codex_supervisor_review18_interrupted_confirms_boundary():
+    print("\n[codex-supervisor] review item 18: a spontaneously-interrupted turn confirms the "
+          "boundary before throwing, and names the recovery reason correctly")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        home, codex_home, workspace, env = _supervisor_fixture(tmp)
+        prompt = tmp / "prompt.txt"
+        prompt.write_text("/vsss go review18")
+        stub_dir = tmp / "stub"
+        fixture = {"turns": [{"events": [_turn_started_event(), _turn_completed_event("interrupted")]}]}
+        stub_path = _write_stub(stub_dir, fixture)
+        r = _run_supervisor(["run", "--cwd", str(workspace), "--prompt-file", str(prompt),
+                              "--codex-bin", str(stub_path)], env)
+        check("[codex-supervisor] interrupted-turn run exits 1", r.returncode == 1, r.stderr)
+        check("[codex-supervisor] stderr names the interruption",
+              "turn interrupted by someone else" in r.stderr, r.stderr)
+        state = _read_state(workspace)
+        check("[codex-supervisor] the turn boundary IS confirmed (unresolvedTurn cleared)",
+              state.get("unresolvedTurn") is None, str(state))
+        check("[codex-supervisor] recoveryReason correctly names an interrupted turn",
+              state.get("recoveryReason") == "turn-interrupted", str(state))
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# review-fixes-2026-09-12 wave 1, item 19: devcontainer/codex-panel.mjs
+#
+# A CJS --require preload monkeypatches fs.mkdtempSync to succeed N times
+# then throw — proven live (node --require + ESM named import DOES see a
+# CJS-patched builtin in this Node) before being relied on here. Call order
+# is: 1) main()'s own probeCwd mkdtemp, 2) reviewer 1's cwd, 3) reviewer 2's
+# cwd — FAIL_AT=3 makes reviewer 1 the "already started" reviewer the fix
+# must kill and clean up, exactly the scenario item 19 describes.
+# ═══════════════════════════════════════════════════════════════════════
+
+_MKDTEMP_FAIL_PRELOAD_SRC = r'''
+const fs = require("fs");
+const orig = fs.mkdtempSync;
+const failAt = Number(process.env.PANEL_TEST_MKDTEMP_FAIL_AT || 0);
+const logPath = process.env.PANEL_TEST_MKDTEMP_LOG;
+let n = 0;
+fs.mkdtempSync = function(...args) {
+  n += 1;
+  if (failAt && n >= failAt) {
+    const err = new Error("injected mkdtemp failure (test)");
+    err.code = "ENOSPC";
+    throw err;
+  }
+  const dir = orig.apply(fs, args);
+  if (logPath) fs.appendFileSync(logPath, dir + "\n");
+  return dir;
+};
+'''
+
+
+def test_codex_panel_review19_partial_startup_failure_cleans_up():
+    print("\n[codex-panel] review item 19: a mid-startup mkdtempSync failure kills already-started "
+          "reviewers and removes their temp dirs before rethrowing")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        ws, home, env = _panel_fixture(root)
+        preload = root / "mkdtemp-fail-preload.cjs"
+        preload.write_text(_MKDTEMP_FAIL_PRELOAD_SRC)
+        mkdtemp_log = root / "mkdtemp-created.log"
+        test_env = dict(env)
+        test_env["PANEL_TEST_MKDTEMP_FAIL_AT"] = "3"
+        test_env["PANEL_TEST_MKDTEMP_LOG"] = str(mkdtemp_log)
+        (home / "fixture.json").write_text(json.dumps({"ymd": list(ROLLOUT_YMD), "stamp": ROLLOUT_STAMP}))
+
+        proc = subprocess.Popen(
+            ["node", "--require", str(preload), str(CODEX_PANEL), "run", "--n", "3"],
+            cwd=ws, env=test_env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True,
+        )
+        try:
+            _, stderr = proc.communicate(input="a reviewable diff\n", timeout=30)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate()
+            check("[codex-panel] review19: partial-startup-failure run does not hang", False, "timed out")
+            return
+        check("[codex-panel] review19: exit 1, a clean thrown error, not a crash/hang",
+              proc.returncode == 1, f"rc={proc.returncode} stderr={stderr}")
+        check("[codex-panel] review19: stderr names the injected failure",
+              "injected mkdtemp failure" in stderr, stderr)
+
+        created = mkdtemp_log.read_text().splitlines() if mkdtemp_log.exists() else []
+        reviewer_dirs = [d for d in created if "codex-panel-probe-" not in d]
+        check("[codex-panel] review19: exactly one reviewer cwd was created before the failure",
+              len(reviewer_dirs) == 1, str(created))
+        if reviewer_dirs:
+            check("[codex-panel] review19: the started reviewer's temp dir was removed (no leak)",
+                  not Path(reviewer_dirs[0]).exists(), reviewer_dirs[0])
+        calls = [json.loads(p.read_text()) for p in sorted((home / "calls").glob("*.json"))]
+        check("[codex-panel] review19: the started reviewer's codex process was killed before it "
+              "could record a completed exec call (never left running to finish)",
+              not _execs(calls), str(calls))
