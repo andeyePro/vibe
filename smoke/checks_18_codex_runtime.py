@@ -1055,8 +1055,10 @@ def test_delegate_role_status_ac5():
         if r.returncode == 0:
             result = json.loads(r.stdout)
             check("[delegate] role astra done: status == done", result.get("status") == "done", r.stdout)
-            check("[delegate] role astra: output keys exactly {runtime, model, role, status, report, usage}",
-                  set(result.keys()) == {"runtime", "model", "role", "status", "report", "usage"},
+            check("[delegate] role astra: output keys exactly {runtime, model, role, status, report, usage, "
+                  "billing, served_models}",
+                  set(result.keys()) == {"runtime", "model", "role", "status", "report", "usage",
+                                          "billing", "served_models"},
                   str(sorted(result.keys())))
             check("[delegate] role astra done: report/role carried through",
                   result.get("report") == "the plan" and result.get("role") == "planner", r.stdout)
@@ -1099,9 +1101,11 @@ def test_delegate_role_status_ac5():
         check("[delegate] role claude 'STATUS: done': exit 0, status done",
               r.returncode == 0 and json.loads(r.stdout).get("status") == "done", r.stdout + r.stderr)
         if r.returncode == 0:
-            check("[delegate] role claude: output keys exactly {runtime, model, role, status, report, usage}",
+            check("[delegate] role claude: output keys exactly {runtime, model, role, status, report, usage, "
+                  "billing, served_models}",
                   set(json.loads(r.stdout).keys()) ==
-                  {"runtime", "model", "role", "status", "report", "usage"}, r.stdout)
+                  {"runtime", "model", "role", "status", "report", "usage",
+                   "billing", "served_models"}, r.stdout)
 
         # Claude: report ending "STATUS: blocked" -> blocked.
         r, calls = _delegate_call(workspace, home, env,

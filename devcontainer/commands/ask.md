@@ -66,8 +66,11 @@ Claude's settings JSON) selects a future paid route by configuration alone;
 Claude itself reads its settings/`apiKeyHelper`. Set these non-secret path/mode
 values in `~/.vibe/config` and relaunch. Never put keys in vibe files or copy OAuth
 between runtimes. The subscription route pins `forceLoginMethod: claudeai`;
-the lead's login policy is unchanged. `/budget` integration is follow-up work;
-this command reports each call's usage directly.
+the lead's login policy is unchanged. Every call also appends one line to the
+untracked, per-project `.vibe/delegate-usage.jsonl` ledger — timestamp,
+runtime, model, billing and token usage, never the payload, prompt text, or
+any thread/session id — which `/budget`'s "Delegated calls" section reports
+separately from interactive Max/Pro usage.
 
 The same helper also has a `role` operation for `/vs`'s subagent dispatch under a
 Codex-led session (`vibe-delegate role <role> --model <model> --cwd <workspace>`,

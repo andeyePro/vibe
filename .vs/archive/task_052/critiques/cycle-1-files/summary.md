@@ -1,0 +1,5 @@
+# task_052 Tester summary (cycle 1)
+
+`python3 code-check.py` clean (shellcheck across 23 files, exit 0); `python3 smoke-test.py < /dev/null` fully green — 4395 checks passed, 0 failed, exit 0 (full log: `.vs/cycle-1/test-output.log`).
+
+Added 7 test functions to `smoke/checks_17_delegation.py` (925 -> 1162 lines, under the 1,500 cap so no new file was needed) covering AC6: `test_delegate_ledger_success_shapes`, `test_delegate_role_billing_and_served_models`, `test_delegate_ledger_refusals_append_nothing`, `test_delegate_ledger_failure_shapes`, `test_delegate_ledger_no_payload_or_ids`, `test_delegate_ledger_fs_safety`, `test_delegate_ledger_docs_and_gitignore` — 50 individual `check()` assertions, all registered in `smoke/runner.py`'s `main()`. Updated the two pre-existing key-set pins in `smoke/checks_18_codex_runtime.py` (`test_delegate_role_status_ac5`) from the six-key `{runtime,model,role,status,report,usage}` set to the eight-key AC2 set adding `billing`/`served_models` — the only change made to an existing test.

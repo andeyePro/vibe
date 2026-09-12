@@ -673,6 +673,16 @@ def main() -> int:
     test_codex_usage_and_help()
     test_codex_allow_docs()
 
+    # task_052: delegate usage ledger and /budget split (AC6)
+    test_delegate_ledger_success_shapes()
+    test_delegate_role_billing_and_served_models()
+    test_delegate_ledger_refusals_append_nothing()
+    test_delegate_ledger_failure_shapes()
+    test_delegate_ledger_no_payload_or_ids()
+    test_delegate_ledger_fs_safety()
+    test_delegate_ledger_docs_and_gitignore()
+    test_delegate_ledger_astra_review_hardening()
+
     # task_046: Codex system policy layer, guard adapter, liveness gate
     test_codex_requirements_toml_ac1()
     test_codex_requirements_toml_citations()

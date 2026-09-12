@@ -381,5 +381,14 @@
     "assigned_to": "evaluator",
     "mode": "rigorous",
     "last_modified": "2026-09-11T23:54:59Z"
+  },
+  {
+    "id": "task_052",
+    "description": "delegate usage ledger .vibe/delegate-usage.jsonl (one line per model-invoking call, exact key set, no payload) and /budget split of Astra vs claude -p",
+    "implementation_status": "complete",
+    "test_status": "pass",
+    "assigned_to": "evaluator",
+    "mode": "rigorous",
+    "last_modified": "2026-09-12T00:33:01Z"
   }
 ]

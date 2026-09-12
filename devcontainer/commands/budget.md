@@ -96,6 +96,50 @@ PYBUDGET
 - If the month's Fable tokens are all dated before 8 Jul 2026, note they fell in the free window and the credit estimate for them is $0 (the script prices all Fable tokens; subtract the pre-cutover portion when it matters).
 - When asked "should I downgrade Max→Pro", compare month subscription usage against ~5× headroom: sustained heavy use of the all-model weekly pool argues for keeping Max; a mostly-idle month argues Pro + credits. Give a recommendation, not a survey.
 
+## Delegated calls (from `.vibe/delegate-usage.jsonl`)
+
+`/ask`, `/review`'s codex slot and `vibe-delegate role` (the `/vs` subagent
+dispatch) each run as a separate one-shot subprocess — `codex exec` for Astra,
+`claude -p` for a delegated Claude call — never an interactive Claude Code
+turn. `vibe-delegate.mjs` appends one line per call to the untracked,
+per-project ledger `.vibe/delegate-usage.jsonl` (git toplevel of wherever it
+was invoked from). These numbers are NEVER included in the interactive
+Max/Pro table above, and must never be added into it or folded into the
+Max→Pro recommendation math above — they spend a different plan (Astra draws
+on the ChatGPT plan, not Anthropic's) or, for a consented `claude -p` billed
+route, credits/API rather than subscription quota.
+
+If the file doesn't exist yet, no delegated call has ever been made from this
+project and both lines below are zero. Otherwise, run this from the project
+root — it is the exact `jq` one-liner every lead uses, so figures are always
+computed the same way:
+
+```bash
+jq -s --arg month "$(date -u +%Y-%m)" --arg today "$(date -u +%Y-%m-%d)" '
+  group_by(.runtime) | map({runtime: .[0].runtime,
+    month_calls: ([.[] | select(.ts[0:7]==$month)] | length),
+    month_tokens: ([.[] | select(.ts[0:7]==$month) | (.usage.total_tokens // 0)] | add // 0),
+    today_calls: ([.[] | select(.ts[0:10]==$today)] | length),
+    today_tokens: ([.[] | select(.ts[0:10]==$today) | (.usage.total_tokens // 0)] | add // 0),
+    failed: ([.[] | select(.ok==false)] | length)})' .vibe/delegate-usage.jsonl
+```
+
+Report the current-month figures (`month_calls`/`month_tokens`) as two
+separate lines, one per runtime — `runtime:"codex"` is the Astra line,
+`runtime:"claude-p"` is the delegated-Claude line — using EXACTLY these
+templates:
+
+```
+Astra (codex exec): <calls> calls, <tokens> tokens
+claude -p (delegated): <calls> calls, <tokens> tokens
+```
+
+Then state the failure count from the same object's `failed` field, e.g.
+`0 delegated call(s) failed (ok:false)` — say it even when it's zero, since a
+silent omission reads as "not checked". `today_calls`/`today_tokens` are for
+a `/budget session`-style same-day drill-down if asked, not required in the
+headline report.
+
 ## Per-task budgets
 
 Per-task budget proposal/approval is `/vs`'s job, not this skill's: the Planner's **Model plan** in `.vs/spec.md` carries the estimated tokens per tier and estimated credits if the Fable rung is authorised, and the user amends/approves it with the spec. `/budget` is the observability half: run it before and after a big task to see what the task actually drew.

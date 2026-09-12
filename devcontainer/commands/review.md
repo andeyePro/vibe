@@ -1,5 +1,5 @@
 ---
-description: Claude code-review on the working diff plus opt-in outside-reviewer slots (gemini, codex), merged into one verdict — the fan-out is the default, --solo runs Claude only.
+description: Claude code-review plus opt-in gemini/codex slots, merged into one verdict — fan-out by default, --solo for Claude only.
 ---
 
 # /review
@@ -17,10 +17,10 @@ Default: `high`, the working diff; alternatively a PR, branch, or path.
 Resolve the shared diff snapshot before dispatching either leg.
 
 1. Run `Skill(skill: "code-review", args: "<level> [<target>]")` — Claude's own review, always.
-2. Unless `--solo`, read `node /usr/local/bin/vibe-delegate slots` from the repo root.
-   Run every available, enabled slot below, or only the explicitly requested `--slot`.
-   A policy error stops fan-out and is reported; never ignore it to enable reviewers.
-3. Merge Claude's findings with every slot's findings per `## Merge`, and print one `## Review verdict` block.
+2. Unless `--solo`, read `node /usr/local/bin/vibe-delegate slots` from the repo root and
+   run every enabled slot, or only an explicit `--slot`. A policy error stops fan-out and
+   is reported; never ignore it to enable reviewers.
+3. Merge findings per `## Merge`, print one `## Review verdict` block.
 
 ## Flags
 
@@ -38,10 +38,10 @@ Report skipped slots and their missing prerequisite; never count absence as agre
 ## Invoking the gemini slot
 
 Resolve the target ONCE and save a private diff file for all reviewers: working tree
-means staged plus unstaged (`git diff HEAD`); identify untracked files separately.
-For a branch use its merge-base diff; for a PR obtain its diff; for a path filter
-the working diff. Claude reviews that same snapshot. Never substitute plain
-`git diff`. Send only the diff and review instructions.
+means staged plus unstaged (`git diff HEAD`), untracked files identified separately;
+a branch uses its merge-base diff, a PR its own diff, a path filters the working diff.
+Claude reviews that same snapshot, never plain `git diff`. Send only the diff and
+review instructions.
 
 ```bash
 jq -Rs '{contents:[{parts:[{text:(. + "\nReview this diff. List correctness bugs only: SEVERITY file:line - one sentence.")}]}]}' < "$diff_file" \
@@ -51,9 +51,9 @@ jq -Rs '{contents:[{parts:[{text:(. + "\nReview this diff. List correctness bugs
   | jq -er '.candidates[0].content.parts[0].text | select(length > 0)'
 ```
 
-It never gets a shell, never writes. Failure or refusal is never a PASS.
-For a connection error, run `sudo /usr/local/bin/refresh-extra-domains.sh` once
-and retry once. No retry loop or silent model substitution.
+It never gets a shell, never writes; failure or refusal is never a PASS. For a
+connection error, run `sudo /usr/local/bin/refresh-extra-domains.sh` once and
+retry once — no retry loop, no silent model substitution.
 
 ## Invoking the codex slot
 
@@ -66,13 +66,16 @@ node /usr/local/bin/vibe-delegate review codex < "$diff_file"
 
 The helper uses `codex exec -m gpt-6-astra --output-schema … --json` because
 `codex review` in 0.154.0 lacks `--output-schema`. It runs a fresh, ephemeral,
-read-only process outside the repository with shell/MCP/apps disabled, passing
-only the diff. Codex alone accesses its login; never inspect its auth file.
-Parse JSON `findings` (severity/file/line/message), `verdict`, `summary`, and
-`usage`. The helper validates types, required fields and completion metadata.
-Never recover findings by parsing prose. Invalid JSON, missing usage, login or
-quota failure, refusal, or any nonzero exit must appear as an incomplete slot;
-final verdict is at least SPLIT until reviewed, never a silent PASS.
+read-only process outside the repository, shell/MCP/apps disabled, passing
+only the diff; Codex alone accesses its login, never inspected. Parse JSON
+`findings` (severity/file/line/message), `verdict`, `summary`, `usage` —
+types, required fields and completion metadata validated.
+Never recover findings by parsing prose. Invalid JSON, missing usage, login/quota failure,
+refusal, or any nonzero exit is an incomplete slot; final verdict is at least
+SPLIT until reviewed, never a silent PASS. Every call also logs one line —
+runtime, model, billing, tokens, never the diff or an id — to the untracked
+`.vibe/delegate-usage.jsonl` ledger; `/budget`'s Delegated calls section
+reports it separately from interactive use.
 
 ## Slot registry
 
@@ -83,11 +86,10 @@ final verdict is at least SPLIT until reviewed, never a silent PASS.
 
 A slot is enabled only when every item in its needs column exists.
 `.vibe/review-slots` is per-project and UNTRACKED: `codex=off` or `gemini=off`
-disables that slot. Missing file/entries default to all enabled; comments and
-blank lines are allowed. Malformed, duplicate, tracked or symlinked policy is
-refused. Claude's own review always runs. `codex=off` is the OpenAI-egress
-switch and also refuses `/ask astra`; `.vibe-allow-codex` is the
-credential-mount switch for the login directory.
+disables that slot; missing file/entries default to all enabled, comments and
+blank lines allowed, malformed/duplicate/tracked/symlinked policy refused.
+Claude's own review always runs. `codex=off` is the OpenAI-egress switch and
+also refuses `/ask astra`; `.vibe-allow-codex` is the credential-mount switch.
 
 Allowlist entries belong in `.vibe/domains`, NOT in the shipped `init-firewall.sh` list:
 `chatgpt.com`, `api.openai.com`, `auth.openai.com` for Codex, and Google's host

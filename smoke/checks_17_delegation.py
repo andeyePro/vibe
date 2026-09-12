@@ -923,3 +923,308 @@ def test_codex_allow_docs():
     check("[codex] TODO.md re-files the three still-open guard-gated follow-ups",
           "auth.json" in todo and "/learnings" in todo and "/zotero" in todo and
           "/repos/*/.vibe-allow-codex" in todo, "")
+
+
+# ── task_052 AC6: delegate usage ledger ─────────────────────────────────────
+# One JSONL line per MODEL-INVOKING process (codex exec / claude -p) — never
+# for the --version/login probes, never for a refusal that spawned no vendor
+# process. Each case below gets a FRESH _delegate_fixture so the file's
+# absence/presence and exact line count can be asserted without tracking an
+# offset across unrelated calls in the same workspace.
+
+_LEDGER_KEYS = {"ts", "op", "runtime", "model", "served_models", "role",
+                "billing", "usage", "ok", "error"}
+
+
+def _ledger_path(workspace):
+    return workspace / ".vibe" / "delegate-usage.jsonl"
+
+
+def _ledger_lines(workspace):
+    path = _ledger_path(workspace)
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text().splitlines() if line]
+
+
+def test_delegate_ledger_success_shapes():
+    print("\n[ledger] AC2: one line per model-invoking call, exact key set, ok:true")
+    with tempfile.TemporaryDirectory() as td:
+        workspace, home, env = _delegate_fixture(Path(td))
+        r, calls = _delegate_call(workspace, home, env, ["ask", "astra"])
+        check("[ledger] ask astra succeeds", r.returncode == 0, r.stderr)
+        lines = _ledger_lines(workspace)
+        check("[ledger] ask astra: exactly one ledger line", len(lines) == 1, str(lines))
+        if lines:
+            entry = lines[0]
+            check("[ledger] ask astra: exact AC2 key set",
+                  set(entry.keys()) == _LEDGER_KEYS, str(sorted(entry.keys())))
+            check("[ledger] ask astra: op/runtime/model/ok/role/served_models/billing",
+                  entry["op"] == "ask" and entry["runtime"] == "codex" and
+                  entry["model"] == "gpt-6-astra" and entry["ok"] is True and
+                  entry["error"] is None and entry["role"] is None and
+                  entry["served_models"] is None and entry["billing"] == "subscription",
+                  str(entry))
+            check("[ledger] ask astra: usage present and non-null", entry["usage"] is not None, str(entry))
+
+    with tempfile.TemporaryDirectory() as td:
+        workspace, home, env = _delegate_fixture(Path(td))
+        r, calls = _delegate_call(workspace, home, env, ["ask", "haiku"])
+        check("[ledger] ask haiku succeeds", r.returncode == 0, r.stderr)
+        lines = _ledger_lines(workspace)
+        check("[ledger] ask haiku: exactly one ledger line", len(lines) == 1, str(lines))
+        if lines:
+            entry = lines[0]
+            check("[ledger] ask haiku: exact AC2 key set",
+                  set(entry.keys()) == _LEDGER_KEYS, str(sorted(entry.keys())))
+            check("[ledger] ask haiku: runtime claude-p, model haiku, ok true",
+                  entry["runtime"] == "claude-p" and entry["model"] == "haiku" and
+                  entry["ok"] is True and entry["error"] is None, str(entry))
+            check("[ledger] ask haiku: served_models non-null", entry["served_models"] is not None, str(entry))
+
+    with tempfile.TemporaryDirectory() as td:
+        workspace, home, env = _delegate_fixture(Path(td))
+        r, calls = _delegate_call(workspace, home, env,
+            ["role", "planner", "--model", "haiku", "--cwd", str(workspace)])
+        check("[ledger] role planner/haiku succeeds", r.returncode == 0, r.stderr)
+        lines = _ledger_lines(workspace)
+        check("[ledger] role: exactly one ledger line", len(lines) == 1, str(lines))
+        if lines:
+            entry = lines[0]
+            check("[ledger] role: exact AC2 key set",
+                  set(entry.keys()) == _LEDGER_KEYS, str(sorted(entry.keys())))
+            check("[ledger] role: op/role/billing recorded, ok true",
+                  entry["op"] == "role" and entry["role"] == "planner" and
+                  entry["billing"] is not None and entry["ok"] is True, str(entry))
+
+
+def test_delegate_role_billing_and_served_models():
+    print("\n[delegate] role stdout JSON carries billing and served_models (task_052 AC2)")
+    with tempfile.TemporaryDirectory() as td:
+        workspace, home, env = _delegate_fixture(Path(td))
+        r, calls = _delegate_call(workspace, home, env,
+            ["role", "planner", "--model", "astra", "--cwd", str(workspace)],
+            {"answer": {"report": "the plan", "status": "done"}})
+        check("[delegate] role astra succeeds", r.returncode == 0, r.stderr)
+        if r.returncode == 0:
+            result = json.loads(r.stdout)
+            check("[delegate] role astra: billing subscription, served_models null",
+                  result.get("billing") == "subscription" and result.get("served_models") is None, r.stdout)
+
+    with tempfile.TemporaryDirectory() as td:
+        workspace, home, env = _delegate_fixture(Path(td))
+        claude_fixture = {"response": {"type": "result", "subtype": "success", "is_error": False,
+            "result": "Reviewed everything.\nSTATUS: done", "modelUsage": {"served-fixture": {}},
+            "usage": {"input_tokens": 100, "cache_creation_input_tokens": 20000,
+                      "cache_read_input_tokens": 7000, "output_tokens": 30,
+                      "cache_creation": {"ephemeral_5m_input_tokens": 40}}}}
+        r, calls = _delegate_call(workspace, home, env,
+            ["role", "reviewer", "--model", "haiku", "--cwd", str(workspace)], claude_fixture)
+        check("[delegate] role claude succeeds", r.returncode == 0, r.stderr)
+        if r.returncode == 0:
+            result = json.loads(r.stdout)
+            check("[delegate] role claude: billing present, served_models non-null",
+                  result.get("billing") == "subscription" and result.get("served_models") is not None, r.stdout)
+
+
+def test_delegate_ledger_refusals_append_nothing():
+    print("\n[ledger] AC2: a refusal that spawns no model-invoking process appends nothing")
+    with tempfile.TemporaryDirectory() as td:
+        workspace, home, env = _delegate_fixture(Path(td))
+        r, calls = _delegate_call(workspace, home, env, ["ask", "unknown"])
+        check("[ledger] unknown model refused, no vendor calls", r.returncode != 0 and not calls, r.stderr)
+        check("[ledger] unknown model: no ledger file written", not _ledger_path(workspace).exists(), "")
+
+    with tempfile.TemporaryDirectory() as td:
+        workspace, home, env = _delegate_fixture(Path(td))
+        (workspace / ".vibe" / "review-slots").write_text("codex=off\n")
+        r, calls = _delegate_call(workspace, home, env, ["ask", "astra"])
+        check("[ledger] codex=off refused, no vendor calls", r.returncode != 0 and not calls, r.stderr)
+        check("[ledger] codex=off: no ledger file written", not _ledger_path(workspace).exists(), "")
+
+    with tempfile.TemporaryDirectory() as td:
+        workspace, home, env = _delegate_fixture(Path(td))
+        r, calls = _delegate_call(workspace, home, env, ["ask", "astra"], {"login_exit": 1})
+        check("[ledger] login probe failure: refused, only the two probes ran",
+              r.returncode != 0 and len(calls) == 2, str(calls))
+        check("[ledger] login probe failure: no ledger file written", not _ledger_path(workspace).exists(), "")
+
+
+def test_delegate_ledger_failure_shapes():
+    print("\n[ledger] AC2: a failed model-invoking call still logs ok:false with the right usage")
+    with tempfile.TemporaryDirectory() as td:
+        workspace, home, env = _delegate_fixture(Path(td))
+        r, calls = _delegate_call(workspace, home, env, ["ask", "astra"], {"answer": "prose"})
+        check("[ledger] schema-invalid reply after a completed turn: the call itself fails",
+              r.returncode != 0 and not r.stdout, r.stdout)
+        lines = _ledger_lines(workspace)
+        check("[ledger] schema-invalid reply: exactly one ledger line", len(lines) == 1, str(lines))
+        if lines:
+            entry = lines[0]
+            check("[ledger] schema-invalid reply: ok false, NON-null usage, error present",
+                  entry["ok"] is False and entry["usage"] is not None and bool(entry["error"]), str(entry))
+
+    with tempfile.TemporaryDirectory() as td:
+        workspace, home, env = _delegate_fixture(Path(td))
+        r, calls = _delegate_call(workspace, home, env, ["ask", "astra"], {"exit": 1})
+        check("[ledger] process exit 1: the call itself fails", r.returncode != 0 and not r.stdout, r.stdout)
+        lines = _ledger_lines(workspace)
+        check("[ledger] process exit 1: exactly one ledger line", len(lines) == 1, str(lines))
+        if lines:
+            entry = lines[0]
+            check("[ledger] process exit 1: ok false, usage null, error present",
+                  entry["ok"] is False and entry["usage"] is None and bool(entry["error"]), str(entry))
+
+
+def test_delegate_ledger_no_payload_or_ids():
+    print("\n[ledger] AC2: never the payload literal, never thread_id/session_id")
+    with tempfile.TemporaryDirectory() as td:
+        workspace, home, env = _delegate_fixture(Path(td))
+        marker = "UNIQUE_PAYLOAD_MARKER_7f3c9a"
+        r, calls = _delegate_call(workspace, home, env, ["ask", "haiku"], payload=f"Task\n{marker}\n")
+        check("[ledger] ask haiku with marker payload succeeds", r.returncode == 0, r.stderr)
+        raw = _ledger_path(workspace).read_text()
+        check("[ledger] payload literal absent from the ledger", marker not in raw, raw)
+        check("[ledger] thread_id/session_id never appear in the ledger",
+              "thread_id" not in raw and "session_id" not in raw, raw)
+
+
+def test_delegate_ledger_fs_safety():
+    print("\n[ledger] AC1/AC3: modes, auto-create, symlink refusal, outside-work-tree refusal")
+    import shutil
+    import stat as statmod
+
+    with tempfile.TemporaryDirectory() as td:
+        workspace, home, env = _delegate_fixture(Path(td))
+        shutil.rmtree(workspace / ".vibe", ignore_errors=True)
+        r, calls = _delegate_call(workspace, home, env, ["ask", "haiku"])
+        check("[ledger] ask haiku succeeds after .vibe/ removed", r.returncode == 0, r.stderr)
+        vibe_dir = workspace / ".vibe"
+        check("[ledger] .vibe/ auto-created", vibe_dir.is_dir(), "")
+        check("[ledger] .vibe/ mode 0700", statmod.S_IMODE(vibe_dir.stat().st_mode) == 0o700,
+              oct(vibe_dir.stat().st_mode))
+        path = _ledger_path(workspace)
+        check("[ledger] ledger file created", path.is_file(), "")
+        check("[ledger] ledger file mode 0600", statmod.S_IMODE(path.stat().st_mode) == 0o600,
+              oct(path.stat().st_mode))
+
+    with tempfile.TemporaryDirectory() as td:
+        workspace, home, env = _delegate_fixture(Path(td))
+        target = home / "does-not-exist.jsonl"
+        _ledger_path(workspace).symlink_to(target)
+        r, calls = _delegate_call(workspace, home, env, ["ask", "haiku"])
+        check("[ledger] symlinked ledger: the call still succeeds",
+              r.returncode == 0 and len(calls) == 1, r.stderr)
+        check("[ledger] symlinked ledger: one stderr note naming the symlink",
+              r.stderr.count("symlink") == 1, r.stderr)
+        check("[ledger] symlinked ledger: still a symlink, target never created",
+              _ledger_path(workspace).is_symlink() and not target.exists(), "")
+
+    with tempfile.TemporaryDirectory() as td:
+        workspace, home, env = _delegate_fixture(Path(td))
+        r, calls = _delegate_call(workspace, home, env, ["ask", "haiku"], cwd=home)
+        check("[ledger] invocation outside a work tree: ask haiku still exits 0",
+              r.returncode == 0 and len(calls) == 1, r.stderr)
+        check("[ledger] outside a work tree: one stderr note naming the git work tree requirement",
+              r.stderr.count("git work tree") == 1, r.stderr)
+        check("[ledger] outside a work tree: no ledger written in the workspace",
+              not _ledger_path(workspace).exists(), "")
+        check("[ledger] outside a work tree: no ledger written under HOME either",
+              not (home / ".vibe" / "delegate-usage.jsonl").exists(), "")
+
+
+def test_delegate_ledger_docs_and_gitignore():
+    print("\n[ledger] AC1/AC4/AC5: gitignore, install script, budget.md, ask/review/README, plan §3")
+    gitignore = (REPO / ".gitignore").read_text()
+    check("[ledger] .gitignore has the blanket .vibe/ rule (nothing new added for the ledger)",
+          re.search(r"(?m)^\.vibe/\s*$", gitignore) is not None, "")
+
+    install = (REPO / "devcontainer" / "install-claude-extras.sh").read_text()
+    check("[ledger] install-claude-extras.sh managed block has the blanket .vibe/ rule",
+          re.search(r'echo\s+"\.vibe/"', install) is not None, "")
+
+    budget = (REPO / "devcontainer" / "commands" / "budget.md").read_text()
+    check("[ledger] budget.md has the Delegated calls heading naming the ledger path",
+          "Delegated calls" in budget and "delegate-usage.jsonl" in budget, "")
+    check("[ledger] budget.md has both line templates",
+          "Astra (codex exec):" in budget and "claude -p (delegated):" in budget, "")
+    check("[ledger] budget.md gives a jq one-liner", "jq -s" in budget, "")
+
+    ask_md = (REPO / "devcontainer" / "commands" / "ask.md").read_text()
+    review_md = (REPO / "devcontainer" / "commands" / "review.md").read_text()
+    readme = README_MD.read_text()
+    check("[ledger] ask.md mentions delegate-usage.jsonl", "delegate-usage.jsonl" in ask_md, "")
+    check("[ledger] review.md mentions delegate-usage.jsonl", "delegate-usage.jsonl" in review_md, "")
+    check("[ledger] README mentions delegate-usage.jsonl", "delegate-usage.jsonl" in readme, "")
+
+    plan = (REPO / "docs" / "codex-integration-plan.md").read_text()
+    check("[ledger] codex-integration-plan.md § 3 item 9 marked delivered",
+          re.search(r"\|\s*9\s*\|\s*\*\*DELIVERED", plan) is not None, "")
+
+
+def test_delegate_ledger_astra_review_hardening():
+    """Astra's review of task_052 (2026-09-11): the ledger never records an
+    exception message (it could carry a scratch path), never follows a
+    symlinked .vibe/ directory, never blocks on a FIFO planted under its name,
+    and never copies a non-numeric usage sub-field."""
+    print("\n[ledger] Astra hardening: error categories, symlinked dir, FIFO, usage sub-field")
+    import os as _os
+    import shutil
+    categories = {"process_failed", "unsuccessful_turn", "no_completion", "invalid_usage", "invalid_reply", "error"}
+
+    with tempfile.TemporaryDirectory() as td:
+        workspace, home, env = _delegate_fixture(Path(td))
+        r, _ = _delegate_call(workspace, home, env, ["ask", "astra"], {"answer": "prose"})
+        lines = _ledger_lines(workspace)
+        check("[ledger] schema-invalid reply -> error is the fixed category invalid_reply",
+              r.returncode != 0 and lines and lines[-1]["error"] == "invalid_reply", str(lines[-1:]))
+        raw = _ledger_path(workspace).read_text()
+        check("[ledger] no scratch path or 'vibe-delegate-' temp name in the ledger",
+              "vibe-delegate-" not in raw and "/tmp/" not in raw, raw[-300:])
+        r, _ = _delegate_call(workspace, home, env, ["ask", "astra"], {"exit": 1})
+        lines = _ledger_lines(workspace)
+        check("[ledger] process exit 1 -> error is process_failed",
+              lines[-1]["error"] == "process_failed", str(lines[-1]))
+        check("[ledger] every recorded error is one of the fixed categories",
+              all(l["error"] in categories for l in lines if l["error"] is not None), str([l["error"] for l in lines]))
+
+    with tempfile.TemporaryDirectory() as td:
+        workspace, home, env = _delegate_fixture(Path(td))
+        shutil.rmtree(workspace / ".vibe", ignore_errors=True)
+        elsewhere = home / "elsewhere"; elsewhere.mkdir()
+        (workspace / ".vibe").symlink_to(elsewhere)
+        r, _ = _delegate_call(workspace, home, env, ["ask", "haiku"])
+        check("[ledger] symlinked .vibe/ dir: call still exits 0", r.returncode == 0, r.stderr)
+        check("[ledger] symlinked .vibe/ dir: refused with one stderr note, nothing written elsewhere",
+              "symlink" in r.stderr and not (elsewhere / "delegate-usage.jsonl").exists(), r.stderr)
+
+    with tempfile.TemporaryDirectory() as td:
+        workspace, home, env = _delegate_fixture(Path(td))
+        fifo = _ledger_path(workspace)
+        _os.mkfifo(fifo)
+        r, _ = _delegate_call(workspace, home, env, ["ask", "haiku"])
+        check("[ledger] FIFO planted as the ledger: call completes with exit 0 (never blocks)",
+              r.returncode == 0, r.stderr)
+        check("[ledger] FIFO planted as the ledger: refused with a stderr note",
+              "not a regular file" in r.stderr or "could not write usage ledger" in r.stderr, r.stderr)
+
+    with tempfile.TemporaryDirectory() as td:
+        workspace, home, env = _delegate_fixture(Path(td))
+        poisoned = {"response": {"type": "result", "subtype": "success", "is_error": False,
+            "result": "Claude answer", "modelUsage": {"served-fixture": {}},
+            "usage": {"input_tokens": 100, "cache_creation_input_tokens": 20000,
+                "cache_read_input_tokens": 7000, "output_tokens": 30,
+                "cache_creation": {"ephemeral_5m_input_tokens": "SECRET prompt text /tmp/x"}}}}
+        r, _ = _delegate_call(workspace, home, env, ["ask", "haiku"], poisoned)
+        out = json.loads(r.stdout)
+        lines = _ledger_lines(workspace)
+        # Astra re-review: the directory race is narrowed by re-verifying the
+        # directory and file identity AFTER the open, before the single write.
+        src = DELEGATE.read_text()
+        check("[ledger] post-open identity re-check present (dir inode, non-symlink, file dev/ino vs the descriptor)",
+              "const dirAfter = lstatSync(dir)" in src and "dirAfter.ino !== dirStat.ino" in src and
+              "pathAfter.ino !== opened.ino" in src and "O_NOFOLLOW" in src and "O_NONBLOCK" in src, "")
+        check("[ledger] non-numeric ephemeral usage sub-field becomes null in stdout and the ledger",
+              r.returncode == 0 and out["usage"]["ephemeral_5m_input_tokens"] is None and
+              lines[-1]["usage"]["ephemeral_5m_input_tokens"] is None and "SECRET" not in _ledger_path(workspace).read_text(),
+              r.stdout[-200:])
