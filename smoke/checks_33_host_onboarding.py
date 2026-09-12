@@ -13,8 +13,10 @@ VIBE_AGENT_WRAPPER = REPO / "devcontainer" / "vibe-agent.sh"
 
 def _load():
     spec = importlib.util.spec_from_file_location("host_onboarding_fixture", HOST_ONBOARDING)
-    module = importlib.util.module_from_spec(spec)
-    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec) if spec else None
+    if not check("[host-onboarding] host-onboarding.py fixture module spec loads",
+                  bool(spec and spec.loader and module), str(HOST_ONBOARDING)):
+        raise RuntimeError("host-onboarding.py fixture failed to load; see the check() failure above")
     spec.loader.exec_module(module)
     return module
 
@@ -63,7 +65,7 @@ def _repo(tmp: Path, name: str = "project with spaces") -> Path:
     ws = tmp / name
     ws.mkdir()
     result = run(["git", "init", str(ws)], env=_env(tmp))
-    assert result.returncode == 0, result.stderr
+    check("[host-onboarding] repo fixture git init succeeds", result.returncode == 0, result.stderr)
     return ws
 
 
@@ -121,7 +123,10 @@ def test_memory_binding_spaces_private_and_unsafe_file_refusals():
             ws = _repo(tmp)
             _main(module, "memory-set", str(ws), "codex")
             out = _main(module, "memory-get", str(ws))
-            runtime = next((home / ".vibe").glob("runtime-*.json"))
+            runtime = next((home / ".vibe").glob("runtime-*.json"), None)
+            if not check("[host-onboarding] memory-set wrote a runtime-*.json file",
+                          runtime is not None, str(home / ".vibe")):
+                return
             check("[host-onboarding] memory binds canonical spaced path",
                   out.strip() == "codex" and json.loads(runtime.read_text()) ==
                   {"workspace": str(ws.resolve()), "agent": "codex"}, out)
@@ -173,11 +178,14 @@ def test_read_only_overlap_and_unsafe_setup_controls_refuse_before_writes():
             check("[host-onboarding] check is read-only",
                   not (home / ".vibe").exists() and not (ws / ".vibe").exists())
             before = sorted(str(p.relative_to(tmp)) for p in tmp.rglob("*"))
-            old = os.environ.get("VIBE_PROJECTS_DIR"); os.environ["VIBE_PROJECTS_DIR"] = str(home)
+            # A genuinely-mounted location (brain2), not VIBE_PROJECTS_DIR: the
+            # launcher never mounts PROJECTS_DIR (item 2), so that var must NOT
+            # trigger this refusal any more -- see test_storage_no_longer_...
+            old = os.environ.get("VIBE_BRAIN2_PATH"); os.environ["VIBE_BRAIN2_PATH"] = str(home)
             try:
                 refused = _refuses(lambda: _setup(module, ws, source))
             finally:
-                os.environ.pop("VIBE_PROJECTS_DIR", None) if old is None else os.environ.__setitem__("VIBE_PROJECTS_DIR", old)
+                os.environ.pop("VIBE_BRAIN2_PATH", None) if old is None else os.environ.__setitem__("VIBE_BRAIN2_PATH", old)
             after = sorted(str(p.relative_to(tmp)) for p in tmp.rglob("*"))
             check("[host-onboarding] overlap refuses before all writes", refused and before == after,
                   f"before={before}\nafter={after}")
@@ -247,7 +255,10 @@ def test_take_agent_host_only_consumes_and_persists_canonical_memory():
                   denied.returncode != 0 and "outside a container" in denied.stderr and
                   request.exists() and not (denied_home / ".vibe").exists(), denied.stderr)
             out = _main(module, "take-agent", str(ws))
-            runtime = next((home / ".vibe").glob("runtime-*.json"))
+            runtime = next((home / ".vibe").glob("runtime-*.json"), None)
+            if not check("[host-onboarding] take-agent persisted a runtime-*.json file",
+                          runtime is not None, str(home / ".vibe")):
+                return
             check("[host-onboarding] host take consumes and persists canonical memory",
                   out.strip() == "codex" and not request.exists() and
                   json.loads(runtime.read_text()) == {"workspace": str(ws.resolve()), "agent": "codex"} and
@@ -459,6 +470,81 @@ m.main()
         check("[host-onboarding] concurrent setup loses neither project grant",
               all(child.returncode == 0 for child in children) and set(entries) == {str(first), str(second)},
               repr(reports) + repr(entries))
+
+
+def test_directory_allows_self_owned_group_or_other_writable_ancestor():
+    print("\n[host-onboarding] umask-002 ancestor is not a launch breaker (item 1)")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        with _unit_fixture(tmp) as (module, _home):
+            for mode in (0o775, 0o777):
+                parent = tmp / ("projects-" + oct(mode))
+                parent.mkdir()
+                os.chmod(parent, mode)  # mkdir()'s mode is masked by umask; force it
+                ws = parent / "proj"
+                result = run(["git", "init", str(ws)], env=_env(tmp))
+                check("[host-onboarding] fixture repo under " + oct(mode) + " ancestor inits",
+                      result.returncode == 0, result.stderr)
+                out = _main(module, "take-agent", str(ws))
+                check("[host-onboarding] take-agent proceeds under a self-owned " + oct(mode) + " ancestor",
+                      out == "" and not (ws / ".vibe").exists(), repr(out))
+            my_uid, other_uid = os.getuid(), os.getuid() + 1
+            # A different non-root owner is unsafe regardless of visible mode
+            # bits -- they can chmod their own directory at will, so the mode
+            # is not the gate; ownership itself is the risk. Cannot fabricate
+            # a file owned by another uid without root, so unit-call the
+            # predicate directly with injected (uid, mode) values.
+            check("[host-onboarding] a different non-root owner refuses even with no write bits set",
+                  module._unsafe_ancestor(other_uid, 0o755, my_uid))
+            check("[host-onboarding] a different non-root owner refuses when group/other-writable too",
+                  module._unsafe_ancestor(other_uid, 0o775, my_uid) and
+                  module._unsafe_ancestor(other_uid, 0o777, my_uid))
+            check("[host-onboarding] your own directory never refuses regardless of write bits",
+                  not module._unsafe_ancestor(my_uid, 0o777, my_uid) and
+                  not module._unsafe_ancestor(my_uid, 0o775, my_uid) and
+                  not module._unsafe_ancestor(my_uid, 0o755, my_uid))
+            check("[host-onboarding] a root-owned non-writable ancestor does not refuse",
+                  not module._unsafe_ancestor(0, 0o755, my_uid))
+            check("[host-onboarding] a root-owned group/other-writable non-sticky ancestor refuses",
+                  module._unsafe_ancestor(0, 0o777, my_uid) and
+                  module._unsafe_ancestor(0, 0o775, my_uid))
+            check("[host-onboarding] a root-owned group/other-writable STICKY ancestor does not refuse (/tmp pattern)",
+                  not module._unsafe_ancestor(0, 0o777 | stat.S_ISVTX, my_uid) and
+                  not module._unsafe_ancestor(0, 0o775 | stat.S_ISVTX, my_uid))
+
+
+def test_storage_no_longer_treats_projects_dir_as_a_container_mount():
+    print("\n[host-onboarding] VIBE_PROJECTS_DIR is not mounted, storage() must not refuse it (item 2)")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        with _unit_fixture(tmp) as (module, home):
+            ws = _repo(tmp)
+            old = os.environ.get("VIBE_PROJECTS_DIR")
+            # ~/.vibe (the candidate storage root) sits under this VIBE_PROJECTS_DIR,
+            # exactly the "~/Projects beside ~/.vibe" case the review item describes.
+            os.environ["VIBE_PROJECTS_DIR"] = str(home.parent)
+            try:
+                fd = module.storage(str(ws), True)
+                accepted = fd is not None
+                if fd is not None:
+                    os.close(fd)
+            finally:
+                if old is None:
+                    os.environ.pop("VIBE_PROJECTS_DIR", None)
+                else:
+                    os.environ["VIBE_PROJECTS_DIR"] = old
+            check("[host-onboarding] storage root under VIBE_PROJECTS_DIR is accepted",
+                  accepted and (home / ".vibe").is_dir())
+            old = os.environ.get("VIBE_BRAIN2_PATH")
+            os.environ["VIBE_BRAIN2_PATH"] = str(home)
+            try:
+                check("[host-onboarding] a genuinely-mounted overlap (brain2) is still refused",
+                      _refuses(lambda: module.storage(str(ws), True)))
+            finally:
+                if old is None:
+                    os.environ.pop("VIBE_BRAIN2_PATH", None)
+                else:
+                    os.environ["VIBE_BRAIN2_PATH"] = old
 
 
 def test_docker_preflight_is_shared_and_mac_start_preserves_target():

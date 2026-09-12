@@ -100,6 +100,24 @@ def host():
             pass
 
 
+def _unsafe_ancestor(uid, mode, euid):
+    """The check exists to stop a DIFFERENT user substituting a directory
+    under us -- it does not police the write bits of a directory we already
+    own.
+    - Ours (uid == euid): never unsafe, whatever its group/other write bits
+      (a umask-002 host's 0775 ~/Projects must still let vibe launch).
+    - A different non-root owner: always unsafe. That owner can chmod their
+      own directory at will regardless of its current mode, so the visible
+      write bits are not the gate -- ownership itself is the risk.
+    - Root-owned: unsafe only if group/other-writable AND not sticky (the
+      /tmp pattern deliberately carves out the sticky case)."""
+    if uid == euid:
+        return False
+    if uid != 0:
+        return True
+    return bool(mode & 0o022) and not (mode & stat.S_ISVTX)
+
+
 def directory(path, create=False):
     """Walk without symlinks; never chmod existing directories."""
     path = os.path.abspath(path)
@@ -121,8 +139,7 @@ def directory(path, create=False):
             os.close(fd)
             fd = nxt
             s = os.fstat(fd)
-            if s.st_uid not in (0, os.getuid()) or (s.st_mode & 0o022 and not
-                    (s.st_uid == 0 and s.st_mode & stat.S_ISVTX)):
+            if _unsafe_ancestor(s.st_uid, s.st_mode, os.getuid()):
                 raise ValueError('unsafe directory ancestor: ' + path)
         return fd
     except BaseException:
@@ -178,7 +195,6 @@ def storage(ws, create=False):
     root = home + '/.vibe'
     # Host state must never sit inside the project or the standard extra mounts.
     mounts = [ws, home + '/.claude', os.environ.get('VIBE_CODEX_PATH', home + '/.codex'), home + '/.ssh',
-              os.environ.get('VIBE_PROJECTS_DIR', home + '/Projects'),
               os.environ.get('VIBE_BRAIN2_PATH', home + '/brain2'),
               os.environ.get('VIBE_ZOTERO_PATH', home + '/Zotero/storage')]
     try:
