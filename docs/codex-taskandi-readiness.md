@@ -1,4 +1,6 @@
-# Codex development of Task&I: acceptance and evidence
+# Codex development of Task&I: historical acceptance and evidence
+
+Superseded as the generic launch gate by [project-agnostic readiness](codex-readiness.md). Martin clarified that Task&I integration belongs in the Task&I project. Its service/native scenario below is historical deferred scope, not a prerequisite for using Vibe Codex in another repo.
 
 Source implementation for the 2026-09-12 scoped run. Martin clarified that this
 builds Vibe capability; a Task&I checkout is not a prerequisite. Codex stays in

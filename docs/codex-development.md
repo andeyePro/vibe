@@ -1,10 +1,12 @@
 # Developing with Codex in Vibe
 
-Codex works inside Vibe's container. Native Apple builds run under a dedicated Mac build account through the build bridge. Container isolation and account permissions are distinct boundaries; a build can execute project-controlled code with the build account's privileges.
+Start with [your first Codex project](codex-quickstart.md). Vibe is project agnostic: ordinary development requires neither Task&I nor a Mac bridge. Codex works inside Vibe's container. Optional native Apple builds run under a dedicated Mac build account through the build bridge. Container isolation and account permissions are distinct boundaries; a build can execute project-controlled code with the build account's privileges.
+
+Docker builds and rebuilds run on the host for both agents. The launcher checks Docker readiness and can start an identifiable installed Mac backend; it never mounts the unrestricted Docker socket into the coding container. A custom or ambiguous backend requires the host’s normal startup step.
 
 ## Interactive and supervised sessions
 
-Launch interactively with `vibe --agent codex`. For unattended work, save a prompt inside the project and run:
+Launch interactively with `vibe`; first launch offers the runtime choice and guides Codex setup. `vibe --agent codex` switches the folder and remembers that choice for subsequent plain launches. The same host ChatGPT login is reused across authorised projects, while each project keeps its own login-mount grant. Existing GitHub setup is shared with Claude. For unattended work, save a prompt inside the project and run:
 
 ```bash
 vibe --codex-run .vss/prompts/my-task.md
@@ -39,10 +41,10 @@ Do not clear an ambiguous lock based only on its age or recorded PID. Healthy
 tools may be silent for a long time: the wall deadline remains the safe bound,
 and silence alone is not classified as a stall.
 
-## Native builds and Task&I
+## Optional native builds and integrations
 
 The bridge setup and account boundary are documented in
-[mac-build-protocol.md](mac-build-protocol.md). The local client uses an explicit
+[the short assisted setup](mac-build-setup.md); implementation details are in [mac-build-protocol.md](mac-build-protocol.md). The local client uses an explicit
 source allowlist and returns content fingerprints, logs and bounded artifacts.
 Live host installation and a project key are separate setup steps.
 
@@ -53,6 +55,8 @@ the real Task&I service before activation. Unbound projects keep their file
 channels and do not initiate Task&I traffic.
 
 ## Context and FM2C
+
+Without configuration, the local answer file is `.vss/fromMartin-toCodex.md` (FM2C), with questions in `.vss/fromCodex.md` and history in `.vss/Codex-Q&A-archive.md`. Discovery reports these paths without creating files.
 
 At startup and resumption, Codex is directed to project instructions and `codex-context`. Configure relevant references and separate Q&A files using local, untracked `.vibe/codex-context.json`:
 
@@ -91,4 +95,4 @@ Use Vibe's existing untracked `.vibe/domains` mechanism for required documentati
 
 ## Verification and rollout
 
-Review `docs/codex-taskandi-readiness.md` for per-capability evidence and remaining live checks. Run the shell and smoke checks, then verify the rebuilt container on a disposable project before relying on overnight operation. Confirm actual tools, helper permissions, guard denials, resumption and cancellation. Test the Mac account and any Task&I endpoint separately with isolated development data. Keep the previous image/source revision available for rollback; preserve supervisor and Q&A state when changing versions.
+Review [generic readiness](codex-readiness.md) for per-capability evidence and remaining live checks. The earlier Task&I matrix is historical, not a prerequisite for another project. Run the shell and smoke checks, then verify the rebuilt container on a disposable project before relying on overnight operation. Confirm actual tools, helper permissions, guard denials, resumption and cancellation. Test the Mac account and any Task&I endpoint separately with isolated development data. Keep the previous image/source revision available for rollback; preserve supervisor and Q&A state when changing versions.

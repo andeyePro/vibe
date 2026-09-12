@@ -74,7 +74,9 @@ Two vibe-wide behaviour changes shipped and took effect on this rebuild — surf
 
 ## Open
 
-- [ ] **Codex Task&I live rollout and acceptance** (2026-09-12): review/rebuild the implemented source image, install the restricted bridge on the existing `claude` Mac account, verify Task&I server schemas/scopes on an isolated test task, and record the whole native loop. Source/fixture evidence and exact prerequisites: `docs/codex-taskandi-readiness.md`; MANUAL-TESTS Test 56. Live activation remains a separate authorised action.
+- [x] **Plain-vibe Codex onboarding** (2026-09-12): remember the per-folder runtime and guide interactive host login, local Git and scoped project setup; preserve credential gates and noninteractive refusal.
+
+- [ ] **Generic Codex live rollout** (2026-09-12): activation authorised by Martin; run the rebuilt image on another disposable repo and verify guard/startup/development/recovery evidence using `docs/codex-quickstart.md` and `docs/codex-readiness.md`. Current container has no Docker command/socket. Mac setup is optional and guided by `docs/mac-build-setup.md`; Task&I service integration belongs in the Task&I project.
 
 - [ ] **Loud completion/blocked alert for unattended runs** (Martin, 2026-09-12: "we really need ... a loud alert sound and a bouncing app tray icon when the likes of /vsss is done or can't proceed without human input; email or SMS would be really cool too") — at `/vsss` exit, on a hard-escalate abort, and at any A-mode wait, ring the terminal bell AND bounce the Dock icon (the `printf '\a'` idiom the Stop/Notification hooks and the A-mode announce already use — extend it to the exit report and the escalate path in `vsss.md`/`vss.md`); and add an opt-in email/SMS notifier, e.g. a `VIBE_NOTIFY_CMD` in `~/.vibe/config` that the launcher runs host-side when the container's claude exits or when a `.vss/needs-human` file appears.
 

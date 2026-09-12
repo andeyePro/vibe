@@ -900,9 +900,9 @@ def test_codex_allow_docs():
     check("[codex] README names the registry as the reason a container cannot opt itself in",
           "a container cannot opt itself in" in readme, "")
     readme_flat = flat(readme)
-    check("[codex] README describes the three-step opt-in (log in, marker, allow)",
+    check("[codex] README describes guided opt-in and its manual recovery prerequisites",
           "1. **Log in**" in readme_flat and
-          "2. **`touch .vibe-allow-codex`**" in readme_flat and
+          "2. **Create `.vibe-allow-codex`**" in readme_flat and "Interactive onboarding performs" in readme_flat and
           "3. **`vibe codex allow`**" in readme_flat, "")
 
     manual = MANUAL_TESTS_MD.read_text()

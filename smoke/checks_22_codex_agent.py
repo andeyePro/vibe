@@ -679,8 +679,8 @@ def test_manual_tests_55_codex_led_block():
           "config.toml" in flat and "deny" in flat.lower(), "")
     check("[agent] Test 55 step: allowed git status, denied git push --force",
           "git status" in flat and "git push --force" in flat, "")
-    check("[agent] Test 55 step: back to Claude on next plain launch",
-          "Claude Code must lead again" in flat, "")
+    check("[agent] Test 55 step: runtime persists and explicit switch returns to Claude",
+          "Codex must remain selected" in flat and "vibe --agent claude" in flat and "remembers Claude" in flat, "")
     check("[agent] Test 55 negative case: refused before any Docker build/container creation",
           "needs the Codex login mount" in flat and
           "before** any Docker build or container creation" in flat, "")

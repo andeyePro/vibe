@@ -32,8 +32,25 @@ from smoke.checks_26_mac_build import *
 from smoke.checks_31_mac_build_recovery import *
 from smoke.checks_30_supervisor_reconciliation import *
 from smoke.checks_32_managed_vendor_trust import *
+from smoke.checks_33_host_onboarding import *
 
 def main() -> int:
+    test_docker_preflight_is_shared_and_mac_start_preserves_target()
+    test_missing_host_cli_installs_only_after_consent_and_reuses_login()
+    test_concurrent_setup_retains_both_project_grants()
+    test_host_cli_refuses_explicit_container_marker_portably()
+    test_memory_binding_spaces_private_and_unsafe_file_refusals()
+    test_setup_preserves_domains_creates_consent_and_is_idempotent()
+    test_read_only_overlap_and_unsafe_setup_controls_refuse_before_writes()
+    test_initial_git_add_after_setup_stages_only_user_files()
+    test_container_request_is_private_local_exact_and_has_no_host_authority()
+    test_take_agent_host_only_consumes_and_persists_canonical_memory()
+    test_fresh_folder_no_request_needs_no_git_and_autonomy_refuses()
+    test_tracked_linked_and_malformed_requests_refuse()
+    test_wrapper_targets_launched_workspace_from_nested_cwd()
+    test_plain_launcher_consent_and_remembered_precedence()
+    test_switch_after_exit_clean_unsupervised_cleanup_then_plain_reexec()
+    test_source_check_rejects_unsafe_auth_metadata()
     test_docker_install_hardens_vendor_and_shared_tree_before_final_user()
     test_liveness_managed_prefix_protected_fixture_and_mutability_refusals()
     test_entry_clears_caller_node_environment_before_cli()

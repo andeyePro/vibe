@@ -8,7 +8,8 @@ def test_task028_fragment_merges_and_fable_grant() -> None:
     """task_028 AC1-AC10, AC12, AC13: fragment merges, word counts, sentinels, Fable grant."""
     print("\n[task_028: CLAUDE.md fragment merges + single Fable-grant definition]")
     
-    # AC1: Exactly 15 .md files in devcontainer/claude-md/
+    # AC1: Exactly 16 .md files (agent-switch.md adds shared runtime handoff).
+    # Previously 15 .md files in devcontainer/claude-md/
     # (13 at task_028; extra-domains-refresh.md added by task_042 — the
     #  CDN-staleness fix, gated on VIBE_EXTRA_DOMAINS so most projects
     #  never see it. The AC2 word budget was NOT raised to make room:
@@ -22,7 +23,7 @@ def test_task028_fragment_merges_and_fable_grant() -> None:
     #                output-consolidation, project-hygiene, todo-changelog, vibe-cli, workspace-is-the-repo
     claude_md_dir = REPO / "devcontainer" / "claude-md"
     all_md_files = sorted([f.name for f in claude_md_dir.glob("*.md")])
-    check("[ac1] exactly 15 .md files in claude-md/", len(all_md_files) == 15, f"found {len(all_md_files)}")
+    check("[ac1] exactly 16 .md files in claude-md/", len(all_md_files) == 16, f"found {len(all_md_files)}")
 
     deleted_names = ["learn-hook.md", "feedback-auto-promote.md", "conversation-history.md"]
     for name in deleted_names:
@@ -37,7 +38,7 @@ def test_task028_fragment_merges_and_fable_grant() -> None:
         "harness-routing.md", "output-consolidation.md", "project-hygiene.md",
         "todo-changelog.md", "vibe-cli.md", "workspace-is-the-repo.md",
         "learnings.md", "auto-memory-scope.md", "content-guard.md",
-        "extra-domains-refresh.md", "dollar-prefix.md",
+        "extra-domains-refresh.md", "dollar-prefix.md", "agent-switch.md",
     }
     check("[ac1] all expected fragment names present", set(all_md_files) == expected_names,
           f"diff: {set(all_md_files).symmetric_difference(expected_names)}")

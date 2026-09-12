@@ -94,6 +94,15 @@ def test_codex_context_missing_helpers_are_false():
         result, data = _discover(root, Path(td) / "empty-bin")
         check("[codex-context] discovery succeeds with an empty helper bin", result.returncode == 0, result.stderr)
         check("[codex-context] missing executable helpers report false", data is not None and all(not x["executable"] for x in data["installedHelpers"]), str(data))
+        check("[codex-context] unconfigured project has local FM2C paths", data is not None and data["channels"]["answers"]["path"] == str(root / ".vss/fromMartin-toCodex.md") and data["channels"]["questions"]["path"] == str(root / ".vss/fromCodex.md") and data["channels"]["archive"]["path"] == str(root / ".vss/Codex-Q&A-archive.md"), str(data))
+        check("[codex-context] discovery does not create channels or require integration", not (root / ".vss").exists() and not (root / ".vibe/taskandi.json").exists(), "")
+        installed = Path(td) / "codex-context"
+        installed.symlink_to(CONTEXT)
+        linked = run(["node", str(installed)], cwd=root / "nested")
+        linked_data = json.loads(linked.stdout) if linked.stdout.strip() else {}
+        check("[codex-context] installed symlink discovers another repo from nested cwd", linked.returncode == 0 and linked_data.get("root") == str(root), linked.stderr)
+        invalid = run(["node", str(installed), str(root), "extra"], cwd=root)
+        check("[codex-context] installed symlink rejects invalid arguments", invalid.returncode != 0 and "Usage:" in invalid.stderr, invalid.stderr)
 
 
 def _prefix(payload):
@@ -106,6 +115,10 @@ def test_codex_context_prompt_prefix_routes_session_and_fm2c():
     check("[codex-context] SessionStart emits context-document instruction", session.returncode == 0 and "codex-context.md" in session.stdout and "additionalContext" in session.stdout, session.stderr)
     unrelated = _prefix({"hook_event_name": "UserPromptSubmit", "prompt": "ordinary project question"})
     check("[codex-context] unrelated prompt stays empty", unrelated.returncode == 0 and unrelated.stdout == "", unrelated.stderr)
+    for phrase in ("help", " HELP? ", "commands", "?", "What can you do?"):
+        help_result = _prefix({"hook_event_name": "UserPromptSubmit", "prompt": phrase})
+        check(f"[codex-context] {phrase!r} delivers help without invoking a task", help_result.returncode == 0 and "$vsss" in help_result.stdout and "Do not execute a harness" in help_result.stdout, help_result.stderr)
+
     fm2c = _prefix({"hook_event_name": "UserPromptSubmit", "prompt": "please fm2c now"})
     check("[codex-context] FM2C is case-insensitive and names answer channel", fm2c.returncode == 0 and "vibe-fromMartin-toCodex.md" in fm2c.stdout and "codex-context.md" in fm2c.stdout, fm2c.stderr)
 

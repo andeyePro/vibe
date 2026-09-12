@@ -38,6 +38,15 @@ prompt=${prompt%$'\n'}   # jq -r's own line terminator, not prompt content
 # leading whitespace; the remainder keeps every later line intact and loses
 # only the whitespace that separated it from the token.
 stripped=${prompt#"${prompt%%[![:space:]]*}"}
+help_text=${stripped%"${stripped##*[![:space:]]}"}
+help_text=$(printf '%s' "$help_text" | tr '[:upper:]' '[:lower:]')
+case "$help_text" in
+  help|help\?|commands|\?|"what can i do"|"what can i do?"|"what can you do"|"what can you do?")
+    jq -n '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext:
+      "The user is asking for Vibe help. Give a short practical command guide, not a development task. Explain: ordinary text describes what to build; $vs runs adversarial implementation/testing; $vss handles one task autonomously; $vsss continues within the task scope until finished or externally blocked; see FM2C reads the configured reply file; ask to switch to Claude or Codex to queue a change with vibe-agent, then exit normally to reopen. In Codex the $ spellings are reliable. A bare /vs, /vss or /vsss may be rejected by the composer before submission; one leading space makes the slash form reach Vibe. Interactive $vsss is not automatically supervised after process exit. Host terminal: vibe reopens the project, vibe --help lists launcher options, vibe --codex-run <project-local-prompt> provides supervised execution. Mention other commands only after checking installed skills/command documents; do not invent parity with Claude-only commands. Do not execute a harness merely to answer help."}}' || true
+    exit 0
+    ;;
+esac
 fm2c=0
 if [[ "$stripped" =~ (^|[[:space:]])[Ff][Mm]2[Cc]([[:space:][:punct:]]|$) ]]; then fm2c=1; fi
 fm2c_note='FM2C means the configured Codex answer file (vibe-fromMartin-toCodex.md). Read /usr/local/share/vibe/codex-context.md and that channel now; apply answers and continue the active objective, preserving concurrent edits and archiving safely.'

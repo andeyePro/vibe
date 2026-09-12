@@ -1,5 +1,7 @@
 # Mac build bridge protocol (v1)
 
+For setup, ask the agent to follow [the short assisted guide](mac-build-setup.md). This document is its technical reference, not a user checklist.
+
 `devcontainer/mac-build.mjs` snapshots explicitly selected source files and sends one JSON request to the fixed SSH forced command `mac-build-host` on host `host.docker.internal` using account `claude`. This is a provisional, fixture-only bridge requiring explicit opt-in for each selected project. Approved tools still execute project-controlled code with the dedicated Mac account’s full privileges.
 
 ## Client configuration

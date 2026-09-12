@@ -13,9 +13,8 @@
 #   vibe --model <id>        # launch on a specific Claude model id
 #   vibe --profile <name>    # build/use a language-profile child image
 #                            # (shipped: none, python; --profile none disables)
-#   vibe --agent <claude|codex>  # choose the lead runtime for this launch
-#                            # (default claude; codex needs the Codex login
-#                            # mount — see the Codex setup section of README)
+#   vibe --agent <claude|codex>  # switch and remember this folder’s runtime
+#                            # (plain vibe offers first setup and reuses it)
 #   vibe <project> --task <ref>  # override the local Task&I node binding for this launch
 #   vibe --codex-run <file>  # run a project-local prompt under the Codex supervisor
 #   vibe --codex-resume <file> # resume that prompt using its saved supervisor state
@@ -334,7 +333,18 @@ create_github_repo() {
     no)    echo "  Skipping — launching without GitHub."; return ;;
   esac
 
+  if ! command -v gh >/dev/null 2>&1; then
+    printf '%s\n' '  Install GitHub CLI from https://cli.github.com, then run vibe again.'
+    return 1
+  fi
   local gh_user
+  if _vibe_interactive && ! gh auth status >/dev/null 2>&1; then
+    if ask_yes_no 'Sign in to GitHub CLI to continue GitHub setup?' n; then
+      gh auth login || return
+    else
+      return
+    fi
+  fi
   gh_user=$(gh api user --jq '.login' 2>/dev/null) || {
     echo "  ✗ Not logged in to GitHub CLI. Run: gh auth login"
     return
@@ -4207,6 +4217,153 @@ _agent_resolve() {
   return 0
 }
 
+# Host onboarding APIs (kept above VIBE_SOURCE_ONLY).
+# Launch precedence: --agent > host folder memory > valid local .vibe/agent
+# > VIBE_AGENT > interactive choice > claude. _agent_resolve remains pure and
+# backward compatible; neither local runtime choice nor memory grants login.
+_vibe_host_onboarding() {
+  VIBE_PROJECTS_DIR="$PROJECTS_DIR" VIBE_BRAIN2_PATH="${VIBE_BRAIN2_PATH:-$HOME/brain2}" \
+    VIBE_ZOTERO_PATH="${VIBE_ZOTERO_PATH:-$HOME/Zotero/storage}" VIBE_CODEX_PATH="${VIBE_CODEX_PATH:-$HOME/.codex}" EXTRA_DOMAINS_MAX="$EXTRA_DOMAINS_MAX" \
+    python3 "$DEVCONTAINER_DIR/host-onboarding.py" "$@"
+}
+
+_vibe_interactive() { [ -t 0 ] && [ -t 1 ]; }
+
+# Shared by both runtimes. Docker stays on the host, outside the YOLO mount.
+vibe_docker_preflight() {
+  local attempt
+  _vibe_host_onboarding docker-ready 2>/dev/null && return 0
+  if _vibe_interactive && _vibe_host_onboarding docker-start 2>/dev/null; then
+    for attempt in 1 2 3 4 5 6; do
+      _vibe_host_onboarding docker-ready 2>/dev/null && return 0
+      if [ "$attempt" -lt 6 ]; then sleep 2; fi
+    done
+  fi
+  printf '%s\n' 'Docker is not ready. Start your selected Docker backend (OrbStack/Docker Desktop on Mac, Docker Engine on Linux), then run vibe again.' >&2
+  return 1
+}
+
+# Sets LEAD_AGENT in caller. Explicit choices update memory, including in CI
+# on a real host; default CI launches neither prompt nor create state.
+vibe_onboard_agent() {
+  local flag="$1" ws="$2" resolved probe remembered="" answer=""
+  local requested=""
+  if [ -n "$flag" ]; then
+    # A new explicit host choice supersedes any queued in-session choice.
+    _vibe_host_onboarding cancel-agent "$ws" || return 1
+  else
+    requested="$(_vibe_host_onboarding take-agent "$ws")" || return 1
+    if [ -n "$requested" ]; then LEAD_AGENT="$requested"; return 0; fi
+  fi
+  if [ -z "$flag" ]; then
+    remembered="$(_vibe_host_onboarding memory-get "$ws")" || return 1
+    if [ -n "$remembered" ]; then LEAD_AGENT="$remembered"; return 0; fi
+  fi
+  resolved="$(_agent_resolve "$flag" "$ws")"
+  # A sentinel environment default distinguishes a valid local Claude choice
+  # from the ordinary Claude fallback without changing _agent_resolve's API.
+  probe="$(VIBE_AGENT=codex _agent_resolve "$flag" "$ws" 2>/dev/null)"
+  if [ -n "$flag" ] || [ "$probe" = claude ] || [ "$resolved" = codex ] || [ "${VIBE_AGENT:-}" = claude ]; then
+    LEAD_AGENT="$resolved"
+  else
+    remembered="$(_vibe_host_onboarding memory-get "$ws")" || return 1
+    if [ -n "$remembered" ]; then
+      LEAD_AGENT="$remembered"
+    elif _vibe_interactive; then
+      printf '  Choose runtime [claude/codex] (claude): '
+      read -r answer || return 1
+      case "$answer" in
+        ''|claude) LEAD_AGENT=claude ;;
+        codex) LEAD_AGENT=codex ;;
+        *) printf '%s\n' 'Choose claude or codex, then run vibe again.' >&2; return 1 ;;
+      esac
+      _vibe_host_onboarding memory-set "$ws" "$LEAD_AGENT" || return 1
+    else
+      LEAD_AGENT=claude
+    fi
+  fi
+  if [ -n "$flag" ]; then
+    _vibe_host_onboarding memory-set "$ws" "$LEAD_AGENT" || return 1
+  fi
+}
+
+# Local Git opt-in is independent of publishing and of GitHub's skip record.
+vibe_onboard_git() {
+  local ws="$1"
+  _vibe_interactive || return 0
+  [ "$(git -C "$ws" rev-parse --is-inside-work-tree 2>/dev/null)" = true ] && return 0
+  _vibe_host_onboarding git-check "$ws" || return 1
+  local question='Initialize a local Git repository here? (No commit or publishing)'
+  [ "${LEAD_AGENT:-claude}" != codex ] || question='Initialize local Git here? Codex project isolation needs Git; no commit or publishing.'
+  if ask_yes_no "$question" n; then
+    git -C "$ws" init || return 1
+  elif [ "${LEAD_AGENT:-claude}" = codex ]; then
+    printf '%s\n' 'Codex setup stopped without changes. Run vibe again when ready to initialize Git.' >&2
+    return 1
+  fi
+}
+
+# Vendor file-store status/login only; run outside project config discovery.
+# Status text is consumed, never printed, and no credential file is read here.
+vibe_codex_login_status() {
+  (cd / && CODEX_HOME="$1" codex -c 'cli_auth_credentials_store="file"' \
+    -c 'forced_login_method="chatgpt"' login status 2>&1) | grep -q 'Logged in using ChatGPT'
+}
+
+vibe_onboard_codex() {
+  local ws="$1" source domains ready=1 logged=0 have_cli=1 d
+  [ "${VIBE_CODEX_PATH:-}" = off ] && return 0
+  _vibe_interactive || return 0
+  source="${VIBE_CODEX_PATH:-$HOME/.codex}"
+  _vibe_host_onboarding source-check "$source" || return 1
+  command -v codex >/dev/null 2>&1 || have_cli=0
+  # Validate destinations even when existing consent looks healthy.
+  _vibe_host_onboarding check "$ws" "${VIBE_EXTRA_DOMAINS:-}" "$source" || return 1
+  [ -n "$(_codex_desired_source "$ws" 2>/dev/null)" ] || ready=0
+  resolve_extra_domains "$ws" "${VIBE_EXTRA_DOMAINS:-}" >/dev/null
+  domains="$EXTRA_DOMAINS_RESOLVED"
+  for d in chatgpt.com auth.openai.com api.openai.com; do
+    case " $domains " in *" $d "*) : ;; *) ready=0 ;; esac
+  done
+  if [ "$have_cli" = 1 ] && vibe_codex_login_status "$source"; then logged=1; else ready=0; fi
+  [ "$ready" = 1 ] && return 0
+  if ! ask_yes_no "Set up Codex here? Its file-stored ChatGPT login at $source will be readable/writable by this project's container; allow chatgpt.com, auth.openai.com and api.openai.com install the host Codex CLI and sign in if needed." n; then
+    return 1
+  fi
+  if [ "$have_cli" != 1 ]; then
+    command -v npm >/dev/null 2>&1 || { printf '%s\n' 'Install Node.js/npm on the host, then run vibe again.' >&2; return 1; }
+    (cd / && npm install -g @openai/codex) || { printf '%s\n' 'Host Codex installation failed; resolve the npm error above and run vibe again.' >&2; return 1; }
+    command -v codex >/dev/null 2>&1 || { printf '%s\n' 'Codex installed but is not on PATH. Open a new terminal and run vibe again.' >&2; return 1; }
+    if vibe_codex_login_status "$source"; then logged=1; fi
+  fi
+  if [ "$logged" != 1 ]; then
+    (cd / && CODEX_HOME="$source" codex -c 'cli_auth_credentials_store="file"' \
+      -c 'forced_login_method="chatgpt"' login) || return 1
+    vibe_codex_login_status "$source" || { printf '%s\n' 'ChatGPT file-store login was not confirmed.' >&2; return 1; }
+  fi
+  _vibe_host_onboarding setup "$ws" "${VIBE_EXTRA_DOMAINS:-}" "$source"
+}
+
+# Apply an explicit in-session request only after the TUI has exited cleanly.
+# Cleanup the old launcher before re-entering; never transfer vendor histories.
+vibe_switch_after_exit() {
+  local next=""
+  _vibe_interactive || return 0
+  [ "${CLAUDE_EXIT:-1}" = 0 ] || return 0
+  [ -z "${CODEX_ACTION:-}" ] || return 0
+  next="$(_vibe_host_onboarding take-agent "$WORKSPACE")" || return 1
+  [ -n "$next" ] || return 0
+  printf '  Reopening this project with %s.\n' "$next"
+  vibe_on_exit
+  VIBE_EXIT_HOOKS=()
+  local args=("$WORKSPACE" --agent "$next")
+  [ -z "${PROFILE_ARG:-}" ] || args+=(--profile "$PROFILE_ARG")
+  [ -z "${TASK_REF_ARG:-}" ] || args+=(--task "$TASK_REF_ARG")
+  # Reload saved project configuration; only runtime-independent explicit
+  # profile/task overrides carry over. Vendor model/history flags do not.
+  exec bash "$VIBE_REPO_DIR/vibe" "${args[@]}"
+}
+
 # Allow smoke-test.py to source this file for pure unit-testing of helpers
 # without running the main launch logic below.
 [ "${VIBE_SOURCE_ONLY:-}" = "1" ] && return 0 2>/dev/null
@@ -4349,7 +4506,49 @@ export VIBE_PROJECT_NAME
 # ── Preflight ─────────────────────────────────────────────────────────────────
 require docker       "Install OrbStack (https://orbstack.dev) or Docker Desktop."
 require devcontainer "Install with: npm install -g @devcontainers/cli"
-require gh           "Install from: https://cli.github.com"
+vibe_docker_preflight || exit 1
+# GitHub CLI is checked only when GitHub setup is requested; local work needs no gh.
+
+# Resolve onboarding before GitHub setup: local Git is useful even when the
+# user declines GitHub, and refused Codex setup must not trigger publishing.
+LEAD_AGENT="$(_agent_resolve "$AGENT_ARG" "$WORKSPACE")"
+if [ -n "$CODEX_ACTION" ]; then
+  if [ "$AGENT_ARG" = "claude" ] || [ "$CONTINUE" = true ] || [ "$RESUME" = true ] || [ -n "$MODEL_ARG" ]; then
+    echo "Codex supervision cannot combine with Claude agent/model/continue/resume flags" >&2
+    exit 1
+  fi
+  LEAD_AGENT=codex
+  # Resolve before Docker work; prompt content is never interpolated into shell code.
+  CODEX_PROMPT_REL=$(node -e '
+    const fs=require("fs"),p=require("path");
+    const root=fs.realpathSync(process.argv[1]);
+    const file=fs.realpathSync(p.resolve(root,process.argv[2]));
+    const rel=p.relative(root,file);
+    if(!rel||/[\x00-\x1f\x7f]/.test(rel)||rel.startsWith(".."+p.sep)||p.isAbsolute(rel)||!fs.statSync(file).isFile()) process.exit(1);
+    process.stdout.write(rel);
+  ' "$WORKSPACE" "$CODEX_PROMPT_ARG") || { echo "Prompt must be a readable file inside the project" >&2; exit 1; }
+  if [ "$CODEX_ACTION" = resume ] && [ ! -f "$WORKSPACE/.vss/codex-supervisor.json" ]; then
+    echo "No Codex supervisor checkpoint exists for this project" >&2; exit 1
+  fi
+fi
+if _vibe_interactive; then
+  _vibe_host_onboarding host-check || exit 1
+  _onboard_flag="$AGENT_ARG"
+  [ -z "$CODEX_ACTION" ] || _onboard_flag=codex
+  vibe_onboard_agent "$_onboard_flag" "$WORKSPACE" || exit 1
+  vibe_onboard_git "$WORKSPACE" || exit 1
+  if [ "$LEAD_AGENT" = codex ]; then vibe_onboard_codex "$WORKSPACE" || exit 1; fi
+else
+  # Explicit CI choices are remembered on hosts, but never grant credentials.
+  if [ -n "$AGENT_ARG" ] && _vibe_host_onboarding host-check 2>/dev/null; then
+    _vibe_host_onboarding memory-set "$WORKSPACE" "$AGENT_ARG" || exit 1
+  fi
+  # Read-only memory lookup: unavailable host state preserves CI defaults.
+  _remembered_agent="$(_vibe_host_onboarding memory-get "$WORKSPACE" 2>/dev/null)" || _remembered_agent=""
+  if [ -n "$_remembered_agent" ] && [ -z "$CODEX_ACTION" ]; then
+    LEAD_AGENT="$(_agent_resolve "${AGENT_ARG:-$_remembered_agent}" "$WORKSPACE")"
+  fi
+fi
 
 # Linux hosts: warn once if the host resolver can't do mDNS (see vibe_mdns_probe).
 # No-op on Darwin and on any Linux host that already resolves .local.
@@ -4445,30 +4644,7 @@ if [ -z "$PROFILE" ] && [ "$PROFILE_ARG" != "none" ]; then
   profile_suggestion "$WORKSPACE" "$HOME/.vibe"
 fi
 
-# ── Lead runtime resolution + Codex gate (task_049) ──────────────────────────
-# Resolved here for the same reason the profile is: BEFORE any docker call, so
-# a refused Codex launch costs nothing and leaves nothing behind. VIBE_AGENT
-# arrives as a plain (unexported) shell variable from the sourced CONFIG_FILE.
-LEAD_AGENT="$(_agent_resolve "$AGENT_ARG" "$WORKSPACE")"
-if [ -n "$CODEX_ACTION" ]; then
-  if [ "$AGENT_ARG" = "claude" ] || [ "$CONTINUE" = true ] || [ "$RESUME" = true ] || [ -n "$MODEL_ARG" ]; then
-    echo "Codex supervision cannot combine with Claude agent/model/continue/resume flags" >&2
-    exit 1
-  fi
-  LEAD_AGENT=codex
-  # Resolve before Docker work; prompt content is never interpolated into shell code.
-  CODEX_PROMPT_REL=$(node -e '
-    const fs=require("fs"),p=require("path");
-    const root=fs.realpathSync(process.argv[1]);
-    const file=fs.realpathSync(p.resolve(root,process.argv[2]));
-    const rel=p.relative(root,file);
-    if(!rel||/[\x00-\x1f\x7f]/.test(rel)||rel.startsWith(".."+p.sep)||p.isAbsolute(rel)||!fs.statSync(file).isFile()) process.exit(1);
-    process.stdout.write(rel);
-  ' "$WORKSPACE" "$CODEX_PROMPT_ARG") || { echo "Prompt must be a readable file inside the project" >&2; exit 1; }
-  if [ "$CODEX_ACTION" = resume ] && [ ! -f "$WORKSPACE/.vss/codex-supervisor.json" ]; then
-    echo "No Codex supervisor checkpoint exists for this project" >&2; exit 1
-  fi
-fi
+# ── Final Codex credential gate (also enforced for noninteractive launches) ──
 # A Codex-led session without the Codex login is useless: the TUI starts, the
 # first request fails on authentication, and the user is left guessing which
 # of the two switches they missed. So refuse here, naming BOTH halves of the
@@ -5242,10 +5418,12 @@ vibe_exit_hook_add 'restore_terminal || true'
 # traps still fire on this path, and CLAUDE_EXIT still carries the status.
 if [ "$LEAD_AGENT" = "codex" ]; then
   launch_codex_plain
+  vibe_switch_after_exit || exit 1
   exit "$CLAUDE_EXIT"
 fi
 
 launch_claude_supervised "$CLAUDE_RESUME_ARGS" "" "$VIBE_SESSION_REF"
+vibe_switch_after_exit || exit 1
 
 # ── Auto-resume loop ──────────────────────────────────────────────────────────
 # Engages only when /vsss left an active marker (default persistence since

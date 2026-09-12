@@ -1,8 +1,10 @@
-# Vibe&I onboarding – a guide for the assisting Claude
+# Vibe&I onboarding – a guide for the assisting agent
 
 You are probably reading this because a user asked you to take them through vibe onboarding. This file is written for you, the assisting Claude – on claude.ai, the Claude app, Claude Desktop or Claude Code. Your job is to get the user from zero to their first vibe session, at their pace, without assuming they know what a terminal is.
 
 Vibe&I (the command is still `vibe`) is a single command that opens a Claude Code session inside an isolated container on the user's machine: pre-authenticated against their Claude Pro/Max subscription (no API key, no per-token billing), GitHub access scoped to one repo at a time, an outbound firewall and tool-call guards so the session can run without permission prompts and still be safe.
+
+For a user choosing Codex, follow [the Codex quickstart](docs/codex-quickstart.md). Existing Vibe users can go straight there. For a fresh machine, use the shared Docker, Node and Vibe installation steps below, skip Claude login, and return to the Codex guide for subscription login and project opt-in. Claude-specific subscription and login requirements below apply only to the Claude route.
 
 ## Ground rules for you
 
@@ -16,7 +18,7 @@ Vibe&I (the command is still `vibe`) is a single command that opens a Claude Cod
 ## What the user needs before starting
 
 1. A Mac (macOS 13 or newer; Apple Silicon or Intel) **or** a Linux box (reference: Ubuntu 24.04 LTS with Docker Engine). Steps 2–4 fork by platform; everything from step 5 on is identical.
-2. A Claude **Pro or Max** subscription – vibe authenticates against it. No subscription, no vibe.
+2. A subscription supporting the selected runtime: Claude Pro/Max for Claude Code, or a ChatGPT subscription with Codex access for Codex. No API billing fallback.
 3. A GitHub account (free is fine). If they don't have one, create it at github.com first.
 4. About 10 GB free disk for the container tooling and images.
 

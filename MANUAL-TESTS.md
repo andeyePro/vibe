@@ -1657,11 +1657,11 @@ else you care about.
 6. **Allowed and denied shell.** Ask Codex to run `git status`: allowed, and it
    should show the working tree. Then ask it to run `git push --force`: denied
    by the same argv-prefix rule that holds for a Claude Code session.
-7. **Back to Claude.** Exit the Codex session, then run plain `vibe` in the same
-   folder. Claude Code must lead again with no leftover state, no `agent   :`
-   header line, and the usual auto-resume behaviour available.
+7. **Back to Claude.** Exit Codex and run plain `vibe`: Codex must remain selected.
+   Exit, run `vibe --agent claude`, then verify another plain `vibe` remembers
+   Claude, with no `agent   :` header line and its usual auto-resume behaviour.
 
-**Negative, run second:** in a project that is NOT in `~/.vibe/codex-allow` (or
+**Negative, run second (noninteractive, so setup is not offered):** in a project that is NOT in `~/.vibe/codex-allow` (or
 with `VIBE_CODEX_PATH=off`), `vibe --agent codex` must exit 1 with
 `✗ --agent codex needs the Codex login mount: …` naming both the
 `.vibe-allow-codex` marker and `vibe codex allow`, **before** any Docker build
@@ -1675,8 +1675,8 @@ for a fail-open stub and for a weakened requirements file; the sudoers block
 is unchanged; and a `vibe --agent codex` launch shows the agent header line,
 prints the `guard chain proven` line, accepts a leading-space ` /vs …` line
 and goes on to follow the `$vs` skill, denies the Codex login-dir write and the
-force-push, allows `git status`, hands the lead back to Claude on the next plain
-launch, and is refused before Docker when the registry line is missing. Record
+force-push, allows `git status`, remembers the selected agent on the next plain
+launch (use `vibe --agent claude` to hand the lead back to Claude), and is refused before Docker on a noninteractive launch when the registry line is missing. Record
 any check you could not run rather than inferring it.
 
 ---
@@ -1704,7 +1704,7 @@ establish that an older installed container supports them.
    and an altered prompt/task binding refuses. Deliberately crash only this
    fixture; reconcile stale ownership only after verifying all descendants are
    gone. Never infer cleanup from a PID or timestamp alone.
-4. Follow `docs/mac-build-protocol.md` to install the reviewed forced-command
+4. Optional native-Mac path: follow `docs/mac-build-setup.md`; the assisting agent uses the protocol reference to install the reviewed forced-command
    runner under the existing `claude` account with a project-specific key and
    verified host key. Confirm root-owned trusted files and safe ancestry. Run
    `doctor`, build and test against an explicitly allowlisted fixture snapshot.
@@ -1713,7 +1713,7 @@ establish that an older installed container supports them.
    disconnect and concurrent requests cannot produce a false pass. Confirm
    simulator availability separately. Screenshots count as application evidence
    only if the approved pipeline builds, installs and launches this snapshot.
-5. Before Task&I traffic, compare the provisional input/output schemas with the
+5. Optional external integration only; this is not a generic Vibe prerequisite. Before Task&I traffic, compare the provisional input/output schemas with the
    authoritative server and verify token scopes and per-task usage attribution.
    Use an isolated test task. Set a local mapping, override it with `--task`,
    enqueue one question and answer it. Verify boundary polling, local durability,
@@ -1721,7 +1721,7 @@ establish that an older installed container supports them.
    disconnect uncertainty and evidence-based retry. No binding must preserve
    the original Markdown workflow and produce no Task&I request.
 6. In the isolated fixture, combine context discovery, one reviewed change,
-   independent testing, native build evidence, one FM2C answer and a controlled
+   independent testing, native build evidence only when configured, one FM2C answer and a controlled
    interruption/resumption. Compare usage rows with the explicit session JSONL;
    missing usage stays unknown. Record precisely which parts remain unverified.
 7. Roll back by selecting the previous source/image and relaunching after a clean
@@ -1729,6 +1729,19 @@ establish that an older installed container supports them.
    state to make a previous version run. Remove the local endpoint/binding only
    after pending requests are reconciled. Revoke the project build key if retiring
    the bridge, with host administration handled separately.
+
+---
+
+## Test 57: Plain-vibe Codex onboarding on a host
+
+Use a disposable folder on the Mac or Linux host with the reviewed Vibe source. Do not run host setup inside the container.
+
+1. Type `vibe` in the empty folder, choose Codex, and accept local Git initialization. Confirm a single project authorisation explains login exposure. If the host is already signed into Codex, it must not require another account login. If not, complete the vendor login once. Existing GitHub creation/token prompts remain the shared launcher flow; declining GitHub must leave local development possible.
+2. Verify the local marker and domains stay untracked even after the initial commit. Existing domain entries survive. Open Codex, type `help`, make one small change and run its tests. No Task&I configuration or Mac build bridge may be required.
+3. In the session, ask to switch agents (the helper is `vibe-agent claude` or `vibe-agent codex`), then exit normally. Verify cleanup happens before Vibe reopens with the selected agent. An active or unresolved autonomous run must refuse the request. Histories stay separate. Exit, type plain `vibe`, and verify Codex reopens without runtime selection, repeated login or project consent. Switch with `vibe --agent claude`, exit, and confirm plain `vibe` remembers Claude; switch back to Codex the same way.
+4. In another folder previously used with Claude, select Codex. Existing GitHub access is reused; only the new project grant is needed if the shared Codex login remains valid. Never broaden a GitHub token across repositories.
+5. Decline Codex consent in another fresh folder and confirm no login/credential grant happens. Confirm noninteractive missing setup refuses without prompting or granting access. Unsafe symlink/linked/tracked local setup files must refuse before modification; preserve the error for diagnosis.
+6. Record actual host platform, source revision, launch/guard result, model response and test result. Host fixture tests alone do not close this checklist.
 
 ---
 

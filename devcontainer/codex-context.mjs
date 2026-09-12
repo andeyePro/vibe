@@ -48,7 +48,7 @@ export function discover(cwd, bin = '/usr/local/bin') {
     configuration: existsSync(configPath) ? configPath : null,
     references: [...new Set([...defaults, ...(config.references || [])])].map(describe),
     channels: Object.fromEntries(['questions', 'answers', 'archive'].map(k =>
-      [k, config[k] ? describe(config[k]) : null])),
+      [k, describe(config[k] || { questions: '.vss/fromCodex.md', answers: '.vss/fromMartin-toCodex.md', archive: '.vss/Codex-Q&A-archive.md' }[k])])),
     answerAlias: 'FM2C',
     build: describe(config.build || '.vibe/mac-build.json'),
     installedHelpers: helpers.map(name => ({ name, path: join(bin, name), executable: executable(join(bin, name)) })),
@@ -56,7 +56,7 @@ export function discover(cwd, bin = '/usr/local/bin') {
   };
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const args = process.argv.slice(2);
     if (args.length > 1) throw new Error('Usage: codex-context [project-directory]');
