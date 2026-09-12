@@ -6,6 +6,8 @@ Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion 
 
 ## 2026-09-12
 
+- [x] **Fix image build: `taskandi-client` symlink created as `node`** — the `RUN ln -s taskandi-client.mjs /usr/local/bin/taskandi-client` added with task_057 sat inside the `USER node` region of `devcontainer/Dockerfile`, where `node` has no write access to `/usr/local/bin`, so every `vibe` launch died at build step 34 with `ln: failed to create symbolic link ...: Permission denied`. Moved the `RUN` into the `USER root` block above the `chmod +x` that already lists that path, and switched to `ln -sf` so a rebuild over an existing link is idempotent. No other change; the published name and its target are unchanged.
+
 - [x] **One-command runtime setup and switching** – Plain `vibe` guides first runtime choice, Codex host login/project authorisation and shared Git setup, then remembers the folder’s runtime. In-session `vibe-agent` queues a clean-exit switch; help explains the workflow. Local consent files are excluded before an initial commit and cannot grant host credentials alone.
 
 - [x] **Project-agnostic Codex onboarding** – Added a short another-repo quickstart and agent-led optional Mac setup, removed Task&I from default startup requirements, supplied default local FM2C paths, and fixed context discovery through installed symlinks. Generic readiness separates source evidence from host-only activation.

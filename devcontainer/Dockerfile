@@ -159,7 +159,6 @@ COPY --chown=root:root codex/ /etc/codex/
 COPY --chown=root:root codex-supervisor.mjs /usr/local/bin/codex-supervisor
 COPY --chown=root:root supervisor-control.mjs /usr/local/bin/supervisor-control.mjs
 COPY --chown=root:root taskandi-client.mjs /usr/local/bin/taskandi-client.mjs
-RUN ln -s taskandi-client.mjs /usr/local/bin/taskandi-client
 COPY --chown=root:root taskandi-usage.mjs /usr/local/bin/taskandi-usage.mjs
 COPY --chown=root:root mac-build.mjs /usr/local/bin/mac-build
 COPY --chown=root:root mac-build-protocol.mjs /usr/local/bin/mac-build-protocol.mjs
@@ -196,6 +195,10 @@ USER root
 RUN chown -R root:root /usr/local/share/npm-global /usr/local/share/vibe && \
   chmod -R go-w /usr/local/share/npm-global /usr/local/share/vibe && \
   chown root:root /usr/local/share && chmod go-w /usr/local/share
+# The bare `taskandi-client` name is a symlink to the .mjs beside it. It is
+# created here, not next to its COPY above, because that COPY sits inside the
+# USER node region and `node` cannot write /usr/local/bin.
+RUN ln -sf taskandi-client.mjs /usr/local/bin/taskandi-client
 # refresh-extra-domains.sh (task_042) gets its OWN sudoers entry rather than a
 # widening of the init-firewall.sh rule: it can only ADD to the existing ipset,
 # so granting it does not also grant a whole firewall rebuild. It exists because
