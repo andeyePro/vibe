@@ -610,3 +610,9 @@ Generator: sonnet. Tester: sonnet (checks_09 pins widened, checks_03 sync test, 
 Spec Critic (draft): revise, 2 BLOCKING folded in (checks_09 pins; sync test location).
 Verified: fragment size/content, alias lines under each H1 (vs.md exact +1 line), README, plan, TODO hook line; code-check clean; full suite green (4,445).
 Astra diff review (gpt-6-astra, 17,075 tokens): PASS, no findings.
+
+## task_053 — cycle 1 — PASS (2026-09-12T01:35:00Z)
+Generator: sonnet. Tester: sonnet (10 functions in checks_18, 1,427 lines). Evaluator: Fable 5.1 chair.
+Spec Critic: revise twice (custom prompts absent at 0.154 → re-scoped to the leading-space pass-through + managed UserPromptSubmit hook; grouped liveness regex; the two named checks_18 edits).
+Verified: hook matches/non-matches/unreadable input, script shape, liveness (a)/(c) with both hardened commands, Dockerfile, SKILL.md/README/plan/MANUAL-TESTS; multi-line, 300 KB and trailing-newline arguments; code-check clean; full suite green (4,515). Chair also replaced task_051's self-referential "+1 line vs HEAD" assertion with an absolute one.
+Astra diff reviews (gpt-6-astra, 28,161 tokens over two calls): FAIL then FAIL — (1) unguarded jq / ARG_MAX via --arg → every jq call guarded, arguments on jq's stdin; (2) `read` dropped later lines and stripped whitespace → parameter-expansion split, later lines kept, no placeholder in the verbatim field; (3, re-review) `$(...)` stripped trailing newlines → sentinel capture. All fixed with tests; the third chair-evaluated (D9's one re-review spent).

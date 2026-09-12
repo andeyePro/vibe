@@ -963,16 +963,18 @@ def test_dollar_prefix_fragment_and_aliases() -> None:
         check(f"[task051] {label}.md alias line points at claude-md/dollar-prefix.md",
               "claude-md/dollar-prefix.md" in alias_line, f"line: {alias_line!r}")
 
-    # vs.md: exact one-line growth against HEAD (nothing else in the body
-    # changed for this task).
-    head_vs = run(["git", "show", "HEAD:devcontainer/commands/vs.md"], cwd=REPO)
-    check("[task051] git show HEAD:vs.md succeeds", head_vs.returncode == 0, head_vs.stderr)
-    if head_vs.returncode == 0:
-        head_vs_lines = head_vs.stdout.splitlines()
-        current_vs_lines = VS_MD.read_text().splitlines()
-        check("[task051] vs.md line count grew by exactly one vs HEAD",
-              len(current_vs_lines) == len(head_vs_lines) + 1,
-              f"HEAD had {len(head_vs_lines)} lines, now {len(current_vs_lines)}")
+    # vs.md: the alias line is the ONLY line added for task_051 — asserted
+    # absolutely (exactly one alias line, and it is the first non-blank line
+    # after the H1) rather than as "+1 line vs HEAD", which held only until
+    # the task's own commit became HEAD (task_053's Generator caught the
+    # self-referential drift; see CLAUDE.md on HEAD-relative pins).
+    current_vs_lines = VS_MD.read_text().splitlines()
+    alias_lines = [l for l in current_vs_lines if l.startswith("Alias: `$vs")]
+    check("[task051] vs.md carries exactly one alias line", len(alias_lines) == 1, str(alias_lines))
+    h1_index = next((i for i, l in enumerate(current_vs_lines) if l.startswith("# ")), None)
+    after_h1 = [l for l in current_vs_lines[(h1_index or 0) + 1:] if l.strip()]
+    check("[task051] vs.md alias line is the first non-blank line after the H1",
+          h1_index is not None and bool(after_h1) and after_h1[0].startswith("Alias: `$vs"), str(after_h1[:1]))
 
     # vss.md and vsss.md: no exact-growth check (rationale prose trimmed to
     # stay under a word cap) — only the alias line (already checked above)

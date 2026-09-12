@@ -27,6 +27,7 @@ HOOKS_JSON = REPO / "devcontainer" / "codex" / "hooks" / "hooks.json"
 ADAPTER = REPO / "devcontainer" / "codex-guard-adapter.sh"
 LIVENESS = REPO / "devcontainer" / "codex-guard-liveness.sh"
 CODEX_ENTRY = REPO / "devcontainer" / "codex-entry.sh"
+PROMPT_PREFIX = REPO / "devcontainer" / "codex-prompt-prefix.sh"
 CODEX_TOOL_INVENTORY_MD = REPO / "docs" / "codex-tool-inventory.md"
 
 # ── task_047: $vs/$vss/$vsss Codex skills + vibe-delegate role dispatch ──────
@@ -137,6 +138,10 @@ def _codex_liveness_fixture(tmp: Path) -> tuple[Path, Path]:
         ("guard-bash.sh", GUARD_BASH),
         ("guard-fs.sh", GUARD_FS),
         ("codex-entry", CODEX_ENTRY),
+        # task_053: the UserPromptSubmit prefix hook joined the ownership
+        # list codex-guard-liveness checks, so the fixture chain needs a
+        # copy too or every liveness check below fails on its absence.
+        ("codex-prompt-prefix", PROMPT_PREFIX),
     ):
         dst = bin_dir / name
         dst.write_text(src.read_text())
@@ -331,7 +336,8 @@ def test_codex_hooks_json_ac3():
     check("[codex] hooks.json parses as JSON", True)
 
     hooks = data.get("hooks", {})
-    check("[codex] exactly one event: PreToolUse", set(hooks.keys()) == {"PreToolUse"}, str(hooks.keys()))
+    check("[codex] exactly two events: PreToolUse, UserPromptSubmit",
+          set(hooks.keys()) == {"PreToolUse", "UserPromptSubmit"}, str(hooks.keys()))
     entries = hooks.get("PreToolUse", [])
     check("[codex] exactly two matcher groups", len(entries) == 2, str(entries))
 
@@ -358,6 +364,24 @@ def test_codex_hooks_json_ac3():
     check("[codex] apply_patch|Write|Edit matcher -> codex-guard-adapter patch",
           by_matcher.get("apply_patch|Write|Edit") == "/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /bin/bash /usr/local/bin/codex-guard-adapter patch",
           str(by_matcher))
+
+    # task_053: the new UserPromptSubmit matcher group — no tool matcher
+    # (there is no tool to match on a prompt), one command, the hardened
+    # env -i /bin/bash form naming codex-prompt-prefix, timeout 10, no async.
+    prompt_entries = hooks.get("UserPromptSubmit", [])
+    check("[codex] UserPromptSubmit has exactly one matcher group", len(prompt_entries) == 1, str(prompt_entries))
+    if prompt_entries:
+        prompt_entry = prompt_entries[0]
+        prompt_hooks = prompt_entry.get("hooks", [])
+        check("[codex] UserPromptSubmit group has exactly one hook entry", len(prompt_hooks) == 1, str(prompt_hooks))
+        if prompt_hooks:
+            ph = prompt_hooks[0]
+            check("[codex] UserPromptSubmit hook type == 'command'", ph.get("type") == "command", str(ph))
+            check("[codex] UserPromptSubmit hook command is the hardened codex-prompt-prefix form",
+                  ph.get("command") == "/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /bin/bash /usr/local/bin/codex-prompt-prefix",
+                  ph.get("command"))
+            check("[codex] UserPromptSubmit hook timeout == 10", ph.get("timeout") == 10, str(ph))
+            check("[codex] UserPromptSubmit hook has no 'async' key", "async" not in ph, str(ph))
 
 
 # ── AC4: adapter bash mode against the real guard-bash.sh ───────────────────
@@ -1182,3 +1206,240 @@ def test_codex_docs_ac7():
           "vibe-delegate role" in plan, "")
     check("[codex] docs/codex-integration-plan.md D5 states 'thin wrapper' is no longer accurate",
           "no longer accurate" in plan, "")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# task_053: `/vs` leading-space pass-through + managed UserPromptSubmit hook
+# (Tester-authored AC5 tests; spec-only read, no generator report/diff/
+# scratch-tests consulted)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _prompt_prefix_fixture(prompt: str | None, session_id: str = "sess-1") -> dict:
+    """A realistic UserPromptSubmit payload: hook_event_name + prompt plus
+    the other input fields Codex's hook JSON carries (F3: session_id, cwd,
+    transcript_path). codex-prompt-prefix.sh reads only .prompt, but a
+    fixture shaped like the real thing exercises the jq extraction the same
+    way a live hook would; prompt=None omits the key entirely."""
+    d = {"hook_event_name": "UserPromptSubmit", "cwd": "/workspace",
+         "session_id": session_id, "transcript_path": "/tmp/transcript.jsonl"}
+    if prompt is not None:
+        d["prompt"] = prompt
+    return d
+
+
+def _run_prompt_prefix(input_text: str):
+    return run(["bash", str(PROMPT_PREFIX)], input=input_text)
+
+
+def _prompt_prefix_context(stdout: str):
+    """None for empty stdout (silent no-op); the additionalContext string
+    for a well-formed envelope; '<bad-json>'/'<bad-event>'/'<no-context>'
+    for anything else, so a caller can tell a real miss from a malformed
+    reply without a second parse."""
+    if stdout.strip() == "":
+        return None
+    try:
+        data = json.loads(stdout)
+    except json.JSONDecodeError:
+        return "<bad-json>"
+    hso = data.get("hookSpecificOutput", {})
+    if hso.get("hookEventName") != "UserPromptSubmit":
+        return "<bad-event>"
+    return hso.get("additionalContext", "<no-context>")
+
+
+def test_codex_prompt_prefix_matches_ac5():
+    print("\n[codex] codex-prompt-prefix — matching prompts add the right context")
+    cases = [
+        (" /vs fix the build", "vs", "fix the build"),
+        ("/vsss --hours 2 go", "vsss", "--hours 2 go"),
+        ("/vss", "vss", "with no arguments"),
+        ("/vss   ", "vss", "with no arguments"),
+    ]
+    for prompt, name, rest in cases:
+        payload = json.dumps(_prompt_prefix_fixture(prompt))
+        r = _run_prompt_prefix(payload)
+        check(f"[codex] prompt-prefix {prompt!r}: exits 0",
+              r.returncode == 0, f"rc={r.returncode} out={r.stdout!r} err={r.stderr!r}")
+        ctx = _prompt_prefix_context(r.stdout)
+        check(f"[codex] prompt-prefix {prompt!r}: additionalContext names ${name}",
+              isinstance(ctx, str) and f"${name}" in ctx, r.stdout)
+        check(f"[codex] prompt-prefix {prompt!r}: additionalContext carries {rest!r} verbatim",
+              isinstance(ctx, str) and rest in ctx, r.stdout)
+
+
+def test_codex_prompt_prefix_non_matches_ac5():
+    print("\n[codex] codex-prompt-prefix — non-matching and unreadable input produce no output")
+    non_matches = ["$vs go", "/vss:foo", "/vssx", "/VS", "hello /vs"]
+    for prompt in non_matches:
+        payload = json.dumps(_prompt_prefix_fixture(prompt))
+        r = _run_prompt_prefix(payload)
+        check(f"[codex] prompt-prefix {prompt!r}: exits 0",
+              r.returncode == 0, f"rc={r.returncode} err={r.stderr!r}")
+        check(f"[codex] prompt-prefix {prompt!r}: no stdout",
+              r.stdout.strip() == "", r.stdout)
+
+    # Astra review (task_053): later lines are arguments too, and a very long
+    # argument must never make the hook fail (jq reads it on stdin, not argv).
+    multi = "/vs implement feature X\nthen run the tests\nand report"
+    r = _run_prompt_prefix(json.dumps({"hook_event_name": "UserPromptSubmit", "prompt": multi}))
+    ctx = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"] if r.stdout.strip() else ""
+    check("[codex] prompt-prefix: multi-line arguments preserved verbatim, including later lines",
+          r.returncode == 0 and "implement feature X\nthen run the tests\nand report" in ctx, ctx[-200:])
+    trailing = "/vs hello\n\n"
+    r = _run_prompt_prefix(json.dumps({"hook_event_name": "UserPromptSubmit", "prompt": trailing}))
+    ctx = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"] if r.stdout.strip() else ""
+    check("[codex] prompt-prefix: trailing newlines in the arguments survive verbatim (sentinel capture)",
+          r.returncode == 0 and ctx.endswith("hello\n\n"), repr(ctx[-20:]))
+    huge = "/vsss " + ("x" * 300000)
+    r = _run_prompt_prefix(json.dumps({"hook_event_name": "UserPromptSubmit", "prompt": huge}))
+    ctx = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"] if r.stdout.strip() else ""
+    check("[codex] prompt-prefix: a 300 KB argument neither fails the hook nor is truncated",
+          r.returncode == 0 and ("x" * 300000) in ctx, f"rc={r.returncode} len={len(ctx)}")
+
+    r = _run_prompt_prefix("")
+    check("[codex] prompt-prefix: empty stdin exits 0, no output",
+          r.returncode == 0 and r.stdout.strip() == "", f"rc={r.returncode} out={r.stdout!r}")
+    r = _run_prompt_prefix("not json at all {{{")
+    check("[codex] prompt-prefix: non-JSON stdin exits 0, no output",
+          r.returncode == 0 and r.stdout.strip() == "", f"rc={r.returncode} out={r.stdout!r}")
+    r = _run_prompt_prefix(json.dumps({"hook_event_name": "UserPromptSubmit"}))
+    check("[codex] prompt-prefix: JSON with no .prompt key exits 0, no output",
+          r.returncode == 0 and r.stdout.strip() == "", f"rc={r.returncode} out={r.stdout!r}")
+
+
+def test_codex_prompt_prefix_script_shape_ac5():
+    print("\n[codex] codex-prompt-prefix.sh — AC1 script shape")
+    text = PROMPT_PREFIX.read_text()
+    lines = text.splitlines()
+    check("[codex] codex-prompt-prefix.sh <= 60 lines", len(lines) <= 60, str(len(lines)))
+    check("[codex] codex-prompt-prefix.sh starts #!/bin/bash",
+          text.startswith("#!/bin/bash\n"), text[:20])
+    check("[codex] codex-prompt-prefix.sh has no 'dangerously'", "dangerously" not in text, "")
+    check("[codex] codex-prompt-prefix.sh has no literal ' -c ' token", " -c " not in text, "")
+
+
+def test_codex_liveness_hooks_hardened_both_commands_ac5():
+    print("\n[codex] liveness — check (c) accepts both hardened forms, rejects a bare env for either")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        root, bin_dir = _codex_liveness_fixture(tmp)
+        stub_dir = _codex_version_stub(tmp, "codex-stub", "codex-cli 0.154.0")
+        r = _run_liveness(root, bin_dir, CURRENT_OWNER, path_prepend=stub_dir)
+        check("[codex] liveness: healthy fixture (both hardened commands) exits 0",
+              r.returncode == 0, f"rc={r.returncode} stdout={r.stdout} stderr={r.stderr}")
+
+        # A bare `env` (no absolute path, no -i) standing in for the
+        # UserPromptSubmit command must still be caught.
+        hooks_path = root / "hooks" / "hooks.json"
+        data = json.loads(hooks_path.read_text())
+        good_prefix_cmd = data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
+        data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"] = \
+            good_prefix_cmd.replace("/usr/bin/env -i ", "env ")
+        hooks_path.write_text(json.dumps(data))
+        r = _run_liveness(root, bin_dir, CURRENT_OWNER, path_prepend=stub_dir)
+        check("[codex] liveness: bare `env` for codex-prompt-prefix fails check (c)",
+              r.returncode == 1, f"rc={r.returncode} stdout={r.stdout} stderr={r.stderr}")
+        check("[codex] liveness: LIVENESS FAILED names hooks-commands",
+              "LIVENESS FAILED" in r.stderr and "hooks-commands" in r.stderr, r.stderr)
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        root, bin_dir = _codex_liveness_fixture(tmp)
+        stub_dir = _codex_version_stub(tmp, "codex-stub", "codex-cli 0.154.0")
+        # Same probe against the pre-existing codex-guard-adapter command,
+        # to confirm the grouped alternation didn't loosen its own anchor.
+        hooks_path = root / "hooks" / "hooks.json"
+        data = json.loads(hooks_path.read_text())
+        good_bash_cmd = data["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+        data["hooks"]["PreToolUse"][0]["hooks"][0]["command"] = \
+            good_bash_cmd.replace("/usr/bin/env -i ", "env ")
+        hooks_path.write_text(json.dumps(data))
+        r = _run_liveness(root, bin_dir, CURRENT_OWNER, path_prepend=stub_dir)
+        check("[codex] liveness: bare `env` for codex-guard-adapter fails check (c) too",
+              r.returncode == 1, f"rc={r.returncode} stdout={r.stdout} stderr={r.stderr}")
+
+
+def test_codex_liveness_ownership_prompt_prefix_ac5():
+    print("\n[codex] liveness — check (a) covers codex-prompt-prefix")
+    liveness_text = LIVENESS.read_text()
+    check("[codex] codex-guard-liveness.sh: ownership list includes codex-prompt-prefix",
+          'check_owned "$prompt_prefix"' in liveness_text, "")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        root, bin_dir = _codex_liveness_fixture(tmp)
+        stub_dir = _codex_version_stub(tmp, "codex-stub", "codex-cli 0.154.0")
+        (bin_dir / "codex-prompt-prefix").unlink()
+        r = _run_liveness(root, bin_dir, CURRENT_OWNER, path_prepend=stub_dir)
+        check("[codex] liveness: a fixture missing codex-prompt-prefix fails ownership",
+              r.returncode == 1, f"rc={r.returncode} stdout={r.stdout} stderr={r.stderr}")
+        check("[codex] liveness: LIVENESS FAILED names ownership and codex-prompt-prefix",
+              "LIVENESS FAILED" in r.stderr and "ownership" in r.stderr and
+              "codex-prompt-prefix" in r.stderr, r.stderr)
+
+
+def test_codex_prompt_prefix_dockerfile_ac5():
+    print("\n[codex] Dockerfile — codex-prompt-prefix COPY --chown=root:root and chmod +x")
+    text = DOCKERFILE.read_text()
+    check("[codex] Dockerfile: COPY --chown=root:root codex-prompt-prefix.sh -> codex-prompt-prefix",
+          "COPY --chown=root:root codex-prompt-prefix.sh /usr/local/bin/codex-prompt-prefix" in text, "")
+    chmod_lines = [l for l in text.splitlines() if l.strip().startswith("RUN chmod +x")]
+    check("[codex] Dockerfile: chmod +x list includes codex-prompt-prefix",
+          any("/usr/local/bin/codex-prompt-prefix" in l for l in chmod_lines), str(chmod_lines))
+
+
+def test_codex_skill_leading_space_docs_ac5():
+    print("\n[codex] SKILL.md — 'The `/` form' section names the leading space, drops /prompts")
+    for name in ("vs", "vss", "vsss"):
+        path = CODEX_SKILLS_DIR / name / "SKILL.md"
+        text = path.read_text()
+        m = re.search(r"## The `/` form\n(.*)", text, re.DOTALL)
+        check(f"[codex] {name}/SKILL.md has a 'The `/` form' section", m is not None, text[-200:])
+        if not m:
+            continue
+        section = m.group(1)
+        flat = " ".join(section.split())
+        check(f"[codex] {name}/SKILL.md '/' section mentions the leading space",
+              "leading space" in flat, flat[:400])
+        check(f"[codex] {name}/SKILL.md '/' section does not mention /prompts",
+              "/prompts" not in section, section)
+
+
+def test_codex_readme_prompt_prefix_ac5():
+    print("\n[codex] README — leading-space pass-through named, /prompts: explicitly withdrawn")
+    readme = README_MD.read_text()
+    check("[codex] README mentions the leading space", "leading space" in readme, "")
+    # AC4 withdraws the earlier `/prompts:`-based plan by naming and
+    # retracting it, not by scrubbing the substring — README says so in the
+    # same breath it names the route.
+    check("[codex] README mentions /prompts: only to withdraw it (not as a live route)",
+          "/prompts:" in readme and "withdrawn" in readme, "")
+    check("[codex] README never spells /prompts:vs as something to type",
+          "/prompts:vs" not in readme, "")
+
+
+def test_codex_integration_plan_prompt_prefix_ac5():
+    print("\n[codex] docs/codex-integration-plan.md — F6 names SlashCommandItem, D3 names UserPromptSubmit")
+    plan = CODEX_INTEGRATION_PLAN_MD.read_text()
+    m = re.search(r"- F6 .*?(?=\n- F7 )", plan, re.DOTALL)
+    check("[codex] plan: found the F6 section", m is not None, "")
+    if m:
+        check("[codex] plan F6 mentions SlashCommandItem", "SlashCommandItem" in m.group(0), "")
+    m = re.search(r"- D3 .*?(?=\n- D4 )", plan, re.DOTALL)
+    check("[codex] plan: found the D3 section", m is not None, "")
+    if m:
+        check("[codex] plan D3 mentions UserPromptSubmit", "UserPromptSubmit" in m.group(0), "")
+
+
+def test_manual_tests_55_leading_space_vs_ac5():
+    print("\n[codex] MANUAL-TESTS — Test 55 mentions /vs with a leading space")
+    manual = MANUAL_TESTS_MD.read_text()
+    idx = manual.find("Test 55")
+    check("[codex] MANUAL-TESTS: Test 55 heading found", idx != -1, "")
+    if idx != -1:
+        section = manual[idx:idx + 8000]
+        check("[codex] MANUAL-TESTS Test 55 mentions a leading-space ' /vs' line",
+              " /vs -" in section or " /vs`" in section or " /vs " in section, section[:400])
+        check("[codex] MANUAL-TESTS Test 55 mentions 'leading space'",
+              "leading space" in section, "")

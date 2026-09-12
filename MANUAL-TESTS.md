@@ -1622,7 +1622,7 @@ cannot establish that the image actually ships the policy root-owned.
    Do **not** run `codex exec`, `codex review` or anything else that contacts a
    model as part of this test; the delegate paths are Test 54's job.
 
-**The Codex-led launch itself (`vibe --agent codex`, task_049).** Six further
+**The Codex-led launch itself (`vibe --agent codex`, task_049).** Seven further
 steps, run after step 4 above and on the same rebuilt container. This is the
 first time Codex leads a vibe session, so run it with the day free of anything
 else you care about.
@@ -1641,14 +1641,23 @@ else you care about.
 3. **Approval policy.** In the Codex TUI, confirm the session is running under
    approval policy `never` and that the workspace is the project directory.
    Do not change either; both come from `/etc/codex/config.toml`.
-4. **A denied write.** Ask Codex to write `/home/node/.codex/config.toml` (any
+4. **The leading-space `/vs` form (task_053).** In the same Codex TUI, type
+   ` /vs --help`-style input with exactly one leading space and submit it.
+   Confirm the composer accepts the line (no `Unrecognized command` message)
+   and that Codex goes on to invoke the `$vs` skill — its response should
+   read `/usr/local/share/vibe/commands/vs.md` and start following it, the
+   same as if you had typed `$vs --help` directly. This is model-mediated,
+   not deterministic: if the model does not pick up the `UserPromptSubmit`
+   hook's `additionalContext` and instead answers the literal text, record
+   that as the expected (documented) failure mode rather than a bug.
+5. **A denied write.** Ask Codex to write `/home/node/.codex/config.toml` (any
    content). The managed hook must **deny** it, with the guard's own wording —
    not an approval prompt, and not a silent success. Check the file's mtime
    afterwards to be sure nothing landed.
-5. **Allowed and denied shell.** Ask Codex to run `git status`: allowed, and it
+6. **Allowed and denied shell.** Ask Codex to run `git status`: allowed, and it
    should show the working tree. Then ask it to run `git push --force`: denied
    by the same argv-prefix rule that holds for a Claude Code session.
-6. **Back to Claude.** Exit the Codex session, then run plain `vibe` in the same
+7. **Back to Claude.** Exit the Codex session, then run plain `vibe` in the same
    folder. Claude Code must lead again with no leftover state, no `agent   :`
    header line, and the usual auto-resume behaviour available.
 
@@ -1664,7 +1673,8 @@ denies each known-bad fixture in both modes, converts `ask` to `deny`, allows
 benign work, and exits 2 whenever it cannot do its job; the liveness gate exits 1
 for a fail-open stub and for a weakened requirements file; the sudoers block
 is unchanged; and a `vibe --agent codex` launch shows the agent header line,
-prints the `guard chain proven` line, denies the Codex login-dir write and the
+prints the `guard chain proven` line, accepts a leading-space ` /vs …` line
+and goes on to follow the `$vs` skill, denies the Codex login-dir write and the
 force-push, allows `git status`, hands the lead back to Claude on the next plain
 launch, and is refused before Docker when the registry line is missing. Record
 any check you could not run rather than inferring it.

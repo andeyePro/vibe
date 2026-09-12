@@ -36,7 +36,9 @@
 #   hooks-commands         (c) every command in hooks.json is the hardened
 #                              `/usr/bin/env -i PATH=<fixed> /bin/bash
 #                              /usr/local/bin/codex-guard-adapter <mode>`
-#                              form and the adapter exists as an executable.
+#                              or `/usr/local/bin/codex-prompt-prefix` form,
+#                              and the target program exists as an
+#                              executable (task_053).
 #   fixture-deny           (d) four known-bad calls are refused: a shell
 #                              redirect into the Codex login dir, a patch
 #                              rewriting that dir's config.toml, a shell
@@ -140,6 +142,7 @@ jq_path=$(command -v jq)
 requirements_file=$root/requirements.toml
 hooks_file=$root/hooks/hooks.json
 adapter=$bin/codex-guard-adapter
+prompt_prefix=$bin/codex-prompt-prefix
 
 # ── (a) ownership and modes ──────────────────────────────────────────────────
 # stat's GNU spelling first, BSD/macOS as the fallback; -L so a symlinked
@@ -177,6 +180,11 @@ check_owned "$bin/guard-fs.sh"
 # the file that consults THIS gate, so a `node`-writable copy of it could
 # simply not call it.
 check_owned "$bin/codex-entry"
+# task_053: the UserPromptSubmit hook that points the model at $vs/$vss/
+# $vsss for a leading-space ` /vs …` line is part of the same chain — it
+# runs with the same hardened env -i form, so it must be just as
+# `node`-unwritable as the guard adapter it sits beside.
+check_owned "$prompt_prefix"
 # jq is a distribution binary, not part of the vibe chain: it is always
 # root-owned even when --owner relocates the chain to a test user, so root is
 # accepted for it in addition to --owner.
@@ -221,16 +229,24 @@ hook_commands=$(jq -r '
 # Each command must be the hardened form the policy ships (Astra's review,
 # 2026-09-11): started through the ABSOLUTE `/usr/bin/env -i` with a FIXED
 # PATH and the absolute /bin/bash, so a caller-controlled BASH_ENV or PATH
-# can never run before the adapter's first line (an unqualified `env` would
-# itself be resolved through the inherited PATH — Astra's re-review). Anything else — a bare adapter path, a different
-# interpreter, an extra token — fails the gate.
-hook_form='^/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /bin/bash /usr/local/bin/codex-guard-adapter (bash|patch)$'
+# can never run before the target script's first line (an unqualified `env`
+# would itself be resolved through the inherited PATH — Astra's re-review).
+# Anything else — a bare path, a different interpreter, an extra token —
+# fails the gate. task_053 adds a second program to the alternation,
+# codex-prompt-prefix (the UserPromptSubmit hook), grouped so both
+# alternatives stay anchored at both ends; the captured group names
+# whichever program actually matched, so the existence/executable check
+# below resolves the right binary for either one.
+hook_form='^/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /bin/bash /usr/local/bin/(codex-guard-adapter (bash|patch)|codex-prompt-prefix)$'
 while IFS= read -r hook_command; do
   [ -n "$hook_command" ] || continue
-  printf '%s\n' "$hook_command" | grep -Eq "$hook_form" ||
-    fail "hooks-commands — '$hook_command' is not the hardened '/usr/bin/env -i PATH=… /bin/bash $CANONICAL_BIN/codex-guard-adapter <mode>' form"
-  hook_program=$CANONICAL_BIN/codex-guard-adapter
-  hook_target=$bin/$(basename -- "$hook_program")
+  if [[ $hook_command =~ $hook_form ]]; then
+    hook_program=${BASH_REMATCH[1]}
+  else
+    fail "hooks-commands — '$hook_command' is not the hardened '/usr/bin/env -i PATH=… /bin/bash $CANONICAL_BIN/(codex-guard-adapter <mode>|codex-prompt-prefix)' form"
+  fi
+  hook_binary=${hook_program%% *}
+  hook_target=$bin/$hook_binary
   [ -f "$hook_target" ] || fail "hooks-commands — $hook_target (for '$hook_command') does not exist"
   [ -x "$hook_target" ] || fail "hooks-commands — $hook_target (for '$hook_command') is not executable"
   ok "hooks-commands" "$hook_command"

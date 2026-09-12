@@ -24,6 +24,12 @@ instead; nothing else about the command body changes.
 
 ## The `/` form
 
-In Codex's own terminal only `$vs` exists — the composer rejects an unknown
-`/vs` before it is even submitted. `/vs` is the same command in Claude Code,
-and, once the supervisor lands, in unattended Codex runs too.
+In Codex's own terminal, only `$vs` is a guaranteed match: the composer
+rejects an unknown `/vs` before it is even submitted. Typing ` /vs …` with
+one leading space also works — the composer lets a space-prefixed line
+through as plain text and trims the space before it reaches the model — and
+a managed `UserPromptSubmit` hook then adds context pointing the model at
+this `$vs` skill with the rest of the line as arguments, verbatim; that is
+model-mediated, not deterministic, so `$vs …` remains the reliable form.
+`/vs` is the same command in Claude Code, and, once the supervisor lands, in
+unattended Codex runs too.

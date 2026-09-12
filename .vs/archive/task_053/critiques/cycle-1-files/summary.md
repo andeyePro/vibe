@@ -1,0 +1,3 @@
+Added 10 AC5 test functions to smoke/checks_18_codex_runtime.py (now 1,449 lines, stayed under the 1,500-line ceiling) covering: the hook script run for real against JSON fixtures (leading-space /vs, /vsss with args, bare /vss, all non-matching/unreadable-input cases), script shape, liveness checks (a)/(c) for codex-prompt-prefix (both hardened commands pass, bare env fails, missing file fails ownership), Dockerfile COPY/chmod, and SKILL.md/README/plan/MANUAL-TESTS wording; all 10 registered in smoke/runner.py after the task_051 block.
+python3 code-check.py: clean (shellcheck, 24 files, exit 0).
+python3 smoke-test.py < /dev/null: fully green, 4,511 checks, 0 failures, exit 0. Nothing from AC5 left uncovered.

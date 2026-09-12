@@ -824,6 +824,20 @@ def main() -> int:
     test_task051_ac2_dollar_prefix_synced_like_web_research()
     test_dollar_prefix_fragment_and_aliases()
 
+    # task_053: `/vs` leading-space pass-through in Codex's own terminal +
+    # managed UserPromptSubmit hook (codex-prompt-prefix). Appended after the
+    # task_051 block above, which is frozen and unchanged.
+    test_codex_prompt_prefix_matches_ac5()
+    test_codex_prompt_prefix_non_matches_ac5()
+    test_codex_prompt_prefix_script_shape_ac5()
+    test_codex_liveness_hooks_hardened_both_commands_ac5()
+    test_codex_liveness_ownership_prompt_prefix_ac5()
+    test_codex_prompt_prefix_dockerfile_ac5()
+    test_codex_skill_leading_space_docs_ac5()
+    test_codex_readme_prompt_prefix_ac5()
+    test_codex_integration_plan_prompt_prefix_ac5()
+    test_manual_tests_55_leading_space_vs_ac5()
+
     print()
     if FAILURES:
         print(f"✗ {len(FAILURES)} check(s) failed:")

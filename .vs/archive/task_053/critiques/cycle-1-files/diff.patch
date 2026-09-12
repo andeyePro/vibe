@@ -1,0 +1,407 @@
+diff --git a/.vs/tasks.json b/.vs/tasks.json
+index 2e9d94b..ad652fb 100644
+--- a/.vs/tasks.json
++++ b/.vs/tasks.json
+@@ -400,5 +400,15 @@
+     "mode": "rigorous",
+     "last_modified": "2026-09-12T01:06:28Z",
+     "cycle_1_tester_note": "Tester (haiku) AC5: updated the two checks_09_openproject_and_scanner.py pins (AC1 fragment count 14->15, expected_names gains dollar-prefix.md; AC2's 6,700-word cap left unchanged since the 15-fragment total is 6,563 words -- the new fragment fit, so per task_042's precedent only a comment was added, not a raise) with no other edits to that function. Extended the fixture-isolated fragment-sync test (task_007/t3 in smoke/checks_03_vibecopy_and_watcher.py) with a new test_task051_ac2_dollar_prefix_synced_like_web_research(), same isolation pattern with two fragments in source, asserting dollar-prefix.md's header and body sync exactly like web-research.md's; added a DOLLAR_PREFIX_MD constant to smoke/_core.py's __all__. Added test_dollar_prefix_fragment_and_aliases() to smoke/checks_13_spec_first.py (37 checks): fragment <=25 lines/<=200 words and contains $vs/$vss/$vsss/'first'/'case-sensitive'/literal $vss:foo; each of vs.md/vss.md/vsss.md has its own-named alias line immediately under its H1 pointing at claude-md/dollar-prefix.md; vs.md's line count is exactly HEAD+1; vss.md and vsss.md get only the alias-line and vsss.md's two protected-phrase checks ('never be reported as a perfection gate', 'VSSS-EXIT:'), per the spec's allowance that vss.md's rationale prose was trimmed to fit a word cap; README's $ spelling sentence and dollar-prefix.md pointer; the plan's section 3 'DELIVERED (task_051)' marker on item 10; TODO.md's UserPromptSubmit/Martin-gated/task_051 sentinels. Both new test functions registered in smoke/runner.py in a new task_051 block after task_050's. python3 code-check.py: clean, shellcheck across 23 files, exit 0. python3 smoke-test.py < /dev/null: fully green, exit 0, 4,445 check() lines passing, 0 failed. Not covered, with reason: the live/manual side of the deterministic UserPromptSubmit hook alternative is out of scope for this task (instructional-route-only; the hook itself is Martin-gated future work per TODO.md), so only its documented sentinel words were asserted, not a live hook trial. Full output: .vs/cycle-1/test-output.log. Summary: .vs/cycle-1/summary.md."
++  },
++  {
++    "id": "task_053",
++    "description": "/vs in Codex's own terminal: leading-space pass-through plus a root-owned managed UserPromptSubmit hook (codex-prompt-prefix) adding context that points at the $vs skill; hooks.json/liveness/docs updated",
++    "implementation_status": "complete",
++    "test_status": "pending",
++    "assigned_to": "generator",
++    "mode": "rigorous",
++    "last_modified": "2026-09-12T01:20:00Z",
++    "cycle_1_generator_note": "devcontainer/codex-prompt-prefix.sh (new, 41 lines, shellcheck-clean): reads UserPromptSubmit JSON via jq, matches /vs|/vss|/vsss as the first whitespace-delimited token (case-sensitive, exact), emits additionalContext via jq -n --arg, else/on-error prints nothing and exits 0. hooks.json gains the UserPromptSubmit group (no matcher key -- no tool to match), hardened command, timeout 10, no async. codex-guard-liveness.sh: check (a) ownership list gains codex-prompt-prefix; check (c) regex grouped to accept both hardened forms and now resolves hook_target per-program via bash [[ =~ ]] + BASH_REMATCH instead of a hardcoded adapter path. Dockerfile: COPY --chown=root:root next to the task_046 lines + chmod +x list. All three SKILL.md 'The / form' sections rewritten (only $name is a GUARANTEED match; leading-space /name also works, model-mediated) -- worded to satisfy the existing task_047 smoke assertions (checks_18) verbatim while being accurate about the new route. README's Codex-led-container paragraph gains two sentences before the panel-runner sentence; Test 55 not pushed past the 2000-char scan window. docs/codex-integration-plan.md: F6 gains an addendum with the two source citations (slash_commands.rs enum absence; slash_input.rs/chat_composer.rs leading-space mechanism); D3 rewritten to the shipped design; the stale out-of-scope bullet referencing '/prompts:vs is his call' corrected for consistency (not separately named in AC4 but directly contradicted the rewritten D3). MANUAL-TESTS.md Test 55 gains step 4 (renumbering old 4-6 to 5-7, 'Six further steps' -> 'Seven'); Pass criteria line mentions the new step. TODO.md Martin's-answers entry (b) verified accurate, no edit needed. Two permitted checks_18 edits only: _codex_liveness_fixture's copy tuple gains ('codex-prompt-prefix', PROMPT_PREFIX); test_codex_hooks_json_ac3's event-set check becomes {PreToolUse, UserPromptSubmit} plus new assertions on the UserPromptSubmit group's single hook (command, timeout==10, no async). python3 code-check.py: clean, shellcheck across 24 files. python3 smoke-test.py < /dev/null: 4453 passed, 1 failed -- '[task051] vs.md line count grew by exactly one vs HEAD' (HEAD had 462, now 462). Verified via git stash (full pop-back afterward, no data lost) that this failure is PRE-EXISTING and independent of every task_053 change: it reproduces identically against a working tree that exactly matches HEAD (4bffdb8, task_051's own commit), because the check computes current-vs-HEAD line-count delta and can never see +1 once the change it is checking for is already inside HEAD itself -- a self-referential test authored to run mid-cycle pre-commit that fails permanently post-commit. Confirmed unrelated to any AC1-4 file and out of my edit scope (checks_13_spec_first.py is not one of the two permitted checks_18 edits) -- left unfixed and flagged for the Evaluator/Tester rather than touched."
+   }
+ ]
+diff --git a/.vss/sessions/2026-09-11T17-11-32Z.md b/.vss/sessions/2026-09-11T17-11-32Z.md
+index c703f7e..95a85d0 100644
+--- a/.vss/sessions/2026-09-11T17-11-32Z.md
++++ b/.vss/sessions/2026-09-11T17-11-32Z.md
+@@ -488,3 +488,7 @@ Generator sonnet: `devcontainer/claude-md/dollar-prefix.md` (9 lines, 163 words)
+ 
+ **Evaluator**: PASS; Astra confirms the ledger re-checks narrow (not eliminate) the directory race and notes O_CREAT can create the file before validation — recorded as a known limit (a created-then-refused empty ledger file is harmless; Node has no openat).
+ **Files touched**: `devcontainer/claude-md/dollar-prefix.md` (new), `devcontainer/commands/{vs,vss,vsss}.md`, `README.md`, `docs/codex-integration-plan.md`, `TODO.md` (hook line + Martin's alert request filed by the fork), `smoke/checks_09_openproject_and_scanner.py`, `smoke/checks_03_vibecopy_and_watcher.py`, `smoke/checks_13_spec_first.py`, `smoke/_core.py`, `smoke/runner.py`, `.vs/*`, `CHANGELOG.md`.
++**Commit**: 4bffdb8 — /vs cycle 1: pass — task_051. **Outcome**: success. Martin's second batch of answers consumed by a Fable fork (T37 reworded with the run's position and ETA; T29 reworded with the audit loop; alert request filed in TODO).
++
++## Iter 11 — Martin-approved task_053: `/vs` in Codex's own terminal (leading-space pass-through + managed UserPromptSubmit hook), `/vs` rigorous, sonnet Generator
++**Plan**: root-owned `codex-prompt-prefix` hook adds context pointing at the `$<name>` skill when the submitted prompt starts with `/vs|/vss|/vsss`; hooks.json gains the UserPromptSubmit group in the hardened form; liveness regex grouped; docs say ' /vs' with a leading space (trimmed by the composer). Spec Critic: revise twice (custom prompts absent at 0.154 → re-scoped; grouped regex; the two named checks_18 edits).
+diff --git a/MANUAL-TESTS.md b/MANUAL-TESTS.md
+index 57526fb..0e69509 100644
+--- a/MANUAL-TESTS.md
++++ b/MANUAL-TESTS.md
+@@ -1622,7 +1622,7 @@ cannot establish that the image actually ships the policy root-owned.
+    Do **not** run `codex exec`, `codex review` or anything else that contacts a
+    model as part of this test; the delegate paths are Test 54's job.
+ 
+-**The Codex-led launch itself (`vibe --agent codex`, task_049).** Six further
++**The Codex-led launch itself (`vibe --agent codex`, task_049).** Seven further
+ steps, run after step 4 above and on the same rebuilt container. This is the
+ first time Codex leads a vibe session, so run it with the day free of anything
+ else you care about.
+@@ -1641,14 +1641,23 @@ else you care about.
+ 3. **Approval policy.** In the Codex TUI, confirm the session is running under
+    approval policy `never` and that the workspace is the project directory.
+    Do not change either; both come from `/etc/codex/config.toml`.
+-4. **A denied write.** Ask Codex to write `/home/node/.codex/config.toml` (any
++4. **The leading-space `/vs` form (task_053).** In the same Codex TUI, type
++   ` /vs --help`-style input with exactly one leading space and submit it.
++   Confirm the composer accepts the line (no `Unrecognized command` message)
++   and that Codex goes on to invoke the `$vs` skill — its response should
++   read `/usr/local/share/vibe/commands/vs.md` and start following it, the
++   same as if you had typed `$vs --help` directly. This is model-mediated,
++   not deterministic: if the model does not pick up the `UserPromptSubmit`
++   hook's `additionalContext` and instead answers the literal text, record
++   that as the expected (documented) failure mode rather than a bug.
++5. **A denied write.** Ask Codex to write `/home/node/.codex/config.toml` (any
+    content). The managed hook must **deny** it, with the guard's own wording —
+    not an approval prompt, and not a silent success. Check the file's mtime
+    afterwards to be sure nothing landed.
+-5. **Allowed and denied shell.** Ask Codex to run `git status`: allowed, and it
++6. **Allowed and denied shell.** Ask Codex to run `git status`: allowed, and it
+    should show the working tree. Then ask it to run `git push --force`: denied
+    by the same argv-prefix rule that holds for a Claude Code session.
+-6. **Back to Claude.** Exit the Codex session, then run plain `vibe` in the same
++7. **Back to Claude.** Exit the Codex session, then run plain `vibe` in the same
+    folder. Claude Code must lead again with no leftover state, no `agent   :`
+    header line, and the usual auto-resume behaviour available.
+ 
+@@ -1664,7 +1673,8 @@ denies each known-bad fixture in both modes, converts `ask` to `deny`, allows
+ benign work, and exits 2 whenever it cannot do its job; the liveness gate exits 1
+ for a fail-open stub and for a weakened requirements file; the sudoers block
+ is unchanged; and a `vibe --agent codex` launch shows the agent header line,
+-prints the `guard chain proven` line, denies the Codex login-dir write and the
++prints the `guard chain proven` line, accepts a leading-space ` /vs …` line
++and goes on to follow the `$vs` skill, denies the Codex login-dir write and the
+ force-push, allows `git status`, hands the lead back to Claude on the next plain
+ launch, and is refused before Docker when the registry line is missing. Record
+ any check you could not run rather than inferring it.
+diff --git a/README.md b/README.md
+index dc8d8c9..58ff35e 100644
+--- a/README.md
++++ b/README.md
+@@ -188,7 +188,7 @@ Claude delegation has its own configurable billing route, independent of the sub
+ 
+ **Codex-led sessions: how the backstops hold.** Everything above is Claude Code leading and Codex answering a single question. When Codex itself leads a session, the same two backstops have to hold with a different runtime behind them, and they do — through a root-owned system policy baked into the image at `/etc/codex/`, not through anything in your Mac's `~/.codex`. `requirements.toml` there is a set of constraints, not defaults: it clamps whatever a user or project config asks for, pins the unhooked tool surfaces off (unified exec's `write_stdin`, the JS REPL, sub-agents, apps), forbids every MCP server with an empty allowlist, disables hosted web search — which the firewall cannot see, since it is fetched by OpenAI rather than by this container — and declares `/etc/codex/hooks` the only place hooks may come from, so a project cannot add or disable one. Those managed hooks run `codex-guard-adapter`, which feeds Codex's `PreToolUse` JSON into the **same, unmodified** `guard-bash.sh` and `guard-fs.sh` the Claude Code hooks use (Codex's hook names are already Claude-shaped: `Bash` with `tool_input.command`, `apply_patch` aliased `Write`/`Edit`), and turns every `ask` into a `deny` — an unattended session has nobody to answer a prompt, so the safe answer is no. Stated plainly: **Codex's own sandbox cannot run here.** It is bubblewrap, it needs unprivileged user namespaces, and the container does not have them, so a mode below `danger-full-access` would fail every tool call rather than contain it. What holds instead is the container boundary, the firewall, root ownership the `node` user cannot touch, an argv-prefix exec policy for force-pushes, and those hooks — exactly the set that already holds a Claude Code session under `--permission-mode bypassPermissions`. Because Codex fails *open* when a hook binary cannot be spawned, `codex-guard-liveness` exists to refuse that silence: it checks every file in the chain for root ownership and permissions, then pushes real known-bad calls through the real adapter and requires real denials before a Codex-led session is considered safe to start. `docs/codex-tool-inventory.md` lists every Codex tool at the pinned version against the layer that mediates it, including the two rows that are honestly marked unmediated.
+ 
+-**Skills in a Codex-led container.** `$vs`, `$vss` and `$vsss` are Codex skills baked into the image at `/etc/codex/skills/{vs,vss,vsss}/SKILL.md` — the Admin scope root, so a project cannot add, shadow or disable one, and nothing is ever written into your Mac's `~/.codex` or `~/.agents` to make this work. Each SKILL.md tells Codex to read the single-sourced command body at `/usr/local/share/vibe/commands/<name>.md` and follow it verbatim, substituting a fixed table of Codex equivalents for the handful of Claude-only primitives those bodies use (`Agent`, `Skill`, `ScheduleWakeup`, and so on). The one primitive with no Codex equivalent at all is subagent dispatch — Codex's own `multi_agent` is pinned off in this image (see above) — so `/vs`'s Planner/Spec Critic/Generator/Tester/Evaluator roles become `vibe-delegate role <role> --model <astra|opus|sonnet|haiku|fable> --cwd <workspace>`: one fresh `codex exec` or `claude -p` process per role, run under the same hooks and firewall as the lead, never resuming or sharing a session with it. This ships the plumbing and its offline tests only; the first live Codex-led `/vs` trial is a later, separate item (see **MANUAL-TESTS Test 55**). `/vs --panel N` has no subagents to fan out to either, so the image also ships `/usr/local/bin/codex-panel`: `codex-panel run --n N < diff` starts N independent, tool-less `codex exec` reviewers — one process each, a private temp cwd each, the same diff and a per-reviewer nonce on stdin — and prints one JSON object of verdicts for the chair to adjudicate. Its `--verify` mode drops `--ephemeral` so each reviewer's rollout is kept and can be proved to hold only its own nonce, which costs N live calls and leaves the diff and the nonces in `~/.codex/sessions` until you delete them, so it is an opt-in proof rather than the default. The same `$vs`/`$vss`/`$vsss` spelling also works when Claude Code is the lead: a synced CLAUDE.md fragment (`devcontainer/claude-md/dollar-prefix.md`) tells it that a prompt whose first token is one of those means invoke the matching command with the rest of the prompt as its arguments, verbatim.
++**Skills in a Codex-led container.** `$vs`, `$vss` and `$vsss` are Codex skills baked into the image at `/etc/codex/skills/{vs,vss,vsss}/SKILL.md` — the Admin scope root, so a project cannot add, shadow or disable one, and nothing is ever written into your Mac's `~/.codex` or `~/.agents` to make this work. Each SKILL.md tells Codex to read the single-sourced command body at `/usr/local/share/vibe/commands/<name>.md` and follow it verbatim, substituting a fixed table of Codex equivalents for the handful of Claude-only primitives those bodies use (`Agent`, `Skill`, `ScheduleWakeup`, and so on). The one primitive with no Codex equivalent at all is subagent dispatch — Codex's own `multi_agent` is pinned off in this image (see above) — so `/vs`'s Planner/Spec Critic/Generator/Tester/Evaluator roles become `vibe-delegate role <role> --model <astra|opus|sonnet|haiku|fable> --cwd <workspace>`: one fresh `codex exec` or `claude -p` process per role, run under the same hooks and firewall as the lead, never resuming or sharing a session with it. This ships the plumbing and its offline tests only; the first live Codex-led `/vs` trial is a later, separate item (see **MANUAL-TESTS Test 55**). Typing a bare `/vs` in Codex's own terminal is rejected by the composer before submission, but a line that starts with one leading space (` /vs …`) passes through as plain text with the space trimmed, and a managed `UserPromptSubmit` hook then adds context pointing the model at the `$vs` skill with the rest of the line as arguments — model-mediated, not guaranteed, so `$vs …` remains the reliable form. Nothing is written to the Mac's `~/.codex` to make this work, and the earlier `/prompts:`-based plan is withdrawn: Codex's custom-prompts directory is not read by the shipped binary. `/vs --panel N` has no subagents to fan out to either, so the image also ships `/usr/local/bin/codex-panel`: `codex-panel run --n N < diff` starts N independent, tool-less `codex exec` reviewers — one process each, a private temp cwd each, the same diff and a per-reviewer nonce on stdin — and prints one JSON object of verdicts for the chair to adjudicate. Its `--verify` mode drops `--ephemeral` so each reviewer's rollout is kept and can be proved to hold only its own nonce, which costs N live calls and leaves the diff and the nonces in `~/.codex/sessions` until you delete them, so it is an opt-in proof rather than the default. The same `$vs`/`$vss`/`$vsss` spelling also works when Claude Code is the lead: a synced CLAUDE.md fragment (`devcontainer/claude-md/dollar-prefix.md`) tells it that a prompt whose first token is one of those means invoke the matching command with the rest of the prompt as its arguments, verbatim.
+ 
+ **The unattended supervisor.** A `$vsss` run is meant to outlive its own quota window, and Codex's CLI has no durable loop of its own, so the image ships one: `/usr/local/bin/codex-supervisor` (root-owned, like the guard chain). It speaks Codex's app-server protocol on stdio — newline-delimited JSON, not JSON-RPC 2.0 — starting ONE thread with `approvalPolicy: "never"` and `sandbox: "danger-full-access"` (the only mode that works here; the container has no user namespaces for Codex's own bubblewrap sandbox, and the real boundary is the container, firewall and hooks described above), then re-entering that same thread with the literal word `continue` until the run's exit report ends with `VSSS-EXIT: <reason>`. It runs the vendor binary as `codex app-server` with no `-c` flags and a four-variable environment, so the system requirements and managed hooks apply unaltered. The reason it uses the protocol rather than `codex exec` is that only the protocol carries `codexErrorInfo` and the rate-limit snapshot: a quota failure names itself and reports when the window resets, so the supervisor sleeps until then plus two minutes rather than guessing, backs off on transient failures, declines every approval request it is sent (nobody is there to answer), and writes its thread id and counters to `.vss/codex-supervisor.json` after every change — so a killed supervisor resumes the same thread instead of starting a new one. Ceilings on turns, resumes, quota waits, retries and wall time bound the whole thing, and `codex-supervisor status --state <file>` prints where a run got to. It is wired into a Codex-led launch by a later item; today it is shipped and tested offline against a stub app-server.
+ 
+diff --git a/devcontainer/Dockerfile b/devcontainer/Dockerfile
+index d3c8f2a..06e5262 100644
+--- a/devcontainer/Dockerfile
++++ b/devcontainer/Dockerfile
+@@ -159,6 +159,11 @@ COPY --chown=root:root codex-supervisor.mjs /usr/local/bin/codex-supervisor
+ COPY --chown=root:root codex-panel.mjs /usr/local/bin/codex-panel
+ COPY --chown=root:root codex-guard-adapter.sh /usr/local/bin/codex-guard-adapter
+ COPY --chown=root:root codex-guard-liveness.sh /usr/local/bin/codex-guard-liveness
++# The UserPromptSubmit prefix hook (task_053): points the model at $vs/$vss/
++# $vsss when the user types a leading-space ` /vs …` line in Codex's own
++# terminal. It only adds context, never denies, but it is root-owned and
++# feeds codex-guard-liveness's chain like the guard adapter beside it.
++COPY --chown=root:root codex-prompt-prefix.sh /usr/local/bin/codex-prompt-prefix
+ # The Codex-led session entry point (task_049): it runs codex-guard-liveness
+ # and refuses to start Codex unless that gate exits 0, so it is root-owned
+ # for the same reason the gate is — `node` must not be able to rewrite the
+@@ -186,7 +191,7 @@ USER root
+ # to a root script whose whole job is widening the firewall. The script body
+ # also never reads its own argv, so this is belt and braces — but the rule is
+ # what makes it true for every future version of the script.
+-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/refresh-extra-domains.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/guard-bash.sh /usr/local/bin/guard-fs.sh /usr/local/bin/install-claude-extras.sh /usr/local/bin/check-sp-current.sh /usr/local/bin/register-op-mcp.sh /usr/local/bin/vibe-credential-helper /usr/local/bin/vibe-copy /usr/local/bin/codex-guard-adapter /usr/local/bin/codex-guard-liveness /usr/local/bin/codex-supervisor /usr/local/bin/codex-panel /usr/local/bin/codex-entry && \
++RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/refresh-extra-domains.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/guard-bash.sh /usr/local/bin/guard-fs.sh /usr/local/bin/install-claude-extras.sh /usr/local/bin/check-sp-current.sh /usr/local/bin/register-op-mcp.sh /usr/local/bin/vibe-credential-helper /usr/local/bin/vibe-copy /usr/local/bin/codex-guard-adapter /usr/local/bin/codex-guard-liveness /usr/local/bin/codex-supervisor /usr/local/bin/codex-panel /usr/local/bin/codex-entry /usr/local/bin/codex-prompt-prefix && \
+   chmod 0755 /etc/codex /etc/codex/hooks && \
+   chmod 0644 /etc/codex/requirements.toml /etc/codex/config.toml /etc/codex/hooks/hooks.json && \
+   chmod 0755 /etc/codex/skills /etc/codex/skills/vs /etc/codex/skills/vss /etc/codex/skills/vsss && \
+diff --git a/devcontainer/codex-guard-liveness.sh b/devcontainer/codex-guard-liveness.sh
+index f9ce176..a096982 100755
+--- a/devcontainer/codex-guard-liveness.sh
++++ b/devcontainer/codex-guard-liveness.sh
+@@ -36,7 +36,9 @@
+ #   hooks-commands         (c) every command in hooks.json is the hardened
+ #                              `/usr/bin/env -i PATH=<fixed> /bin/bash
+ #                              /usr/local/bin/codex-guard-adapter <mode>`
+-#                              form and the adapter exists as an executable.
++#                              or `/usr/local/bin/codex-prompt-prefix` form,
++#                              and the target program exists as an
++#                              executable (task_053).
+ #   fixture-deny           (d) four known-bad calls are refused: a shell
+ #                              redirect into the Codex login dir, a patch
+ #                              rewriting that dir's config.toml, a shell
+@@ -140,6 +142,7 @@ jq_path=$(command -v jq)
+ requirements_file=$root/requirements.toml
+ hooks_file=$root/hooks/hooks.json
+ adapter=$bin/codex-guard-adapter
++prompt_prefix=$bin/codex-prompt-prefix
+ 
+ # ── (a) ownership and modes ──────────────────────────────────────────────────
+ # stat's GNU spelling first, BSD/macOS as the fallback; -L so a symlinked
+@@ -177,6 +180,11 @@ check_owned "$bin/guard-fs.sh"
+ # the file that consults THIS gate, so a `node`-writable copy of it could
+ # simply not call it.
+ check_owned "$bin/codex-entry"
++# task_053: the UserPromptSubmit hook that points the model at $vs/$vss/
++# $vsss for a leading-space ` /vs …` line is part of the same chain — it
++# runs with the same hardened env -i form, so it must be just as
++# `node`-unwritable as the guard adapter it sits beside.
++check_owned "$prompt_prefix"
+ # jq is a distribution binary, not part of the vibe chain: it is always
+ # root-owned even when --owner relocates the chain to a test user, so root is
+ # accepted for it in addition to --owner.
+@@ -221,16 +229,24 @@ hook_commands=$(jq -r '
+ # Each command must be the hardened form the policy ships (Astra's review,
+ # 2026-09-11): started through the ABSOLUTE `/usr/bin/env -i` with a FIXED
+ # PATH and the absolute /bin/bash, so a caller-controlled BASH_ENV or PATH
+-# can never run before the adapter's first line (an unqualified `env` would
+-# itself be resolved through the inherited PATH — Astra's re-review). Anything else — a bare adapter path, a different
+-# interpreter, an extra token — fails the gate.
+-hook_form='^/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /bin/bash /usr/local/bin/codex-guard-adapter (bash|patch)$'
++# can never run before the target script's first line (an unqualified `env`
++# would itself be resolved through the inherited PATH — Astra's re-review).
++# Anything else — a bare path, a different interpreter, an extra token —
++# fails the gate. task_053 adds a second program to the alternation,
++# codex-prompt-prefix (the UserPromptSubmit hook), grouped so both
++# alternatives stay anchored at both ends; the captured group names
++# whichever program actually matched, so the existence/executable check
++# below resolves the right binary for either one.
++hook_form='^/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /bin/bash /usr/local/bin/(codex-guard-adapter (bash|patch)|codex-prompt-prefix)$'
+ while IFS= read -r hook_command; do
+   [ -n "$hook_command" ] || continue
+-  printf '%s\n' "$hook_command" | grep -Eq "$hook_form" ||
+-    fail "hooks-commands — '$hook_command' is not the hardened '/usr/bin/env -i PATH=… /bin/bash $CANONICAL_BIN/codex-guard-adapter <mode>' form"
+-  hook_program=$CANONICAL_BIN/codex-guard-adapter
+-  hook_target=$bin/$(basename -- "$hook_program")
++  if [[ $hook_command =~ $hook_form ]]; then
++    hook_program=${BASH_REMATCH[1]}
++  else
++    fail "hooks-commands — '$hook_command' is not the hardened '/usr/bin/env -i PATH=… /bin/bash $CANONICAL_BIN/(codex-guard-adapter <mode>|codex-prompt-prefix)' form"
++  fi
++  hook_binary=${hook_program%% *}
++  hook_target=$bin/$hook_binary
+   [ -f "$hook_target" ] || fail "hooks-commands — $hook_target (for '$hook_command') does not exist"
+   [ -x "$hook_target" ] || fail "hooks-commands — $hook_target (for '$hook_command') is not executable"
+   ok "hooks-commands" "$hook_command"
+diff --git a/devcontainer/codex/hooks/hooks.json b/devcontainer/codex/hooks/hooks.json
+index b7490a9..57912b7 100644
+--- a/devcontainer/codex/hooks/hooks.json
++++ b/devcontainer/codex/hooks/hooks.json
+@@ -21,6 +21,17 @@
+           }
+         ]
+       }
++    ],
++    "UserPromptSubmit": [
++      {
++        "hooks": [
++          {
++            "type": "command",
++            "command": "/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /bin/bash /usr/local/bin/codex-prompt-prefix",
++            "timeout": 10
++          }
++        ]
++      }
+     ]
+   }
+ }
+diff --git a/devcontainer/codex/skills/vs/SKILL.md b/devcontainer/codex/skills/vs/SKILL.md
+index b20568e..afb09bd 100644
+--- a/devcontainer/codex/skills/vs/SKILL.md
++++ b/devcontainer/codex/skills/vs/SKILL.md
+@@ -24,6 +24,12 @@ instead; nothing else about the command body changes.
+ 
+ ## The `/` form
+ 
+-In Codex's own terminal only `$vs` exists — the composer rejects an unknown
+-`/vs` before it is even submitted. `/vs` is the same command in Claude Code,
+-and, once the supervisor lands, in unattended Codex runs too.
++In Codex's own terminal, only `$vs` is a guaranteed match: the composer
++rejects an unknown `/vs` before it is even submitted. Typing ` /vs …` with
++one leading space also works — the composer lets a space-prefixed line
++through as plain text and trims the space before it reaches the model — and
++a managed `UserPromptSubmit` hook then adds context pointing the model at
++this `$vs` skill with the rest of the line as arguments, verbatim; that is
++model-mediated, not deterministic, so `$vs …` remains the reliable form.
++`/vs` is the same command in Claude Code, and, once the supervisor lands, in
++unattended Codex runs too.
+diff --git a/devcontainer/codex/skills/vss/SKILL.md b/devcontainer/codex/skills/vss/SKILL.md
+index d854b9d..d863e1f 100644
+--- a/devcontainer/codex/skills/vss/SKILL.md
++++ b/devcontainer/codex/skills/vss/SKILL.md
+@@ -24,6 +24,12 @@ instead; nothing else about the command body changes.
+ 
+ ## The `/` form
+ 
+-In Codex's own terminal only `$vss` exists — the composer rejects an unknown
+-`/vss` before it is even submitted. `/vss` is the same command in Claude
+-Code, and, once the supervisor lands, in unattended Codex runs too.
++In Codex's own terminal, only `$vss` is a guaranteed match: the composer
++rejects an unknown `/vss` before it is even submitted. Typing ` /vss …` with
++one leading space also works — the composer lets a space-prefixed line
++through as plain text and trims the space before it reaches the model — and
++a managed `UserPromptSubmit` hook then adds context pointing the model at
++this `$vss` skill with the rest of the line as arguments, verbatim; that is
++model-mediated, not deterministic, so `$vss …` remains the reliable form.
++`/vss` is the same command in Claude Code, and, once the supervisor lands,
++in unattended Codex runs too.
+diff --git a/devcontainer/codex/skills/vsss/SKILL.md b/devcontainer/codex/skills/vsss/SKILL.md
+index 19e059f..8fcb636 100644
+--- a/devcontainer/codex/skills/vsss/SKILL.md
++++ b/devcontainer/codex/skills/vsss/SKILL.md
+@@ -24,6 +24,12 @@ instead; nothing else about the command body changes.
+ 
+ ## The `/` form
+ 
+-In Codex's own terminal only `$vsss` exists — the composer rejects an
+-unknown `/vsss` before it is even submitted. `/vsss` is the same command in
+-Claude Code, and, once the supervisor lands, in unattended Codex runs too.
++In Codex's own terminal, only `$vsss` is a guaranteed match: the composer
++rejects an unknown `/vsss` before it is even submitted. Typing ` /vsss …`
++with one leading space also works — the composer lets a space-prefixed line
++through as plain text and trims the space before it reaches the model — and
++a managed `UserPromptSubmit` hook then adds context pointing the model at
++this `$vsss` skill with the rest of the line as arguments, verbatim; that is
++model-mediated, not deterministic, so `$vsss …` remains the reliable form.
++`/vsss` is the same command in Claude Code, and, once the supervisor lands,
++in unattended Codex runs too.
+diff --git a/docs/codex-integration-plan.md b/docs/codex-integration-plan.md
+index b3f83f5..57160a9 100644
+--- a/docs/codex-integration-plan.md
++++ b/docs/codex-integration-plan.md
+@@ -93,6 +93,18 @@ relies on it.
+   invoked as `/prompts:<name>` (or `/<name>` once listed), deprecated in
+   favour of skills; no repo-scope prompts dir (open issues #4734, #9848).
+   So `/vs` in the Codex TUI cannot be a hook or a file vibe owns (Astra B3).
++  **F6 addendum (task_053, Spec Critic 2026-09-11):** that `/prompts:<name>`
++  route is ALSO gone at the shipped tag — `tui/src/bottom_pane/slash_commands.rs`
++  at `rust-v0.154.0` defines `SlashCommandItem` as only `{Builtin,
++  ServiceTier}`, no user-prompts variant, and nothing under `codex-rs/` reads
++  a `prompts/` directory at all, so a `vibe codex prompts` installer would
++  write inert files. What DOES exist, verified in
++  `tui/src/bottom_pane/chat_composer/slash_input.rs:71-87`'s
++  `validate_submission`: a prompt whose input STARTS WITH A SPACE
++  (`input_starts_with_space`, `chat_composer.rs:3064`) skips slash
++  validation, and the composer then TRIMS that space (`trim_submission`,
++  `chat_composer.rs:494, 3079-3082`) before submitting the line as plain
++  text — the mechanism task_053's leading-space pass-through relies on.
+ - F7 `codex exec --json` emits ONLY `thread.started {thread_id}`,
+   `turn.started`, `turn.completed {usage: {input_tokens,
+   cached_input_tokens, cache_write_input_tokens, output_tokens,
+@@ -188,17 +200,31 @@ relies on it.
+   inventory (every tool Codex can enable at the tag and its input shape) is
+   written down in item 4 and each entry maps to a guard, the sandbox, or an
+   explicit "unmediated" line.
+-- D3 **`/vs` is not achievable inside the Codex TUI by anything vibe owns**
+-  (F6): the composer rejects unknown slash commands before submission, hooks
+-  never see the text, and `additionalContext` is not scanned for skills.
+-  What ships: `$vs`, `$vss`, `$vsss` as native Codex skills (D5); `/vs` and
+-  `$vs` both accepted by the unattended path (the supervisor, D7, rewrites
+-  the prefix before dispatch); `/vs` and `$vs` both accepted in Claude Code
+-  (D4). The one remaining gap — typing `/vs` in Codex's own terminal — has
+-  exactly one supported route, custom prompts in the user's own
+-  `$CODEX_HOME/prompts/`, invoked as `/prompts:vs`. That is a Martin decision
+-  (posted to `vibe-fromClaude.md`): a consented host-side `vibe codex
+-  prompts` installer, or accept `$vs` there.
++- D3 **`/vs` typed bare in the Codex TUI is not achievable by anything vibe
++  owns** (F6): the composer rejects an unknown slash command before
++  submission, so a hook never sees the text and `additionalContext` is not
++  scanned for skills. What ships instead (task_053, re-scoped from Martin's
++  `y` of 2026-09-11 after the `/prompts:vs` route named below turned out to
++  be gone at the shipped tag — F6 addendum): `$vs`, `$vss`, `$vsss` as native
++  Codex skills (D5); `/vs` and `$vs` both accepted by the unattended path
++  (the supervisor, D7, rewrites the prefix before dispatch); `/vs` and `$vs`
++  both accepted in Claude Code (D4); and, in Codex's own terminal, a
++  leading-space pass-through — typing ` /vs …` with ONE leading space skips
++  the composer's slash validation (`input_starts_with_space`) and submits
++  `/vs …` as plain text once the composer trims the space
++  (`trim_submission`) — paired with a root-owned managed `UserPromptSubmit`
++  hook, `codex-prompt-prefix` (`devcontainer/codex-prompt-prefix.sh`,
++  installed `/usr/local/bin/codex-prompt-prefix`, wired in
++  `/etc/codex/hooks/hooks.json`), that recognises a first token of exactly
++  `/vs`, `/vss` or `/vsss` and adds `additionalContext` telling the model
++  this is the same command as the matching `$name` skill, to invoke it now
++  with the rest of the line as arguments verbatim. This is model-mediated,
++  not deterministic — the hook can only add context, never force a tool
++  call — so `$vs …` remains the one guaranteed form and the docs say so
++  everywhere. Nothing is written to the Mac's `~/.codex`; the earlier
++  `vibe codex prompts` installer idea and any `/prompts:`-based route are
++  withdrawn — a `vibe codex prompts` installer would write inert files, per
++  the F6 addendum.
+ - D4 **`$vs` in Claude Code is a CLAUDE.md fragment**, not a hook: a prompt
+   beginning `$vs`, `$vss` or `$vsss` means "invoke that skill with the rest as
+   arguments". A `UserPromptSubmit` hook would be deterministic but is a
+@@ -327,8 +353,10 @@ for the prefix rewrite table. Items 9 and 10 are independent of everything.
+ - The remaining live legs of MANUAL-TESTS Test 54, the PR to `main`, and any
+   push.
+ - Anything that writes into the Mac's `~/.codex` (skills, prompts, hooks):
+-  vibe never modifies the user's own Codex configuration; the `/prompts:vs`
+-  route in D3 is his call.
++  vibe never modifies the user's own Codex configuration. The `/prompts:vs`
++  route is withdrawn (F6 addendum, D3); task_053's leading-space
++  pass-through plus managed `UserPromptSubmit` hook is the shipped answer
++  and needs no Mac-side write.
+ - The live blind-panel nonce proof (N Astra calls) and the first Codex-led
+   trial (item 7 on real Docker): item 7's code, gate and docs shipped in
+   task_049, but nothing in it has ever started a real Codex session — that is
+diff --git a/smoke/checks_18_codex_runtime.py b/smoke/checks_18_codex_runtime.py
+index 594c1f3..4977df8 100644
+--- a/smoke/checks_18_codex_runtime.py
++++ b/smoke/checks_18_codex_runtime.py
+@@ -27,6 +27,7 @@ HOOKS_JSON = REPO / "devcontainer" / "codex" / "hooks" / "hooks.json"
+ ADAPTER = REPO / "devcontainer" / "codex-guard-adapter.sh"
+ LIVENESS = REPO / "devcontainer" / "codex-guard-liveness.sh"
+ CODEX_ENTRY = REPO / "devcontainer" / "codex-entry.sh"
++PROMPT_PREFIX = REPO / "devcontainer" / "codex-prompt-prefix.sh"
+ CODEX_TOOL_INVENTORY_MD = REPO / "docs" / "codex-tool-inventory.md"
+ 
+ # ── task_047: $vs/$vss/$vsss Codex skills + vibe-delegate role dispatch ──────
+@@ -137,6 +138,10 @@ def _codex_liveness_fixture(tmp: Path) -> tuple[Path, Path]:
+         ("guard-bash.sh", GUARD_BASH),
+         ("guard-fs.sh", GUARD_FS),
+         ("codex-entry", CODEX_ENTRY),
++        # task_053: the UserPromptSubmit prefix hook joined the ownership
++        # list codex-guard-liveness checks, so the fixture chain needs a
++        # copy too or every liveness check below fails on its absence.
++        ("codex-prompt-prefix", PROMPT_PREFIX),
+     ):
+         dst = bin_dir / name
+         dst.write_text(src.read_text())
+@@ -331,7 +336,8 @@ def test_codex_hooks_json_ac3():
+     check("[codex] hooks.json parses as JSON", True)
+ 
+     hooks = data.get("hooks", {})
+-    check("[codex] exactly one event: PreToolUse", set(hooks.keys()) == {"PreToolUse"}, str(hooks.keys()))
++    check("[codex] exactly two events: PreToolUse, UserPromptSubmit",
++          set(hooks.keys()) == {"PreToolUse", "UserPromptSubmit"}, str(hooks.keys()))
+     entries = hooks.get("PreToolUse", [])
+     check("[codex] exactly two matcher groups", len(entries) == 2, str(entries))
+ 
+@@ -359,6 +365,24 @@ def test_codex_hooks_json_ac3():
+           by_matcher.get("apply_patch|Write|Edit") == "/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /bin/bash /usr/local/bin/codex-guard-adapter patch",
+           str(by_matcher))
+ 
++    # task_053: the new UserPromptSubmit matcher group — no tool matcher
++    # (there is no tool to match on a prompt), one command, the hardened
++    # env -i /bin/bash form naming codex-prompt-prefix, timeout 10, no async.
++    prompt_entries = hooks.get("UserPromptSubmit", [])
++    check("[codex] UserPromptSubmit has exactly one matcher group", len(prompt_entries) == 1, str(prompt_entries))
++    if prompt_entries:
++        prompt_entry = prompt_entries[0]
++        prompt_hooks = prompt_entry.get("hooks", [])
++        check("[codex] UserPromptSubmit group has exactly one hook entry", len(prompt_hooks) == 1, str(prompt_hooks))
++        if prompt_hooks:
++            ph = prompt_hooks[0]
++            check("[codex] UserPromptSubmit hook type == 'command'", ph.get("type") == "command", str(ph))
++            check("[codex] UserPromptSubmit hook command is the hardened codex-prompt-prefix form",
++                  ph.get("command") == "/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /bin/bash /usr/local/bin/codex-prompt-prefix",
++                  ph.get("command"))
++            check("[codex] UserPromptSubmit hook timeout == 10", ph.get("timeout") == 10, str(ph))
++            check("[codex] UserPromptSubmit hook has no 'async' key", "async" not in ph, str(ph))
++
+ 
+ # ── AC4: adapter bash mode against the real guard-bash.sh ───────────────────
+ 

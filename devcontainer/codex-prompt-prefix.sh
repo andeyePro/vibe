@@ -1,0 +1,60 @@
+#!/bin/bash
+# vibe Codex UserPromptSubmit prefix hook — installed as
+# /usr/local/bin/codex-prompt-prefix (root-owned, 0755), invoked by the
+# managed hook in /etc/codex/hooks/hooks.json for every UserPromptSubmit
+# event (task_053).
+#
+# This hook ADDS CONTEXT; it never guards. When the prompt's first
+# non-whitespace token is exactly /vs, /vss or /vsss (case-sensitive) it
+# tells the model that the typed command is the same as the matching
+# $-form skill and to invoke that skill now with everything after the
+# token — every following line included — as its arguments, verbatim.
+# Anything else, and ANY failure of its own (unreadable or non-JSON stdin,
+# jq missing or failing), produces no output and exits 0: a broken or
+# confused hook here must never block a prompt (Astra's review, 2026-09-12:
+# every jq call is guarded, and the arguments travel on jq's stdin, never
+# as a command-line argument, so their length cannot make the hook fail).
+set -euo pipefail
+export PATH=/usr/local/bin:/usr/bin:/bin
+unset BASH_ENV ENV
+
+command -v jq >/dev/null 2>&1 || exit 0
+
+payload=$(cat) || exit 0
+# Sentinel capture (Astra re-review): `$(...)` would strip trailing newlines,
+# which are argument content; the marker keeps them.
+prompt=$(printf '%s' "$payload" | jq -r '.prompt // empty' 2>/dev/null; printf x) || exit 0
+prompt=${prompt%x}
+prompt=${prompt%$'\n'}   # jq -r's own line terminator, not prompt content
+[ -n "$prompt" ] || exit 0
+
+# First token = up to the first whitespace (space, tab or newline) after any
+# leading whitespace; the remainder keeps every later line intact and loses
+# only the whitespace that separated it from the token.
+stripped=${prompt#"${prompt%%[![:space:]]*}"}
+first=${stripped%%[[:space:]]*}
+rest=${stripped#"$first"}
+rest=${rest#"${rest%%[![:space:]]*}"}
+
+case "$first" in
+  /vs | /vss | /vsss) name=${first#/} ;;
+  *) exit 0 ;;
+esac
+
+if [ -n "$rest" ]; then
+  out=$(printf '%s' "$rest" | jq -Rs --arg name "$name" \
+    '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext:
+      ("The user typed the vibe command /" + $name +
+       "; it is the same command as the $" + $name + " skill. Invoke the $" +
+       $name + " skill now with these arguments, verbatim (they may span several lines): " + .)}}' \
+    2>/dev/null) || exit 0
+else
+  out=$(jq -n --arg name "$name" \
+    '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext:
+      ("The user typed the vibe command /" + $name +
+       "; it is the same command as the $" + $name + " skill. Invoke the $" +
+       $name + " skill now with no arguments.")}}' 2>/dev/null) || exit 0
+fi
+[ -n "$out" ] || exit 0
+printf '%s\n' "$out"
+exit 0

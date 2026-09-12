@@ -93,6 +93,18 @@ relies on it.
   invoked as `/prompts:<name>` (or `/<name>` once listed), deprecated in
   favour of skills; no repo-scope prompts dir (open issues #4734, #9848).
   So `/vs` in the Codex TUI cannot be a hook or a file vibe owns (Astra B3).
+  **F6 addendum (task_053, Spec Critic 2026-09-11):** that `/prompts:<name>`
+  route is ALSO gone at the shipped tag — `tui/src/bottom_pane/slash_commands.rs`
+  at `rust-v0.154.0` defines `SlashCommandItem` as only `{Builtin,
+  ServiceTier}`, no user-prompts variant, and nothing under `codex-rs/` reads
+  a `prompts/` directory at all, so a `vibe codex prompts` installer would
+  write inert files. What DOES exist, verified in
+  `tui/src/bottom_pane/chat_composer/slash_input.rs:71-87`'s
+  `validate_submission`: a prompt whose input STARTS WITH A SPACE
+  (`input_starts_with_space`, `chat_composer.rs:3064`) skips slash
+  validation, and the composer then TRIMS that space (`trim_submission`,
+  `chat_composer.rs:494, 3079-3082`) before submitting the line as plain
+  text — the mechanism task_053's leading-space pass-through relies on.
 - F7 `codex exec --json` emits ONLY `thread.started {thread_id}`,
   `turn.started`, `turn.completed {usage: {input_tokens,
   cached_input_tokens, cache_write_input_tokens, output_tokens,
@@ -188,17 +200,31 @@ relies on it.
   inventory (every tool Codex can enable at the tag and its input shape) is
   written down in item 4 and each entry maps to a guard, the sandbox, or an
   explicit "unmediated" line.
-- D3 **`/vs` is not achievable inside the Codex TUI by anything vibe owns**
-  (F6): the composer rejects unknown slash commands before submission, hooks
-  never see the text, and `additionalContext` is not scanned for skills.
-  What ships: `$vs`, `$vss`, `$vsss` as native Codex skills (D5); `/vs` and
-  `$vs` both accepted by the unattended path (the supervisor, D7, rewrites
-  the prefix before dispatch); `/vs` and `$vs` both accepted in Claude Code
-  (D4). The one remaining gap — typing `/vs` in Codex's own terminal — has
-  exactly one supported route, custom prompts in the user's own
-  `$CODEX_HOME/prompts/`, invoked as `/prompts:vs`. That is a Martin decision
-  (posted to `vibe-fromClaude.md`): a consented host-side `vibe codex
-  prompts` installer, or accept `$vs` there.
+- D3 **`/vs` typed bare in the Codex TUI is not achievable by anything vibe
+  owns** (F6): the composer rejects an unknown slash command before
+  submission, so a hook never sees the text and `additionalContext` is not
+  scanned for skills. What ships instead (task_053, re-scoped from Martin's
+  `y` of 2026-09-11 after the `/prompts:vs` route named below turned out to
+  be gone at the shipped tag — F6 addendum): `$vs`, `$vss`, `$vsss` as native
+  Codex skills (D5); `/vs` and `$vs` both accepted by the unattended path
+  (the supervisor, D7, rewrites the prefix before dispatch); `/vs` and `$vs`
+  both accepted in Claude Code (D4); and, in Codex's own terminal, a
+  leading-space pass-through — typing ` /vs …` with ONE leading space skips
+  the composer's slash validation (`input_starts_with_space`) and submits
+  `/vs …` as plain text once the composer trims the space
+  (`trim_submission`) — paired with a root-owned managed `UserPromptSubmit`
+  hook, `codex-prompt-prefix` (`devcontainer/codex-prompt-prefix.sh`,
+  installed `/usr/local/bin/codex-prompt-prefix`, wired in
+  `/etc/codex/hooks/hooks.json`), that recognises a first token of exactly
+  `/vs`, `/vss` or `/vsss` and adds `additionalContext` telling the model
+  this is the same command as the matching `$name` skill, to invoke it now
+  with the rest of the line as arguments verbatim. This is model-mediated,
+  not deterministic — the hook can only add context, never force a tool
+  call — so `$vs …` remains the one guaranteed form and the docs say so
+  everywhere. Nothing is written to the Mac's `~/.codex`; the earlier
+  `vibe codex prompts` installer idea and any `/prompts:`-based route are
+  withdrawn — a `vibe codex prompts` installer would write inert files, per
+  the F6 addendum.
 - D4 **`$vs` in Claude Code is a CLAUDE.md fragment**, not a hook: a prompt
   beginning `$vs`, `$vss` or `$vsss` means "invoke that skill with the rest as
   arguments". A `UserPromptSubmit` hook would be deterministic but is a
@@ -327,8 +353,10 @@ for the prefix rewrite table. Items 9 and 10 are independent of everything.
 - The remaining live legs of MANUAL-TESTS Test 54, the PR to `main`, and any
   push.
 - Anything that writes into the Mac's `~/.codex` (skills, prompts, hooks):
-  vibe never modifies the user's own Codex configuration; the `/prompts:vs`
-  route in D3 is his call.
+  vibe never modifies the user's own Codex configuration. The `/prompts:vs`
+  route is withdrawn (F6 addendum, D3); task_053's leading-space
+  pass-through plus managed `UserPromptSubmit` hook is the shipped answer
+  and needs no Mac-side write.
 - The live blind-panel nonce proof (N Astra calls) and the first Codex-led
   trial (item 7 on real Docker): item 7's code, gate and docs shipped in
   task_049, but nothing in it has ever started a real Codex session — that is
