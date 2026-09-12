@@ -74,6 +74,8 @@ Two vibe-wide behaviour changes shipped and took effect on this rebuild — surf
 
 ## Open
 
+- [ ] **Guard against build-time writes to /usr/local/bin in the `USER node` region** (2026-09-12, from the `ln -s taskandi-client` build break fixed in `ec64ada`): `smoke/` has no check that `devcontainer/Dockerfile` never puts a `RUN` that writes a root-owned path between `USER node` (line ~89) and the `USER root` that follows it. Parse the Dockerfile in `smoke/checks_18_codex_runtime.py`, track the active `USER`, and fail on any `RUN` in a node region whose body writes `/usr/local/bin`, `/usr/local/share` or `/etc/codex` (`ln`, `cp`, `mv`, `install`, `chmod`, `chown`, `touch`, `>` redirection). Cheap, and it catches the exact failure that cost two launches. Awaiting Martin's `y` (fromClaude item 25).
+
 - [x] **Plain-vibe Codex onboarding** (2026-09-12): remember the per-folder runtime and guide interactive host login, local Git and scoped project setup; preserve credential gates and noninteractive refusal.
 
 - [ ] **Generic Codex live rollout** (2026-09-12): activation authorised by Martin; run the rebuilt image on another disposable repo and verify guard/startup/development/recovery evidence using `docs/codex-quickstart.md` and `docs/codex-readiness.md`. Current container has no Docker command/socket. Mac setup is optional and guided by `docs/mac-build-setup.md`; Task&I service integration belongs in the Task&I project.
