@@ -180,7 +180,7 @@ const cfg={{root:base+'/stages',receiptsRoot:base+'/receipts',commands:{{doctor:
 console.log(JSON.stringify(await execute(req,cfg,{{runner:async()=>{{throw new Error('runner must not run while locked')}}}})));'''
         r = _node(script_lock, [str(root)])
         locked = json.loads(r.stdout) if r.returncode == 0 else {}
-        check("[mac-build] existing resource lock fails closed with cleanup guidance", locked.get("outcome") == "busy" and "administrator" in locked.get("error", ""), r.stderr + r.stdout)
+        check("[mac-build] existing resource lock fails closed as non-terminal busy (not a permanently poisoned jobId)", locked.get("outcome") == "busy" and locked.get("error"), r.stderr + r.stdout)
 
 
 def test_mac_build_host_failure_artifact_and_doctor_fixtures():
@@ -209,6 +209,91 @@ console.log(JSON.stringify({{bad,doctor,healthyDoctor,invalidArtifact}}));'''
         check("[mac-build] doctor success alone does not attest simulator availability", healthy_doctor.get("toolAvailability", {}).get("simulator", {}).get("available") is False, str(healthy_doctor))
 
 
+def test_mac_build_main_guard_survives_spaced_invocation_path():
+    print("\n[mac-build] item 20: main-module guard runs from a path containing a space")
+    import shutil
+    with tempfile.TemporaryDirectory() as td:
+        space_dir = Path(td) / "dir with space"
+        space_dir.mkdir()
+        for name in ["mac-build.mjs", "mac-build-host.mjs", "mac-build-protocol.mjs"]:
+            shutil.copy(REPO / "devcontainer" / name, space_dir / name)
+        client = run(["node", str(space_dir / "mac-build.mjs")])
+        check("[mac-build] client entrypoint actually runs (not a silent no-op exit 0) from a spaced path",
+              client.returncode == 1 and "usage:" in client.stderr, client.stdout + client.stderr)
+        host_env = {**os.environ}
+        host_env.pop("SSH_CONNECTION", None)
+        host_env.pop("MAC_BUILD_FORCED_COMMAND", None)
+        host = run(["node", str(space_dir / "mac-build-host.mjs")], env=host_env)
+        host_body = json.loads(host.stdout) if host.stdout.strip() else {}
+        check("[mac-build] host entrypoint actually runs (not a silent no-op exit 0) from a spaced path",
+              host.returncode == 1 and host_body.get("outcome") == "failure" and "forced" in host_body.get("error", ""),
+              host.stdout + host.stderr)
+
+
+def test_mac_build_transport_surfaces_host_json_failure_body():
+    print("\n[mac-build] item 22: ssh transport surfaces the host's structured JSON failure body")
+    script = f'''import {{ EventEmitter }} from 'node:events'; import {{ sshTransport }} from {_mod(MAC_CLIENT)!r};
+const req={{version:1,jobId:'123e4567-e89b-42d3-a456-426614174030',operation:'build',digest:'d'.repeat(64),files:[]}};
+const fake = (bin,args,opts) => {{ const c=new EventEmitter(); c.stdin=new EventEmitter(); c.stdin.end=()=>{{}}; c.stdout=new EventEmitter(); c.stderr=new EventEmitter();
+  queueMicrotask(()=>{{ c.stderr.emit('data','generic ssh failure noise'); c.stdout.emit('data',JSON.stringify({{outcome:'failure',error:'staged source fingerprint mismatch before command',code:'digest_mismatch'}})); c.emit('close',7) }});
+  return c; }};
+let message=''; try {{ await sshTransport({{config:{{account:'claude',knownHosts:'kh',identityFile:'key'}},request:req,spawnImpl:fake}}); }} catch (e) {{ message=e.message }}
+const fallbackFake = (bin,args,opts) => {{ const c=new EventEmitter(); c.stdin=new EventEmitter(); c.stdin.end=()=>{{}}; c.stdout=new EventEmitter(); c.stderr=new EventEmitter();
+  queueMicrotask(()=>{{ c.stderr.emit('data','plain stderr text, no json on stdout'); c.emit('close',255) }});
+  return c; }};
+let fallback=''; try {{ await sshTransport({{config:{{account:'claude',knownHosts:'kh',identityFile:'key'}},request:req,spawnImpl:fallbackFake}}); }} catch (e) {{ fallback=e.message }}
+console.log(JSON.stringify({{message,fallback}}));'''
+    r = _node(script)
+    data = json.loads(r.stdout) if r.returncode == 0 else {}
+    check("[mac-build] a nonzero ssh exit with a JSON stdout body surfaces its error and code, not generic stderr noise",
+          "staged source fingerprint mismatch before command" in data.get("message", "") and
+          "digest_mismatch" in data.get("message", "") and
+          "generic ssh failure noise" not in data.get("message", ""), r.stderr + r.stdout)
+    check("[mac-build] a nonzero ssh exit with no parseable stdout body falls back to the stderr text",
+          "plain stderr text, no json on stdout" in data.get("fallback", ""), r.stderr + r.stdout)
+
+
+def test_mac_build_transport_decodes_split_multibyte_utf8_and_still_caps_bytes():
+    print("\n[mac-build] item 23: stdout Buffers are decoded once, not corrupted at chunk boundaries")
+    script = f'''import {{ EventEmitter }} from 'node:events'; import {{ sshTransport }} from {_mod(MAC_CLIENT)!r};
+const req={{version:1,jobId:'123e4567-e89b-42d3-a456-426614174031',operation:'build',digest:'e'.repeat(64),files:[]}};
+const note = 'h\\u00e9llo \\u65e5\\u672c\\u8a9e \\ud83c\\udf89';
+const body = JSON.stringify({{version:1,jobId:req.jobId,operation:req.operation,fingerprint:req.digest,snapshotBytes:0,outcome:'success',note}});
+const bytes = Buffer.from(body, 'utf8');
+// Split inside the emoji's 4-byte UTF-8 sequence specifically (not just the
+// buffer's midpoint, which can land inside an unrelated ASCII field instead
+// and hide the bug) so a multi-byte sequence straddles a chunk boundary.
+const emojiBytes = Buffer.from('\\ud83c\\udf89', 'utf8');
+const emojiOffset = bytes.indexOf(emojiBytes);
+if (emojiOffset < 0) throw new Error('fixture bug: emoji bytes not found');
+const splitPoint = emojiOffset + 2;
+const chunks = [bytes.subarray(0, splitPoint), bytes.subarray(splitPoint, splitPoint + 1), bytes.subarray(splitPoint + 1)];
+const fake = (bin,args,opts) => {{ const c=new EventEmitter(); c.stdin=new EventEmitter(); c.stdin.end=()=>{{}}; c.stdout=new EventEmitter(); c.stderr=new EventEmitter();
+  queueMicrotask(()=>{{ for (const chunk of chunks) c.stdout.emit('data', chunk); c.emit('close',0) }});
+  return c; }};
+const result = await sshTransport({{config:{{account:'claude',knownHosts:'kh',identityFile:'key'}},request:req,spawnImpl:fake}});
+console.log(JSON.stringify({{note: result.note, expected: note}}));'''
+    r = _node(script)
+    data = json.loads(r.stdout) if r.returncode == 0 else {}
+    check("[mac-build] a multi-byte UTF-8 sequence split across a stdout chunk boundary decodes byte-identical",
+          r.returncode == 0 and data.get("note") == data.get("expected") and data.get("note") == 'héllo 日本語 \U0001f389',
+          r.stderr + r.stdout)
+
+    cap_script = f'''import {{ EventEmitter }} from 'node:events'; import {{ sshTransport }} from {_mod(MAC_CLIENT)!r}; import {{ LIMITS }} from {_mod(MAC_PROTOCOL)!r};
+const req={{version:1,jobId:'123e4567-e89b-42d3-a456-426614174032',operation:'build',digest:'f'.repeat(64),files:[]}};
+const oversized = Buffer.alloc(LIMITS.maxWireBytes + 1024, 97);
+let killed=false; const fake = (bin,args,opts) => {{ const c=new EventEmitter(); c.stdin=new EventEmitter(); c.stdin.end=()=>{{}}; c.stdout=new EventEmitter(); c.stderr=new EventEmitter(); c.kill=(sig)=>{{killed=sig}};
+  queueMicrotask(()=>{{ c.stdout.emit('data', oversized); }});
+  return c; }};
+let message=''; try {{ await sshTransport({{config:{{account:'claude',knownHosts:'kh',identityFile:'key'}},request:req,spawnImpl:fake}}); }} catch (e) {{ message=e.message }}
+console.log(JSON.stringify({{message,killed,size:oversized.length}}));'''
+    r2 = _node(cap_script)
+    data2 = json.loads(r2.stdout) if r2.returncode == 0 else {}
+    check("[mac-build] the wire-byte cap still trips on the exact byte count of a Buffer payload",
+          r2.returncode == 0 and data2.get("message") == "host response exceeds wire limit" and data2.get("killed") == "SIGKILL",
+          r2.stderr + r2.stdout)
+
+
 def main():
     test_mac_build_client_snapshot_and_config_boundary()
     test_mac_build_client_git_and_symlink_ancestor_boundaries()
@@ -217,6 +302,9 @@ def main():
     test_mac_build_transport_lifecycle_and_response_binding()
     test_mac_build_host_atomic_execution_replay_and_evidence()
     test_mac_build_host_failure_artifact_and_doctor_fixtures()
+    test_mac_build_main_guard_survives_spaced_invocation_path()
+    test_mac_build_transport_surfaces_host_json_failure_body()
+    test_mac_build_transport_decodes_split_multibyte_utf8_and_still_caps_bytes()
     if FAILURES:
         print("\\nFAILURES:")
         for name, detail in FAILURES: print(f"- {name}: {detail}")

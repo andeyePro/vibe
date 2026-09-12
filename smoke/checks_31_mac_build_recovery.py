@@ -168,7 +168,37 @@ console.log(JSON.stringify(captured));'''
                   rejected.stdout + rejected.stderr)
 
 
+def test_lock_busy_is_not_persisted_terminal_and_same_jobid_later_succeeds():
+    print("\n[mac-build recovery] item 21: lock-busy does not poison the jobId; a later attempt with it succeeds")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        script = f'''import fs from 'node:fs/promises'; import {{ execute }} from {_mod(MAC_HOST)!r}; import {{ digestFiles }} from {_mod(MAC_PROTOCOL)!r};
+const base=process.argv[1], file={{path:'a',mode:420,content:'eA=='}};
+const req={{version:1,jobId:'123e4567-e89b-42d3-a456-426614174201',operation:'build',files:[file],digest:digestFiles([file])}};
+const cfg={{root:base+'/stages',receiptsRoot:base+'/receipts',commands:{{doctor:['/usr/bin/true'],build:['/usr/bin/true'],test:['/usr/bin/true']}}}};
+await fs.mkdir(cfg.receiptsRoot, {{recursive:true, mode:0o700}});
+await fs.mkdir(base+'/receipts/.mac-build.lock');
+let calls=0; const runner=async()=>{{calls++; return {{exit:0,stdout:'ran',stderr:'',timedOut:false,overflow:false}}}};
+const busy=await execute(req,cfg,{{runner}}); const callsAfterBusy=calls;
+const receiptFile=base+'/receipts/'+req.jobId+'.json';
+let receiptAfterBusy=null; try {{ receiptAfterBusy=JSON.parse(await fs.readFile(receiptFile,'utf8')); }} catch (e) {{ receiptAfterBusy={{missing:e.code}}; }}
+await fs.rmdir(base+'/receipts/.mac-build.lock');
+const retried=await execute(req,cfg,{{runner}}); const callsAfterRetry=calls;
+console.log(JSON.stringify({{busy,receiptAfterBusy,retried,callsAfterBusy,callsAfterRetry}}));'''
+        r = _node(script, [str(root)])
+        data = json.loads(r.stdout) if r.returncode == 0 else {}
+        busy, receipt_after_busy, retried = data.get("busy", {}), data.get("receiptAfterBusy"), data.get("retried", {})
+        check("[mac-build] a lock-busy attempt reports outcome busy and never calls the runner",
+              busy.get("outcome") == "busy" and data.get("callsAfterBusy") == 0, r.stderr + r.stdout)
+        check("[mac-build] the lock-busy attempt leaves no terminal receipt for that jobId",
+              not (isinstance(receipt_after_busy, dict) and receipt_after_busy.get("state") == "terminal"),
+              str(receipt_after_busy))
+        check("[mac-build] once the lock clears, the same jobId is accepted and actually executes",
+              retried.get("outcome") == "success" and data.get("callsAfterRetry") == 1, str(data))
+
+
 def main():
+    test_lock_busy_is_not_persisted_terminal_and_same_jobid_later_succeeds()
     test_client_retains_snapshot_and_private_evidence_across_disconnect_and_replay()
     test_host_receipt_identity_unknown_recovery_and_config_rejection()
     test_symlink_descriptors_and_detached_child_cleanup()

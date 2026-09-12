@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 /** Client: immutable source snapshots sent only to a fixed SSH forced command. */
 import fs from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { readBoundedFile, withCheckedPath, LIMITS, ProtocolError, assertSnapshotPathSet, comparePaths, digestFiles, parseRequest, safeRelativePath } from './mac-build-protocol.mjs';
 
 const deny = new Set(['.git', '.vibe', '.vss', '.build', 'node_modules']);
@@ -136,7 +138,8 @@ export function sshTransport({ config, request, spawnImpl = spawn, timeoutMs = S
       `${config.account}@host.docker.internal`, 'mac-build-host',
     ];
     let child;
-    let output = '';
+    const outputChunks = [];
+    let outputBytes = 0;
     let error = '';
     let settled = false;
     const finish = (fn, value) => {
@@ -163,11 +166,19 @@ export function sshTransport({ config, request, spawnImpl = spawn, timeoutMs = S
       return;
     }
     child.stdout.on('data', data => {
-      output += data;
-      if (Buffer.byteLength(output) > LIMITS.maxWireBytes) {
+      // Collect raw Buffers and decode once at the end: decoding each chunk
+      // independently (e.g. via string concatenation) corrupts a multi-byte
+      // UTF-8 sequence split across a chunk boundary. outputBytes counts the
+      // Buffer's own byte length, so the cap below counts bytes, not the
+      // UTF-16 code units a premature decode would produce.
+      const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
+      outputBytes += chunk.length;
+      if (outputBytes > LIMITS.maxWireBytes) {
         child.kill('SIGKILL');
         finish(reject, new Error('host response exceeds wire limit'));
+        return;
       }
+      outputChunks.push(chunk);
     });
     child.stderr.on('data', data => {
       if (Buffer.byteLength(error) < 8192) {
@@ -178,7 +189,24 @@ export function sshTransport({ config, request, spawnImpl = spawn, timeoutMs = S
     child.on('error', err => finish(reject, err));
     child.on('close', code => {
       if (settled) return;
-      if (code !== 0) return finish(reject, new Error(`ssh failed (${code}): ${error}`));
+      const output = Buffer.concat(outputChunks).toString('utf8');
+      if (code !== 0) {
+        // The host writes its structured JSON failure body (error/code) to
+        // stdout even on a nonzero exit; prefer that over the generic ssh
+        // stderr text when it parses, and fall back to stderr otherwise.
+        let detail = error;
+        if (output) {
+          try {
+            const parsed = JSON.parse(output);
+            if (parsed && typeof parsed === 'object' && (parsed.error !== undefined || parsed.code !== undefined)) {
+              const message = parsed.error !== undefined ? String(parsed.error) : 'host reported failure';
+              const codePart = parsed.code !== undefined ? ` (code: ${parsed.code})` : '';
+              detail = `${message}${codePart}`;
+            }
+          } catch { /* stdout was not the host's structured JSON body; fall back to stderr */ }
+        }
+        return finish(reject, new Error(`ssh failed (${code}): ${detail}`));
+      }
       try {
         const result = JSON.parse(output);
         const snapshotBytes = request.files.reduce(
@@ -274,6 +302,10 @@ async function main() {
     process.off('SIGTERM', terminate);
   }
 }
-if (import.meta.url === `file://${process.argv[1]}`) {
+function invokedDirectly() {
+  try { return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); }
+  catch { return false; }
+}
+if (invokedDirectly()) {
   main().catch(error => { console.error(error.message); process.exitCode ||= 1; });
 }

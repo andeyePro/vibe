@@ -4,6 +4,7 @@
  * It accepts only protocol v1 snapshots; it never accepts a command or cwd.
  */
 import fs from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -301,10 +302,16 @@ export async function execute(request, cfg, { runner = runApproved } = {}) {
     }
     locked = await atomicMkdir(lock);
     if (!locked) {
-      return terminal({
+      // Do not persist lock-busy as a terminal receipt: a terminal receipt is
+      // never re-executed, which would permanently poison this jobId once the
+      // lock clears. Remove the unknown-running placeholder written above so
+      // a later attempt with the same jobId is accepted and runs normally.
+      await fs.unlink(receipt).catch(error => { if (error.code !== 'ENOENT') throw error; });
+      await syncDirectory(cfg.receiptsRoot);
+      return {
         ...envelope, outcome: 'busy',
-        error: 'build resource is locked; administrator must reconcile an abandoned lock',
-      });
+        error: 'build resource is locked; try again once it clears',
+      };
     }
     await fs.writeFile(path.join(lock, 'owner.json'), JSON.stringify({ identity, pid: process.pid }), {
       flag: 'wx', mode: 0o600,
@@ -389,4 +396,8 @@ async function main() {
     for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.off(signal, stop);
   }
 }
-if (import.meta.url === `file://${process.argv[1]}`) main();
+function invokedDirectly() {
+  try { return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); }
+  catch { return false; }
+}
+if (invokedDirectly()) main();
