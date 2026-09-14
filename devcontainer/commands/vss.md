@@ -21,9 +21,10 @@ Stop and surface to the user — do NOT autonomously proceed when:
 - **Firewall / hook / settings perms.** Edits to `init-firewall.sh`, `guard-bash.sh`, `guard-fs.sh`, `settings.local.json` permission lists.
 - **Credit-billed model dispatch.** Any Fable 5 dispatch the user has not pre-authorised — via an approved Model plan or `--fable-subagents` on THIS invocation, threaded into whatever tool /vss picks; semantics per `/vs § Model economy`.
 - **Scope creep beyond the announced plan.** If execution reveals the task is materially bigger than planned, stop and re-plan with the user.
+- **An uncovered pass/fail call** — e.g. a check silently skipped on one machine.
 - **Anything explicitly flagged in `~/.claude/CLAUDE.md` or `/workspace/CLAUDE.md`** as needing user authorisation per turn.
 
-If a hard-escalate item triggers, write a one-paragraph status to the user, leave the workspace in a clean state (commit or stash partial work), and stop.
+If a hard-escalate item triggers, raise it via `AskUserQuestion` (watchdog-protected from auto-kill, task_058) and `PushNotification`, not prose. Then leave the workspace clean and stop.
 
 ## Acts-as-user defaults
 

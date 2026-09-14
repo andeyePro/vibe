@@ -823,6 +823,85 @@ def test_vibe_stall_watchdog_functional() -> None:
           "ALIVE=[yes]" in r.stdout, r.stdout)
     check("AC6 T4: empty ref never arms kill", "KILLFILE=[no]" in r.stdout, r.stdout)
 
+    # Test 5 (task_058): NEGATIVE awaiting-human veto - otherwise-positive
+    # shape (active=1, sentinel ref "-" unconditional arm, stale heartbeat -
+    # same as T1) but a fresh .vss/awaiting-human marker sits beside the
+    # auto-resume marker (written by the AskUserQuestion PreToolUse hook when
+    # the assistant is genuinely waiting on a human decision, not wedged at
+    # the usage-limit picker). Its presence must veto the kill outright.
+    # Isolated in its own dir since _vibe_stall_armed derives the
+    # awaiting-human path from dirname(marker) with a fixed basename.
+    snippet_t5 = (
+        'set +e; '
+        'd="${TMPDIR:-/tmp}/stall-t5.$$"; mkdir -p "$d"; '
+        'marker="$d/marker"; '
+        'hb="$d/hb"; '
+        'killfile="$d/killfile"; '
+        'vibe_container_kill_claude() { echo "killed" > "$killfile"; }; '
+        'printf "active=1\\nremaining=2\\nresume_at=1751600000\\n" > "$marker"; '
+        'touch "$d/awaiting-human"; '
+        'echo "$(($(date +%s) - 2000))" > "$hb"; '
+        'sleep 5 & fake_pid=$!; '
+        'VIBE_STALL_POLL_SECS=1 VIBE_STALL_GRACE_SECS=1 VIBE_STALL_SECS=1 VIBE_STALL_KILL_PAUSE_SECS=0 vibe_stall_watchdog "$fake_pid" "$marker" "$hb" "-" 2>/dev/null & '
+        'wd_pid=$!; '
+        'sleep 3; '
+        'if kill -0 "$fake_pid" 2>/dev/null; then echo "ALIVE=[yes]"; else echo "ALIVE=[no]"; fi; '
+        'if [ -f "$killfile" ]; then echo "KILLFILE=[yes]"; else echo "KILLFILE=[no]"; fi; '
+        'kill "$fake_pid" 2>/dev/null; '
+        'kill "$wd_pid" 2>/dev/null; '
+        'wait "$fake_pid" 2>/dev/null; '
+        'wait "$wd_pid" 2>/dev/null; '
+        'rm -rf "$d"; '
+        'set -e'
+    )
+    r = _source_vibe_call({}, snippet_t5)
+    check("AC6 T5 (task_058): awaiting-human veto exits 0", r.returncode == 0, r.stderr)
+    check("AC6 T5 (task_058): awaiting-human present - fake claude still alive "
+          "(otherwise-positive shape, sentinel ref)",
+          "ALIVE=[yes]" in r.stdout, r.stdout)
+    check("AC6 T5 (task_058): kill never invoked while awaiting-human present",
+          "KILLFILE=[no]" in r.stdout, r.stdout)
+
+
+def test_vibe_awaiting_human_hooks_in_settings() -> None:
+    """task_058: settings.local.json's AskUserQuestion hooks set/clear
+    .vss/awaiting-human, the marker _vibe_stall_armed vetoes a kill on."""
+    print("\n[task_058: AskUserQuestion hooks wire .vss/awaiting-human]")
+    vibe_src = (REPO / "vibe").read_text()
+    start_marker = 'cat > "$WORKSPACE/.claude/settings.local.json" << \'EOF\'\n'
+    start = vibe_src.find(start_marker)
+    check("[awaiting-human] settings.local.json heredoc found", start != -1, "")
+    if start == -1:
+        return
+    start += len(start_marker)
+    end = vibe_src.find("\nEOF\n", start)
+    check("[awaiting-human] heredoc terminator found", end != -1, "")
+    if end == -1:
+        return
+    payload = json.loads(vibe_src[start:end])
+    pre = payload.get("hooks", {}).get("PreToolUse", [])
+    post = payload.get("hooks", {}).get("PostToolUse", [])
+    pre_entry = next((h for h in pre if h.get("matcher") == "AskUserQuestion"), None)
+    post_entry = next((h for h in post if h.get("matcher") == "AskUserQuestion"), None)
+    check("[awaiting-human] PreToolUse has an AskUserQuestion matcher",
+          pre_entry is not None, str(pre))
+    check("[awaiting-human] PostToolUse has an AskUserQuestion matcher",
+          post_entry is not None, str(post))
+    if pre_entry is not None:
+        cmd = pre_entry["hooks"][0]["command"]
+        check("[awaiting-human] PreToolUse writes .vss/awaiting-human",
+              "/workspace/.vss/awaiting-human" in cmd and "date +%s >" in cmd, cmd)
+        check("[awaiting-human] PreToolUse gated on .vss/auto-resume like the heartbeat hook",
+              "[ -f /workspace/.vss/auto-resume ]" in cmd, cmd)
+    if post_entry is not None:
+        cmd = post_entry["hooks"][0]["command"]
+        check("[awaiting-human] PostToolUse clears .vss/awaiting-human",
+              "rm -f /workspace/.vss/awaiting-human" in cmd, cmd)
+    check("[awaiting-human] _vibe_stall_armed derives the path from dirname(marker)",
+          'awaiting="$(dirname "$marker")/awaiting-human"' in vibe_src, "")
+    check("[awaiting-human] _vibe_stall_armed vetoes the kill when present",
+          '[ -f "$awaiting" ] && return 1' in vibe_src, "")
+
 
 def test_vibe_gitignore_heartbeat_pattern() -> None:
     print("\n[task_016 AC12: .gitignore heartbeat pattern]")

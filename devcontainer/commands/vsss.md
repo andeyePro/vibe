@@ -11,7 +11,7 @@ Autonomous loop wrapper around `/vss`. Higher blast radius — read this whole f
 
 ## Hard-escalate list
 
-Inherited verbatim from `/vss`. Every iteration of every wrapped `/vss` invocation honours it. See `/vss` for the full list. Summary: physical actuation, SSH-out, `/vs --fuzzy` subjective verdicts, destructive git, `/learnings` writes, firewall/hook/perm edits, scope creep, anything CLAUDE.md flags as needing per-turn auth.
+Inherited verbatim from `/vss` (raise via `AskUserQuestion`+`PushNotification`, not prose — task_058). Every iteration honours it; see `/vss` for the full list.
 
 A hard-escalate trigger inside any iteration aborts the entire loop, not just that iteration.
 

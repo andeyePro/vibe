@@ -967,16 +967,26 @@ vibe_container_kill_claude() {
   devcontainer exec --workspace-folder "$WORKSPACE" --override-config "$OVERRIDE_CONFIG" pkill -TERM -x claude || true
 }
 
-# _vibe_stall_armed <marker_file> <ref_file> — kill-gate conditions 1+2 (see
-# vibe_stall_watchdog): marker active=1 AND either the literal relaunch
-# sentinel "-" (unconditional arm) or a non-empty, existing session-start ref
-# file that the marker is newer than (portable POSIX `-nt`, no stat -c/-f).
-# An empty or missing ref never arms (mktemp-failure fail-safe). Split out
-# from auto_resume_stalled (condition 3) so the watchdog can re-check the
-# cheap conditions first without a fresh heartbeat read every retry.
+# _vibe_stall_armed <marker_file> <ref_file> — kill-gate conditions 1+2+3
+# (see vibe_stall_watchdog): marker active=1 AND no fresh .vss/awaiting-human
+# marker (condition 3, task_058: a stale heartbeat is ambiguous between "wedged
+# at the usage-limit picker" and "the assistant asked a genuine AskUserQuestion
+# and is correctly waiting on a human" — killing the latter discards a pending
+# question instead of resolving it, so its presence vetoes the kill outright)
+# AND either the literal relaunch sentinel "-" (unconditional arm) or a
+# non-empty, existing session-start ref file that the marker is newer than
+# (portable POSIX `-nt`, no stat -c/-f). An empty or missing ref never arms
+# (mktemp-failure fail-safe). Split out from auto_resume_stalled (condition 4)
+# so the watchdog can re-check the cheap conditions first without a fresh
+# heartbeat read every retry. awaiting-human lives beside the marker
+# (dirname-derived, not a new parameter) — written by the AskUserQuestion
+# PreToolUse hook and cleared by its PostToolUse counterpart once answered
+# (settings.local.json, install-claude-extras.sh).
 _vibe_stall_armed() {
-  local marker="$1" ref="$2"
+  local marker="$1" ref="$2" awaiting
   [ "$(auto_resume_field "$marker" active)" = "1" ] || return 1
+  awaiting="$(dirname "$marker")/awaiting-human"
+  [ -f "$awaiting" ] && return 1
   [ "$ref" = "-" ] && return 0
   [ -n "$ref" ] && [ -f "$ref" ] && [ "$marker" -nt "$ref" ]
 }
@@ -984,8 +994,8 @@ _vibe_stall_armed() {
 # vibe_stall_watchdog <claude_pid> <marker_file> <hb_file> <ref_file> —
 # backgrounded by launch_claude_supervised alongside claude. Polls every
 # ${VIBE_STALL_POLL_SECS:-60}s while claude is alive (kill -0). On the first
-# poll where all three kill-gate conditions hold (_vibe_stall_armed plus a
-# stale heartbeat via auto_resume_stalled, default threshold 1800s): prints a
+# poll where all four kill-gate conditions hold (_vibe_stall_armed's three
+# plus a stale heartbeat via auto_resume_stalled, default threshold 1800s): prints a
 # loud stderr warning (bell + threshold + cancel instruction), sleeps
 # ${VIBE_STALL_GRACE_SECS:-120}, re-checks all three conditions, and only if
 # STILL met kills in-container first (vibe_container_kill_claude), pauses
@@ -4868,7 +4878,21 @@ fi
 #                                               --sessions marker is active,
 #                                               feeding the launcher's stall
 #                                               watchdog (see the auto-resume
-#                                               comment block above)
+#                                               comment block above);
+#                                               PreToolUse/PostToolUse also
+#                                               matcher-gate on AskUserQuestion
+#                                               to set/clear .vss/awaiting-
+#                                               human (task_058) — a stale
+#                                               heartbeat while the assistant
+#                                               is genuinely waiting on a
+#                                               human decision must NOT read
+#                                               as a wedged usage-limit
+#                                               picker, so its presence vetoes
+#                                               _vibe_stall_armed's kill
+#                                               outright rather than getting
+#                                               SIGTERM'd and silently
+#                                               relaunched past the pending
+#                                               question
 #   statusLine                                  — one-glance session state at
 #                                               the bottom of the TUI: model
 #                                               as a single letter (F/O/S/H,
@@ -4945,6 +4969,12 @@ cat > "$WORKSPACE/.claude/settings.local.json" << 'EOF'
         "hooks": [
           { "type": "command", "command": "[ -f /workspace/.vss/auto-resume ] && { date +%s > /workspace/.vss/heartbeat.tmp.$$ && mv /workspace/.vss/heartbeat.tmp.$$ /workspace/.vss/heartbeat; } || true" }
         ]
+      },
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          { "type": "command", "command": "[ -f /workspace/.vss/auto-resume ] && { date +%s > /workspace/.vss/awaiting-human.tmp.$$ && mv /workspace/.vss/awaiting-human.tmp.$$ /workspace/.vss/awaiting-human; } || true" }
+        ]
       }
     ],
     "PostToolUse": [
@@ -4952,6 +4982,12 @@ cat > "$WORKSPACE/.claude/settings.local.json" << 'EOF'
         "matcher": "",
         "hooks": [
           { "type": "command", "command": "[ -f /workspace/.vss/auto-resume ] && { date +%s > /workspace/.vss/heartbeat.tmp.$$ && mv /workspace/.vss/heartbeat.tmp.$$ /workspace/.vss/heartbeat; } || true" }
+        ]
+      },
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          { "type": "command", "command": "[ -f /workspace/.vss/auto-resume ] && rm -f /workspace/.vss/awaiting-human || true" }
         ]
       }
     ],

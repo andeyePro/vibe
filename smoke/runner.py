@@ -179,6 +179,7 @@ def main() -> int:
     test_vibe_settings_heartbeat_hooks()
     test_vibe_supervised_launch_text()
     test_vibe_stall_watchdog_functional()
+    test_vibe_awaiting_human_hooks_in_settings()
     test_vibe_gitignore_heartbeat_pattern()
     test_vibe_task016_docs()
     test_vibe_statusline()
