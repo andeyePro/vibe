@@ -28,7 +28,7 @@ check('no "one-click install" promise anywhere', !/one.click install/i.test(html
 
 // the journey: deck chips + checklists present, in launcher order
 const chips = html.match(/data-step="/g) || [];
-check(`command deck has exactly 13 chips (found ${chips.length})`, chips.length === 13);
+check(`command deck has exactly 15 chips (found ${chips.length})`, chips.length === 15);
 const checklists = html.match(/<ol class="steps"/g) || [];
 check(`every chip carries a checklist (found ${checklists.length})`, checklists.length === chips.length);
 // the deck must ship UNLOCKED server-side — lock states are script-applied,
@@ -128,6 +128,8 @@ const vssCmd = src('../devcontainer/commands/vss.md');
 const vsssCmd = src('../devcontainer/commands/vsss.md');
 const budgetCmd = src('../devcontainer/commands/budget.md');
 const cCmd = src('../devcontainer/commands/c.md');
+const askCmd = src('../devcontainer/commands/ask.md');
+const codexEntry = src('../devcontainer/codex-entry.sh');
 const norm = (s) => s.replace(/[–—]/g, '-').replace(/…/g, '...');
 const H = norm(html);
 const inBoth = (s, source) => H.includes(norm(s)) && norm(source).includes(norm(s));
@@ -227,6 +229,41 @@ check('/budget honesty line quotes budget.md (estimates, not invoices)',
 check('/c scratch path matches c.md (copy-latest.txt)',
   inBoth('copy-latest.txt', cCmd));
 
+// ---------------------------------------------------------------------------
+// Codex as a second lead runtime: the deck now claims vibe runs on either
+// vendor's subscription. Pin every load-bearing string in those two chips to
+// the launcher / codex-entry / ask.md sources, the same way the Claude-side
+// chips are pinned above, so the page cannot drift from what vibe prints.
+// ---------------------------------------------------------------------------
+check('agent chip present with cmd `vibe --agent codex`',
+  /id="step-agent"/.test(html) && chipCmd('agent') === 'vibe --agent codex');
+const agentLines = linesText('agent');
+check('agent chip quotes the launcher\'s own Codex banner rows (agent + codex mount)',
+  ['agent   : codex (policy: /etc/codex, gate: codex-guard-liveness)',
+   'codex   : /home/node/.codex (rw, ChatGPT login)']
+    .every((str) => inBothIn(str, agentLines, launcher)));
+check('agent chip quotes the liveness gate\'s own start line, verbatim from codex-entry.sh',
+  inBothIn('codex-led session: guard chain proven, starting codex', agentLines, codexEntry));
+check('agent chip names BOTH consent switches, and both are real in the launcher',
+  chipBlock('agent').includes('vibe codex allow')
+  && launcher.includes('vibe codex allow')
+  && agentLines.includes('.vibe-allow-codex') && launcher.includes('.vibe-allow-codex'));
+check('agent chip claims no API key on either side',
+  /no API key either side/.test(chipBlock('agent')));
+
+check('ask chip present with cmd `/ask astra`',
+  /id="step-ask"/.test(html) && chipCmd('ask') === '/ask astra');
+const askLines = linesText('ask');
+check('ask chip names the real delegate model and the tools-disabled constraint',
+  inBothIn('gpt-6-astra', askLines, askCmd) && inBothIn('tools disabled', askLines, askCmd));
+check('ask chip\'s usage-ledger path matches ask.md (.vibe/delegate-usage.jsonl)',
+  inBothIn('delegate-usage.jsonl', askLines, askCmd));
+
+// the firewall chip must say where Codex's hosts come from — per-project
+// extras, not the shipped allowlist (README's OpenAI-egress split)
+check('firewall chip places Codex\'s hosts in per-project .vibe/domains, not the shipped list',
+  linesText('curl').includes('.vibe/domains'));
+
 // andeye sites rule: no raw email addresses ever
 check('no mailto: and no raw email addresses',
   !html.includes('mailto:') && !/[\w.+-]+@[\w-]+\.[a-z]{2,}/i.test(html.replace(/[\w.+-]+%40/g, '')));
@@ -301,7 +338,7 @@ check('dist/demo/markers.json parses as an array of {id, time, label}',
 
 const deckStepIds = [...html.matchAll(/data-step="([a-z0-9-]+)"/g)].map((m) => m[1]);
 const chipMarkers = markersData.filter((m) => !m.id.includes(':'));
-check('chip-marker ids, in order, equal the 13 data-step ids in dist/index.html',
+check(`chip-marker ids, in order, equal the ${deckStepIds.length} data-step ids in dist/index.html`,
   JSON.stringify(chipMarkers.map((m) => m.id)) === JSON.stringify(deckStepIds));
 
 check('every checklist step of every chip has its <chip>:<n> step marker',

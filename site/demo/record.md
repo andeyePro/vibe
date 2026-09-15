@@ -24,7 +24,7 @@ the deck's `term_title` copy both say `96×28` — if you ever change one,
 change all three). `--idle-time-limit 2` caps dead air between lines so the
 cast doesn't sit on a silent terminal.
 
-Type each of the 13 sections below **in order**, exactly as shown, letting
+Type each of the 15 sections below **in order**, exactly as shown, letting
 each command's real output land before moving to the next. Press `Ctrl-D`
 or run `exit` when done to stop the recording.
 
@@ -96,7 +96,18 @@ vibe pat
 Wait for: "stored token found — it will be replaced" through to the
 final "Token saved" confirmation.
 
-### 4. `vs` — Build, adversarially
+### 4. `agent` — Claude or Codex
+
+Type (from a project that already carries `.vibe-allow-codex` and is listed
+by `vibe codex allow`, so the login mount is actually granted):
+```
+vibe --agent codex
+```
+Wait for: the launch banner's `agent   :` and `codex   :` rows, the
+`codex-led session: guard chain proven, starting codex` line from the
+liveness gate, and Codex's own ready prompt.
+
+### 5. `vs` — Build, adversarially
 
 Type:
 ```
@@ -106,7 +117,7 @@ Wait for: the spec draft, the critic's revise pass, the builder's diff,
 the tester's first (failing) run, the fix, the second (passing) run, and
 the reviewer's pass verdict.
 
-### 5. `vss` — One task, solo
+### 6. `vss` — One task, solo
 
 Type:
 ```
@@ -115,7 +126,7 @@ Type:
 Wait for: the TODO.md pick, the redirect-window notice, the change
 landing, the passing test run, and the "committed — not pushed" line.
 
-### 6. `vsss` — Overnight loop
+### 7. `vsss` — Overnight loop
 
 Type:
 ```
@@ -124,7 +135,7 @@ Type:
 Wait for: at least two committed iterations, a parked question, the
 auto-resume relaunch line, and the perfection-gate stop.
 
-### 7. `curl` — Try to phone out
+### 8. `curl` — Try to phone out
 
 Type:
 ```
@@ -133,7 +144,7 @@ curl https://sketchy.example
 Wait for: the connection failure, then narrate (or let vibe's own output
 show) the allowlist and fail-closed behaviour.
 
-### 8. `leak` — Try to leak a secret
+### 9. `leak` — Try to leak a secret
 
 Type (with a **fake** key already staged in a throwaway `config.js` —
 never a real one):
@@ -143,7 +154,7 @@ git commit -m "wip"   # config.js still holds a pasted API key
 Wait for: the BLOCK finding on the staged secret, and the note that WARN
 fires the same way on private IPs/home paths/emails.
 
-### 9. `push` — Ship it
+### 10. `push` — Ship it
 
 Type:
 ```
@@ -151,7 +162,7 @@ git push
 ```
 Wait for: the outgoing-range re-scan line and the push completing.
 
-### 10. `budget` — /budget
+### 11. `budget` — /budget
 
 Type:
 ```
@@ -160,7 +171,7 @@ Type:
 Wait for: the month-to-date token line and the Fable-credit estimate
 caveat.
 
-### 11. `learn` — /learn
+### 12. `learn` — /learn
 
 Type:
 ```
@@ -168,7 +179,7 @@ Type:
 ```
 Wait for: the write-confirm prompt and the saved confirmation.
 
-### 12. `copy` — /c
+### 13. `copy` — /c
 
 Type:
 ```
@@ -176,10 +187,19 @@ Type:
 ```
 Wait for: the scratch-file write and the clipboard-watcher confirmation.
 
-### 13. `diet` — /diet · /feast
+### 14. `diet` — /diet · /feast
 
 Type:
 ```
 /diet
 ```
 Wait for: lean-mode-on confirmation and the `/feast` mention.
+
+### 15. `ask` — /ask
+
+Type (needs the Codex login mount, same three gates as section 4):
+```
+/ask astra "review this diff for race conditions"
+```
+Wait for: the delegation notice, Astra's answer, and the token line the
+helper appends to `.vibe/delegate-usage.jsonl`.

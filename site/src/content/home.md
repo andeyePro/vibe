@@ -38,7 +38,7 @@ journey:
           checklist:
             - finds your project and its GitHub remote, and reuses the PAT you set once
             - brings up the firewall and proves it – outbound on a short allowlist, verified before work starts
-            - signs Claude Code in with your Claude subscription – no API key
+            - signs your lead agent in with your existing subscription – Claude or ChatGPT, never an API key
             - ready in seconds – the container's already built, the PAT's already on file
           lines:
             - { cmd: true, sh: true, text: "cd yourproject && vibe" }
@@ -84,6 +84,25 @@ journey:
             - { role: vibe, text: "https://github.com/settings/personal-access-tokens" }
             - { role: vibe, text: "set an expiry on the new token – 90 days is a good default", step: 2 }
             - { role: vibe, text: "✓ Token saved for you/yourproject. Takes effect on the next vibe launch (no rebuild needed).", step: 3 }
+    - label: Choose your lead
+      steps:
+        - id: agent
+          cmd: vibe --agent codex
+          label: Claude or Codex
+          desc: your subscription, either vendor
+          checklist:
+            - one flag switches the lead – Claude Code by default, Codex when you ask for it
+            - your ChatGPT login is mounted only where you've said yes twice – a marker in the project, and vibe codex allow on your Mac
+            - the guard chain proves itself before Codex starts – known-bad tool calls must be denied for real, or the session is refused
+            - no API key either side – Claude signs in with your Claude subscription, Codex with your ChatGPT one
+          lines:
+            - { cmd: true, sh: true, text: "vibe --agent codex" }
+            - { role: vibe, text: "🚀 vibe session starting" }
+            - { role: vibe, text: "   agent   : codex (policy: /etc/codex, gate: codex-guard-liveness)", step: 1 }
+            - { role: vibe, text: "   codex   : /home/node/.codex (rw, ChatGPT login) — opted in via .vibe-allow-codex", step: 2 }
+            - { role: guard, text: "codex-led session: guard chain proven, starting codex", step: 3 }
+            - { role: codex, tone: note, text: "ready – signed in with your ChatGPT subscription, nothing to re-enter", step: 4 }
+            - { role: vibe, text: "same image, same firewall, same one-repo PAT – only the lead changed" }
     - label: Build
       steps:
         - id: vs
@@ -158,6 +177,7 @@ journey:
             - { role: guard, tone: fail, text: "curl: (7) Failed to connect to sketchy.example port 443: No route to host", step: 1 }
             - { role: vibe, text: "outbound is REJECTed unless the destination is allowlisted – GitHub · npm · Anthropic · a few named extras", step: 2 }
             - { role: vibe, text: "and the firewall fails closed – if the allowlist can't be built, nothing gets out", step: 3 }
+            - { role: vibe, text: "Codex's own hosts are per-project extras in .vibe/domains – never shipped defaults" }
         - id: leak
           cmd: git commit (with a pasted API key)
           label: Try to leak a secret
@@ -231,6 +251,18 @@ journey:
             - { cmd: true, text: "/diet" }
             - { role: claude, text: "lean mode on – no subagents, terse replies; the rest looks mechanical, suggest /model sonnet" }
             - { role: claude, text: "say /feast when you want the full spread back", step: 1 }
+        - id: ask
+          cmd: /ask astra
+          label: /ask
+          desc: one question, another model
+          checklist:
+            - hands one bounded payload to another model's own CLI and brings the answer back – your lead session never moves
+            - Astra on your ChatGPT subscription, or Claude's own tiers; the same login also powers the Codex slot in /review
+          lines:
+            - { cmd: true, text: "/ask astra \"review this diff for race conditions\"" }
+            - { role: vibe, text: "delegating to gpt-6-astra – tools disabled, no shell, no session to resume", step: 1 }
+            - { role: astra, text: "three findings – the worst is a time-of-check/time-of-use gap between the lock test and the write" }
+            - { role: vibe, text: "tokens logged to .vibe/delegate-usage.jsonl – /budget reports delegated calls separately", step: 2 }
 who:
   eyebrow: Who it's for
   h2: For developers first
@@ -239,4 +271,4 @@ status: In development – built on the same open-core values as everything ande
 footer: andeye Ltd, Scotland
 ---
 
-**Letting an AI write your code shouldn't mean accepting whatever it produces.** Vibe&I puts adversarial agentic models between your idea and your codebase: one plans, one builds, and independent critics, testers and reviewers attack the result until it actually holds up.
+**Letting an AI write your code shouldn't mean accepting whatever it produces.** Vibe&I puts adversarial agentic models between your idea and your codebase: one plans, one builds, and independent critics, testers and reviewers attack the result until it actually holds up. Claude Code leads by default and Codex can lead instead – whichever you pick, it signs in with the subscription you already pay for, never an API key.
