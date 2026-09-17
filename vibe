@@ -43,6 +43,12 @@
 #   vibe repos list          # show the machine's shared-repo registry
 #   vibe codex allow|deny|list [path]    # host-side opt-in registry for the Codex login mount
 #   vibe audit [--history|--staged]      # scan git history (default) or the staged diff for secrets/PII
+#   vibe clean [--dry-run|--yes|--all]   # reclaim stopped vibe containers, dangling images, build cache
+#
+# `vibe clean` is host-side too. It never removes a named volume in any mode,
+# so your Claude login (vibe-claude-config) and bash history survive it. Cap
+# Docker's disk appetite as well: Docker Desktop > Settings > Resources >
+# Advanced > "Disk usage limit" defaults to the whole drive.
 #
 # `vibe pat` runs on the HOST shell too, same as `vibe learn` above — not
 # available inside the container. With no argument the repo is detected
@@ -3475,6 +3481,394 @@ remove_existing_flag() {
   fi
 }
 
+# ── Docker hygiene (task_059) ─────────────────────────────────────────────────
+# Defined here, ABOVE the VIBE_SOURCE_ONLY guard, so smoke-test.py can
+# unit-test them by sourcing with VIBE_SOURCE_ONLY=1 and a stubbed docker().
+#
+# Why this section exists: vibe rebuilds vibe-dev:latest whenever devcontainer/
+# changes, and `devcontainer up` never removes a container. Before this, every
+# rebuild orphaned the previous image (dangling, or pinned forever by some
+# idle project's stopped container) and left its build cache behind, and
+# nothing ever reclaimed either. On 2026-09-17 that filled a 926 GB Mac:
+# Docker.raw at 245 GB, ~20 vibe containers pinning ~18 distinct images,
+# Docker Desktop's disk limit left at its default (the whole drive), and the
+# containerd content store corrupted by the disk filling mid-write. Recovery
+# meant deleting Docker.raw, which took the vibe-claude-config volume (the
+# Claude login and every session history) with it.
+#
+# Three defences, in order of how quietly they work:
+#   1. vibe_remove_stale_workspace_containers - on every recreate, drop this
+#      project's OWN stopped containers, so an image can actually be reclaimed.
+#   2. vibe_prune_after_build - after a rebuild, reclaim vibe's dangling
+#      images and stale build cache. Scoped: never other projects' leftovers.
+#   3. vibe_hygiene_check + `vibe clean` - warn, then reclaim on demand.
+# NONE of them ever touches a volume. The launcher has no code path that runs
+# `docker volume rm` or passes `--volumes`/`-v` to a prune or rm - that is the
+# invariant this whole section is built around, and smoke-test.py asserts it.
+
+# Image label stamped by devcontainer/Dockerfile's final LABEL instruction and
+# inherited by profile child images (and by every container created from one).
+# It is what makes "vibe's leftovers" a decidable question after the vibe-dev
+# tag has moved on. MUST stay in sync with the Dockerfile and with the literal
+# in _clean_docker_ps_format below (smoke-test.py checks all three agree).
+VIBE_IMAGE_LABEL="com.andeye.vibe.image"
+
+# _vibe_size_to_mib <human-size> - "245GB", "1.5GiB", "812.3MB", "0B",
+# "12.5GB (58%)" -> whole MiB on stdout. Anything unparseable -> 0, never an
+# error: these feed advisory warnings, never a decision to delete something.
+#
+# Docker prints sizes with units.HumanSize, which is DECIMAL - "245GB" means
+# 245e9 bytes, not 245 GiB. Treating it as binary overstates by ~7% at GB
+# scale, so a suffix is read as decimal unless it carries the `i` (GiB, MiB).
+# All arithmetic in awk because macOS ships bash 3.2 (no float math).
+_vibe_size_to_mib() {
+  awk -v s="${1:-}" 'BEGIN {
+    sub(/ .*$/, "", s); gsub(/,/, "", s)
+    if (match(s, /^[0-9]+(\.[0-9]+)?/) == 0) { print 0; exit }
+    num = substr(s, 1, RLENGTH) + 0
+    unit = tolower(substr(s, RLENGTH + 1))
+    binary = (unit ~ /i/)
+    sub(/i?b$/, "", unit)
+    mult = binary ? 1024 : 1000
+    if (unit == "k") bytes = num * mult
+    else if (unit == "m") bytes = num * mult * mult
+    else if (unit == "g") bytes = num * mult * mult * mult
+    else if (unit == "t") bytes = num * mult * mult * mult * mult
+    else bytes = num
+    printf "%d\n", int(bytes / 1048576 + 0.5)
+  }'
+}
+
+# _vibe_docker_reclaimable_mib - total reclaimable MiB across images,
+# containers and build cache. Local Volumes are EXCLUDED on purpose: docker
+# counts an unused volume as reclaimable, but vibe never reclaims one, so
+# including it would warn about space this tool will not free.
+_vibe_docker_reclaimable_mib() {
+  local type size total=0 mib
+  while IFS=$'\t' read -r type size; do
+    [ -n "$size" ] || continue
+    case "$type" in
+      "Local Volumes") continue ;;
+    esac
+    mib="$(_vibe_size_to_mib "$size")"
+    total=$((total + mib))
+  done < <(docker system df --format '{{.Type}}'$'\t''{{.Reclaimable}}' 2>/dev/null || true)
+  echo "$total"
+}
+
+# _vibe_host_free_mib [path] - free MiB on the filesystem holding <path>
+# (default $HOME). Empty string when df says nothing useful.
+_vibe_host_free_mib() {
+  df -P -k "${1:-$HOME}" 2>/dev/null | awk 'NR==2 && $4 ~ /^[0-9]+$/ { printf "%d\n", $4/1024 }'
+}
+
+# _vibe_marker_fresh <file> <hours> - rc 0 iff <file> exists and was touched
+# within the last <hours>. A missing file, or a find that cannot answer, is
+# "not fresh", so a check throttled on it runs rather than being skipped
+# forever. `find -mmin` is the one mtime test both BSD and GNU find agree on;
+# stat(1) syntax differs between macOS and Linux and is not worth branching on.
+_vibe_marker_fresh() {
+  local f="${1:-}" hours="${2:-24}"
+  [ -n "$f" ] && [ -f "$f" ] || return 1
+  [ -n "$(find "$f" -mmin "-$((hours * 60))" 2>/dev/null)" ]
+}
+
+# vibe_hygiene_check [marker] - advisory preflight. Warns (stderr) when the
+# host disk is running low, or when Docker is sitting on a lot of reclaimable
+# space. Never fails a launch: every path returns 0, and a missing/unhappy
+# docker degrades to silence rather than noise.
+#
+# The cheap half (df) runs on every launch. The expensive half
+# (`docker system df`, which walks the image store) is throttled to once per
+# VIBE_HYGIENE_INTERVAL_HOURS (default 24) via the marker's mtime, so it never
+# adds a second to a routine launch.
+#   VIBE_HYGIENE=0                  - disable both halves
+#   VIBE_DISK_WARN_GIB              - host free-space threshold (default 20)
+#   VIBE_DOCKER_RECLAIM_WARN_GIB    - reclaimable threshold (default 20)
+# shellcheck disable=SC2120  # the optional marker arg is passed only by tests
+vibe_hygiene_check() {
+  [ "${VIBE_HYGIENE:-1}" = "0" ] && return 0
+  local marker="${1:-$HOME/.vibe/.hygiene-checked}"
+  local disk_warn="${VIBE_DISK_WARN_GIB:-20}"
+  local reclaim_warn="${VIBE_DOCKER_RECLAIM_WARN_GIB:-20}"
+  local interval="${VIBE_HYGIENE_INTERVAL_HOURS:-24}"
+
+  local free_mib
+  free_mib="$(_vibe_host_free_mib "$HOME")"
+  if [ -n "$free_mib" ] && [ "$free_mib" -lt $((disk_warn * 1024)) ]; then
+    printf '  ⚠ only %s GB free on this disk. Docker writes its whole VM disk here;\n' \
+      "$((free_mib / 1024))" >&2
+    printf '    if it fills mid-write the image store can corrupt. Reclaim: vibe clean\n' >&2
+    printf '    Cap it for good: Docker Desktop > Settings > Resources > Advanced > Disk usage limit.\n' >&2
+  fi
+
+  _vibe_marker_fresh "$marker" "$interval" && return 0
+  mkdir -p "$(dirname "$marker")" 2>/dev/null || true
+  : > "$marker" 2>/dev/null || true
+
+  local reclaimable
+  reclaimable="$(_vibe_docker_reclaimable_mib)"
+  if [ -n "$reclaimable" ] && [ "$reclaimable" -gt $((reclaim_warn * 1024)) ]; then
+    printf '  ⚠ Docker is holding %s GB of reclaimable images, containers and build cache.\n' \
+      "$((reclaimable / 1024))" >&2
+    printf '    Reclaim it (volumes are never touched): vibe clean\n' >&2
+  fi
+  return 0
+}
+
+# vibe_workspace_stale_containers <workspace> - ids of NON-running containers
+# labelled for this workspace, newline-separated. Running containers are never
+# listed: this only ever reaps what is already dead.
+vibe_workspace_stale_containers() {
+  local out
+  out=$(docker ps -aq \
+          --filter "label=devcontainer.local_folder=$1" \
+          --filter status=exited --filter status=created --filter status=dead \
+          2>/dev/null) || out=""
+  printf '%s' "$out"
+}
+
+# vibe_remove_stale_workspace_containers <workspace> - `docker rm` each one.
+# Echoes how many were removed. Deliberately `docker rm` with NO flags: no
+# -f (a running container is out of scope by construction) and no -v (which
+# would delete anonymous volumes). Failure to remove any one of them is not an
+# error - the recreate proceeds either way.
+vibe_remove_stale_workspace_containers() {
+  local ids id removed=0
+  ids="$(vibe_workspace_stale_containers "$1")"
+  [ -n "$ids" ] || { echo 0; return 0; }
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    docker rm "$id" >/dev/null 2>&1 && removed=$((removed + 1))
+  done <<< "$ids"
+  echo "$removed"
+}
+
+# vibe_prune_after_build [cache_age_hours] - reclaim what a rebuild just
+# superseded. Echoes a one-line human summary, or nothing when there was
+# nothing to reclaim.
+#
+# Both prunes are SCOPED on purpose:
+#   - `docker image prune --filter label=$VIBE_IMAGE_LABEL` touches only
+#     images built from vibe's Dockerfile; a bare prune would also delete
+#     other projects' dangling images on a shared machine.
+#   - `docker builder prune --filter until=<age>` leaves cache newer than the
+#     age alone, so a rebuild never throws away another project's warm cache.
+# `docker image prune` never removes an image that ANY container still
+# references, running or stopped - so a project whose stopped container is
+# still pinned to an old image keeps it until `vibe clean` reaps the container.
+# That is why vibe clean exists as well as this.
+# shellcheck disable=SC2120  # the optional cache-age arg is passed only by tests
+vibe_prune_after_build() {
+  local age="${1:-168}" img_out cache_out freed=""
+  img_out=$(docker image prune -f --filter "label=$VIBE_IMAGE_LABEL" 2>/dev/null) || img_out=""
+  cache_out=$(docker builder prune -f --filter "until=${age}h" 2>/dev/null) || cache_out=""
+  local img_mib cache_mib total
+  img_mib="$(_vibe_size_to_mib "$(printf '%s\n' "$img_out" | awk '/[Rr]eclaimed space/ { print $NF }' | tail -n 1)")"
+  cache_mib="$(_vibe_size_to_mib "$(printf '%s\n' "$cache_out" | awk '/[Rr]eclaimed space/ { print $NF }' | tail -n 1)")"
+  total=$((img_mib + cache_mib))
+  [ "$total" -gt 0 ] || return 0
+  if [ "$total" -ge 1024 ]; then
+    freed="$((total / 1024)) GB"
+  else
+    freed="$total MB"
+  fi
+  printf '  reclaimed %s of superseded image layers and build cache.\n' "$freed"
+}
+
+# ── `vibe clean` subcommand (task_059) ────────────────────────────────────────
+# Host-side, docker-only. Reclaims the three things vibe is responsible for
+# accumulating - stopped vibe containers, dangling vibe images, build cache -
+# and NOTHING else. Volumes are out of scope by construction: there is no
+# `docker volume` call and no `--volumes`/`-v` flag anywhere below, so no
+# invocation of this command, in any mode, can lose the Claude login in
+# vibe-claude-config or the shell history in vibe-bash-history.
+# Defined above the VIBE_SOURCE_ONLY guard so smoke-test.py can unit-test it
+# against a stubbed docker().
+
+_clean_usage() {
+  cat <<'EOF'
+Usage: vibe clean [--dry-run] [--yes] [--all]
+
+  Reclaims the Docker space vibe is responsible for:
+
+    - stopped vibe containers   (running ones are never touched)
+    - dangling vibe images      (untagged leftovers of past rebuilds)
+    - build cache older than 7 days
+
+  --dry-run, -n   list what would be removed, remove nothing
+  --yes, -y       skip the confirmation prompt
+  --all           widen the sweep: build cache of ANY age, ALL dangling
+                  images (including other tools' - they are untagged and
+                  unreferenced either way), and stopped devcontainers whose
+                  image no longer exists. Use this to clear a fleet built
+                  before vibe started labelling its images.
+
+  Named volumes are NEVER removed, in any mode. Your Claude login
+  (vibe-claude-config) and bash history (vibe-bash-history) survive
+  every run of this command.
+
+  A stopped container pins the image it was built from, so Docker cannot
+  reclaim that image until the container goes. That is usually where the
+  space actually is.
+EOF
+  exit 0
+}
+
+# Docker ps format shared by the listing helpers. The label literal must match
+# VIBE_IMAGE_LABEL (smoke-test.py asserts it does); it cannot be interpolated
+# without making the Go-template quoting unreadable.
+_clean_docker_ps_format() {
+  printf '%s' '{{.ID}}\t{{.Image}}\t{{.Label "devcontainer.local_folder"}}\t{{.Label "com.andeye.vibe.image"}}'
+}
+
+# _clean_stopped_containers [all] - echo "id<TAB>image<TAB>folder" per stopped
+# container in scope, one per line.
+#
+# In scope by default:
+#   - anything carrying vibe's image label (survives the vibe-dev tag moving on)
+#   - anything whose image name still reads vibe-dev* (pre-label fleet)
+# Additionally with "all":
+#   - a devcontainer whose image is a bare sha256 - i.e. the image it was built
+#     from is gone, so the container cannot be started meaningfully anyway.
+#     Only under --all, and every one is listed by folder before the prompt,
+#     because on a shared machine this class can include another tool's
+#     devcontainers.
+_clean_stopped_containers() {
+  local all="${1:-}" id img folder lbl
+  while IFS=$'\t' read -r id img folder lbl; do
+    [ -n "$id" ] || continue
+    if [ -n "$lbl" ]; then
+      :
+    elif [ "${img#vibe-dev}" != "$img" ]; then
+      :
+    elif [ "$all" = "all" ] && [ -n "$folder" ] && [ "${img#sha256:}" != "$img" ]; then
+      :
+    else
+      continue
+    fi
+    printf '%s\t%s\t%s\n' "$id" "$img" "$folder"
+  done < <(docker ps -a \
+             --filter status=exited --filter status=created --filter status=dead \
+             --format "$(_clean_docker_ps_format)" 2>/dev/null || true)
+}
+
+# _clean_confirm <prompt> - rc 0 on an explicit yes. Non-interactive stdin is
+# a NO: a piped or cron-driven `vibe clean` must not delete anything it was
+# never told to delete. --yes is the deliberate way to say yes without a tty.
+_clean_confirm() {
+  [ -t 0 ] || { echo "  not a terminal - re-run with --yes to confirm non-interactively." >&2; return 1; }
+  ask_yes_no "$1" n
+}
+
+clean_handle_subcommand() {
+  shift || true   # drop the literal "clean"
+  local dry=0 assume_yes=0 all=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --dry-run|-n) dry=1 ;;
+      --yes|-y)     assume_yes=1 ;;
+      --all)        all=1 ;;
+      --help|-h)    _clean_usage ;;
+      *)
+        echo "vibe clean: unknown argument '$1'" >&2
+        echo "  try: vibe clean --help" >&2
+        exit 1
+        ;;
+    esac
+    shift
+  done
+
+  command -v docker >/dev/null 2>&1 || {
+    echo "vibe clean: docker not found. Install OrbStack (https://orbstack.dev) or Docker Desktop." >&2
+    exit 1
+  }
+  docker info >/dev/null 2>&1 || {
+    echo "vibe clean: Docker is not running - start it and try again." >&2
+    exit 1
+  }
+
+  local all_arg=""
+  [ "$all" -eq 1 ] && all_arg="all"
+
+  local rows count
+  rows="$(_clean_stopped_containers "$all_arg")"
+  count=0
+  [ -n "$rows" ] && count=$(printf '%s\n' "$rows" | grep -c . || true)
+
+  local before
+  before="$(_vibe_docker_reclaimable_mib)"
+
+  echo ""
+  echo "  vibe clean — reclaimable Docker space"
+  echo ""
+  if [ "$count" -gt 0 ]; then
+    echo "  Stopped containers to remove ($count):"
+    local id img folder
+    while IFS=$'\t' read -r id img folder; do
+      [ -n "$id" ] || continue
+      printf '    %s  %-28s %s\n' "$id" "$img" "${folder:-(no project folder recorded)}"
+    done <<< "$rows"
+  else
+    echo "  Stopped containers to remove: none"
+  fi
+  echo ""
+  if [ "$all" -eq 1 ]; then
+    echo "  Plus: all dangling images, and all build cache regardless of age."
+  else
+    echo "  Plus: dangling vibe images, and build cache older than 7 days."
+  fi
+  echo "  Named volumes (vibe-claude-config, vibe-bash-history): untouched."
+  echo ""
+  if [ -n "$before" ] && [ "$before" -gt 0 ]; then
+    printf '  Docker currently reports %s GB reclaimable in total.\n\n' "$((before / 1024))"
+  fi
+
+  if [ "$dry" -eq 1 ]; then
+    echo "  --dry-run: nothing removed."
+    exit 0
+  fi
+
+  if [ "$assume_yes" -ne 1 ]; then
+    _clean_confirm "Remove the above?" || { echo "  Nothing removed."; exit 0; }
+  fi
+
+  local removed=0 id img folder
+  if [ -n "$rows" ]; then
+    while IFS=$'\t' read -r id img folder; do
+      [ -n "$id" ] || continue
+      # No -f (nothing here is running) and no -v (never delete volumes).
+      docker rm "$id" >/dev/null 2>&1 && removed=$((removed + 1))
+    done <<< "$rows"
+  fi
+
+  if [ "$all" -eq 1 ]; then
+    docker image prune -f >/dev/null 2>&1 || true
+    docker builder prune -f >/dev/null 2>&1 || true
+  else
+    docker image prune -f --filter "label=$VIBE_IMAGE_LABEL" >/dev/null 2>&1 || true
+    docker builder prune -f --filter "until=168h" >/dev/null 2>&1 || true
+  fi
+
+  local after freed
+  after="$(_vibe_docker_reclaimable_mib)"
+  echo "  ✓ removed $removed stopped container(s)."
+  if [ -n "$before" ] && [ -n "$after" ] && [ "$before" -gt "$after" ]; then
+    freed=$((before - after))
+    if [ "$freed" -ge 1024 ]; then
+      echo "  ✓ reclaimed about $((freed / 1024)) GB."
+    else
+      echo "  ✓ reclaimed about $freed MB."
+    fi
+  fi
+  if [ "$all" -ne 1 ] && [ "$count" -eq 0 ]; then
+    echo "    If Docker is still large, the space is pinned by images that older"
+    echo "    containers still reference: vibe clean --all widens the sweep."
+  fi
+  echo ""
+  exit 0
+}
+
 # ── Terminal hygiene + crash forensics (task_031) ─────────────────────────────
 # claude enables xterm mouse tracking (and bracketed paste, focus reporting,
 # the alternate screen). When it dies abnormally it never sends the disable
@@ -4493,6 +4887,17 @@ if [ "${1:-}" = "audit" ]; then
   exit $?
 fi
 
+# ── Clean subcommand dispatch (task_059) ──────────────────────────────────────
+# Must be BEFORE the --* flag-parser loop — mirrors `learn`/`repos`/`audit`
+# above. Host-side, docker-only: it reclaims stopped vibe containers, dangling
+# vibe images and build cache, and never enters workspace resolution,
+# preflight, image build, GitHub setup, or container launch. Never removes a
+# volume in any mode. Dispatches and exits; this is a safety net.
+if [ "${1:-}" = "clean" ]; then
+  clean_handle_subcommand "$@"
+  exit $?
+fi
+
 # ── Pat subcommand dispatch (task_026) ────────────────────────────────────────
 # Must be BEFORE the --* flag-parser loop — mirrors `learn`/`repos`/`audit`
 # above. Host-side only: rotates a stored PAT via rotate_token; never enters
@@ -4574,6 +4979,9 @@ export VIBE_PROJECT_NAME
 require docker       "Install OrbStack (https://orbstack.dev) or Docker Desktop."
 require devcontainer "Install with: npm install -g @devcontainers/cli"
 vibe_docker_preflight || exit 1
+# Advisory only — warns on a low host disk or a lot of reclaimable Docker
+# space, never blocks a launch (task_059). VIBE_HYGIENE=0 silences it.
+vibe_hygiene_check || true
 # GitHub CLI is checked only when GitHub setup is requested; local work needs no gh.
 
 # Resolve onboarding before GitHub setup: local Git is useful even when the
@@ -4841,6 +5249,15 @@ if [ "$REBUILD" = true ] || ! docker image inspect "$BASE_TAG" >/dev/null 2>&1; 
   BASE_REBUILT=true
 fi
 
+# task_059: a rebuild is the moment the PREVIOUS image becomes garbage. Reclaim
+# it (and stale build cache) right here rather than letting every rebuild add a
+# few GB to Docker.raw forever. Scoped to vibe's own label and to cache older
+# than a week, so a shared machine keeps other projects' images and warm cache.
+# Fail-safe: a prune that errors prints nothing and never blocks the launch.
+if [ "$BASE_REBUILT" = true ]; then
+  vibe_prune_after_build || true
+fi
+
 # ── Build the selected language-profile image, if any (task_040) ────────────
 # Un-suppressed, same shape as the base build above: under `set -euo
 # pipefail` a failing `docker build` aborts the launcher before the marker
@@ -4856,6 +5273,9 @@ if [ -n "$PROFILE" ] && { [ "$REBUILD" = true ] || ! docker image inspect "$IMAG
   docker build --build-arg "BASE=$BASE_TAG" -t "$IMAGE_TAG" "$(profile_dir "$PROFILE")"
   mkdir -p "$(dirname "$PROFILE_MARKER")"
   touch "$PROFILE_MARKER"
+  # Same reasoning as the base build above (task_059): the superseded profile
+  # image is dangling from this point on, so reclaim it now.
+  vibe_prune_after_build || true
 fi
 
 # ── Write persistent session settings ────────────────────────────────────────
@@ -5312,6 +5732,22 @@ if [ "$REBUILD" != true ] && [ -z "$drift_marker" ]; then
 fi
 extra_flag="$(remove_existing_flag "$REBUILD" "${drift_marker}${mount_drift}${projects_drift}${domains_drift}${codex_drift}")"
 [ -n "$extra_flag" ] && UP_ARGS+=("$extra_flag")
+# task_059: --remove-existing-container removes the ONE container the
+# devcontainer CLI finds for this workspace. Anything else this workspace left
+# behind — a container stopped by a crash, or one the CLI orphaned — keeps
+# pinning the image it was built from, and Docker cannot reclaim an image while
+# any container references it. That is how ~18 superseded vibe-dev images came
+# to occupy 245 GB of Docker.raw on 2026-09-17. So when a recreate is already
+# happening, first drop every NON-RUNNING container labelled for this
+# workspace. `docker rm` with no flags: nothing running is in scope, and no -v,
+# so no volume is ever removed.
+if [ -n "$extra_flag" ]; then
+  reaped="$(vibe_remove_stale_workspace_containers "$WORKSPACE")"
+  if [ "${reaped:-0}" -gt 0 ]; then
+    echo "  removed $reaped stopped container(s) this project had left behind."
+    echo ""
+  fi
+fi
 # Print a distinct status line when drift (not --rebuild) triggered the recreate.
 if [ -n "$drift_marker" ] && [ "$REBUILD" != true ]; then
   echo "  image moved on since this project's container was built - recreating it."

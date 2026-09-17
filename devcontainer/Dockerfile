@@ -223,3 +223,14 @@ RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/refresh-extra-domain
   echo "node ALL=(root) NOPASSWD: /usr/sbin/avahi-daemon" >> /etc/sudoers.d/node-firewall && \
   chmod 0440 /etc/sudoers.d/node-firewall
 USER node
+
+# task_059: stamp the image so vibe can recognise its own leftovers after the
+# vibe-dev tag has moved on. A dangling image is untagged by definition, so
+# without a label there is no way to tell one of vibe's superseded builds from
+# another project's — and a bare `docker image prune -f` would delete both.
+# Labels are inherited by every child image built FROM this one, and by every
+# container created from either, which is also what lets `vibe clean` find
+# stopped containers whose image is long gone. LAST instruction on purpose: changing it invalidates one
+# metadata layer, not the whole build cache. Keep the value in sync with
+# VIBE_IMAGE_LABEL in the vibe launcher (smoke-test.py checks that they agree).
+LABEL com.andeye.vibe.image="vibe-dev"
