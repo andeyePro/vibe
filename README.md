@@ -23,6 +23,7 @@ Vibe&I (the command is still `vibe`) is a single-command containerised Claude Co
 
 - macOS 13+ (primary) or Linux — see [Linux hosts](#linux-hosts) below
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) or [OrbStack](https://orbstack.dev)
+  - **On Docker Desktop, set a disk limit before you start.** Settings > Resources > Advanced > "Disk usage limit" defaults to the whole drive, so a Docker that grows unchecked can fill the disk — and a disk that fills while Docker is mid-write can corrupt its image store, which is only recoverable by deleting `Docker.raw` and everything in it. 100 GiB is a comfortable cap for vibe. OrbStack grows and shrinks its disk on demand and needs no equivalent step.
 - Node.js, then `npm install -g @devcontainers/cli`
 - [GitHub CLI](https://cli.github.com) — `gh auth login`
 - A Claude **Pro or Max** subscription
@@ -101,6 +102,7 @@ The installer clones vibe to `~/.vibe-src`, symlinks `~/bin/vibe`, and prompts f
 - `vibe repos add <owner/repo> [path]` — register a private repo this machine mounts read-only at `/repos/<name>` for every project that declares it (`vibe repos list` / `vibe repos remove [--purge]` manage it; see Shared repos above)
 - `vibe codex allow|deny|list [path]` — host-side, manage the machine's Codex login-mount consent registry (`~/.vibe/codex-allow`); `deny` also offers to stop that project's container so the login is unmounted at once (see Codex setup below)
 - `vibe audit [--history|--staged]` — host-side, scans the current project's full git history (default) or its staged diff for secrets and PII the git-hook layer below can't retroactively catch (see Content guard below)
+- `vibe clean [--dry-run|--yes|--all]` — host-side, reclaims the Docker space vibe accumulates: stopped vibe containers, dangling images left by past rebuilds, and old build cache. Named volumes are never removed in any mode, so your Claude login survives it (see Disk hygiene below)
 
 Fresh conversation is the default — durable memory lives in `TODO.md`, `CLAUDE.md`, and Claude's auto-memory, not in resumed conversations (which accumulate compaction debt). `--continue` / `--resume` are opt-in for short-horizon pickup.
 
@@ -217,6 +219,38 @@ It's worth setting up if you: work across several repos and want durable knowled
 The name is only a convention — "brain2" is shorthand for "second brain". The in-container mount point is `/brain2`, but the source can be any directory; nothing requires the folder or repo itself to be called "brain2".
 
 Every launch also auto-refreshes `<brain2>/meta/vibe-operation.md` (fail-soft — a no-op if brain2 isn't mounted or the dir isn't writable): a managed block holding the currently-installed `vibe --help` output, so an in-container Claude with no visibility into the host-side launcher has a ground-truth reference instead of guessing. Prose you add outside that block is preserved untouched on every refresh.
+
+### Disk hygiene
+
+vibe rebuilds its container image whenever anything in `devcontainer/` changes, and the devcontainer CLI never removes a container. Left alone, that combination grows without bound: each rebuild supersedes the previous image, and any container still referencing an old image stops Docker from reclaiming it. In September 2026 this filled a 926 GB Mac — `Docker.raw` at 245 GB, around 20 vibe containers spread across 18 distinct images — and the disk filling mid-write corrupted Docker's content store badly enough that the only recovery was deleting `Docker.raw`, which took the `vibe-claude-config` volume (the Claude login and every session history) with it.
+
+Three things now keep it in check:
+
+- **On every recreate**, vibe removes the stopped containers the project has left behind, so the image they pinned can be reclaimed.
+- **After every rebuild**, vibe prunes its own dangling images and build cache older than a week. Both prunes are scoped — to vibe's image label, and to cache age — so a shared machine keeps other projects' images and warm cache.
+- **On launch**, vibe warns when the disk is running low, or (at most once a day) when Docker is holding a lot of reclaimable space.
+
+`vibe clean` does the sweep on demand:
+
+```bash
+vibe clean --dry-run   # list what would go, remove nothing
+vibe clean             # remove it, after confirming
+vibe clean --all       # widen the sweep: build cache of any age, all dangling
+                       # images, and stopped devcontainers whose image is gone
+```
+
+**`vibe clean` never removes a named volume, in any mode.** `vibe-claude-config` (your Claude login and session history) and `vibe-bash-history` survive every run of it. Note that a *stopped container pins the image it was built from*: if Docker still looks large after a default sweep, the space is usually held by containers older than vibe's image labelling, which `--all` reaches.
+
+Tuning, in `~/.vibe/config`:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `VIBE_HYGIENE` | `1` | `=0` silences the launch-time warnings entirely |
+| `VIBE_DISK_WARN_GIB` | `20` | warn below this much free host disk |
+| `VIBE_DOCKER_RECLAIM_WARN_GIB` | `20` | warn above this much reclaimable Docker space |
+| `VIBE_HYGIENE_INTERVAL_HOURS` | `24` | how often the (slower) `docker system df` half runs |
+
+And cap Docker itself: **Docker Desktop > Settings > Resources > Advanced > "Disk usage limit"** defaults to the whole drive. Setting it (100 GiB suits vibe) turns "the Mac fills up" into "Docker runs out of room", which is a far better failure. OrbStack sizes its disk on demand and needs no equivalent.
 
 ## Host-side state
 

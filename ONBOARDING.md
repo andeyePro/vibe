@@ -70,6 +70,8 @@ brew install --cask orbstack
 
 Then open OrbStack once from Applications so it finishes its setup. (Docker Desktop also works if the user already has it; don't install both.)
 
+If the user already has **Docker Desktop** rather than OrbStack, walk them through one setting before going further: **Docker Desktop > Settings > Resources > Advanced > "Disk usage limit"**. It ships set to the whole drive, which means Docker can quietly grow until the Mac is full — and a disk that fills while Docker is mid-write can corrupt Docker's own storage, which is only fixable by deleting everything Docker holds. Ask them to set it to **100 GiB** and click Apply & restart. OrbStack sizes its disk on demand and needs nothing here.
+
 Check: `docker --version` prints a version.
 
 ### 3L. Install the container runtime – Docker Engine — **Linux only**

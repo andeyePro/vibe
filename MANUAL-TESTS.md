@@ -1745,6 +1745,58 @@ Use a disposable folder on the Mac or Linux host with the reviewed Vibe source. 
 
 ---
 
+### Test 57: Docker hygiene — reaping, pruning and `vibe clean` (task_059)
+
+The one thing no host-side fixture can prove: that these commands leave the
+named volumes, and every running container, alone on a real daemon.
+
+```bash
+docker volume ls                       # note vibe-claude-config's presence
+docker system df                       # note the "before" figures
+cd ~/Projects/vibe-test && vibe        # let it come up, then exit
+docker ps -a --filter status=exited    # note this project's stopped container
+touch ~/.vibe-src/devcontainer/Dockerfile
+cd ~/Projects/vibe-test && vibe        # forces a rebuild + recreate
+```
+
+**Expected on the rebuild run:**
+- [ ] "devcontainer/ changed since last build — rebuilding image."
+- [ ] After the build: "reclaimed N GB of superseded image layers and build cache."
+- [ ] "removed N stopped container(s) this project had left behind." (only if this project actually had any)
+- [ ] `docker volume ls` still lists `vibe-claude-config` and `vibe-bash-history`
+- [ ] Claude is still logged in inside the new container — the login volume survived
+
+**Then, with a second project's container running:**
+
+```bash
+# In another terminal, leave a vibe session open in a different project.
+vibe clean --dry-run
+vibe clean
+```
+
+- [ ] `--dry-run` lists stopped containers and removes nothing (`docker ps -a` unchanged)
+- [ ] the confirm prompt appears, and answering `n` removes nothing
+- [ ] answering `y` removes only stopped containers; the other project's RUNNING container is untouched and its session keeps working
+- [ ] `docker volume ls` unchanged after the sweep
+- [ ] `docker system df` shows the reclaim
+- [ ] `vibe clean --all` additionally clears build cache of any age, and `docker volume ls` is STILL unchanged
+
+**Preflight warning:**
+
+```bash
+VIBE_DOCKER_RECLAIM_WARN_GIB=1 rm -f ~/.vibe/.hygiene-checked && vibe
+```
+
+- [ ] a "Docker is holding N GB of reclaimable..." line appears before launch
+- [ ] the launch proceeds normally regardless
+- [ ] a second launch within the day does not repeat it
+- [ ] `VIBE_HYGIENE=0 vibe` shows neither warning
+
+**Docker Desktop disk limit (Docker Desktop hosts only):**
+- [ ] Settings > Resources > Advanced > "Disk usage limit" is set (not the drive default)
+
+---
+
 ## Test Summary
 
 After completing all tests, check:
@@ -1759,3 +1811,4 @@ After completing all tests, check:
 - [ ] Can commit and push via GitHub token
 - [ ] SSH outbound works (if configured)
 - [ ] No credentials leaked to host/container boundary
+- [ ] `vibe clean` and the post-rebuild prune left every named volume intact
