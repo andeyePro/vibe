@@ -43,6 +43,7 @@ from smoke.checks_31_mac_build_recovery import *
 from smoke.checks_30_supervisor_reconciliation import *
 from smoke.checks_32_managed_vendor_trust import *
 from smoke.checks_33_host_onboarding import *
+from smoke.checks_34_docker_hygiene import *
 
 def main() -> int:
     test_docker_preflight_is_shared_and_mac_start_preserves_target()
@@ -996,6 +997,34 @@ def main() -> int:
         test_codex_supervisor_review18_interrupted_confirms_boundary,   # item 18
     ])
     test_codex_panel_review19_partial_startup_failure_cleans_up()      # item 19
+
+    # task_059 — Docker hygiene: post-rebuild pruning, stale-container
+    # reaping, `vibe clean`, and the invariant that none of it can remove
+    # a volume.
+    test_hygiene_size_parser_decimal_and_binary()
+    test_hygiene_reclaimable_excludes_volumes()
+    test_hygiene_prune_after_build_is_scoped()
+    test_hygiene_prune_silent_when_nothing_reclaimed()
+    test_hygiene_helpers_survive_a_broken_docker()
+    test_hygiene_stale_container_query_excludes_running()
+    test_hygiene_stale_container_removal_never_forces_or_takes_volumes()
+    test_hygiene_stale_removal_wired_into_the_recreate_path()
+    test_hygiene_prune_wired_after_each_build()
+    test_clean_scope_default_and_all()
+    test_clean_dry_run_removes_nothing()
+    test_clean_without_a_tty_refuses_rather_than_deleting()
+    test_clean_yes_removes_containers_and_prunes_scoped()
+    test_clean_all_widens_both_sweeps()
+    test_clean_never_removes_a_volume_in_any_mode()
+    test_clean_rejects_unknown_arguments()
+    test_clean_usage_promises_volume_safety()
+    test_clean_is_dispatched_before_flag_parsing()
+    test_hygiene_check_warns_and_throttles()
+    test_hygiene_check_can_be_disabled()
+    test_hygiene_check_wired_into_preflight()
+    test_image_label_agrees_everywhere()
+    test_image_label_is_the_last_dockerfile_instruction()
+    test_launcher_has_no_volume_removal_anywhere()
 
     print()
     if FAILURES:
