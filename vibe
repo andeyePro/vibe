@@ -755,6 +755,41 @@ build_claude_model_args() {
   fi
 }
 
+# build_color_env echoes the terminal-colour env that every in-container
+# command is started with: TERM always, plus COLORTERM when the host terminal
+# advertises one.
+#
+# `devcontainer exec` hands the container a bare TERM=xterm and no COLORTERM at
+# all, whatever the outer terminal is. Claude Code's (and Codex's) colour-depth
+# ladder reads COLORTERM=truecolor / xterm-ghostty / xterm-kitty as 24-bit,
+# *-256color as 256, and bare xterm as *16 colours* — so every rgb() theme
+# colour was being crushed to the nearest of 16. Most visible in the fullscreen
+# renderer, which paints the selection itself: the dark theme's rgb(38,79,120)
+# selection blue degraded to a near-black that reads as unhighlighted text.
+#
+# TERM is claimed unconditionally — xterm-256color terminfo ships in the image
+# (`TERM=xterm-256color tput colors` → 256) and every terminal vibe supports
+# handles it. COLORTERM is FORWARDED rather than hardcoded: Ghostty, iTerm2,
+# Kitty and WezTerm set it to truecolor, Apple Terminal (256-colour only) does
+# not, so the host terminal's own capability decides and there is no allowlist
+# to go stale. A host with no COLORTERM gets 256 colours, not a mangled 24-bit
+# stream it can't render.
+#
+# The value is embedded in the bash -c command string sent to the container, so
+# it is charset-restricted exactly like MODEL_ARG and RESUME_UID; anything with
+# a shell-significant character is dropped rather than sanitised, because a
+# COLORTERM that isn't a plain token is not a colour declaration.
+# Defined above the VIBE_SOURCE_ONLY guard so smoke-test.py can unit-test it.
+build_color_env() {
+  local out="TERM=xterm-256color"
+  case "${COLORTERM:-}" in
+    "") ;;
+    *[!A-Za-z0-9._-]*) ;;
+    *) out="$out COLORTERM=$COLORTERM" ;;
+  esac
+  echo "$out"
+}
+
 # fable_billing_phase [yyyymmdd] — echoes "free" before the credits cutover
 # date, "credits" from it onward. Date injectable for tests; defaults to the
 # host's local date (day-level precision is enough for a billing notice).
@@ -5800,6 +5835,10 @@ fi
 #   - `LC_ALL=C.UTF-8 LANG=C.UTF-8` — silences the bash "locale not supported"
 #     warning when the host inherits en_US.UTF-8 (and neutralises any older
 #     image whose zsh-in-docker .zshrc re-exports it before the Dockerfile sed)
+#   - `$(build_color_env)` — `TERM=xterm-256color`, plus the host's own
+#     COLORTERM when it has one. Without it devcontainer exec's bare
+#     TERM=xterm pins the session to 16 colours and every rgb() theme colour
+#     in claude/codex is crushed to the nearest of them (see build_color_env)
 #
 # Note: two issues recommend switching away from Apple's Terminal.app
 # (and similar stock/restricted terminals):
@@ -5873,7 +5912,7 @@ launch_claude() {
   exec devcontainer exec \
     --workspace-folder "$WORKSPACE" \
     --override-config "$OVERRIDE_CONFIG" \
-    ${TASK_BIND_ENV[@]+"${TASK_BIND_ENV[@]}"} /bin/bash --noprofile --norc -c "exec env SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 claude ${1:+$1 }${CLAUDE_MODEL_ARGS:+$CLAUDE_MODEL_ARGS }--permission-mode bypassPermissions${2:+ '$2'}"
+    ${TASK_BIND_ENV[@]+"${TASK_BIND_ENV[@]}"} /bin/bash --noprofile --norc -c "exec env SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 $(build_color_env) claude ${1:+$1 }${CLAUDE_MODEL_ARGS:+$CLAUDE_MODEL_ARGS }--permission-mode bypassPermissions${2:+ '$2'}"
 }
 
 # launch_codex — the Codex-led sibling of launch_claude (task_049). Same
@@ -5901,16 +5940,20 @@ launch_codex() {
   CODEX_SUPERVISE_EXTRA=()
   [ "${CODEX_NEW_RUN:-false}" != true ] || CODEX_SUPERVISE_EXTRA=(--new-run)
   if [ -n "${CODEX_ACTION:-}" ]; then
+    # shellcheck disable=SC2046  # build_color_env's output is deliberately
+    # split into separate KEY=VALUE argv words for `env`; its charset is
+    # restricted to [A-Za-z0-9._-] plus the single separating space, so the
+    # split can only ever produce the one or two assignments it built.
     exec devcontainer exec --workspace-folder "$WORKSPACE" --override-config "$OVERRIDE_CONFIG" \
       ${TASK_BIND_ENV[@]+"${TASK_BIND_ENV[@]}"} /usr/bin/env -u BASH_ENV -u ENV PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/share/npm-global/bin \
-      SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 CODEX_HOME=/home/node/.codex \
+      SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 $(build_color_env) CODEX_HOME=/home/node/.codex \
       /usr/local/bin/codex-entry --supervise -- run --cwd /workspace --prompt-file "/workspace/$CODEX_PROMPT_REL" \
       ${CODEX_SUPERVISE_EXTRA[@]+"${CODEX_SUPERVISE_EXTRA[@]}"}
   fi
   exec devcontainer exec \
     --workspace-folder "$WORKSPACE" \
     --override-config "$OVERRIDE_CONFIG" \
-    ${TASK_BIND_ENV[@]+"${TASK_BIND_ENV[@]}"} /usr/bin/env -u BASH_ENV -u ENV /bin/bash --noprofile --norc -c "exec /usr/bin/env -u BASH_ENV -u ENV PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/share/npm-global/bin SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 CODEX_HOME=/home/node/.codex /usr/local/bin/codex-entry"
+    ${TASK_BIND_ENV[@]+"${TASK_BIND_ENV[@]}"} /usr/bin/env -u BASH_ENV -u ENV /bin/bash --noprofile --norc -c "exec /usr/bin/env -u BASH_ENV -u ENV PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/share/npm-global/bin SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 $(build_color_env) CODEX_HOME=/home/node/.codex /usr/local/bin/codex-entry"
 }
 
 # VIBE_SESSION_REF — a session-start reference file, used solely for its

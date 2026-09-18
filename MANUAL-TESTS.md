@@ -1797,6 +1797,47 @@ VIBE_DOCKER_RECLAIM_WARN_GIB=1 rm -f ~/.vibe/.hygiene-checked && vibe
 
 ---
 
+### Test 58: Terminal colour reaches the container
+
+The one thing no host-side fixture can prove: that the container actually
+renders 24-bit colour, and that a 256-colour-only terminal is not sent
+sequences it cannot draw. `build_color_env`'s output is asserted in
+`smoke/checks_22_codex_agent.py`; what a pixel looks like is not.
+
+**From a truecolor terminal (Ghostty, iTerm2, Kitty, WezTerm):**
+
+```bash
+cd ~/Projects/vibe-test && vibe
+# then, inside the session:
+!echo "$TERM / ${COLORTERM:-<unset>}" && tput colors
+```
+
+- [ ] prints `xterm-256color / truecolor` and `256`
+- [ ] drag-select some output: the selection is a legible blue, not near-black
+      (fullscreen renderer only — `/tui` says which one is live)
+- [ ] `/config` → Input & controls lists "Copy on select"
+
+**From Apple Terminal (256 colours, sets no COLORTERM):**
+
+```bash
+cd ~/Projects/vibe-test && vibe
+!echo "$TERM / ${COLORTERM:-<unset>}" && tput colors
+```
+
+- [ ] prints `xterm-256color / <unset>` and `256` — TERM is still upgraded, but
+      no COLORTERM is claimed on the terminal's behalf
+- [ ] the UI is legible: no garbled escape text where colours should be
+
+**Codex lead (same check, other runtime):**
+
+```bash
+cd ~/Projects/vibe-test && vibe --agent codex
+```
+
+- [ ] the Codex TUI renders in full colour from a truecolor terminal
+
+---
+
 ## Test Summary
 
 After completing all tests, check:

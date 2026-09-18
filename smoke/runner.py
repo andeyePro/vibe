@@ -875,6 +875,7 @@ def main() -> int:
     test_agent_claude_argv_default_and_flag()
     test_launch_codex_source_shape()
     test_launch_claude_unchanged_vs_head()
+    test_terminal_color_env_reaches_container()
     test_codex_entry_offline_refusals_and_success()
     test_codex_entry_no_dangerously_no_dash_c()
     test_dockerfile_codex_entry_copy_and_chmod()
