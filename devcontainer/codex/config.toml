@@ -65,3 +65,16 @@ web_search = "disabled"
 # Deliberately NOT set here either: any [permissions] deny_read list — those
 # are enforced by the sandbox, which is unavailable (see header), so listing
 # them would read as protection that is not there.
+
+# Codex's native sub-agents (spawn_agent / wait_agent / send_message) are OFF.
+# The requirements pin multi_agent and multi_agent_v2, but that does NOT
+# remove them: `codex debug prompt-input` under this policy still offered the
+# model `spawn_agent` on 0.154.0, 0.156.1 and 0.157.0 (found 2026-09-25 after
+# a taskandeye $vsss spawned `/root/task032_final_reviewer`, which then failed
+# auth). The switch that does is agents.enabled. vibe's roles go through
+# vibe-delegate instead (separate processes, blind by construction).
+# codex-entry also passes it on the command line, which beats a user or
+# project config; codex-compat-check fails the image build if a Codex
+# version ever offers spawn_agent under this policy again.
+[agents]
+enabled = false

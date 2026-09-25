@@ -611,8 +611,8 @@ def test_codex_entry_offline_refusals_and_success():
         check("[agent] entry: success -> the proven line printed before exec",
               "codex-led session: guard chain proven, starting codex" in r.stdout, r.stdout)
         calls = [json.loads(l) for l in argv_log.read_text().splitlines()] if argv_log.exists() else []
-        check("[agent] entry: success -> codex exec'd exactly once with the args after --",
-              calls == [["--flag", "value"]], str(calls))
+        check("[agent] entry: success -> codex exec'd exactly once: sub-agents off, then the args after --",
+              calls == [["-c", "agents.enabled=false", "--flag", "value"]], str(calls))
         check("[agent] entry: success -> liveness invoked with --root/--bin and our --codex",
               liveness_log.exists() and str(root) in liveness_log.read_text() and
               str(bindir) in liveness_log.read_text() and str(codex_stub) in liveness_log.read_text(),
@@ -654,7 +654,11 @@ def test_codex_entry_no_dangerously_no_dash_c():
     print("\n[agent] AC4: codex-entry.sh never spells --dangerously... or a literal ` -c `")
     src = CODEX_ENTRY.read_text()
     check("[agent] codex-entry.sh contains no 'dangerously'", "dangerously" not in src, "")
-    check("[agent] codex-entry.sh contains no literal ' -c '", " -c " not in src, "")
+    # The one -c codex-entry may pass TIGHTENS the policy (native sub-agents
+    # off, beating a user/project config); any other -c is still refused.
+    check("[agent] codex-entry.sh's only ' -c ' is the sub-agents-off override",
+          src.replace(" -c agents.enabled=false ", " ").count(" -c ") == 0
+          and src.count(" -c agents.enabled=false ") == 1, "")
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -194,8 +194,19 @@ def test_codex_compat_gate_is_wired_and_passes_the_installed_codex():
           dockerfile.index("COPY --chown=root:root codex/ /etc/codex/") < dockerfile.index("&& /usr/local/bin/codex-compat-check"))
     import shutil
     if shutil.which("codex") and Path("/etc/codex/requirements.toml").exists():
-        r = subprocess.run(["bash", str(GATE)], capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL)
-        check("[update] the installed Codex passes the gate", r.returncode == 0 and "is compatible" in r.stdout, r.stdout + r.stderr)
+        cfg = str(REPO / "devcontainer/codex/config.toml")
+        r = subprocess.run(["bash", str(GATE), "--config", cfg], capture_output=True, text=True, timeout=120,
+                           stdin=subprocess.DEVNULL)
+        check("[update] the installed Codex passes the gate under the repo's policy",
+              r.returncode == 0 and "is compatible" in r.stdout and "no native sub-agents" in r.stdout, r.stdout + r.stderr)
+        empty = Path(tempfile.mkdtemp()) / "config.toml"
+        empty.write_text("# no [agents] section\n")
+        r = subprocess.run(["bash", str(GATE), "--config", str(empty)], capture_output=True, text=True, timeout=120,
+                           stdin=subprocess.DEVNULL)
+        check("[update] the gate is behavioural: a policy without [agents] enabled=false is refused on an older image, "
+              "or passes only because /etc/codex already has it",
+              ("FAIL the model is offered native sub-agents" in r.stderr)
+              or "[agents]" in Path("/etc/codex/config.toml").read_text(), r.stdout + r.stderr)
     with tempfile.TemporaryDirectory() as t:
         stub = Path(t) / "codex"
         rows = "\n".join(f"feature_{i}  stable  false" for i in range(12))

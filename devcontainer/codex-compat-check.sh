@@ -19,12 +19,21 @@
 # passed (vibe: build_base_image). Nothing here touches the network; it only
 # runs the local binary.
 #
-# Usage: codex-compat-check [--codex <path>]
+# Usage: codex-compat-check [--codex <path>] [--config <config.toml>]
+#   --config layers a policy file as the user config, so the smoke tests can
+#   check the repo's policy against a container built from an older one.
 set -uo pipefail
 export PATH=/usr/local/share/npm-global/bin:/usr/local/bin:/usr/bin:/bin
 
-codex=codex
-[ "${1:-}" = --codex ] && [ -n "${2:-}" ] && codex=$2
+codex=codex config=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --codex) codex=${2:-}; shift 2 || shift ;;
+    --config) config=${2:-}; shift 2 || shift ;;
+    *) printf 'codex-compat-check: unknown argument %s\n' "$1" >&2; exit 2 ;;
+  esac
+done
+[ -n "$codex" ] || { echo "codex-compat-check: --codex needs a path" >&2; exit 2; }
 
 fail() { printf 'codex-compat-check: FAIL %s\n' "$*" >&2; exit 1; }
 ok() { printf 'codex-compat-check: ok   %s\n' "$*"; }
@@ -45,6 +54,7 @@ ok "version $version (floor $floor)"
 
 home=$(mktemp -d) || fail "no temp dir"
 trap 'rm -rf "$home"' EXIT
+if [ -n "$config" ]; then cp -- "$config" "$home/config.toml" || fail "cannot read $config"; fi
 
 features=$(CODEX_HOME=$home "$codex" features list 2>&1) || fail "codex features list failed under the managed policy: $(printf '%s' "$features" | tail -n 3)"
 # The output must still parse as "<name> <stage> <true|false>" rows, or an
@@ -78,5 +88,16 @@ for token in PreToolUse UserPromptSubmit SessionStart stop_hook_active last_assi
   grep -aqF "$token" "$native" || fail "the binary no longer mentions $token (a hook event or field vibe relies on)"
 done
 ok "hook events and Stop-hook fields"
+
+# Behavioural, not just flags: what the model is actually offered under the
+# managed policy must not include native sub-agents (the multi_agent pins
+# alone never removed them; [agents] enabled = false does).
+prompt=$(CODEX_HOME=$home "$codex" debug prompt-input "vibe compatibility probe" 2>/dev/null) ||
+  fail "codex debug prompt-input failed; cannot see what the model is offered"
+[ -n "$prompt" ] || fail "codex debug prompt-input printed nothing"
+if printf '%s' "$prompt" | grep -qE 'spawn_agent|wait_agent'; then
+  fail "the model is offered native sub-agents (spawn_agent) under the managed policy"
+fi
+ok "no native sub-agents offered to the model"
 
 echo "codex-compat-check: Codex $version is compatible with vibe's policy"
