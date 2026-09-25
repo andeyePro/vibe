@@ -1877,6 +1877,7 @@ cd ~/Projects/vibe-test && vibe
 Offline tests (`smoke/checks_37_capabilities.py`) cover the inventory and the nudge's matching. This checks the live behaviour.
 
 - [ ] In a new session on a Mac with the account set up, `!vibe-capabilities` lists the Mac account first with `port 22 open`, and `!vibe-capabilities --setup mac-account` ends with "declared as <account>".
+- [ ] `!vibe-shot --check` prints "is ready" (after `npm i -g playwright && npx playwright install chromium` on the account); `!vibe-shot https://example.org --viewport 390x844` prints a PNG path under `.vibe/shots/`, and opening it shows the page at phone width. `!vibe-shot site/dist` (any built folder) shows its index page.
 - [ ] Ask: "Build the site and tell me whether the header wraps on a phone-width screen." The agent should render it on the Mac account and look at a screenshot, rather than say it can't see the page. With no `.vibe-allow-ssh` it asks for a one-line OK first.
 - [ ] Get it to end a reply with "I can't see the rendered page" (for example, by asking it to skip the check). The turn should not end. A "vibe capability check" message quoting that sentence appears, and the agent either does the check or names the one-line step.
 - [ ] `vibe --agent codex`: the same prompt; Codex runs `vibe-capabilities` (its session context names it), and the same Stop-hook nudge fires once; `codex-guard-liveness` still passes at launch.

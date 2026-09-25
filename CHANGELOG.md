@@ -6,6 +6,19 @@ Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion 
 
 ## 2026-09-25
 
+- [x] **`vibe-shot`: one command for "look at it" on the Mac account** (`devcontainer/vibe-shot.sh`, `devcontainer/vibe-capabilities.sh`, `devcontainer/claude-md/capabilities.md`, `devcontainer/Dockerfile`, `README.md`, `MANUAL-TESTS.md`, `smoke/checks_38_vibe_shot.py`, `smoke/checks_37_capabilities.py`). Knowing it *can* see was not enough: an agent still had to hand-roll an SSH + Playwright + scp script in every project, and the reference `shot.sh` lived in another repo.
+  - **What it does:** `vibe-shot <url|folder|file> [--viewport 390x844] [--full-page] [--wait-for SEL] [--out PATH]` renders a URL the Mac can reach, including `localhost` there. A folder is uploaded and its `index.html` opened (`--path` picks another page); a single file is uploaded alone. It uses one SSH connection to the declared account, runs headless Chromium through Playwright there, and prints the PNG's path under `.vibe/shots/`.
+  - **`--check`** confirms node and Playwright on the Mac and names the install command.
+  - **Hardening:**
+    - the Mac's zsh login shell never parses user text: the remote script and its arguments travel base64-encoded;
+    - an upload travels as a tar on stdin that leaves out `.git`, `node_modules`, `.vibe`, `.vss` and `.env*`, and is size-checked on the real tar before connecting;
+    - the image comes back base64 between newline-guarded markers and must decode to a real PNG header before it replaces `--out`;
+    - both ends clean up their temp dirs, on failure too;
+    - it waits for `load` plus a short network-idle, so a dev server with polling cannot time it out.
+  - **Wiring:** `vibe-capabilities`, the Stop-hook nudge and the CLAUDE.md fragment now name it as the way to see. The inventory also lists subagents, `/ask sonnet|opus|haiku`, `/review`, `/vs` and the Gemini slot.
+  - **Review:** one code-reviewer round (opus) found and fixed two real bugs: a missing option value hung the script, and a local tar failure was blamed on the Mac. It also found that shooting one file uploaded its whole parent folder, plus six smaller issues.
+  - **Tests:** 39 checks run the remote script for real. A stub `ssh` executes it under zsh, as on a Mac. A stub `base64` takes the macOS `-D` branch, and `node --check` validates the Playwright JavaScript. They cover exclusions, the size limit, rc-file noise before the markers, failure cleanup and every refusal. No real SSH connection was made in this run, so Manual Test 60 has the live steps.
+
 - [x] **An agent that ends with "I can't see / run / build it" is sent back once with what it can do** (`devcontainer/vibe-capabilities.sh --stop-hook`, `vibe`, `devcontainer/codex/hooks/hooks.json`, `devcontainer/codex-guard-liveness.sh`, `README.md`, `ONBOARDING.md`, `MANUAL-TESTS.md`, `smoke/checks_37_capabilities.py`). This is the "make sure they use it" half of Martin's brief.
   - **What it catches:** a new Stop hook in both runtimes reads the turn's final message for a capability denial. Examples are "I can't see the rendered page", "I'm unable to view the output", "I don't have a browser", "could you send me a screenshot" and "you'll need to look at the page". Curly apostrophes, which GPT output often uses, also match.
   - **What it does:** it sends the turn back once with the container's live capability list. Without SSH pre-authorisation it tells the model to OFFER the exact ssh command in one line, as vibe's SSH discipline requires, rather than connecting. With `.vibe-allow-ssh` it tells the model to do it. If nothing covers the job, the model is told to name the switch-on step or to say in one line that it truly can't.

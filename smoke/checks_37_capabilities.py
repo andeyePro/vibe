@@ -59,8 +59,8 @@ def test_capabilities_finds_the_mac_account_from_the_ssh_config():
         avail = out.split("## Available now", 1)[-1].split("## Could be", 1)[0]
         check("[caps] Mac account listed under Available now",
               "Mac account `claude@host.docker.internal`" in avail, out[:600])
-        check("[caps] ... says how to see: screenshot, scp back, Read tool displays images",
-              "screenshot" in avail and "scp" in avail and "Read tool displays images" in avail, avail)
+        check("[caps] ... says how to see: vibe-shot renders it, Read tool displays images",
+              "screenshot" in avail and "vibe-shot <url|folder|file>" in avail and "Read tool displays images" in avail, avail)
         check("[caps] ... names where the declaration came from", "the SSH config (Host host.docker.internal)" in avail, avail)
         check("[caps] ... SSH needs a per-action OK without the project marker", "per-action OK" in avail, avail)
         check("[caps] other SSH hosts listed by name only (not github.com)",

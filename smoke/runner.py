@@ -47,6 +47,7 @@ from smoke.checks_34_docker_hygiene import *
 from smoke.checks_35_vsss_stop_guard import *
 from smoke.checks_36_native_usage_wait import *
 from smoke.checks_37_capabilities import *
+from smoke.checks_38_vibe_shot import *
 
 def main() -> int:
     test_docker_preflight_is_shared_and_mac_start_preserves_target()
@@ -1047,6 +1048,11 @@ def main() -> int:
     test_capabilities_reach_every_agent()
     test_capability_nudge_sends_a_cant_back_once()
     test_capability_nudge_is_wired_into_both_runtimes()
+    test_vibe_shot_url_round_trip()
+    test_vibe_shot_uploads_a_folder_or_file()
+    test_vibe_shot_refusals_and_check()
+    test_vibe_shot_playwright_script_parses()
+    test_vibe_shot_is_named_wherever_seeing_comes_up()
     test_statusline_records_the_window_reset()
     test_native_wait_detector()
     test_watchdog_stands_aside_during_a_native_wait()

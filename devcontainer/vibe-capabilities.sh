@@ -95,7 +95,7 @@ if [ "$mode" = stop-hook ]; then
   fi
   reason="vibe capability check: your reply says \"$match\". This container may be able to do that (\`vibe-capabilities\` has the full list):
 $inventory
-If one of these covers it (for anything visual, the Mac account: render or launch there, screenshot, scp the PNG back and view it - Claude: the Read tool; Codex: the image file), $act. If none does, give the user the one-line step from \`vibe-capabilities\` under \"Could be switched on\". If you already checked and it genuinely cannot be done here, say so in one line and finish."
+If one of these covers it (for anything visual: vibe-shot <url|folder|file> renders it on the Mac account and prints a PNG path to view - Claude: the Read tool; Codex: the image file), $act. If none does, give the user the one-line step from \`vibe-capabilities\` under \"Could be switched on\". If you already checked and it genuinely cannot be done here, say so in one line and finish."
   jq -n --arg reason "$reason" '{decision: "block", reason: $reason}' 2>/dev/null || exit 0
   exit 0
 fi
@@ -164,7 +164,7 @@ mac_note=""
 
 mac_line() {
   # shellcheck disable=SC2016  # the backticks are Markdown, not command substitution
-  printf 'Mac account `%s@%s` (declared by %s; port 22 %s): anything that needs eyes or a Mac runs there — render a page in a headless browser and screenshot it, build and launch a Mac/iOS app, reach URLs the container firewall blocks. Copy the PNG back with scp and look at it (Claude: the Read tool displays images; Codex: view the image file). SSH %s.' \
+  printf 'Mac account `%s@%s` (declared by %s; port 22 %s): anything that needs eyes or a Mac runs there — render a page in a headless browser and screenshot it, build and launch a Mac/iOS app, reach URLs the container firewall blocks. To look at a page: `vibe-shot <url|folder|file> [--viewport 390x844]` renders it there and prints the PNG path; open it (Claude: the Read tool displays images; Codex: view the image file). SSH %s.' \
     "$mac_user" "$mac_host" "$mac_user_source" "$mac_port" \
     "$([ "$ssh_auto" = yes ] && echo 'is pre-authorised in this project' || echo 'needs a one-line per-action OK from the user unless the project allows it')"
   # shellcheck disable=SC2016  # Markdown backticks
@@ -195,12 +195,14 @@ Simulator) and a real Mac toolchain, without touching your own files.
 4. Authorise a key for it: append the public key vibe containers use (your
    \`~/.ssh/id_ed25519.pub\`, or a dedicated one) to
    that account's \`~/.ssh/authorized_keys\` on the Mac.
-5. Optional, once, logged in as that user: \`npm i -g playwright &&
-   npx playwright install chromium\` so agents can render web pages.
+5. Once, logged in as that user: \`brew install node\` if needed, then
+   \`npm i -g playwright && npx playwright install chromium\` so agents can
+   render pages with \`vibe-shot\`.
 6. Optional: let agents use it without asking each time — in a project,
    \`touch .vibe-allow-ssh\` (untracked) and relaunch vibe.
 
-Check: inside any vibe session run \`vibe-capabilities\`; the first line of
+Check: inside any vibe session run \`vibe-shot --check\` (one SSH call) and
+\`vibe-capabilities\`; the first line of
 "Available now" should name the account on \`$mac_host\` with port 22 open.
 Status on THIS container: $([ -n "$mac_user" ] && echo "declared as $mac_user (port 22 $mac_port)" || echo "not declared yet (step 3)").
 EOF
@@ -234,7 +236,9 @@ echo "- Web: WebSearch/WebFetch-style tools route outside the container firewall
 [ -d "$zotero" ] && echo "- \`$zotero\`: Zotero PDFs, read-only."
 [ -d "$learnings" ] && echo "- \`$learnings\`: cross-project learning library (read)."
 [ -n "$shared_repos" ] && echo "- Shared repos under /repos: $shared_repos"
+echo "- Helpers: parallel subagents (Claude's Agent tool; under Codex, \`vibe-delegate role\`), \`/ask sonnet|opus|haiku\` for a one-shot second model on the subscription, \`/review\` for a code review, \`/vs\` for an adversarial build."
 [ "$codex_login" = yes ] && echo "- Codex login mounted: \`/ask astra\`, the \`/review\` codex slot, \`vibe-delegate\`."
+[ -n "${GEMINI_API_KEY:-}" ] && echo "- Gemini key present: \`/review\` adds a Gemini opinion (when \`generativelanguage.googleapis.com\` is in the project's domains)."
 [ -n "$other_hosts" ] && echo "- Other SSH hosts from ~/.ssh/config (ask per action): $other_hosts"
 echo "- GitHub: pull and push this project's repo (single-repo token); \`gh\` for its issues and PRs."
 echo "- Toolchain in the image:$toolchain"
@@ -248,6 +252,7 @@ echo
 echo "- Direct HTTP to another site: add its host to \`.vibe/domains\` (untracked) and relaunch."
 [ "$codex_login" = no ] && echo "- Codex (second opinions, \`/ask astra\`): run \`vibe\`, choose Codex once, follow its login."
 have uv || echo "- A Python toolchain with uv/ruff/mypy: relaunch with \`vibe --profile python\`."
+[ -z "${GEMINI_API_KEY:-}" ] && echo "- A Gemini second opinion in \`/review\`: put \`GEMINI_API_KEY=<key>\` in \`~/.vibe/tokens\` on the host and add \`generativelanguage.googleapis.com\` to \`.vibe/domains\`."
 echo
 echo "## Genuinely not here (and what to do instead)"
 echo
