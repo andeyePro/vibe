@@ -112,6 +112,8 @@ def main():
     rl_index = 0
     turns = fixture.get("turns", [])
     turn_index = 0
+    compactions = fixture.get("compactions", [])
+    compact_index = 0
     handshake = fixture.get("handshake", {})
     next_req_id = 100000
 
@@ -171,6 +173,24 @@ def main():
                         return
                     continue
                 send(event)
+        elif method == "thread/compact/start":
+            idx = compact_index
+            compact_index += 1
+            script = compactions[idx] if idx < len(compactions) else {}
+            tid = script.get("turnId", f"compact-{idx}")
+            if script.get("error"):
+                send({"id": mid, "error": {"code": -32601, "message": script["error"]}})
+                continue
+            send({"id": mid, "result": {}})
+            for ev in script.get("preEvents", []):
+                send(ev)
+            if script.get("hang"):
+                continue
+            send({"method": "turn/started",
+                  "params": {"threadId": thread_id, "turn": {"id": tid, "status": "inProgress"}}})
+            send({"method": "turn/completed",
+                  "params": {"threadId": thread_id,
+                             "turn": {"id": tid, "status": script.get("status", "completed")}}})
         else:
             if mid is not None:
                 send({"id": mid, "error": {"code": -32601, "message": "stub: unhandled method"}})
@@ -1229,3 +1249,202 @@ def test_codex_supervisor_default_ceilings_allow_a_week_of_windows():
           int(vals.get("maxQuotaWaits", 0)) >= 7 * 24 // 5, str(vals))
     check("[codex-supervisor] max-turn-failures stays a small in-a-row bound",
           0 < int(vals.get("maxTurnFailures", 0)) <= 5, str(vals))
+
+
+# ── contextWindowExceeded is recovered by compacting the thread ─────────────
+
+_CONTEXT_FAILED_EVENTS = [
+    _turn_started_event(),
+    _turn_completed_event("failed", {"message": "context window exceeded",
+                                     "codexErrorInfo": "contextWindowExceeded"}),
+]
+
+
+def _compaction_run(tmp: Path, turn_events: list, compactions: list | None = None,
+                    extra_args: list | None = None, state: dict | None = None):
+    home, codex_home, workspace, env = _supervisor_fixture(tmp)
+    stub_dir = tmp / "stub"
+    fixture = {"turns": [{"events": ev} for ev in turn_events], "compactions": compactions or []}
+    if state is not None:
+        fixture["threadId"] = state["threadId"]
+        state["cwd"] = str(workspace)
+        (workspace / ".vss").mkdir()
+        (workspace / ".vss" / "codex-supervisor.json").write_text(json.dumps(state))
+    stub_path = _write_stub(stub_dir, fixture)
+    prompt = tmp / "prompt.txt"
+    prompt.write_text("/vsss go")
+    r = _run_supervisor(["run", "--cwd", str(workspace), "--prompt-file", str(prompt),
+                         "--codex-bin", str(stub_path), *(extra_args or [])], env)
+    msgs = _in_messages(stub_dir)
+    texts = [m["params"]["input"][0]["text"] for m in msgs if m.get("method") == "turn/start"]
+    compacts = [m for m in msgs if m.get("method") == "thread/compact/start"]
+    return r, workspace, texts, compacts, [m.get("method") for m in msgs]
+
+
+def test_codex_supervisor_context_exceeded_compacts_then_continues():
+    print("\n[codex-supervisor] contextWindowExceeded -> thread/compact/start -> 'continue' -> exit")
+    with tempfile.TemporaryDirectory() as td:
+        r, ws, texts, compacts, methods = _compaction_run(Path(td), [
+            _CONTEXT_FAILED_EVENTS, _DONE_TURN_EVENTS("i2", "done"),
+        ])
+        check("[codex-supervisor] compacted run exits 0", r.returncode == 0, r.stderr)
+        check("[codex-supervisor] exactly one thread/compact/start, carrying only the thread id",
+              len(compacts) == 1 and compacts[0].get("params") == {"threadId": "11111111-1111-1111-1111-111111111111"},
+              str(compacts))
+        starts = [i for i, m in enumerate(methods) if m == "turn/start"]
+        check("[codex-supervisor] the compaction is sent between the failed turn and the next one",
+              len(starts) == 2 and starts[0] < methods.index("thread/compact/start") < starts[1], str(methods))
+        check("[codex-supervisor] the turn after the compaction is the literal 'continue'",
+              len(texts) == 2 and texts[1] == "continue", str(texts))
+        state = _read_state(ws)
+        check("[codex-supervisor] the completed turn after it resets compactions to 0 (they count in a row)",
+              state.get("compactions") == 0, str(state))
+        check("[codex-supervisor] the compaction turn is not recorded as a user turn",
+              [t.get("turnId") for t in state.get("turns", [])] == ["turn-1"], str(state.get("turns")))
+        check("[codex-supervisor] turnsStarted counts only the two user turns",
+              state.get("turnsStarted") == 2, str(state))
+        check("[codex-supervisor] no unresolved turn left after the compaction",
+              state.get("unresolvedTurn") is None, str(state))
+        log = (ws / ".vss" / "codex-supervisor.log").read_text()
+        check("[codex-supervisor] log names the compaction start and its bound turn id",
+              "compaction start (1/3)" in log and "compaction completed → compact-0" in log, log[-800:])
+
+
+def test_codex_supervisor_compaction_ceiling_is_fatal():
+    print("\n[codex-supervisor] --max-compactions 1: a second contextWindowExceeded is fatal")
+    with tempfile.TemporaryDirectory() as td:
+        r, ws, texts, compacts, _ = _compaction_run(Path(td), [
+            _CONTEXT_FAILED_EVENTS, _CONTEXT_FAILED_EVENTS, _DONE_TURN_EVENTS("i3", "done"),
+        ], extra_args=["--max-compactions", "1"])
+        check("[codex-supervisor] exhausted compactions are a ceiling (exit 3)", r.returncode == 3,
+              f"rc={r.returncode} {r.stderr}")
+        check("[codex-supervisor] stderr names max-compactions",
+              "max-compactions" in r.stderr, r.stderr)
+        check("[codex-supervisor] exactly one compaction, two turns", len(compacts) == 1 and len(texts) == 2,
+              f"{compacts} {texts}")
+        state = _read_state(ws)
+        check("[codex-supervisor] recoveryReason == 'context-exhausted'",
+              state.get("recoveryReason") == "context-exhausted", str(state))
+        check("[codex-supervisor] state.compactions == 1", state.get("compactions") == 1, str(state))
+    with tempfile.TemporaryDirectory() as td:
+        home, codex_home, workspace, env = _supervisor_fixture(Path(td))
+        prompt = Path(td) / "prompt.txt"
+        prompt.write_text("/vsss go")
+        r = _run_supervisor(["run", "--cwd", str(workspace), "--prompt-file", str(prompt),
+                             "--max-compactions", "0"], env)
+        check("[codex-supervisor] --max-compactions 0 is a usage error", r.returncode == 2, r.stderr)
+
+
+def test_codex_supervisor_failed_compaction_is_fatal():
+    print("\n[codex-supervisor] a compaction turn that fails is fatal and never retried")
+    for status in ("failed", "interrupted"):
+        with tempfile.TemporaryDirectory() as td:
+            r, ws, texts, compacts, _ = _compaction_run(Path(td), [
+                _CONTEXT_FAILED_EVENTS, _DONE_TURN_EVENTS("i2", "done"),
+            ], compactions=[{"status": status}])
+            check(f"[codex-supervisor] compaction {status}: exit 1", r.returncode == 1, f"rc={r.returncode} {r.stderr}")
+            check(f"[codex-supervisor] compaction {status}: one compaction, no further turn",
+                  len(compacts) == 1 and len(texts) == 1, f"{compacts} {texts}")
+            state = _read_state(ws)
+            check(f"[codex-supervisor] compaction {status}: context-exhausted, boundary confirmed",
+                  state.get("recoveryReason") == "context-exhausted" and state.get("unresolvedTurn") is None,
+                  str(state))
+
+
+def test_codex_supervisor_unfinished_compaction_needs_reconciliation():
+    print("\n[codex-supervisor] a compaction that never completes is left unresolved, not replayed")
+    with tempfile.TemporaryDirectory() as td:
+        r, ws, texts, compacts, _ = _compaction_run(Path(td), [
+            _CONTEXT_FAILED_EVENTS, _DONE_TURN_EVENTS("i2", "done"),
+        ], compactions=[{"hang": True}], extra_args=["--max-wall-seconds", "3"])
+        check("[codex-supervisor] silent compaction hits the wall ceiling (exit 3)", r.returncode == 3,
+              f"rc={r.returncode} {r.stderr}")
+        unresolved = _read_state(ws).get("unresolvedTurn") or {}
+        check("[codex-supervisor] the compaction attempt is persisted as unresolved with no turn id",
+              unresolved.get("kind") == "compaction" and unresolved.get("turnId") is None, str(unresolved))
+        check("[codex-supervisor] no turn was sent after the unfinished compaction",
+              len(texts) == 1 and len(compacts) == 1, f"{texts} {compacts}")
+        check("[codex-supervisor] the ceiling message says nothing could be interrupted (id never bound)",
+              "never bound" in r.stderr, r.stderr)
+        home = Path(td) / "home"
+        env = {"PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"), "HOME": str(home),
+               "CODEX_HOME": str(home / ".codex"), "LANG": "C.UTF-8"}
+        r2 = _run_supervisor(["run", "--cwd", str(ws), "--prompt-file", str(Path(td) / "prompt.txt"),
+                              "--codex-bin", str(Path(td) / "stub" / "codex")], env)
+        check("[codex-supervisor] a second run refuses and asks for reconciliation",
+              r2.returncode != 0 and "reconcil" in r2.stderr, f"rc={r2.returncode} {r2.stderr}")
+
+
+def test_codex_supervisor_pending_challenge_survives_a_compaction():
+    print("\n[codex-supervisor] a pending exit challenge is re-sent after a compaction")
+    with tempfile.TemporaryDirectory() as td:
+        r, ws, texts, compacts, _ = _compaction_run(Path(td), [
+            _DONE_TURN_EVENTS("i1", "waiting for an answer"),
+            _CONTEXT_FAILED_EVENTS,
+            _DONE_TURN_EVENTS("i3", "nothing unblocked left"),
+        ])
+        check("[codex-supervisor] challenged-and-compacted run exits 0",
+              r.returncode == 0 and len(texts) == 3 and len(compacts) == 1, f"{texts} {r.stderr}")
+        if len(texts) == 3:
+            check("[codex-supervisor] the turn after the compaction still carries the challenge",
+                  texts[1].startswith(_CHALLENGE_PREFIX) and texts[2].startswith(_CHALLENGE_PREFIX), str(texts))
+
+
+def test_codex_supervisor_legacy_state_adopts_zero_compactions():
+    print("\n[codex-supervisor] a state file without 'compactions' adopts it as 0")
+    def legacy_state(**extra):
+        return {"threadId": "legacy-thread", "promptHash": hashlib.sha256(b"/vsss go").hexdigest(),
+                "startedAt": int(time.time()) - 60, "turnsStarted": 1,
+                "turns": [{"turnId": "turn-old", "status": "completed", "at": int(time.time()) - 30}],
+                "resumes": 0, "quotaWaits": 0, "transientRetries": 0, "turnFailures": 0,
+                "lastRateLimits": None, "waits": [], **extra}
+    with tempfile.TemporaryDirectory() as td:
+        r, ws, texts, compacts, _ = _compaction_run(Path(td), [
+            _CONTEXT_FAILED_EVENTS, _DONE_TURN_EVENTS("i2", "done"),
+        ], extra_args=["--max-compactions", "1"], state=legacy_state())
+        check("[codex-supervisor] legacy state resumes and compacts once", r.returncode == 0 and len(compacts) == 1,
+              f"rc={r.returncode} {r.stderr}")
+        check("[codex-supervisor] legacy state ends with compactions reset to 0 by the completed turn",
+              _read_state(ws).get("compactions") == 0, str(_read_state(ws)))
+    with tempfile.TemporaryDirectory() as td:
+        r, ws, texts, compacts, methods = _compaction_run(Path(td), [_DONE_TURN_EVENTS("i1", "done")],
+                                                          state=legacy_state(compactions=-1))
+        check("[codex-supervisor] a negative persisted compactions refuses with exit 2 and no server",
+              r.returncode == 2 and "compactions" in r.stderr and methods == [], f"rc={r.returncode} {r.stderr}")
+
+
+def test_codex_supervisor_compactions_count_in_a_row():
+    print("\n[codex-supervisor] max-compactions bounds compactions in a row, not per run")
+    normal = [_turn_started_event(), _agent_message_event("n", "ok"), _turn_completed_event("completed")]
+    with tempfile.TemporaryDirectory() as td:
+        r, ws, texts, compacts, _ = _compaction_run(Path(td), [
+            _CONTEXT_FAILED_EVENTS, normal, _CONTEXT_FAILED_EVENTS, _DONE_TURN_EVENTS("i4", "done"),
+        ], extra_args=["--max-compactions", "1"])
+        check("[codex-supervisor] two compactions split by a completed turn fit a ceiling of 1",
+              r.returncode == 0 and len(compacts) == 2, f"rc={r.returncode} {compacts} {r.stderr}")
+
+
+def test_codex_supervisor_compaction_refused_by_server():
+    print("\n[codex-supervisor] an explicit error reply to thread/compact/start needs no reconciliation")
+    with tempfile.TemporaryDirectory() as td:
+        r, ws, texts, compacts, _ = _compaction_run(Path(td), [
+            _CONTEXT_FAILED_EVENTS, _DONE_TURN_EVENTS("i2", "done"),
+        ], compactions=[{"error": "method not found"}])
+        state = _read_state(ws)
+        check("[codex-supervisor] refused compaction: exit 1, context-exhausted",
+              r.returncode == 1 and state.get("recoveryReason") == "context-exhausted", f"rc={r.returncode} {r.stderr}")
+        check("[codex-supervisor] refused compaction leaves no unresolved turn",
+              state.get("unresolvedTurn") is None, str(state))
+
+
+def test_codex_supervisor_compaction_binds_only_this_threads_turn():
+    print("\n[codex-supervisor] a turn/started without this thread's id is never bound as the compaction")
+    foreign = {"method": "turn/started", "params": {"turn": {"id": "foreign-turn", "status": "inProgress"}}}
+    with tempfile.TemporaryDirectory() as td:
+        r, ws, texts, compacts, _ = _compaction_run(Path(td), [
+            _CONTEXT_FAILED_EVENTS, _DONE_TURN_EVENTS("i2", "done"),
+        ], compactions=[{"preEvents": [foreign]}])
+        log = (ws / ".vss" / "codex-supervisor.log").read_text()
+        check("[codex-supervisor] foreign turn/started ignored; the real compaction completes",
+              r.returncode == 0 and "compaction completed → compact-0" in log and "foreign-turn" not in log,
+              f"rc={r.returncode} {log[-400:]}")

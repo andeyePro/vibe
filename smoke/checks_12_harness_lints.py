@@ -506,3 +506,27 @@ def test_gitignore_managed_block_and_site_gitignore() -> None:
     check("[lint] site/.gitignore is exactly the expected 4-line content",
           actual_site_gi == expected_site_gi,
           f"actual: {actual_site_gi!r} expected: {expected_site_gi!r}")
+
+
+# Deliberately-unregistered helpers named test_*: none today. Add a name here
+# with a one-line reason if one is ever meant to be defined but not run.
+UNREGISTERED_TESTS_ALLOWED: dict[str, str] = {}
+
+
+def test_every_smoke_test_is_registered_in_the_runner():
+    """task_043 found test_review_command_docs defined and never called, so a
+    whole doc suite was silently dead. Every `def test_*` in smoke/checks_*.py
+    must be reachable from runner.main() — called directly or passed to
+    run_supervisor_tests([...]) — unless it is allow-listed above."""
+    print("\n[lint] every smoke test_* function is registered in smoke/runner.py")
+    runner = (REPO / "smoke" / "runner.py").read_text()
+    main_src = runner[runner.index("def main("):]
+    registered = set(re.findall(r"\b(test_\w+)\b", main_src))
+    missing = []
+    for path in sorted((REPO / "smoke").glob("checks_*.py")):
+        for name in re.findall(r"^def (test_\w+)\(", path.read_text(), re.M):
+            if name not in registered and name not in UNREGISTERED_TESTS_ALLOWED:
+                missing.append(f"{path.name}:{name}")
+    check("[lint] no smoke test is defined but never run", not missing, ", ".join(missing))
+    stale = sorted(n for n in UNREGISTERED_TESTS_ALLOWED if n in registered)
+    check("[lint] the unregistered allow-list names nothing that is registered", not stale, ", ".join(stale))

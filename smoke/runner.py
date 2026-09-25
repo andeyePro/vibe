@@ -1034,6 +1034,7 @@ def main() -> int:
     test_stop_guard_wiring()
     test_liveness_ties_each_hook_program_to_its_event()
     test_ask_mode_parks_no_live_run_on_a_question()
+    test_every_smoke_test_is_registered_in_the_runner()
     test_statusline_records_the_window_reset()
     test_native_wait_detector()
     test_watchdog_stands_aside_during_a_native_wait()
@@ -1044,6 +1045,17 @@ def main() -> int:
         test_codex_supervisor_turn_failures_count_in_a_row,
         test_codex_supervisor_pending_challenge_survives_a_failed_turn,
         test_codex_supervisor_default_ceilings_allow_a_week_of_windows,
+    ])
+    run_supervisor_tests([
+        test_codex_supervisor_context_exceeded_compacts_then_continues,
+        test_codex_supervisor_compaction_ceiling_is_fatal,
+        test_codex_supervisor_failed_compaction_is_fatal,
+        test_codex_supervisor_unfinished_compaction_needs_reconciliation,
+        test_codex_supervisor_pending_challenge_survives_a_compaction,
+        test_codex_supervisor_legacy_state_adopts_zero_compactions,
+        test_codex_supervisor_compactions_count_in_a_row,
+        test_codex_supervisor_compaction_refused_by_server,
+        test_codex_supervisor_compaction_binds_only_this_threads_turn,
     ])
 
     print()

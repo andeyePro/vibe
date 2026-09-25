@@ -11,7 +11,11 @@
 // sandbox`, never sets `-c`, never reads or copies `auth.json`, writes only
 // the state, adjacent ownership/stop files and log, and sends no prompt other than the
 // user's (prefix-rewritten) text, the literal `continue`, and the fixed
-// EXIT_CHALLENGE text below (sent at most once per exit attempt).
+// EXIT_CHALLENGE text below (sent at most once per exit attempt). Besides
+// `initialize` and `account/rateLimits/read`, the only requests it sends are
+// `thread/start`, `thread/resume`, `turn/start`, `turn/interrupt`, and
+// `thread/compact/start` (after a `contextWindowExceeded` failure, at most
+// `--max-compactions` times per run state).
 import { loadConfig, bindingFingerprint } from './taskandi-client.mjs';
 import { acquire, canonicalPath, readRegular, atomicWrite, requestStop, closeServer, ownershipFresh, appendRegular, spawnOwnedServer } from './supervisor-control.mjs';
 import { spawnSync } from 'node:child_process';
@@ -74,6 +78,7 @@ const DEFAULTS = {
   maxQuotaWaits: 48,
   maxTransientRetries: 6,
   maxTurnFailures: 3,
+  maxCompactions: 3,
   maxWallSeconds: 604800,
 };
 const USAGE = [
@@ -81,7 +86,8 @@ const USAGE = [
   '  codex-supervisor run --cwd <abs workspace> --prompt-file <file>',
   '      [--state <file>] [--max-turns N] [--max-resumes N]',
   '      [--max-quota-waits N] [--max-transient-retries N]',
-  '      [--max-turn-failures N] [--max-wall-seconds N] [--model <id>]',
+  '      [--max-turn-failures N] [--max-compactions N]',
+  '      [--max-wall-seconds N] [--model <id>]',
   '      [--codex-bin <path>] [--now-source <file>] [--new-run]',
   '  codex-supervisor status --state <file>',
   '  codex-supervisor stop --state <file>',
@@ -256,7 +262,11 @@ class AppServer {
     if (message.error !== undefined && message.error !== null) {
       const detail = isRecord(message.error) ? (message.error.message || JSON.stringify(message.error))
         : String(message.error);
-      entry.reject(failError(`${entry.label} failed: ${detail}`));
+      const replyError = failError(`${entry.label} failed: ${detail}`);
+      // An explicit error REPLY proves the server did not act on the request,
+      // unlike a timeout or a closed connection.
+      replyError.replied = true;
+      entry.reject(replyError);
       return;
     }
     entry.resolve(message.result);
@@ -476,6 +486,7 @@ const NUMBER_FLAGS = {
   '--max-quota-waits': 'maxQuotaWaits',
   '--max-transient-retries': 'maxTransientRetries',
   '--max-turn-failures': 'maxTurnFailures',
+  '--max-compactions': 'maxCompactions',
   '--max-wall-seconds': 'maxWallSeconds',
 };
 
@@ -543,6 +554,7 @@ function freshState(threadId, cwd, promptHash, startedAt) {
     quotaWaits: 0,
     transientRetries: 0,
     turnFailures: 0,
+    compactions: 0,
     exitChallenged: false,
     exitChallengePending: false,
     lastRateLimits: null,
@@ -598,11 +610,13 @@ function reconcileTurn(options) {
     state.reconciliations = [...(state.reconciliations || []), {
       at: Math.floor(Date.now() / 1000), unresolvedTurn: state.unresolvedTurn ?? null, ...evidence,
     }];
-    if (evidence.outcome === 'completed' && !state.turns.some(turn => turn.turnId === evidence.turnId)) {
+    // A compaction turn is not a user turn: it never enters `turns` or the failure count.
+    const userTurn = state.unresolvedTurn?.kind !== 'compaction';
+    if (userTurn && evidence.outcome === 'completed' && !state.turns.some(turn => turn.turnId === evidence.turnId)) {
       state.turns.push({ turnId: evidence.turnId, status: 'completed', at: Math.floor(Date.now() / 1000) });
     }
-    if (evidence.outcome === 'failed') state.turnFailures += 1;
-    if (evidence.outcome === 'completed') state.turnFailures = 0;
+    if (userTurn && evidence.outcome === 'failed') state.turnFailures += 1;
+    if (userTurn && evidence.outcome === 'completed') state.turnFailures = 0;
     // A resolved attempt still consumed the initial prompt slot: even evidence
     // of non-start does not authorize automatic replay of that prompt.
     state.turnsStarted = Math.max(1, Number(state.turnsStarted || 0), state.turns?.length || 0);
@@ -692,8 +706,9 @@ class Supervisor {
   }
 
   // AC7a (Astra re-review): every outstanding request — initialize,
-  // account/rateLimits/read, thread/start, thread/resume, turn/start — is
-  // bounded by the SMALLER of its own limit and the remaining wall budget.
+  // account/rateLimits/read, thread/start, thread/resume, turn/start,
+  // thread/compact/start — is bounded by the SMALLER of its own limit and
+  // the remaining wall budget.
   // When the wall budget is what actually cuts the wait short, a timeout
   // ends the run with exit 3 naming max-wall-seconds — never the ordinary
   // exit 1 protocol timeout, which still applies when the request's own
@@ -828,6 +843,9 @@ class Supervisor {
     for (const key of ['resumes', 'quotaWaits', 'transientRetries', 'turnFailures']) {
       if (!Number.isSafeInteger(previous[key]) || previous[key] < 0) throw usageError(`invalid persisted counter: ${key}`);
     }
+    // Legacy snapshots predate compactions: none were ever run by them.
+    if (previous.compactions === undefined) previous.compactions = 0;
+    if (!Number.isSafeInteger(previous.compactions) || previous.compactions < 0) throw usageError('invalid persisted counter: compactions');
     // Legacy snapshots predate turnsStarted. Completed turns are a conservative lower bound.
     if (previous.turnsStarted === undefined) previous.turnsStarted = previous.turns.length;
     if (!Number.isSafeInteger(previous.turnsStarted) || previous.turnsStarted < previous.turns.length) throw usageError('invalid persisted turnsStarted');
@@ -838,7 +856,7 @@ class Supervisor {
       previous.startedAt);
     state.turns = Array.isArray(previous.turns) ? previous.turns : [];
     state.waits = Array.isArray(previous.waits) ? previous.waits : [];
-    for (const key of ['turnsStarted', 'resumes', 'quotaWaits', 'transientRetries', 'turnFailures']) {
+    for (const key of ['turnsStarted', 'resumes', 'quotaWaits', 'transientRetries', 'turnFailures', 'compactions']) {
       state[key] = Number.isFinite(Number(previous[key])) ? Number(previous[key]) : 0;
     }
     state.lastRateLimits = previous.lastRateLimits ?? null;
@@ -955,7 +973,8 @@ class Supervisor {
     this.server.closeStdin();
     try { this.persist(); } catch { /* best effort */ }
     throw ceilingError(`ceiling reached: max-wall-seconds (${this.options.maxWallSeconds}, elapsed `
-      + `${elapsed}s) while awaiting a turn; sent turn/interrupt`);
+      + `${elapsed}s) while awaiting a turn; `
+      + (turnId ? 'sent turn/interrupt' : 'its id was never bound, so nothing could be interrupted'));
   }
 
   // task_048 review item 17: after our own turn/interrupt on a cooperative
@@ -994,7 +1013,7 @@ class Supervisor {
   // machine will refuse a plain resume and reconciliation is the honest
   // instruction (the same form used elsewhere in this file).
   async stopDuringTurn(turnId, stopError) {
-    const drained = await this.drainForTurnBoundary(turnId, STOP_DRAIN_MS);
+    const drained = turnId ? await this.drainForTurnBoundary(turnId, STOP_DRAIN_MS) : false;
     if (!drained) {
       return new SupervisorError(EXIT_SIGNAL, 'stop requested; checkpoint saved; unresolved turn — '
         + 'review prior effects and use reconcile --state <file> --evidence-file <file> before resuming');
@@ -1002,6 +1021,109 @@ class Supervisor {
     this.activeTurn = null;
     this.confirmTurnBoundary();
     return stopError;
+  }
+
+  // The next notification for this thread while a turn (a user turn, or a
+  // compaction whose id may not be bound yet) is outstanding, with the wall
+  // deadline and a cooperative stop handled the same way for both.
+  async nextTurnNotification(turnId) {
+    for (;;) {
+      let next;
+      try {
+        next = await this.nextNotificationOrDeadline();
+      } catch (error) {
+        // task_048 review item 17: a cooperative stop that lands mid-turn
+        // has already sent turn/interrupt (checkStop()) and is about to
+        // claim "resume with the same run arguments" — true only if the
+        // turn actually reaches its boundary. Drain for it before deciding.
+        if (error instanceof SupervisorError && error.code === EXIT_SIGNAL && this.activeTurn === turnId) {
+          throw await this.stopDuringTurn(turnId, error);
+        }
+        throw error;
+      }
+      if (next.expired) this.expireDuringTurn(turnId);
+      const message = next.message;
+      const params = isRecord(message.params) ? message.params : {};
+      if (['turn/completed', 'item/completed'].includes(message.method) && params.threadId !== this.state.threadId) continue;
+      if (params.threadId !== undefined && params.threadId !== this.state.threadId) continue;
+      return { message, params };
+    }
+  }
+
+  // Compaction runs as its own turn (core/src/session/handlers.rs compact()),
+  // but `thread/compact/start` answers `{}`: the turn id arrives only in
+  // `turn/started`. So, as for `turn/start`, the attempt is persisted as
+  // unresolved BEFORE the request — a crash mid-compaction needs
+  // reconciliation, never a silent replay — and the id is bound from the
+  // notification. It is not a user turn: `turns` and `turnsStarted` are
+  // left alone.
+  async compactThread() {
+    if (needsTurnReconciliation(this.state)) throw failError('unresolved turn requires explicit reconciliation');
+    this.state.compactions = Number(this.state.compactions || 0) + 1;
+    this.state.unresolvedTurn = {
+      attemptId: randomUUID(), threadId: this.state.threadId,
+      turnId: null, at: this.clock.now(), kind: 'compaction',
+    };
+    this.persist();
+    this.log(`compaction start (${this.state.compactions}/${this.options.maxCompactions})`);
+    try {
+      await this.boundedRequest('thread/compact/start', { threadId: this.state.threadId });
+    } catch (error) {
+      // A definite refusal (e.g. a binary without the method) started nothing,
+      // so it needs no reconciliation; anything else stays unresolved.
+      if (error?.replied === true) {
+        this.state.unresolvedTurn = null;
+        this.state.recoveryReason = 'context-exhausted';
+        this.persist();
+        throw failError(`turn failed: contextWindowExceeded and ${error.message}; checkpoint saved. `
+          + 'Resume this thread after compacting context; ceilings are preserved.');
+      }
+      throw error;
+    }
+    this.operation = 'compaction';
+    this.persist();
+    let turnId = null;
+    for (;;) {
+      const { message, params } = await this.nextTurnNotification(turnId);
+      const turn = isRecord(params.turn) ? params.turn : {};
+      if (message.method === 'turn/started' && turnId === null) {
+        // Bind only a turn that names this thread. After the request the
+        // thread's next turn IS the compaction (compact() aborts running work
+        // and starts it), so the first same-thread turn/started is trusted.
+        if (params.threadId !== this.state.threadId) continue;
+        if (typeof turn.id !== 'string' || !turn.id) continue;
+        turnId = turn.id;
+        this.activeTurn = turnId;
+        this.state.unresolvedTurn.turnId = turnId;
+        this.persist();
+        continue;
+      }
+      if (message.method === 'turn/completed' && turnId !== null) {
+        if (turn.id !== turnId) {
+          this.log(`[warn] turn/completed for another turn (${turn.id})`);
+          continue;
+        }
+        this.activeTurn = null;
+        if (turn.status === 'completed') {
+          this.confirmTurnBoundary();
+          this.log(`compaction completed → ${turnId}`);
+          return;
+        }
+        if (turn.status !== 'failed' && turn.status !== 'interrupted') {
+          throw failError(`unexpected compaction turn status: ${String(turn.status)}`);
+        }
+        this.confirmTurnBoundary();
+        this.log(`compaction ${turn.status} → ${turnId}`);
+        this.state.recoveryReason = 'context-exhausted';
+        throw failError(`turn failed: contextWindowExceeded and compaction ${turn.status}; checkpoint saved. `
+          + 'Resume this thread after compacting context; ceilings are preserved.');
+      }
+      if (message.method === 'account/rateLimits/updated') this.applyRateLimits(params.rateLimits);
+      if (message.method === 'error') {
+        const detail = isRecord(params.error) ? params.error.message : '';
+        this.log(`[server-error] willRetry=${params.willRetry === true} ${detail || ''}`.trimEnd());
+      }
+    }
   }
 
   // One turn: start it, then drain notifications until its `turn/completed`.
@@ -1031,24 +1153,7 @@ class Supervisor {
     this.log(`turn/start → ${turnId || '(no id)'}`);
     let lastAgentMessage = null;
     for (;;) {
-      let next;
-      try {
-        next = await this.nextNotificationOrDeadline();
-      } catch (error) {
-        // task_048 review item 17: a cooperative stop that lands mid-turn
-        // has already sent turn/interrupt (checkStop()) and is about to
-        // claim "resume with the same run arguments" — true only if the
-        // turn actually reaches its boundary. Drain for it before deciding.
-        if (error instanceof SupervisorError && error.code === EXIT_SIGNAL && this.activeTurn === turnId) {
-          throw await this.stopDuringTurn(turnId, error);
-        }
-        throw error;
-      }
-      if (next.expired) this.expireDuringTurn(turnId);
-      const message = next.message;
-      const params = isRecord(message.params) ? message.params : {};
-      if (['turn/completed', 'item/completed'].includes(message.method) && params.threadId !== this.state.threadId) continue;
-      if (params.threadId !== undefined && params.threadId !== this.state.threadId) continue;
+      const { message, params } = await this.nextTurnNotification(turnId);
       const sameTurn = params.turnId === turnId;
       switch (message.method) {
         case 'turn/completed': {
@@ -1190,6 +1295,9 @@ class Supervisor {
         // A completed turn resets the failure count: max-turn-failures bounds
         // failures in a row, not over the whole life of a long run.
         this.state.turnFailures = 0;
+        // Like max-turn-failures, max-compactions bounds compactions in a
+        // row: a completed turn proves the last one worked.
+        this.state.compactions = 0;
         this.state.exitChallengePending = false;
         const reason = exitReasonFrom(agentMessage);
         // No challenge when another turn could not run anyway: accepting the
@@ -1233,6 +1341,16 @@ class Supervisor {
       const info = classifyError(error.codexErrorInfo);
       const detail = typeof error.message === 'string' ? error.message : '';
       this.log(`turn failed: ${info.name} (${info.kind})${detail ? ` — ${detail}` : ''}`);
+      if (info.kind === 'fatal' && info.name === 'contextWindowExceeded') {
+        if (this.state.compactions < this.options.maxCompactions) {
+          await this.compactThread();
+          continue;
+        }
+        this.state.recoveryReason = 'context-exhausted';
+        this.persist();
+        throw ceilingError(`ceiling reached: max-compactions (${this.options.maxCompactions}): the context `
+          + 'window is still exceeded after that many compactions in a row; checkpoint saved.');
+      }
       if (info.kind === 'fatal') {
         this.state.recoveryReason = info.name === 'contextWindowExceeded' ? 'context-exhausted' : 'budget-exhausted';
         throw failError(`turn failed: ${info.name}; checkpoint saved. Resume this thread after compacting context or resolving its budget; ceilings are preserved.`);
@@ -1367,7 +1485,7 @@ function stamp(seconds) {
 export function statusReport(state) {
   // Explicit allowlist: never print model text, paths, IDs, errors, or rate-limit metadata.
   const complete = state.exitReason !== undefined;
-  const allowed = new Set(['starting', 'turn', 'turn-boundary', 'initialize', 'thread/start', 'thread/resume', 'turn/start', 'account/rateLimits/read', 'quota-wait', 'transient-wait', 'stopped']);
+  const allowed = new Set(['starting', 'turn', 'turn-boundary', 'initialize', 'thread/start', 'thread/resume', 'turn/start', 'thread/compact/start', 'compaction', 'account/rateLimits/read', 'quota-wait', 'transient-wait', 'stopped']);
   const rows = [
     ['state', complete ? 'complete' : state.lifecycle === 'running' ? 'running' : 'checkpointed'],
     ['operation', complete ? 'complete' : allowed.has(state.operation) ? state.operation : 'stopped'],
@@ -1377,6 +1495,9 @@ export function statusReport(state) {
   for (const key of ['turnsStarted', 'resumes', 'quotaWaits', 'transientRetries', 'turnFailures']) {
     rows.push([key, Number.isSafeInteger(state[key]) ? state[key] : 'unknown']);
   }
+  // Legacy state files predate the counter: none were ever run by them.
+  rows.push(['compactions', state.compactions === undefined ? 0
+    : Number.isSafeInteger(state.compactions) ? state.compactions : 'unknown']);
   rows.push(['turns', Array.isArray(state.turns) ? state.turns.length : 0]);
   if (complete) {
     // Only fixed, benign completion vocabulary is public. Arbitrary agent
