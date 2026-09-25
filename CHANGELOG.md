@@ -6,6 +6,8 @@ Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion 
 
 ## 2026-09-25
 
+- [x] **`/vss` no longer implies a hard-escalate reaches Martin's phone** (`devcontainer/commands/vss.md`). The landscape research found that `PushNotification` sends a mobile push only while Remote Control is active, and vibe never starts it. The hard-escalate instruction now says so. The words came out of the same sentence, keeping vs+vss+vsss at their 14,300-word budget. The notification TODO also records the finding that hook output can carry a `terminalSequence`, and why the question-posted trigger belongs host-side.
+
 - [x] **The container learns which terminal it is in: `TERM_PROGRAM` is forwarded** (`vibe`, `smoke/checks_22_codex_agent.py`, `MANUAL-TESTS.md`). This is step one of the landscape research's notification finding. `devcontainer exec` hands the container no `TERM_PROGRAM`, so inside vibe both runtimes saw an unknown terminal:
   - Codex's notification auto-detect (openai/codex `codex-rs/terminal-detection`, which reads `TERM_PROGRAM` first) never chose OSC 9 desktop notifications for Ghostty or iTerm2.
   - Claude Code's OSC 8 link detection (confirmed in the installed binary) never turned on.

@@ -24,7 +24,7 @@ Stop and surface to the user — do NOT autonomously proceed when:
 - **An uncovered pass/fail call** — e.g. a check silently skipped on one machine.
 - **Anything explicitly flagged in `~/.claude/CLAUDE.md` or `/workspace/CLAUDE.md`** as needing user authorisation per turn.
 
-If a hard-escalate item triggers, raise it via `AskUserQuestion` (watchdog-protected from auto-kill, task_058) and `PushNotification`, not prose. Then leave the workspace clean and stop.
+If a hard-escalate item triggers, raise it via `AskUserQuestion` (watchdog-protected, task_058) and `PushNotification` (reaches a phone only under Remote Control), not prose. Then leave the workspace clean and stop.
 
 ## Acts-as-user defaults
 
