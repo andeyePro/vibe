@@ -118,13 +118,13 @@ Getting the most from Fable 5 on a subscription: reserve it for genuinely huge o
 
 A profile is a thin child image — `devcontainer/profiles/<name>/Dockerfile`, built `FROM` the base `vibe-dev:latest` image — that adds a language toolchain on top of the base container, never project dependencies. `vibe --profile python` builds (once, then caches) and launches on `vibe-dev:python`, which adds `python3`/`python3-venv`/`python3-pip`, `uv`, `ruff`, and `mypy`. `--profile none` launches on the plain base image and silences the suggestion below.
 
-Astro, React and other JavaScript or TypeScript projects need no profile at all: the base image is already Node 20 with npm. Only the `python` profile ships today; the base build's context includes `profiles/`, which is harmless because the base Dockerfile has no `COPY .`.
+Astro, React and other JavaScript or TypeScript projects need no profile at all: the base image is already Node 22 with npm. Only the `python` profile ships today; the base build's context includes `profiles/`, which is harmless because the base Dockerfile has no `COPY .`.
 
 Persistent selection, so you don't have to pass the flag every launch: put the profile name on the first line of `.vibe/profile` in the project (wins over config, loses to the flag), or set `VIBE_PROFILE="python"` in `~/.vibe/config` for a machine-wide default. Precedence, first hit wins: `--profile` flag → `.vibe/profile` → `VIBE_PROFILE`.
 
 Custom profiles: drop a `Dockerfile` at `~/.vibe/profiles/<name>/Dockerfile` (same `ARG BASE=vibe-dev:latest` / `FROM ${BASE}` shape) and `vibe --profile <name>` picks it up — a shipped profile of the same name always wins on a clash. `vibe --profile <bogus-name>` exits with an error listing every profile actually available (shipped and custom).
 
-Everything a profile installs happens at **build time**, before `init-firewall.sh` ever runs, so no firewall allowlist entry is needed for a profile's own installer traffic (the built image already has the toolchain baked in by the time the container's network lockdown starts). Astro/React projects need no profile at all — the base image is already Node 20 (`FROM node:20`). One incidental note: the base image's build context includes `devcontainer/profiles/` (there's no `.dockerignore`), which is harmless since the base `Dockerfile` has no `COPY .`, but worth knowing if the profiles directory grows large.
+Everything a profile installs happens at **build time**, before `init-firewall.sh` ever runs, so no firewall allowlist entry is needed for a profile's own installer traffic (the built image already has the toolchain baked in by the time the container's network lockdown starts). Astro/React projects need no profile at all — the base image is already Node 22 (`FROM node:22`). One incidental note: the base image's build context includes `devcontainer/profiles/` (there's no `.dockerignore`), which is harmless since the base `Dockerfile` has no `COPY .`, but worth knowing if the profiles directory grows large.
 
 ### Overnight auto-resume
 

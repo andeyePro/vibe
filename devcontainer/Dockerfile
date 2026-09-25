@@ -8,7 +8,7 @@
 # then re-apply the vibe-specific patches (openssh-client, shellcheck,
 # credential-helper, agents/, commands/).
 
-FROM node:20
+FROM node:22
 
 ARG TZ
 ENV TZ="$TZ"
@@ -73,7 +73,7 @@ RUN SNIPPET="export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhisto
 ENV DEVCONTAINER=true
 
 # UTF-8 locale so terminal UIs (Claude Code spinner glyphs, box-drawing) render
-# correctly. node:20 inherits glibc's `C` default, which strips non-ASCII.
+# correctly. node:22 inherits glibc's `C` default, which strips non-ASCII.
 # C.UTF-8 is provided by glibc — no locale-gen required.
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
