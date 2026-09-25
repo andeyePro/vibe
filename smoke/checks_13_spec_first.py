@@ -1118,3 +1118,18 @@ def test_no_silent_skip_conditionals_in_checks_13_and_17():
         check(f"[hygiene] {path.name}: no unguarded silent-skip conditionals",
               not violations,
               f"{path.name}: {violations}")
+
+
+def test_vs_tester_must_show_a_control_can_fail():
+    """2026-09-08: four fail-open test designs (vacuous sweeps, self-matching
+    alternations, an A/B that could not fire, a sticky-routing premise nobody
+    checked) each REPORTED SUCCESS while measuring nothing. The Tester brief
+    now requires the absent-mechanism result, a positive control, and marked
+    unverified assumptions."""
+    print("\n[vs] Tester brief: a control that cannot be observed failing is not a control")
+    vs = (REPO / "devcontainer" / "commands" / "vs.md").read_text()
+    step5a = vs[vs.index("### Step 5a"):vs.index("### Step 5b")]
+    check("[vs] Step 5a names the rule", "A control that cannot be observed failing is not a control" in step5a, "")
+    check("[vs] ... absent-mechanism result must not be a pass", "entirely absent (never a pass)" in step5a, "")
+    check("[vs] ... positive control required", "positive control" in step5a, "")
+    check("[vs] ... unverified assumptions marked", "assumption not checked against an artefact" in step5a, "")

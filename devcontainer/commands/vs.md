@@ -27,7 +27,7 @@ Spec Critic runs **once at task start**, before user approval. It does not re-ru
 
 ### Relation to canonical Architect/Writer/Reviewer
 
-`/vs` extends Claude Code's Architect / Writer / Reviewer agent pattern with two adversarial-separation splits: Architect becomes Planner (drafts the spec) plus Spec Critic (audits it BEFORE any code is written); Reviewer becomes Tester (mechanical, Haiku-tier; rigorous mode) or Reviewer (judgment-based, Sonnet-tier; `--fuzzy` mode) plus Evaluator (Opus-tier final verdict) — cheap Haiku for rote test-writing, Opus only for the pass/fail call. Full audit: [`../../.vs/audits/architect-writer-reviewer.md`](../../.vs/audits/architect-writer-reviewer.md).
+`/vs` splits Claude Code's Architect / Writer / Reviewer pattern for adversarial separation (full audit: [`../../.vs/audits/architect-writer-reviewer.md`](../../.vs/audits/architect-writer-reviewer.md)):
 
 | Canonical role     | `/vs` equivalent                                                |
 | ------------------ | --------------------------------------------------------------- |
@@ -276,6 +276,7 @@ Independence rule: Tester sees only `.vs/spec.md`, the test-dir layout, and the 
 Tester's brief:
 - For each acceptance criterion, write a test in the spec's test location that verifies it. Use repo conventions.
 - Run the tests. Write full output to `.vs/cycle-<N>/test-output.log` and a 3-line summary (4 lines under `--TDD`: a `TDD trail:` line is appended) to `.vs/cycle-<N>/summary.md` (total/passed/failed/key-failures).
+- **A control that cannot be observed failing is not a control:** state what each test reports if the mechanism is entirely absent (never a pass), include a positive control where it should fire, and mark any assumption not checked against an artefact.
 - **Mandatory regression check:** also run any pre-existing test suite. Any pre-existing failure caused by Generator's diff is a regression — report under `Regressions:` line.
 - Update `.vs/tasks.json` (`test_status: passing|failing`).
 - **Once committed, these tests are frozen.** Evaluator enforces immutability on subsequent cycles.
