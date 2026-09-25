@@ -20,7 +20,7 @@ Markers: `[ ]` open · `[!]` failed/abandoned (note what was tried) · a `Martin
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v4
-        with: { node-version: 20, cache: npm, cache-dependency-path: site/package-lock.json }
+        with: { node-version: 22, cache: npm, cache-dependency-path: site/package-lock.json }
       - name: Site build + post-build assertions
         working-directory: site
         run: npm ci && npm run check
