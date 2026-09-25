@@ -1872,6 +1872,15 @@ cd ~/Projects/vibe-test && vibe
       with the same id. If `.vss/stop-guard` never appears, the ids differ and the guard
       is silently inert under Codex: report both values
 
+### Test 60: Agents know their capabilities and use the Mac account
+
+Offline tests (`smoke/checks_37_capabilities.py`) cover the inventory and the nudge's matching. This checks the live behaviour.
+
+- [ ] In a new session on a Mac with the account set up, `!vibe-capabilities` lists the Mac account first with `port 22 open`, and `!vibe-capabilities --setup mac-account` ends with "declared as <account>".
+- [ ] Ask: "Build the site and tell me whether the header wraps on a phone-width screen." The agent should render it on the Mac account and look at a screenshot, rather than say it can't see the page. With no `.vibe-allow-ssh` it asks for a one-line OK first.
+- [ ] Get it to end a reply with "I can't see the rendered page" (for example, by asking it to skip the check). The turn should not end. A "vibe capability check" message quoting that sentence appears, and the agent either does the check or names the one-line step.
+- [ ] `vibe --agent codex`: the same prompt; Codex runs `vibe-capabilities` (its session context names it), and the same Stop-hook nudge fires once; `codex-guard-liveness` still passes at launch.
+
 ---
 
 ## Test Summary

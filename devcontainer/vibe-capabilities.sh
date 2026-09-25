@@ -15,12 +15,24 @@
 # It only LOOKS. It never connects over SSH, never reads a private key, never
 # makes an HTTP request; the one network probe is a TCP connect to the Mac's
 # port 22 with a 2-second timeout (skipped with VIBE_CAP_NO_PROBE=1). Every
-# probe failure degrades to "unknown", never to an error.
+# probe failure degrades to "unknown", never to an error. Under Codex the
+# hooks run with `env -i`, so the env overrides (VIBE_SSH_AUTO, VIBE_MAC_USER,
+# VIBE_CAP_*) do not reach them there: the file-based signals (the SSH config,
+# .vibe-allow-ssh) are the ones that hold in both runtimes.
 #
 # Usage: vibe-capabilities            full inventory (Markdown)
 #        vibe-capabilities --brief    one line per available capability
 #        vibe-capabilities --setup mac-account
 #                                     the steps to give agents a Mac account
+#        vibe-capabilities --stop-hook
+#                                     Stop hook (Claude Code and Codex): when
+#                                     the turn's final message says "I can't
+#                                     see / run / build …" or hands the user a
+#                                     job the agent could do itself, send it
+#                                     back ONCE with this inventory. Silent
+#                                     (allow) on everything else, on a second
+#                                     stop in the same chain (stop_hook_active)
+#                                     and on any failure of its own.
 set -uo pipefail
 
 ws=${VIBE_CAP_WORKSPACE:-/workspace}
@@ -36,6 +48,7 @@ mode=full
 case "${1:-}" in
   "") ;;
   --brief) mode=brief ;;
+  --stop-hook) mode=stop-hook ;;
   --setup)
     case "${2:-}" in
       mac-account) mode=setup-mac ;;
@@ -44,6 +57,48 @@ case "${1:-}" in
   -h | --help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   *) echo "vibe-capabilities: unknown argument: $1 (try --help)" >&2; exit 2 ;;
 esac
+
+# ── stop-hook mode (runs before any probe: it must stay cheap on every turn) ──
+if [ "$mode" = stop-hook ]; then
+  command -v jq >/dev/null 2>&1 || exit 0
+  payload=$(cat 2>/dev/null) || exit 0
+  [ -n "$payload" ] || exit 0
+  [ "$(printf '%s' "$payload" | jq -r '.stop_hook_active // false' 2>/dev/null)" = true ] && exit 0
+  message=$(printf '%s' "$payload" | jq -r '.last_assistant_message // empty' 2>/dev/null) || exit 0
+  [ -n "$message" ] || exit 0
+  session=$(printf '%s' "$payload" | jq -r '.session_id // "unknown"' 2>/dev/null | tr -cd 'A-Za-z0-9_-' | cut -c1-80)
+  # Fenced code, quoted lines and inline code are the agent quoting, not
+  # claiming. Curly apostrophes (common in GPT output) are normalised.
+  prose=$(printf '%s\n' "$message" | awk '/^[[:space:]]*(```|~~~)/ { f = !f; next } !f && !/^[[:space:]]*>/' \
+    | sed -e "s/\`[^\`]*\`//g" -e "s/’/'/g" | tr '\n' ' ' | tr '[:upper:]' '[:lower:]')
+  # Visual and build/run verbs only: "I can't reach the Pi" or "I can't test
+  # on Windows" are honest limits, not missed capabilities.
+  verbs="see|view|look at|observe|render|screenshot|open|run|build|launch|display|browse|preview"
+  denial_re="(^|[^a-z])((i|we) (can'?t|cannot|can not|have no way to|don'?t have (a way|any way|the ability) to)|(i'?m|i am|we'?re|we are) (unable|not able) to) ($verbs)([^a-z]|$)"
+  offload_re="(^|[^a-z])((you('ll| will)? need to|please|could you|can you) (take|send|share|paste|attach) (me )?(a |the )?screenshot|(i|we) (have|'ve got) no (browser|display|gui|screen|eyes)|(i|we) don'?t have (a browser|a display|a gui|eyes|visual access)|you('ll| will) need to (look at|view|eyeball|check) (it|this|that|the (page|layout|screen|ui|output|rendering|app|result)))([^a-z]|$)"
+  match=$(printf '%s' "$prose" | grep -oE "$denial_re|$offload_re" | head -n1 | sed -e 's/^[^a-z]*//' -e 's/[^a-z]*$//')
+  [ -n "$match" ] || exit 0
+  # Own loop guard, independent of the runtime's stop_hook_active: at most one
+  # nudge per session per 10 minutes.
+  stamp="${TMPDIR:-/tmp}/vibe-cap-nudge.$session"
+  now=$(date +%s)
+  if [ -f "$stamp" ] && [ ! -L "$stamp" ]; then
+    last=$(head -c 20 "$stamp" 2>/dev/null | tr -cd '0-9')
+    [ -n "$last" ] && [ $((now - last)) -lt 600 ] && exit 0
+  fi
+  { printf '%s\n' "$now" > "$stamp"; } 2>/dev/null || exit 0
+  inventory=$(VIBE_CAP_NO_PROBE=1 bash "$0" --brief 2>/dev/null | head -n 12)
+  if [ "${VIBE_SSH_AUTO:-}" = 1 ] || [ -f "$ws/.vibe-allow-ssh" ]; then
+    act="do it now (SSH is pre-authorised in this project)"
+  else
+    act="offer it to the user in one line with the exact command (for example: I can check this on the Mac account: ssh <account>@host.docker.internal '...' - OK?) instead of saying you can't"
+  fi
+  reason="vibe capability check: your reply says \"$match\". This container may be able to do that (\`vibe-capabilities\` has the full list):
+$inventory
+If one of these covers it (for anything visual, the Mac account: render or launch there, screenshot, scp the PNG back and view it - Claude: the Read tool; Codex: the image file), $act. If none does, give the user the one-line step from \`vibe-capabilities\` under \"Could be switched on\". If you already checked and it genuinely cannot be done here, say so in one line and finish."
+  jq -n --arg reason "$reason" '{decision: "block", reason: $reason}' 2>/dev/null || exit 0
+  exit 0
+fi
 
 # ── probes ───────────────────────────────────────────────────────────────────
 
@@ -72,7 +127,10 @@ case "$mac_user" in *[!A-Za-z0-9._-]*) mac_user="" ;; esac
 
 mac_port=unknown
 if [ -n "$mac_user" ] && [ "${VIBE_CAP_NO_PROBE:-0}" != 1 ]; then
-  if timeout 2 bash -c "</dev/tcp/$mac_host/22" 2>/dev/null; then mac_port=open; else mac_port=closed; fi
+  case "$mac_host" in
+    *[!A-Za-z0-9.-]*) mac_port=unknown ;;
+    *) if timeout 2 bash -c '</dev/tcp/$1/22' _ "$mac_host" 2>/dev/null; then mac_port=open; else mac_port=closed; fi ;;
+  esac
 fi
 
 ssh_auto=no
@@ -153,7 +211,7 @@ if [ "$mode" = brief ]; then
   [ -n "$mac_user" ] && echo "- $(mac_line)"
   [ "$mac_build" = yes ] && echo "- mac-build doctor|build|test|screenshot (this project's Mac build bridge)"
   echo "- view images: Claude's Read tool displays PNG/JPG; Codex can view image files"
-  echo "- web: search tools route outside the firewall; direct HTTP only to GitHub, npm, Anthropic${extra_domains:+ and $extra_domains}"
+  echo "- web: search tools route outside the firewall; direct HTTP only to GitHub, npm, Anthropic, VS Code marketplace${extra_domains:+ and $extra_domains}"
   [ -d "$brain2" ] && echo "- $brain2: the user's second brain (read; search it before asking)"
   [ -d "$zotero" ] && echo "- $zotero: Zotero PDFs (read)"
   [ "$codex_login" = yes ] && echo "- Codex login: /ask astra and the /review codex slot"
@@ -171,7 +229,7 @@ echo
 [ -n "$mac_user" ] && echo "- $(mac_line)"
 [ "$mac_build" = yes ] && echo "- Mac build bridge: \`mac-build doctor|build|test|screenshot\` builds this project's snapshot on the Mac and returns logs and artifacts (docs/mac-build-protocol.md in the vibe repo)."
 echo "- Look at images: Claude's Read tool displays PNG/JPG files; Codex can view an image file. A screenshot you fetched is something you can see."
-echo "- Web: WebSearch/WebFetch-style tools route outside the container firewall. Direct HTTP from the shell reaches only GitHub, npm, Anthropic${extra_domains:+ and the project extra domains $extra_domains}."
+echo "- Web: WebSearch/WebFetch-style tools route outside the container firewall. Direct HTTP from the shell reaches only GitHub, npm, Anthropic, the VS Code marketplace${extra_domains:+ and the project extra domains $extra_domains}."
 [ -d "$brain2" ] && echo "- \`$brain2\`: the user's second brain (read; start at \`$brain2/Brain2.md\`, search it before asking)."
 [ -d "$zotero" ] && echo "- \`$zotero\`: Zotero PDFs, read-only."
 [ -d "$learnings" ] && echo "- \`$learnings\`: cross-project learning library (read)."

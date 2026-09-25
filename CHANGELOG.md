@@ -6,6 +6,19 @@ Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion 
 
 ## 2026-09-25
 
+- [x] **An agent that ends with "I can't see / run / build it" is sent back once with what it can do** (`devcontainer/vibe-capabilities.sh --stop-hook`, `vibe`, `devcontainer/codex/hooks/hooks.json`, `devcontainer/codex-guard-liveness.sh`, `README.md`, `ONBOARDING.md`, `MANUAL-TESTS.md`, `smoke/checks_37_capabilities.py`). This is the "make sure they use it" half of Martin's brief.
+  - **What it catches:** a new Stop hook in both runtimes reads the turn's final message for a capability denial. Examples are "I can't see the rendered page", "I'm unable to view the output", "I don't have a browser", "could you send me a screenshot" and "you'll need to look at the page". Curly apostrophes, which GPT output often uses, also match.
+  - **What it does:** it sends the turn back once with the container's live capability list. Without SSH pre-authorisation it tells the model to OFFER the exact ssh command in one line, as vibe's SSH discipline requires, rather than connecting. With `.vibe-allow-ssh` it tells the model to do it. If nothing covers the job, the model is told to name the switch-on step or to say in one line that it truly can't.
+  - **What it leaves alone:**
+    - honest limits: "I can't reach the Pi", "I can't test on Windows", host-only steps like "run `vibe --rebuild` on your Mac";
+    - a word that merely ends in "i" ("the API can't…");
+    - fenced code, quoted lines and inline code.
+  - **Loop safety:** it has its own guard, one nudge per session per 10 minutes, as well as `stop_hook_active`, so it does not depend on Codex's continuation semantics. It runs before any probe, so a normal turn end costs one `jq` call.
+  - **Liveness gate:** the Codex gate accepts the exact `--stop-hook` form on `Stop` only and checks that the script is root-owned.
+  - **Setup docs:** README gains a "What agents can do, and a Mac account to see with" section. ONBOARDING gains an optional step 9, "give the agents eyes", which is agent-led; the user does only three things once per Mac. MANUAL-TESTS gains Test 60.
+  - **Review:** one code-reviewer round (opus) found four problems, all fixed: the nudge told agents to SSH without asking; patterns matched "api can't" and honest limits; the guard trusted `stop_hook_active`; and the probe ran on every turn.
+  - **Tests:** 30 new checks, including 7 false-positive shapes, a curly apostrophe, the own-guard per session, and the Codex `env -i` form.
+
 - [x] **`vibe-capabilities`: agents check what they can do before saying they can't** (`devcontainer/vibe-capabilities.sh`, `devcontainer/claude-md/capabilities.md`, `devcontainer/codex/context.md`, `devcontainer/codex-prompt-prefix.sh`, `devcontainer/Dockerfile`, `smoke/checks_37_capabilities.py`). Martin: agents keep saying they can't look at an output, though this Mac gives them a dedicated `claude` account to build and observe anything. The capability was real but invisible from inside a container. brain2's `meta/mac-test-account.md` says so itself: "agents otherwise assume it does not exist".
   - **The new command** prints three lists:
     - **Available now**, with how to use each item. The Mac account comes first: render or launch there, screenshot, `scp` the PNG back and open it with the Read tool. The list also covers the Mac build bridge, image viewing, the web route, mounts, the Codex login, other SSH hosts, the toolchain and GitHub.

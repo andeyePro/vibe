@@ -157,6 +157,14 @@ Check: they see the Claude Code prompt. Have them type a small request and watch
 - Come back to a project: `cd` there and run `vibe` again – it's fast after the first build.
 - Update vibe later: re-run the installer one-liner from step 6, or `git -C ~/.vibe-src pull`.
 
+### 9. Optional, Mac only: give the agents eyes
+
+A vibe container has no browser and can't open the apps it builds, so an agent can write a web page or a Mac app but never *see* it. A separate, ordinary Mac user account for the agents fixes that: agents SSH into it to render pages, run the Simulator, take screenshots and look at them. Your own account and files stay out of reach.
+
+Inside any vibe session, ask: "Show me `vibe-capabilities --setup mac-account` and walk me through it." Stay with the user for the three steps only they can do: create the account, turn on Remote Login for it, and add two lines to their Mac's `~/.ssh/config`. Those two lines are what tell *every* vibe on the Mac the account exists, so this is a one-time job per Mac, not per project.
+
+Check: in a new session, `vibe-capabilities` lists the Mac account first, with port 22 open. From then on, agents are told to use it before ever saying "I can't see that".
+
 ### Second session onward
 
 Everyday use is just `cd project && vibe` — same command as step 7, every time. It starts a fresh Claude conversation by default; `vibe --continue` resumes the last one instead (README's Usage section covers both). The GitHub token from step 7 is reused automatically until it expires (90 days by default, at whatever the user chose when creating it) or is revoked; when that happens vibe notices and re-prompts on the next launch, or the user can rotate it ahead of time with `vibe pat` from that project's folder.

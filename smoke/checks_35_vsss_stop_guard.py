@@ -207,8 +207,9 @@ def test_stop_guard_wiring():
     hooks = json.loads(CODEX_HOOKS_JSON.read_text()).get("hooks", {})
     stop = hooks.get("Stop", [])
     cmds = [h.get("command") for g in stop for h in g.get("hooks", [])]
-    check("[stop-guard] Codex hooks.json has exactly one Stop hook", len(cmds) == 1, str(stop))
-    check("[stop-guard] Codex Stop hook is the hardened env -i form", cmds == [GUARD_CMD_CODEX], str(cmds))
+    check("[stop-guard] Codex Stop runs the guard exactly once", cmds.count(GUARD_CMD_CODEX) == 1, str(stop))
+    check("[stop-guard] every Codex Stop hook is a hardened env -i form",
+          all(c.startswith("/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /bin/bash /usr/local/bin/") for c in cmds), str(cmds))
     check("[stop-guard] Codex Stop hook has a timeout and no async",
           all("timeout" in h and "async" not in h for g in stop for h in g.get("hooks", [])), str(stop))
     elsewhere = [h.get("command", "") for ev, gs in hooks.items() if ev != "Stop"
@@ -231,7 +232,7 @@ def test_stop_guard_wiring():
 
     liveness = LIVENESS_SH.read_text()
     check("[stop-guard] liveness gate accepts the hardened Stop command form",
-          "|vsss-stop-guard)$'" in liveness)
+          "|vsss-stop-guard|" in liveness)
     check("[stop-guard] liveness gate checks its ownership",
           'check_owned "$bin/vsss-stop-guard"' in liveness)
 

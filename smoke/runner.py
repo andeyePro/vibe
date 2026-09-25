@@ -1045,6 +1045,8 @@ def main() -> int:
     test_capabilities_parsing_edges()
     test_capabilities_bridge_brief_and_setup_modes()
     test_capabilities_reach_every_agent()
+    test_capability_nudge_sends_a_cant_back_once()
+    test_capability_nudge_is_wired_into_both_runtimes()
     test_statusline_records_the_window_reset()
     test_native_wait_detector()
     test_watchdog_stands_aside_during_a_native_wait()

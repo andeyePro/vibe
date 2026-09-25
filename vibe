@@ -5411,6 +5411,12 @@ fi
 #                                               post its questions and carry
 #                                               on with unblocked work; every
 #                                               doubt allows the stop);
+#                                               Stop also runs
+#                                               vibe-capabilities --stop-hook,
+#                                               which sends a final message
+#                                               that says "I can't see/run/
+#                                               build…" back ONCE with the
+#                                               container's capability list;
 #                                               PreToolUse/PostToolUse also
 #                                               matcher-gate on AskUserQuestion
 #                                               to set/clear .vss/awaiting-
@@ -5529,7 +5535,8 @@ cat > "$WORKSPACE/.claude/settings.local.json" << 'EOF'
         "hooks": [
           { "type": "command", "command": "printf '\\a' >&2" },
           { "type": "command", "command": "[ -f /workspace/.vss/auto-resume ] && { date +%s > /workspace/.vss/heartbeat.tmp.$$ && mv /workspace/.vss/heartbeat.tmp.$$ /workspace/.vss/heartbeat; } || true" },
-          { "type": "command", "command": "[ ! -x /usr/local/bin/vsss-stop-guard ] || /usr/local/bin/vsss-stop-guard" }
+          { "type": "command", "command": "[ ! -x /usr/local/bin/vsss-stop-guard ] || /usr/local/bin/vsss-stop-guard" },
+          { "type": "command", "command": "[ ! -x /usr/local/bin/vibe-capabilities ] || /usr/local/bin/vibe-capabilities --stop-hook" }
         ]
       }
     ],

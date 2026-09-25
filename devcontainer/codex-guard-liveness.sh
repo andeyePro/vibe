@@ -207,6 +207,8 @@ check_owned "$prompt_prefix"
 # The /vsss keep-going guard (the Stop hook) decides whether a run may end
 # its turn, so it is held to the same ownership rule as the other hooks.
 check_owned "$bin/vsss-stop-guard"
+# The capability nudge (a second Stop hook) is held to the same rule.
+check_owned "$bin/vibe-capabilities"
 # jq is a distribution binary, not part of the vibe chain: it is always
 # root-owned even when --owner relocates the chain to a test user, so root is
 # accepted for it in addition to --owner.
@@ -259,13 +261,13 @@ hook_commands=$(jq -r '
 # alternatives stay anchored at both ends; the captured group names
 # whichever program actually matched, so the existence/executable check
 # below resolves the right binary for either one.
-hook_form='^/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /bin/bash /usr/local/bin/(codex-guard-adapter (bash|patch)|codex-prompt-prefix|vsss-stop-guard)$'
+hook_form='^/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /bin/bash /usr/local/bin/(codex-guard-adapter (bash|patch)|codex-prompt-prefix|vsss-stop-guard|vibe-capabilities --stop-hook)$'
 while IFS= read -r hook_command; do
   [ -n "$hook_command" ] || continue
   if [[ $hook_command =~ $hook_form ]]; then
     hook_program=${BASH_REMATCH[1]}
   else
-    fail "hooks-commands — '$hook_command' is not the hardened '/usr/bin/env -i PATH=… /bin/bash $CANONICAL_BIN/(codex-guard-adapter <mode>|codex-prompt-prefix|vsss-stop-guard)' form"
+    fail "hooks-commands — '$hook_command' is not the hardened '/usr/bin/env -i PATH=… /bin/bash $CANONICAL_BIN/(codex-guard-adapter <mode>|codex-prompt-prefix|vsss-stop-guard|vibe-capabilities --stop-hook)' form"
   fi
   hook_binary=${hook_program%% *}
   hook_target=$bin/$hook_binary
@@ -291,7 +293,7 @@ while read -r hook_event hook_binary; do
   [ -n "$hook_event" ] || continue
   case "$hook_binary:$hook_event" in
     codex-guard-adapter:PreToolUse | codex-prompt-prefix:UserPromptSubmit | \
-      codex-prompt-prefix:SessionStart | vsss-stop-guard:Stop) ;;
+      codex-prompt-prefix:SessionStart | vsss-stop-guard:Stop | vibe-capabilities:Stop) ;;
     *) fail "hooks-commands — $hook_binary is wired to the $hook_event event, which is not where it belongs" ;;
   esac
 done <<<"$hook_events"

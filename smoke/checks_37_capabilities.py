@@ -155,3 +155,105 @@ def test_capabilities_reach_every_agent():
     check("[caps] Dockerfile installs it root-owned and executable",
           "COPY --chown=root:root vibe-capabilities.sh /usr/local/bin/vibe-capabilities" in dockerfile
           and "/usr/local/bin/vibe-capabilities " in dockerfile)
+
+
+def _nudge(td: Path, home: Path, ws: Path, bindir: Path, message: str, active: bool = False,
+           session: str | None = None, tmpdir: Path | None = None):
+    payload = json.dumps({"hook_event_name": "Stop", "stop_hook_active": active, "last_assistant_message": message,
+                          "session_id": session or "s-" + str(abs(hash(message)))})
+    if tmpdir is None:
+        tmpdir = Path(tempfile.mkdtemp(dir=td))
+    env = {"PATH": f"{bindir}:/usr/local/bin:/usr/bin:/bin", "HOME": str(home), "VIBE_CAP_WORKSPACE": str(ws),
+           "VIBE_CAP_NO_PROBE": "1", "VIBE_CAP_BRAIN2": str(td / "nb"), "VIBE_CAP_ZOTERO": str(td / "nz"),
+           "VIBE_CAP_LEARNINGS": str(td / "nl"), "VIBE_CAP_RUN_DIR": str(td / "run"), "TMPDIR": str(tmpdir)}
+    return subprocess.run(["bash", str(CAPS), "--stop-hook"], input=payload, capture_output=True,
+                          text=True, env=env, timeout=30)
+
+
+def _nudged(r) -> bool:
+    try:
+        return r.returncode == 0 and json.loads(r.stdout).get("decision") == "block"
+    except json.JSONDecodeError:
+        return False
+
+
+def test_capability_nudge_sends_a_cant_back_once():
+    print("\n[caps nudge] a final 'I can't see/run/build' is sent back once with the capability list")
+    denials = [
+        "Done. I can't see the rendered page from here, so please check the spacing.",
+        "The build passes, but I cannot run the Mac app in this container.",
+        "I'm unable to view the output of that command.",
+        "I don't have a browser, so I couldn't verify the layout.",
+        "Could you send me a screenshot of the error?",
+        "You'll need to look at the page on a phone to confirm.",
+        "I can\u2019t see the rendered output, sorry.",
+    ]
+    fine = [
+        "Done: built, screenshotted on the Mac account and checked the layout.",
+        "I can't push from here by policy; the commits are local.",
+        "```\nI can't see the page\n```\nThat quote is from the old log; the new build renders fine.",
+        "> I cannot run it\nThat was the user's earlier message; it runs now.",
+        "The API can't reach the proxy, so the request timed out.",
+        "I can't reach pi02.local; the Pi looks offline.",
+        "I can't test on Windows from here.",
+        "You'll need to run the launcher on your Mac: vibe --rebuild",
+        "The new hook matches `I can't see` phrases.",
+        "",
+    ]
+    with tempfile.TemporaryDirectory() as t:
+        td = Path(t)
+        home, ws, bindir = _caps_fixture(td, MAC_CONFIG)
+        for msg in denials:
+            r = _nudge(td, home, ws, bindir, msg)
+            check(f"[caps nudge] sent back: {msg[:48]!r}", _nudged(r), r.stdout + r.stderr)
+        r = _nudge(td, home, ws, bindir, denials[0])
+        reason = json.loads(r.stdout)["reason"] if _nudged(r) else ""
+        check("[caps nudge] reason quotes the claim and carries the live list with the Mac account",
+              "i can't see" in reason and "Mac account `claude@host.docker.internal`" in reason, reason[:400])
+        check("[caps nudge] reason says what to do when nothing covers it",
+              "Could be switched on" in reason and "genuinely cannot be done here" in reason, reason)
+        check("[caps nudge] without SSH pre-authorisation it says to OFFER the command, not to connect",
+              "offer it to the user in one line" in reason and "do it now" not in reason, reason)
+        shared = Path(tempfile.mkdtemp(dir=td))
+        r1 = _nudge(td, home, ws, bindir, denials[0], session="same", tmpdir=shared)
+        r2 = _nudge(td, home, ws, bindir, denials[1], session="same", tmpdir=shared)
+        check("[caps nudge] own loop guard: a second nudge in the same session within 10 min is suppressed",
+              _nudged(r1) and r2.stdout.strip() == "", r2.stdout)
+        r3 = _nudge(td, home, ws, bindir, denials[1], session="other", tmpdir=shared)
+        check("[caps nudge] ... per session", _nudged(r3), r3.stdout)
+        (ws / ".vibe-allow-ssh").write_text("")
+        r = _nudge(td, home, ws, bindir, denials[0])
+        check("[caps nudge] with .vibe-allow-ssh it says to do it now",
+              _nudged(r) and "do it now (SSH is pre-authorised" in json.loads(r.stdout)["reason"], r.stdout[:300])
+        (ws / ".vibe-allow-ssh").unlink()
+        for msg in fine:
+            r = _nudge(td, home, ws, bindir, msg)
+            check(f"[caps nudge] left alone: {msg[:48]!r}", r.returncode == 0 and r.stdout.strip() == "", r.stdout)
+        r = _nudge(td, home, ws, bindir, denials[0], active=True)
+        check("[caps nudge] never twice in one stop chain (stop_hook_active)", r.stdout.strip() == "", r.stdout)
+        payload = json.dumps({"stop_hook_active": False, "session_id": "envi", "last_assistant_message": denials[0]})
+        r = subprocess.run(["/usr/bin/env", "-i", "PATH=/usr/local/bin:/usr/bin:/bin", f"TMPDIR={td}",
+                            "/bin/bash", str(CAPS), "--stop-hook"], input=payload, capture_output=True, text=True, timeout=30)
+        check("[caps nudge] runs under env -i (the Codex form) with no HOME", _nudged(r), r.stdout + r.stderr)
+        r = subprocess.run(["bash", str(CAPS), "--stop-hook"], input="not json", capture_output=True, text=True, timeout=30)
+        check("[caps nudge] garbage input fails open", r.returncode == 0 and r.stdout.strip() == "", r.stdout)
+        check("[caps nudge] never runs ssh or scp", not (td / "ssh.called").exists())
+
+
+def test_capability_nudge_is_wired_into_both_runtimes():
+    print("\n[caps nudge] wired as a Stop hook in Claude Code and Codex, in the liveness chain")
+    hooks = json.loads((REPO / "devcontainer/codex/hooks/hooks.json").read_text())["hooks"]
+    stop_cmds = [h["command"] for g in hooks.get("Stop", []) for h in g.get("hooks", [])]
+    check("[caps nudge] Codex Stop runs it in the hardened form",
+          "/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /bin/bash /usr/local/bin/vibe-capabilities --stop-hook" in stop_cmds,
+          str(stop_cmds))
+    launcher = VIBE.read_text()
+    start = launcher.index('cat > "$WORKSPACE/.claude/settings.local.json" << \'EOF\'')
+    body = launcher[launcher.index("\n", start) + 1:launcher.index("\nEOF\n", start)]
+    claude_stop = [h["command"] for g in json.loads(body)["hooks"]["Stop"] for h in g["hooks"]]
+    check("[caps nudge] Claude Stop runs it (skipped on an image without it)",
+          "[ ! -x /usr/local/bin/vibe-capabilities ] || /usr/local/bin/vibe-capabilities --stop-hook" in claude_stop,
+          str(claude_stop))
+    liveness = (REPO / "devcontainer/codex-guard-liveness.sh").read_text()
+    check("[caps nudge] liveness accepts it only on Stop and checks its ownership",
+          "vibe-capabilities:Stop" in liveness and 'check_owned "$bin/vibe-capabilities"' in liveness)

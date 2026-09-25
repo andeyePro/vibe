@@ -146,6 +146,7 @@ def _codex_liveness_fixture(tmp: Path) -> tuple[Path, Path]:
         # copy too or every liveness check below fails on its absence.
         ("codex-prompt-prefix", PROMPT_PREFIX),
         ("vsss-stop-guard", REPO / "devcontainer" / "vsss-stop-guard.sh"),
+        ("vibe-capabilities", REPO / "devcontainer" / "vibe-capabilities.sh"),
     ):
         dst = bin_dir / name
         dst.write_text(src.read_text())
