@@ -45,6 +45,14 @@ if vendor == "codex" and args == ["--version"]:
 if vendor == "codex" and "status" in args:
     print(fixture.get("login", "Logged in using ChatGPT"), file=sys.stderr)
     sys.exit(fixture.get("login_exit", 0))
+if fixture.get("connection_fail_first") and (vendor == "claude" or "exec" in args):
+    counter = home / "conn-count"
+    n = int(counter.read_text()) if counter.exists() else 0
+    counter.write_text(str(n + 1))
+    if n == 0:
+        print("stream error: error sending request: tcp connect error: Connection refused (os error 111)",
+              file=sys.stderr)
+        sys.exit(1)
 if fixture.get("exit"):
     print("PRIVATE_PROVIDER_ERROR", file=sys.stderr)
     sys.exit(fixture["exit"])

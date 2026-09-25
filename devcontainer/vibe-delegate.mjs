@@ -61,9 +61,36 @@ function tokenCountOrNull(value) {
   return Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
-function run(binary, args, { cwd, env, input = '', timeout = 600000 } = {}) {
-  const result = spawnSync(binary, args, { cwd, env, input, encoding: 'utf8',
+// A model call that could not reach its API. The container's extra firewall
+// domains (the OpenAI hosts among them) are pinned at start and sit behind
+// CDNs whose addresses move, so the commonest cause is a stale pin: refresh
+// once (the sudo rule allows exactly this script, no arguments) and retry
+// once. Only for calls that cannot have changed anything yet: read-only or
+// tool-less invocations (the caller says so), never a writable role.
+const CONNECTION_RE = /ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|EHOSTUNREACH|connection refused|error sending request|failed to connect|stream disconnected|network is unreachable|tcp connect error|connection error|fetch failed/i;
+const FAILED_EVENT_RE = /"type"\s*:\s*"(turn\.failed|error)"/;
+
+export function connectionFailure(result) {
+  const failed = result.error || result.status !== 0 || FAILED_EVENT_RE.test(result.stdout || '');
+  return Boolean(failed) && CONNECTION_RE.test(`${result.stderr || ''}\n${result.stdout || ''}`);
+}
+
+function refreshExtraDomains() {
+  const r = spawnSync('sudo', ['-n', '/usr/local/bin/refresh-extra-domains.sh'],
+    { input: '', encoding: 'utf8', timeout: 60000 });
+  return !r.error && r.status === 0;
+}
+
+function run(binary, args, { cwd, env, input = '', timeout = 600000, retryOnConnection = false } = {}) {
+  const spawn = () => spawnSync(binary, args, { cwd, env, input, encoding: 'utf8',
     timeout, killSignal: 'SIGKILL', maxBuffer: 32 * 1024 * 1024 });
+  let result = spawn();
+  if (retryOnConnection && connectionFailure(result)) {
+    process.stderr.write(`vibe-delegate: ${binary} could not reach its API; refreshing the firewall's `
+      + 'extra domains and retrying once\n');
+    refreshExtraDomains();
+    result = spawn();
+  }
   if (result.error || result.status !== 0) {
     // Vendor stderr can contain request details. Don't echo it into the lead's context.
     fail(`${binary} failed (${result.error?.code || result.status || result.signal}); ` +
@@ -286,8 +313,8 @@ function codexReady(cwd, env) {
 // return value of THIS function in a local variable regardless of what a
 // later reply-schema check does with it, so usage survives a downstream
 // throw without needing to be threaded back through an exception.
-function codexEvents(cwd, env, args, input) {
-  const events = run('codex', args, { cwd, env, input })
+function codexEvents(cwd, env, args, input, retryOnConnection = false) {
+  const events = run('codex', args, { cwd, env, input, retryOnConnection })
     .split(/\r?\n/).filter(Boolean).map(line => parse(line, 'Codex event'));
   return reduceCodexUsage(events);
 }
@@ -338,7 +365,7 @@ function codex(payload, review, cwd) {
   let usage = null;
   try {
     usage = codexEvents(cwd, env, args,
-      instruction + 'Do not invoke tools or access files, credentials, or network.\n\n' + payload);
+      instruction + 'Do not invoke tools or access files, credentials, or network.\n\n' + payload, true);
     const reply = parse(readFileSync(outputPath, 'utf8'), 'Codex answer');
     if (review) {
       if (!exact(reply, ['verdict', 'summary', 'findings']) ||
@@ -407,7 +434,7 @@ function codexRole(payload, roleName, cwd, scratch, model = 'astra') {
   // every role reply (Astra: always "subscription", never a served list).
   let usage = null;
   try {
-    usage = codexEvents(runCwd, env, args, instruction + payload);
+    usage = codexEvents(runCwd, env, args, instruction + payload, !write);
     const reply = parse(readFileSync(outputPath, 'utf8'), 'Codex role reply');
     if (!exact(reply, ['report', 'status']) || typeof reply.report !== 'string' || !reply.report.trim() ||
         !ROLE_STATUSES.includes(reply.status)) fail('Codex role reply does not match its schema');
@@ -504,7 +531,7 @@ function claude(payload, model, consent, cwd) {
   // over this local null so a schema-invalid-after-completion still logs.
   let usage = null;
   try {
-    const response = parse(run('claude', args, { cwd, env, input: payload }), 'Claude result');
+    const response = parse(run('claude', args, { cwd, env, input: payload, retryOnConnection: true }), 'Claude result');
     const reply = claudeReply(response);
     usage = reply.usage;
     const result = { runtime: 'claude-p', model, served_models: reply.servedModels, billing,
@@ -581,7 +608,8 @@ function claudeRole(payload, roleName, model, consent, cwd, scratch) {
   // every role reply too, so the ledger and the printed JSON agree.
   let usage = null;
   try {
-    const response = parse(run('claude', args, { cwd: runCwd, env, input: instruction + payload }), 'Claude result');
+    const response = parse(run('claude', args, { cwd: runCwd, env, input: instruction + payload,
+      retryOnConnection: !write }), 'Claude result');
     const reply = claudeReply(response);
     usage = reply.usage;
     const result = { runtime: 'claude-p', model, role: roleName, status: claudeRoleStatus(response.result),
