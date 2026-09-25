@@ -1,8 +1,9 @@
 """vibe-shot: one command to see a page, via the Mac account.
 
 No real SSH ever happens here. A stub `ssh` on PATH records its argv and then
-runs the remote command LOCALLY with bash (so the Mac-side script is really
-executed), with stub `node`/`npm` standing in for Playwright: the stub node
+runs the remote command LOCALLY under zsh when present (the Mac's login
+shell), so the Mac-side script is really executed; the script itself then
+runs under the container's bash, not macOS's bash 3.2, with stub `node`/`npm` standing in for Playwright: the stub node
 checks it was handed a loadable URL (for an upload: the uploaded file on disk)
 and writes known PNG bytes where Playwright would.
 """
@@ -201,13 +202,20 @@ def test_vibe_shot_is_named_wherever_seeing_comes_up():
     check("[vibe-shot] the CLAUDE.md fragment names it", "vibe-shot" in frag, frag)
 
 
-def _native_stubs(td: Path, booted: bool = True, console_is_me: bool = True, xcode: bool = True):
+def _native_stubs(td: Path, booted: bool = True, console_is_me: bool = True, xcode: bool = True,
+                  iphone: bool = True, boot_fails: bool = False, launch_fails: bool = False,
+                  screen_permitted: str = "true"):
     bindir = td / "bin"
     png_octal = "".join("\\%03o" % b for b in PNG)
     me = subprocess.run(["id", "-un"], capture_output=True, text=True, stdin=subprocess.DEVNULL).stdout.strip()
+    udid = "0A1B2C3D-1111-2222-3333-444455556666"
+    avail = (f"    iPhone SE (3rd generation) ({udid}) (Shutdown)" if iphone
+             else "    iPad Air (5th generation) (9F9F9F9F-1111-2222-3333-444455556666) (Shutdown)")
     stubs = {
         "sleep": "#!/bin/sh\nexit 0\n",
+        "sips": "#!/bin/sh\nexit 0\n",
         "open": f"#!/bin/sh\necho \"open $*\" >> {td}/native.log\n",
+        "osascript": f"#!/bin/sh\necho {screen_permitted}\n",
         "stat": f"#!/bin/sh\n[ \"$1 $2 $3\" = '-f %Su /dev/console' ] && echo {me if console_is_me else 'someone-else'}\n",
         "screencapture": f"#!/bin/bash\necho \"screencapture $*\" >> {td}/native.log\nprintf '{png_octal}' > \"${{@: -1}}\"\n",
     }
@@ -217,9 +225,12 @@ def _native_stubs(td: Path, booted: bool = True, console_is_me: bool = True, xco
             f"echo \"xcrun $*\" >> {td}/native.log\n"
             "case \"$*\" in\n"
             "  'simctl help') exit 0 ;;\n"
-            "  'simctl list devices booted') " + ("echo '    iPhone 16 (AAAA-1111) (Booted)'" if booted else "true") + " ;;\n"
-            "  'simctl list devices available') echo '    iPhone 16 (AAAA-1111) (Shutdown)' ;;\n"
-            f"  simctl\\ io\\ booted\\ screenshot\\ *) printf '{png_octal}' > \"${{@: -1}}\" ;;\n"
+            "  'simctl list devices booted') " + (f"echo '    iPhone 16 ({udid}) (Booted)'" if booted else "echo '    Apple Watch (7E7E7E7E-1111-2222-3333-444455556666) (Booted)'") + " ;;\n"
+            f"  'simctl list devices available') echo '{avail}' ;;\n"
+            "  simctl\\ bootstatus*) " + ("echo 'boot timed out' >&2; exit 1" if boot_fails else "exit 0") + " ;;\n"
+            "  simctl\\ launch*) " + ("echo 'not installed' >&2; exit 1" if launch_fails else "exit 0") + " ;;\n"
+            f"  simctl\\ io\\ {udid}\\ screenshot\\ *) printf '{png_octal}' > \"${{@: -1}}\" ;;\n"
+            "  simctl\\ io\\ *) echo 'wrong device' >&2; exit 1 ;;\n"
             "esac\nexit 0\n")
     for name, body in stubs.items():
         (bindir / name).write_text(body)
@@ -237,9 +248,12 @@ def test_vibe_shot_native_simulator_and_screen():
         check("[vibe-shot] --sim returns the simulator PNG", r.returncode == 0 and out is not None
               and out.name.endswith("-sim.png") and out.read_bytes() == PNG, r.stderr)
         log = (td / "native.log").read_text()
-        check("[vibe-shot] --sim boots an iPhone when none is running, launches the app, then captures",
-              log.index("simctl boot AAAA-1111") < log.index("simctl launch booted com.example.app")
-              < log.index("simctl io booted screenshot"), log)
+        check("[vibe-shot] --sim ignores a booted watch, boots an iPhone by UDID (brackets in its name), launches, captures",
+              log.index("simctl boot 0A1B2C3D-1111-2222-3333-444455556666")
+              < log.index("simctl launch --terminate-running-process 0A1B2C3D-1111-2222-3333-444455556666 com.example.app")
+              < log.index("simctl io 0A1B2C3D-1111-2222-3333-444455556666 screenshot"), log)
+        check("[vibe-shot] --screen warns what a wallpaper-only image means",
+              "Screen Recording is not allowed" in _shot(env, "--screen").stderr, "")
         r = _shot(env, "--screen", "--app", "Calculator")
         log = (td / "native.log").read_text()
         check("[vibe-shot] --screen opens the app and captures silently",
@@ -253,7 +267,7 @@ def test_vibe_shot_native_simulator_and_screen():
         _native_stubs(td, console_is_me=False, xcode=False)
         r = _shot(env, "--screen")
         check("[vibe-shot] --screen when the account is not on the display: refused with the fix",
-              r.returncode != 0 and "log in as" in r.stderr and "Screen Recording" in r.stderr, r.stderr)
+              r.returncode != 0 and "the active user on the Mac display" in r.stderr and "Screen Recording" in r.stderr, r.stderr)
         r = _shot(env, "--sim")
         check("[vibe-shot] --sim without Xcode: refused with the fix", r.returncode != 0 and "install Xcode" in r.stderr, r.stderr)
         r = _shot(env, "--check")
@@ -265,6 +279,45 @@ def test_vibe_shot_native_simulator_and_screen():
         for args, label in ((["--sim", "https://x"], "--sim with a URL"),
                             (["--sim", "--open", "com.bad app"], "--open with a space"),
                             (["--screen", "--app", "Calc;rm"], "--app with a shell character"),
-                            (["https://x", "--open", "com.x"], "--open without --sim")):
+                            (["https://x", "--open", "com.x"], "--open without --sim"),
+                            (["--sim", "--screen"], "--sim with --screen"),
+                            (["--sim", "--app", "Calculator"], "--app with --sim"),
+                            (["--screen", "--open", "com.x"], "--open with --screen"),
+                            (["--sim", "--open", "com.x", "--app", "Y"], "--open and --app together"),
+                            (["--check", "--sim"], "--check with a capture option"),
+                            (["--sim", "--open", "com_x"], "--open with an underscore")):
             r = _shot(env, *args)
             check(f"[vibe-shot] {label}: usage error before any SSH", r.returncode == 2 and not (td / "ssh.log").exists(), r.stderr)
+
+
+
+def test_vibe_shot_native_failure_paths():
+    print("\n[vibe-shot] native capture failure paths are explained, never silent")
+    cases = [
+        (dict(booted=True), ["--sim"], 0, None),
+        (dict(booted=False, iphone=False), ["--sim"], 4, "an iOS simulator runtime"),
+        (dict(booted=False, boot_fails=True), ["--sim"], 5, "did not finish booting"),
+        (dict(launch_fails=True), ["--sim", "--open", "com.example.app"], 5, "could not launch com.example.app"),
+        (dict(screen_permitted="false"), ["--screen"], 4, "Screen Recording"),
+    ]
+    for stubs, args, rc, text in cases:
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            env, ws = _shot_fixture(td)
+            _native_stubs(td, **stubs)
+            r = _shot(env, *args)
+            label = f"{args} {stubs}"
+            if rc == 0:
+                log = (td / "native.log").read_text()
+                check(f"[vibe-shot] {label}: already-booted iPhone is used without booting",
+                      r.returncode == 0 and "simctl boot " not in log, r.stderr + log)
+            else:
+                check(f"[vibe-shot] {label}: exit {rc} naming the cause", r.returncode == rc and text in r.stderr,
+                      f"rc={r.returncode} {r.stderr}")
+    with tempfile.TemporaryDirectory() as t:
+        td = Path(t)
+        env, ws = _shot_fixture(td)
+        _native_stubs(td, iphone=False)
+        r = _shot(env, "--check")
+        check("[vibe-shot] --check: Xcode without an iPhone runtime is NOT reported ready",
+              "iOS Simulator: not ready" in r.stderr and "Components" in r.stderr, r.stderr)

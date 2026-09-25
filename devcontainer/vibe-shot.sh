@@ -48,7 +48,7 @@ ssh_config=${VIBE_CAP_SSH_CONFIG:-$home/.ssh/config}
 ws=${VIBE_CAP_WORKSPACE:-/workspace}
 
 target="" viewport="1280x800" full=0 wait_for="" out="" subpath="index.html" check=0
-native="" native_arg=""
+native="" native_arg="" native_flag=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --viewport) need_value $# "$1"; viewport=$2; shift 2 ;;
@@ -57,9 +57,13 @@ while [ $# -gt 0 ]; do
     --out) need_value $# "$1"; out=$2; shift 2 ;;
     --path) need_value $# "$1"; subpath=$2; shift 2 ;;
     --check) check=1; shift ;;
-    --sim) native=sim; shift ;;
-    --screen) native=screen; shift ;;
-    --open | --app) need_value $# "$1"; native_arg=$2; shift 2 ;;
+    --sim | --screen)
+      [ -z "$native" ] || [ "$native" = "${1#--}" ] || die "--sim and --screen are separate captures; pick one" 2
+      native=${1#--}; shift ;;
+    --open | --app)
+      need_value $# "$1"
+      [ -z "$native_flag" ] || [ "$native_flag" = "$1" ] || die "--open and --app belong to different captures" 2
+      native_flag=$1; native_arg=$2; shift 2 ;;
     -h | --help) sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) die "unknown option: $1 (try --help)" 2 ;;
     *) [ -z "$target" ] || die "one target only" 2; target=$1; shift ;;
@@ -97,11 +101,17 @@ full=$(printf "%s\n" "$args" | sed -n 5p); wait=$(printf "%s\n" "$args" | sed -n
 native=$(printf "%s\n" "$args" | sed -n 7p)
 fail() { echo "vibe-shot(mac): $1" >&2; exit "${2:-4}"; }
 web_fix="npm i -g playwright && npx playwright install chromium (and brew install node if node is missing)"
-sim_fix="install Xcode on the Mac and open it once as this account to accept its licence"
-screen_fix="log in as $(id -un) on the Mac display (Fast User Switching keeps it running) and allow Screen Recording for sshd-keygen-wrapper in System Settings > Privacy & Security"
+sim_fix="install Xcode and an iOS simulator runtime (Xcode > Settings > Components), open Xcode once as this account to accept its licence, and if only the Command Line Tools are selected: sudo xcode-select -s /Applications/Xcode.app"
+screen_fix="make $(id -un) the active user on the Mac display (a session switched to the background cannot be captured) and allow Screen Recording for sshd-keygen-wrapper in System Settings > Privacy & Security"
 web_ready() { command -v node >/dev/null 2>&1 || return 1; NODE_PATH=$(npm root -g 2>/dev/null); export NODE_PATH; node -e "require(\"playwright\")" 2>/dev/null; }
-sim_ready() { command -v xcrun >/dev/null 2>&1 && xcrun simctl help >/dev/null 2>&1; }
-screen_ready() { command -v screencapture >/dev/null 2>&1 && [ "$( (stat -f %Su /dev/console) 2>/dev/null)" = "$(id -un)" ]; }
+UDID_RE="[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}"
+first_iphone() { xcrun simctl list devices "$1" 2>/dev/null | grep iPhone | grep -oE "$UDID_RE" | head -n 1; }
+sim_ready() { command -v xcrun >/dev/null 2>&1 && xcrun simctl help >/dev/null 2>&1 && [ -n "$(first_iphone available)" ]; }
+# Screen Recording cannot be approved over SSH; without it screencapture still
+# "succeeds" with wallpaper only. Preflight it when the Mac can say (an error
+# here is "unknown", not "no").
+screen_permitted() { [ "$(osascript -l JavaScript -e "ObjC.import(\"CoreGraphics\"); \$.CGPreflightScreenCaptureAccess()" 2>/dev/null)" != false ]; }
+screen_ready() { command -v screencapture >/dev/null 2>&1 && [ "$( (stat -f %Su /dev/console) 2>/dev/null)" = "$(id -un)" ] && screen_permitted; }
 if [ "$mode" = check ]; then
   any=0
   if web_ready; then echo "vibe-shot(mac): web pages: ready" >&2; any=1; else echo "vibe-shot(mac): web pages: not ready: $web_fix" >&2; fi
@@ -114,18 +124,26 @@ tmp=$(mktemp -d "${TMPDIR:-/tmp}/vibe-shot.XXXXXX") || exit 5
 trap "rm -rf \"$tmp\"" EXIT
 if [ "$mode" = sim ]; then
   sim_ready || fail "iOS Simulator not ready: $sim_fix"
-  if ! xcrun simctl list devices booted 2>/dev/null | grep -q Booted; then
-    dev=$(xcrun simctl list devices available 2>/dev/null | awk -F"[()]" "/iPhone/ {print \$2; exit}")
-    [ -n "$dev" ] || fail "no iPhone simulator is installed (Xcode > Settings > Components)"
+  # Only a booted iPhone counts (a booted watch or iPad would be the wrong
+  # screen), and every later command names it by id rather than "booted".
+  dev=$(first_iphone booted)
+  if [ -z "$dev" ]; then
+    dev=$(first_iphone available)
+    [ -n "$dev" ] || fail "no iPhone simulator is installed: $sim_fix"
     xcrun simctl boot "$dev" >&2 || fail "could not boot simulator $dev" 5
-    xcrun simctl bootstatus "$dev" -b >/dev/null 2>&1 || sleep 10
+    xcrun simctl bootstatus "$dev" -b >/dev/null || fail "simulator $dev did not finish booting" 5
   fi
-  if [ -n "$native" ]; then xcrun simctl launch booted "$native" >&2 || fail "could not launch $native (is it installed on the booted simulator?)" 5; sleep 3; fi
-  xcrun simctl io booted screenshot "$tmp/shot.png" >&2 || fail "simulator screenshot failed" 5
+  if [ -n "$native" ]; then
+    xcrun simctl launch --terminate-running-process "$dev" "$native" >&2 ||
+      fail "could not launch $native (is it installed on simulator $dev?)" 5
+    sleep 3
+  fi
+  xcrun simctl io "$dev" screenshot "$tmp/shot.png" >&2 || fail "simulator screenshot failed" 5
 elif [ "$mode" = screen ]; then
   screen_ready || fail "screen not ready: $screen_fix"
   if [ -n "$native" ]; then open -a "$native" >&2 || fail "could not open $native" 5; sleep 3; fi
   screencapture -x "$tmp/shot.png" >&2 || fail "screencapture failed: $screen_fix" 5
+  echo "vibe-shot(mac): if the image shows only the wallpaper and menu bar, Screen Recording is not allowed; if it shows the lock screen, the display is locked" >&2
 else
   web_ready || fail "web pages not ready: $web_fix"
   if [ "$mode" = upload ]; then
@@ -147,7 +165,9 @@ const [url, out, w, h, full, wait] = process.argv.slice(2);
 })().catch((e) => { console.error("vibe-shot(mac): " + e.message); process.exit(3); });
 JS
 fi
-[ -s "$tmp/shot.png" ] || exit 3
+[ -s "$tmp/shot.png" ] || fail "the capture produced no image" 3
+# Retina and 5K captures are huge; the viewer downscales anyway.
+sips -Z 2400 "$tmp/shot.png" >/dev/null 2>&1 || true
 printf "\nVIBE-SHOT-PNG-BEGIN\n"
 base64 < "$tmp/shot.png"
 printf "\nVIBE-SHOT-PNG-END\n"'
@@ -157,12 +177,17 @@ b64() { base64 | tr -d '\n'; }
 upload_dir=""
 mode=url url=""
 if [ "$check" = 1 ]; then
+  [ -z "$native$native_flag$target" ] || die "--check takes no other target or capture option" 2
   mode=check
 elif [ -n "$native" ]; then
   [ -z "$target" ] || die "--$native takes no URL, folder or file" 2
   mode=$native
+  if [ -n "$native_flag" ]; then
+    [ "$native/$native_flag" = sim/--open ] || [ "$native/$native_flag" = screen/--app ] ||
+      die "--open goes with --sim, --app with --screen" 2
+  fi
   case "$native_arg" in *$'\n'* | *[!A-Za-z0-9._\ -]*) die "--open / --app take a bundle id or an app name (letters, digits, space, . _ -)" 2 ;; esac
-  if [ "$native" = sim ]; then case "$native_arg" in *\ *) die "--open takes a bundle id, e.g. com.example.app" 2 ;; esac; fi
+  if [ "$native" = sim ]; then case "$native_arg" in *[!A-Za-z0-9.-]*) die "--open takes a bundle id, e.g. com.example.app" 2 ;; esac; fi
 elif [ -n "$native_arg" ]; then
   die "--open goes with --sim, --app with --screen" 2
 elif [ -z "$target" ]; then

@@ -199,8 +199,11 @@ Simulator) and a real Mac toolchain, without touching your own files.
    \`npm i -g playwright && npx playwright install chromium\` so agents can
    render pages with \`vibe-shot\`. For iOS apps: Xcode, opened once as
    that user. To capture the account's own screen (\`vibe-shot --screen\`):
-   leave it logged in on the display (Fast User Switching) and allow Screen
-   Recording for sshd-keygen-wrapper in Privacy & Security.
+   it must be the active user on the display (switch to it; a background
+   session cannot be captured) and Screen Recording must be allowed for
+   sshd-keygen-wrapper in Privacy & Security. Note that this permission covers
+   every SSH login on the Mac, not only this account; skip it if you don't
+   need --screen.
 6. Optional: let agents use it without asking each time — in a project,
    \`touch .vibe-allow-ssh\` (untracked) and relaunch vibe.
 

@@ -6,13 +6,22 @@ Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion 
 
 ## 2026-09-25
 
+- [x] **`vibe-shot` native modes: review fixes so a capture never quietly lies** (`devcontainer/vibe-shot.sh`, `devcontainer/vibe-capabilities.sh`, `README.md`, `CHANGELOG.md`, `smoke/checks_38_vibe_shot.py`). The optimiser flagged that iter 4 had skipped the review the earlier iterations got, and one opus code-reviewer round confirmed these problems:
+  - **Screen captures:** Screen Recording cannot be approved over SSH, so without it `screencapture` "succeeds" with wallpaper only. `--screen` readiness now preflights `CGPreflightScreenCaptureAccess` through `osascript`, treating an error as unknown and only an explicit `false` as not ready. Every screen capture also carries a one-line note on what a wallpaper-only or lock-screen image means. The setup steps now say the permission covers every SSH login on the Mac.
+  - **Simulator readiness:** Xcode 15+ ships iOS runtimes separately, so `--check` reported the Simulator ready on a fresh Xcode with no iPhone. Readiness now requires an available iPhone, and the fix names Components and `xcode-select`.
+  - **Choosing the simulator:** a booted watch or iPad no longer counts. Every command now names the iPhone by UDID rather than `booted`, and the UDID is matched by pattern, so a name like `iPhone SE (3rd generation)` no longer yields "3rd generation".
+  - **Failures:** a boot that doesn't finish is a hard failure with its output visible, and an empty capture says so.
+  - **Behaviour and size:** `launch` uses `--terminate-running-process`, and large Retina captures are downscaled with `sips`.
+  - **Argument checks:** refused are `--sim` with `--screen`, `--open` with `--app`, `--check` with a capture option, and an underscore in a bundle id.
+  - **Tests:** 12 more checks cover already-booted reuse, no iPhone, a failed boot, a failed launch, permission denied, and readiness with no runtime.
+
 - [x] **`vibe-shot --sim` and `--screen`: seeing native apps, not just web pages** (`devcontainer/vibe-shot.sh`, `devcontainer/vibe-capabilities.sh`, `devcontainer/claude-md/capabilities.md`, `README.md`, `ONBOARDING.md`, `MANUAL-TESTS.md`, `smoke/checks_38_vibe_shot.py`). The README promised that agents could "launch the Simulator, take a screenshot", but no command did it. So the most common native case, "does my iOS or Mac app look right?", still ended in "I can't see it".
   - **`--sim [--open <bundle id>]`** boots the first available iPhone simulator if none is running, optionally launches the app, and returns `xcrun simctl io booted screenshot`.
   - **`--screen [--app <name>]`** opens the app on the Mac account's own display and returns `screencapture -x`.
   - **`--check`** now reports web pages, iOS Simulator and screen separately, each with its exact fix:
     - Playwright install;
     - Xcode, opened once;
-    - for the screen: the account logged in on the display (Fast User Switching) and Screen Recording allowed for `sshd-keygen-wrapper`. The inventory also treats the screen as available only when this account owns `/dev/console`.
+    - for the screen: the account as the active user on the display (a background session cannot be captured) and Screen Recording allowed for `sshd-keygen-wrapper`. The inventory also treats the screen as available only when this account owns `/dev/console`.
   - **Input checks:** `--open` takes a bundle id and `--app` an app name. Each is charset-checked and still travels base64. The pairing is enforced: `--open` only with `--sim`, `--app` only with `--screen`, and neither with a URL.
   - **Setup steps** (`vibe-capabilities --setup mac-account`), README, ONBOARDING step 9, the fragment and Manual Test 60 name the new modes.
   - **Tests:** 15 more checks with stub `xcrun`, `screencapture`, `stat` and `open`. They cover boot, launch and capture ordering, the not-on-display and no-Xcode refusals, the three-way readiness report, and argument refusals before any SSH. The full suite is green apart from one unrelated `/c` watcher-kill timing flake, which passes when re-run alone.
