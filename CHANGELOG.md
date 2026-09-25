@@ -6,6 +6,8 @@ Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion 
 
 ## 2026-09-25
 
+- [x] **The image carries vibe's own version, so the Codex supervisor stops calling itself 0.0.0** (`vibe`, `devcontainer/Dockerfile`, `smoke/checks_34_docker_hygiene.py`). This is follow-on (a) from task_048. `codex-supervisor` reports `/usr/local/share/vibe/VERSION` as its app-server `clientInfo.version`, but nothing ever wrote that file, so every run said `0.0.0`. The base `docker build` now passes the launcher's `VERSION` as a `VIBE_VERSION` build arg, charset-restricted (`0.0.0-dev` otherwise). The Dockerfile writes it late in the build, so a version bump invalidates one tiny layer and not the toolchain.
+
 - [x] **`vibe` expands every possibly-empty array in the bash-3.2-safe form, and a lint keeps it that way** (`vibe`, `smoke/checks_12_harness_lints.py`). Closes the 2026-09-12 follow-up from the `TASK_BIND_ENV` launch break. macOS runs `vibe` under bash 3.2, where a bare `"${arr[@]}"` on an EMPTY array aborts under `set -u`.
   - **The three remaining bare expansions** were safe, but only because of their context: `VIBE_EXIT_HOOKS` and `VIBE_SHARED_REPO_WARNINGS` sat behind count checks, and `mount_args` always gets the projects mount. All three now use `${arr[@]+"${arr[@]}"}`, which behaves identically.
   - **The new lint** finds every array `vibe` assigns `=()` and fails on any bare expansion of one. Run against the previous launcher, it flags exactly those three lines.

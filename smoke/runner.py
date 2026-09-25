@@ -1028,6 +1028,7 @@ def main() -> int:
     test_image_label_agrees_everywhere()
     test_image_label_is_the_last_dockerfile_instruction()
     test_launcher_has_no_volume_removal_anywhere()
+    test_image_carries_vibes_own_version()
     test_stop_guard_blocks_a_live_owned_run()
     test_stop_guard_allow_paths()
     test_stop_guard_caps_refusals_without_a_commit()

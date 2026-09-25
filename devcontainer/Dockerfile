@@ -229,6 +229,12 @@ RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/refresh-extra-domain
   echo "Defaults!/usr/local/bin/refresh-extra-domains.sh env_reset" >> /etc/sudoers.d/node-firewall && \
   echo "node ALL=(root) NOPASSWD: /usr/sbin/avahi-daemon" >> /etc/sudoers.d/node-firewall && \
   chmod 0440 /etc/sudoers.d/node-firewall
+# vibe's own version (the launcher passes VERSION as a build arg), read by
+# codex-supervisor for its clientInfo.version. Late on purpose: a version bump
+# invalidates this one small layer, not the toolchain above it.
+ARG VIBE_VERSION=0.0.0-dev
+RUN printf '%s\n' "$VIBE_VERSION" > /usr/local/share/vibe/VERSION && \
+  chmod 0644 /usr/local/share/vibe/VERSION
 USER node
 
 # task_059: stamp the image so vibe can recognise its own leftovers after the

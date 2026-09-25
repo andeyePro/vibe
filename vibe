@@ -5315,8 +5315,15 @@ if [ "$REBUILD" = true ] || ! docker image inspect "$BASE_TAG" >/dev/null 2>&1; 
   if command -v npm >/dev/null 2>&1; then
     CLAUDE_CC_VERSION="$(npm view @anthropic-ai/claude-code version 2>/dev/null || echo latest)"
   fi
+  # vibe's own version goes into the image (/usr/local/share/vibe/VERSION) so
+  # codex-supervisor can report it as its clientInfo.version instead of the
+  # 0.0.0 placeholder; charset-restricted like every other value vibe hands
+  # to a build.
+  VIBE_BUILD_VERSION="$(_vibe_version)"
+  case "$VIBE_BUILD_VERSION" in *[!A-Za-z0-9._+-]*) VIBE_BUILD_VERSION="0.0.0-dev" ;; esac
   echo "  Building vibe container image ($BASE_TAG, claude-code=${CLAUDE_CC_VERSION})..."
-  docker build --build-arg "CLAUDE_CODE_VERSION=${CLAUDE_CC_VERSION}" -t "$BASE_TAG" "$DEVCONTAINER_DIR"
+  docker build --build-arg "CLAUDE_CODE_VERSION=${CLAUDE_CC_VERSION}" \
+    --build-arg "VIBE_VERSION=${VIBE_BUILD_VERSION}" -t "$BASE_TAG" "$DEVCONTAINER_DIR"
   mkdir -p "$(dirname "$IMAGE_MARKER")"
   touch "$IMAGE_MARKER"
   BASE_REBUILT=true

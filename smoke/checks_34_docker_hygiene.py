@@ -442,3 +442,22 @@ def test_launcher_has_no_volume_removal_anywhere() -> None:
                  or re.search(r'docker\s+rm\b[^\n|#]*\s-\w*v', ln)]
     check("[hygiene] the launcher never removes a docker volume",
           not offenders, "; ".join(offenders))
+
+
+def test_image_carries_vibes_own_version():
+    """codex-supervisor reports /usr/local/share/vibe/VERSION as its
+    clientInfo.version; the launcher passes VERSION into the base build and
+    the Dockerfile writes it there (it was always 0.0.0 before)."""
+    print("\n[image] the base image carries vibe's own VERSION")
+    launcher = VIBE.read_text()
+    check("[image] base build passes VIBE_VERSION as a build arg",
+          '--build-arg "VIBE_VERSION=${VIBE_BUILD_VERSION}"' in launcher, "")
+    check("[image] the build arg is charset-restricted",
+          'case "$VIBE_BUILD_VERSION" in *[!A-Za-z0-9._+-]*) VIBE_BUILD_VERSION="0.0.0-dev"' in launcher, "")
+    dockerfile = DOCKERFILE.read_text()
+    check("[image] Dockerfile declares ARG VIBE_VERSION and writes the shipped VERSION file",
+          "ARG VIBE_VERSION=0.0.0-dev" in dockerfile
+          and '> /usr/local/share/vibe/VERSION' in dockerfile, "")
+    supervisor = (REPO / "devcontainer" / "codex-supervisor.mjs").read_text()
+    check("[image] codex-supervisor reads that same path",
+          "'/usr/local/share/vibe/VERSION'" in supervisor, "")
