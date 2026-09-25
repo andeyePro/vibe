@@ -1015,7 +1015,7 @@ def test_task017_ac2_shared_repos_parse_comments_blanks() -> None:
     snippet = (
         'm="$(mktemp)"; '
         'printf "# comment\\n\\nandeyePro/andeyePro\\n  # another comment\\n" > "$m"; '
-        'OUT=$(shared_repos_parse "$m" | wc -l); '
+        'OUT=$(shared_repos_parse "$m" | wc -l | tr -d " "); '
         'echo "LINES=$OUT"; '
         'rm "$m"'
     )

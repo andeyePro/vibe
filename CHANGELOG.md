@@ -6,6 +6,12 @@ Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion 
 
 ## 2026-09-25
 
+- [x] **The two smoke checks that failed only on a Mac host are host-agnostic** (`smoke/checks_04_hooks_guards.py`, `smoke/checks_06_autoresume_and_sharedrepos.py`). These were seen in Astra's Mac-side run on 2026-09-10; both were green in the container.
+  - `[skipped] file contains canonical path` compared against the raw temp path. On macOS that path sits behind `/var` → `/private/var`, and the launcher correctly writes the `pwd -P` form, so the check now compares against `os.path.realpath`.
+  - `skips comments/blanks` matched `LINES=1`, but BSD `wc -l` left-pads its count. It is now piped through `tr -d " "`, like the suite's other `wc -l` uses.
+
+  Not re-run on a Mac from here: the next Mac-side suite run confirms it.
+
 - [x] **The image carries vibe's own version, so the Codex supervisor stops calling itself 0.0.0** (`vibe`, `devcontainer/Dockerfile`, `smoke/checks_34_docker_hygiene.py`). This is follow-on (a) from task_048. `codex-supervisor` reports `/usr/local/share/vibe/VERSION` as its app-server `clientInfo.version`, but nothing ever wrote that file, so every run said `0.0.0`. The base `docker build` now passes the launcher's `VERSION` as a `VIBE_VERSION` build arg, charset-restricted (`0.0.0-dev` otherwise). The Dockerfile writes it late in the build, so a version bump invalidates one tiny layer and not the toolchain.
 
 - [x] **`vibe` expands every possibly-empty array in the bash-3.2-safe form, and a lint keeps it that way** (`vibe`, `smoke/checks_12_harness_lints.py`). Closes the 2026-09-12 follow-up from the `TASK_BIND_ENV` launch break. macOS runs `vibe` under bash 3.2, where a bare `"${arr[@]}"` on an EMPTY array aborts under `set -u`.
