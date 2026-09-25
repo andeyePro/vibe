@@ -1052,6 +1052,7 @@ def main() -> int:
     test_vibe_shot_uploads_a_folder_or_file()
     test_vibe_shot_refusals_and_check()
     test_vibe_shot_playwright_script_parses()
+    test_vibe_shot_native_simulator_and_screen()
     test_vibe_shot_is_named_wherever_seeing_comes_up()
     test_statusline_records_the_window_reset()
     test_native_wait_detector()

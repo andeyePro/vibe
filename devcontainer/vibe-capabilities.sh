@@ -164,7 +164,7 @@ mac_note=""
 
 mac_line() {
   # shellcheck disable=SC2016  # the backticks are Markdown, not command substitution
-  printf 'Mac account `%s@%s` (declared by %s; port 22 %s): anything that needs eyes or a Mac runs there — render a page in a headless browser and screenshot it, build and launch a Mac/iOS app, reach URLs the container firewall blocks. To look at a page: `vibe-shot <url|folder|file> [--viewport 390x844]` renders it there and prints the PNG path; open it (Claude: the Read tool displays images; Codex: view the image file). SSH %s.' \
+  printf 'Mac account `%s@%s` (declared by %s; port 22 %s): anything that needs eyes or a Mac runs there — render a page in a headless browser and screenshot it, build and launch a Mac/iOS app, reach URLs the container firewall blocks. To look at something: `vibe-shot <url|folder|file> [--viewport 390x844]` renders a page there, `vibe-shot --sim [--open <bundle id>]` captures the iOS Simulator, `vibe-shot --screen [--app <name>]` the screen of that account; each prints a PNG path (`vibe-shot --check` says which are ready). Open it (Claude: the Read tool displays images; Codex: view the image file). SSH %s.' \
     "$mac_user" "$mac_host" "$mac_user_source" "$mac_port" \
     "$([ "$ssh_auto" = yes ] && echo 'is pre-authorised in this project' || echo 'needs a one-line per-action OK from the user unless the project allows it')"
   # shellcheck disable=SC2016  # Markdown backticks
@@ -197,7 +197,10 @@ Simulator) and a real Mac toolchain, without touching your own files.
    that account's \`~/.ssh/authorized_keys\` on the Mac.
 5. Once, logged in as that user: \`brew install node\` if needed, then
    \`npm i -g playwright && npx playwright install chromium\` so agents can
-   render pages with \`vibe-shot\`.
+   render pages with \`vibe-shot\`. For iOS apps: Xcode, opened once as
+   that user. To capture the account's own screen (\`vibe-shot --screen\`):
+   leave it logged in on the display (Fast User Switching) and allow Screen
+   Recording for sshd-keygen-wrapper in Privacy & Security.
 6. Optional: let agents use it without asking each time — in a project,
    \`touch .vibe-allow-ssh\` (untracked) and relaunch vibe.
 

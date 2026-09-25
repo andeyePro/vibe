@@ -163,7 +163,7 @@ A vibe container has no browser and can't open the apps it builds, so an agent c
 
 Inside any vibe session, ask: "Show me `vibe-capabilities --setup mac-account` and walk me through it." Stay with the user for the three steps only they can do: create the account, turn on Remote Login for it, and add two lines to their Mac's `~/.ssh/config`. Those two lines are what tell *every* vibe on the Mac the account exists, so this is a one-time job per Mac, not per project.
 
-Check: in a new session, `vibe-capabilities` lists the Mac account first, with port 22 open. From then on, agents are told to use it before ever saying "I can't see that".
+Check: in a new session, `vibe-capabilities` lists the Mac account first, with port 22 open, and `vibe-shot --check` says which of web pages, the iOS Simulator and the account's screen are ready. Each line that isn't ready gives its fix. From then on, agents are told to use it before ever saying "I can't see that".
 
 ### Second session onward
 

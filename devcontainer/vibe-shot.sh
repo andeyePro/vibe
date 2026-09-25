@@ -16,9 +16,15 @@
 #   vibe-shot page.html                         a single file (only that file
 #                                               is uploaded; use the folder
 #                                               form when it needs its CSS)
+#   vibe-shot --sim [--open com.example.app]   the iOS Simulator (boots an
+#                                               iPhone if none is running)
+#   vibe-shot --screen [--app "App Name"]       the Mac account's own screen
+#                                               (needs it logged in on the
+#                                               Mac's display, see --check)
 #   options: --viewport WxH (default 1280x800; 390x844 is a phone)
 #            --full-page   --wait-for CSS_SELECTOR   --out PATH
-#            --check       only check the Mac side is ready (one SSH call)
+#            --check       report which of web / Simulator / screen are
+#                          ready on the Mac, and how to fix the rest
 #   file:// URLs are paths ON THE MAC. A folder upload leaves out .git,
 #   node_modules, .vibe, .vss and .env*; symlinks travel as links (not
 #   followed), so links pointing outside the folder break there.
@@ -42,6 +48,7 @@ ssh_config=${VIBE_CAP_SSH_CONFIG:-$home/.ssh/config}
 ws=${VIBE_CAP_WORKSPACE:-/workspace}
 
 target="" viewport="1280x800" full=0 wait_for="" out="" subpath="index.html" check=0
+native="" native_arg=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --viewport) need_value $# "$1"; viewport=$2; shift 2 ;;
@@ -50,7 +57,10 @@ while [ $# -gt 0 ]; do
     --out) need_value $# "$1"; out=$2; shift 2 ;;
     --path) need_value $# "$1"; subpath=$2; shift 2 ;;
     --check) check=1; shift ;;
-    -h | --help) sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --sim) native=sim; shift ;;
+    --screen) native=screen; shift ;;
+    --open | --app) need_value $# "$1"; native_arg=$2; shift 2 ;;
+    -h | --help) sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) die "unknown option: $1 (try --help)" 2 ;;
     *) [ -z "$target" ] || die "one target only" 2; target=$1; shift ;;
   esac
@@ -75,7 +85,8 @@ case "$user" in "" | *[!A-Za-z0-9._-]*)
 esac
 
 # ── the script that runs on the Mac ──────────────────────────────────────────
-# Arguments arrive as base64 lines in $1: mode, url, width, height, full, wait.
+# Arguments arrive as base64 lines in $1: mode, url, width, height, full,
+# wait, and the native argument (--open bundle id / --app name).
 remote_script='set -u
 export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
 dec() { base64 -D 2>/dev/null || base64 -d; }
@@ -83,16 +94,44 @@ args=$(printf "%s" "$1" | dec) || { echo "vibe-shot(mac): bad arguments" >&2; ex
 mode=$(printf "%s\n" "$args" | sed -n 1p); url=$(printf "%s\n" "$args" | sed -n 2p)
 w=$(printf "%s\n" "$args" | sed -n 3p); h=$(printf "%s\n" "$args" | sed -n 4p)
 full=$(printf "%s\n" "$args" | sed -n 5p); wait=$(printf "%s\n" "$args" | sed -n 6p)
-command -v node >/dev/null 2>&1 || { echo "vibe-shot(mac): node is not installed for this account (brew install node)" >&2; exit 4; }
-NODE_PATH=$(npm root -g 2>/dev/null); export NODE_PATH
-node -e "require(\"playwright\")" 2>/dev/null || { echo "vibe-shot(mac): Playwright is missing: npm i -g playwright && npx playwright install chromium" >&2; exit 4; }
-if [ "$mode" = check ]; then echo "vibe-shot(mac): ready (node, Playwright)" >&2; exit 0; fi
+native=$(printf "%s\n" "$args" | sed -n 7p)
+fail() { echo "vibe-shot(mac): $1" >&2; exit "${2:-4}"; }
+web_fix="npm i -g playwright && npx playwright install chromium (and brew install node if node is missing)"
+sim_fix="install Xcode on the Mac and open it once as this account to accept its licence"
+screen_fix="log in as $(id -un) on the Mac display (Fast User Switching keeps it running) and allow Screen Recording for sshd-keygen-wrapper in System Settings > Privacy & Security"
+web_ready() { command -v node >/dev/null 2>&1 || return 1; NODE_PATH=$(npm root -g 2>/dev/null); export NODE_PATH; node -e "require(\"playwright\")" 2>/dev/null; }
+sim_ready() { command -v xcrun >/dev/null 2>&1 && xcrun simctl help >/dev/null 2>&1; }
+screen_ready() { command -v screencapture >/dev/null 2>&1 && [ "$( (stat -f %Su /dev/console) 2>/dev/null)" = "$(id -un)" ]; }
+if [ "$mode" = check ]; then
+  any=0
+  if web_ready; then echo "vibe-shot(mac): web pages: ready" >&2; any=1; else echo "vibe-shot(mac): web pages: not ready: $web_fix" >&2; fi
+  if sim_ready; then echo "vibe-shot(mac): iOS Simulator: ready" >&2; any=1; else echo "vibe-shot(mac): iOS Simulator: not ready: $sim_fix" >&2; fi
+  if screen_ready; then echo "vibe-shot(mac): screen: ready" >&2; any=1; else echo "vibe-shot(mac): screen: not ready: $screen_fix" >&2; fi
+  [ "$any" = 1 ] && exit 0
+  exit 4
+fi
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/vibe-shot.XXXXXX") || exit 5
 trap "rm -rf \"$tmp\"" EXIT
-if [ "$mode" = upload ]; then
-  mkdir "$tmp/site" && tar -xf - -C "$tmp/site" || { echo "vibe-shot(mac): upload failed" >&2; exit 5; }
-  url="file://$tmp/site/$url"
-fi
+if [ "$mode" = sim ]; then
+  sim_ready || fail "iOS Simulator not ready: $sim_fix"
+  if ! xcrun simctl list devices booted 2>/dev/null | grep -q Booted; then
+    dev=$(xcrun simctl list devices available 2>/dev/null | awk -F"[()]" "/iPhone/ {print \$2; exit}")
+    [ -n "$dev" ] || fail "no iPhone simulator is installed (Xcode > Settings > Components)"
+    xcrun simctl boot "$dev" >&2 || fail "could not boot simulator $dev" 5
+    xcrun simctl bootstatus "$dev" -b >/dev/null 2>&1 || sleep 10
+  fi
+  if [ -n "$native" ]; then xcrun simctl launch booted "$native" >&2 || fail "could not launch $native (is it installed on the booted simulator?)" 5; sleep 3; fi
+  xcrun simctl io booted screenshot "$tmp/shot.png" >&2 || fail "simulator screenshot failed" 5
+elif [ "$mode" = screen ]; then
+  screen_ready || fail "screen not ready: $screen_fix"
+  if [ -n "$native" ]; then open -a "$native" >&2 || fail "could not open $native" 5; sleep 3; fi
+  screencapture -x "$tmp/shot.png" >&2 || fail "screencapture failed: $screen_fix" 5
+else
+  web_ready || fail "web pages not ready: $web_fix"
+  if [ "$mode" = upload ]; then
+    mkdir "$tmp/site" && tar -xf - -C "$tmp/site" || fail "upload failed" 5
+    url="file://$tmp/site/$url"
+  fi
 node - "$url" "$tmp/shot.png" "$w" "$h" "$full" "$wait" >&2 <<'"'"'JS'"'"' || exit $?
 const { chromium } = require("playwright");
 const [url, out, w, h, full, wait] = process.argv.slice(2);
@@ -107,6 +146,7 @@ const [url, out, w, h, full, wait] = process.argv.slice(2);
   } finally { await browser.close(); }
 })().catch((e) => { console.error("vibe-shot(mac): " + e.message); process.exit(3); });
 JS
+fi
 [ -s "$tmp/shot.png" ] || exit 3
 printf "\nVIBE-SHOT-PNG-BEGIN\n"
 base64 < "$tmp/shot.png"
@@ -118,6 +158,13 @@ upload_dir=""
 mode=url url=""
 if [ "$check" = 1 ]; then
   mode=check
+elif [ -n "$native" ]; then
+  [ -z "$target" ] || die "--$native takes no URL, folder or file" 2
+  mode=$native
+  case "$native_arg" in *$'\n'* | *[!A-Za-z0-9._\ -]*) die "--open / --app take a bundle id or an app name (letters, digits, space, . _ -)" 2 ;; esac
+  if [ "$native" = sim ]; then case "$native_arg" in *\ *) die "--open takes a bundle id, e.g. com.example.app" 2 ;; esac; fi
+elif [ -n "$native_arg" ]; then
+  die "--open goes with --sim, --app with --screen" 2
 elif [ -z "$target" ]; then
   die "give a URL, a folder or a file (try --help)" 2
 else
@@ -138,7 +185,7 @@ else
 fi
 case "$url$wait_for" in *$'\n'*) die "newlines are not allowed in the URL or selector" 2 ;; esac
 
-args=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$mode" "$url" "$width" "$height" "$full" "$wait_for" | b64)
+args=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$mode" "$url" "$width" "$height" "$full" "$wait_for" "$native_arg" | b64)
 remote="/bin/bash -c \"\$(echo $(printf '%s' "$remote_script" | b64) | { base64 -D 2>/dev/null || base64 -d; })\" vibe-shot $args"
 
 ssh_opts=(-o BatchMode=yes -o ConnectTimeout=10)
@@ -163,11 +210,14 @@ fi
 response=$(ssh "${ssh_opts[@]}" "$user@$mac_host" "$remote" < "$stdin_file")
 rc=$?
 [ "$rc" -eq 0 ] || die "the Mac side failed (exit $rc); see the message above. Readiness: vibe-shot --check" "$rc"
-[ "$mode" = check ] && { echo "vibe-shot: the Mac account $user@$mac_host is ready"; exit 0; }
+[ "$mode" = check ] && { echo "vibe-shot: the Mac account $user@$mac_host is ready (details above)"; exit 0; }
 
 if [ -z "$out" ]; then
   mkdir -p "$ws/.vibe/shots" 2>/dev/null || die "cannot create $ws/.vibe/shots"
-  out="$ws/.vibe/shots/shot-$(date -u +%Y%m%dT%H%M%SZ)-${width}x${height}.png"
+  case "$mode" in
+    sim | screen) out="$ws/.vibe/shots/shot-$(date -u +%Y%m%dT%H%M%SZ)-$mode.png" ;;
+    *) out="$ws/.vibe/shots/shot-$(date -u +%Y%m%dT%H%M%SZ)-${width}x${height}.png" ;;
+  esac
 fi
 printf '%s\n' "$response" | awk '/^VIBE-SHOT-PNG-END$/{f=0} f{print} /^VIBE-SHOT-PNG-BEGIN$/{f=1}' > "$work/png.b64"
 base64 -d < "$work/png.b64" > "$work/shot.png" 2>/dev/null || die "the image that came back does not decode"

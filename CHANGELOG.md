@@ -6,6 +6,17 @@ Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion 
 
 ## 2026-09-25
 
+- [x] **`vibe-shot --sim` and `--screen`: seeing native apps, not just web pages** (`devcontainer/vibe-shot.sh`, `devcontainer/vibe-capabilities.sh`, `devcontainer/claude-md/capabilities.md`, `README.md`, `ONBOARDING.md`, `MANUAL-TESTS.md`, `smoke/checks_38_vibe_shot.py`). The README promised that agents could "launch the Simulator, take a screenshot", but no command did it. So the most common native case, "does my iOS or Mac app look right?", still ended in "I can't see it".
+  - **`--sim [--open <bundle id>]`** boots the first available iPhone simulator if none is running, optionally launches the app, and returns `xcrun simctl io booted screenshot`.
+  - **`--screen [--app <name>]`** opens the app on the Mac account's own display and returns `screencapture -x`.
+  - **`--check`** now reports web pages, iOS Simulator and screen separately, each with its exact fix:
+    - Playwright install;
+    - Xcode, opened once;
+    - for the screen: the account logged in on the display (Fast User Switching) and Screen Recording allowed for `sshd-keygen-wrapper`. The inventory also treats the screen as available only when this account owns `/dev/console`.
+  - **Input checks:** `--open` takes a bundle id and `--app` an app name. Each is charset-checked and still travels base64. The pairing is enforced: `--open` only with `--sim`, `--app` only with `--screen`, and neither with a URL.
+  - **Setup steps** (`vibe-capabilities --setup mac-account`), README, ONBOARDING step 9, the fragment and Manual Test 60 name the new modes.
+  - **Tests:** 15 more checks with stub `xcrun`, `screencapture`, `stat` and `open`. They cover boot, launch and capture ordering, the not-on-display and no-Xcode refusals, the three-way readiness report, and argument refusals before any SSH. The full suite is green apart from one unrelated `/c` watcher-kill timing flake, which passes when re-run alone.
+
 - [x] **`vibe-shot`: one command for "look at it" on the Mac account** (`devcontainer/vibe-shot.sh`, `devcontainer/vibe-capabilities.sh`, `devcontainer/claude-md/capabilities.md`, `devcontainer/Dockerfile`, `README.md`, `MANUAL-TESTS.md`, `smoke/checks_38_vibe_shot.py`, `smoke/checks_37_capabilities.py`). Knowing it *can* see was not enough: an agent still had to hand-roll an SSH + Playwright + scp script in every project, and the reference `shot.sh` lived in another repo.
   - **What it does:** `vibe-shot <url|folder|file> [--viewport 390x844] [--full-page] [--wait-for SEL] [--out PATH]` renders a URL the Mac can reach, including `localhost` there. A folder is uploaded and its `index.html` opened (`--path` picks another page); a single file is uploaded alone. It uses one SSH connection to the declared account, runs headless Chromium through Playwright there, and prints the PNG's path under `.vibe/shots/`.
   - **`--check`** confirms node and Playwright on the Mac and names the install command.
