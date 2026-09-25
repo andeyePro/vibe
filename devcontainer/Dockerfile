@@ -12,7 +12,7 @@ ARG TZ
 ENV TZ="$TZ"
 
 ARG CLAUDE_CODE_VERSION=latest
-ARG CODEX_VERSION=0.154.0
+ARG CODEX_VERSION=0.156.1
 
 # Install basic development tools and iptables/ipset
 RUN apt-get update && apt-get install -y --no-install-recommends \

@@ -15,7 +15,7 @@ def test_codex_container_plumbing():
           not any(".codex" in str(m) for m in cfg["mounts"]), str(cfg["mounts"]))
     dockerfile = DOCKERFILE.read_text()
     check("[codex] pinned vendor binary installed in image",
-          "ARG CODEX_VERSION=0.154.0" in dockerfile and
+          "ARG CODEX_VERSION=0.156.1" in dockerfile and
           "npm install -g @openai/codex@${CODEX_VERSION}" in dockerfile, "")
     check("[codex] delegate helper shipped",
           "COPY vibe-delegate.mjs /usr/local/bin/vibe-delegate" in dockerfile, "")

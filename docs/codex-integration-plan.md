@@ -21,7 +21,15 @@ runtimes, both prefixes; `/ask`; the two backstops are the floor.
   changes; fail-closed when a container cannot be inspected.
 - Guards: `guard-fs.sh` denies tool writes under `/home/node/.codex` and to
   the marker; `guard-bash.sh` blocks the shell idioms.
-- Codex CLI 0.154.0 in the image; version floor enforced by the helper.
+- Codex CLI 0.156.1 in the image since 2026-09-25 (was 0.154.0); version floor
+  0.154.0 enforced by the helper. The facts below were verified at 0.154.0; for
+  0.156.1 the bump re-checked, against the installed binary, that `codex`,
+  `codex exec`, `codex app-server` and `codex sandbox` help is unchanged apart
+  from a new top-level `--no-daemon`; the app-server JSON schema for every
+  method and notification the supervisor uses is unchanged (new optional
+  response fields only, `CodexErrorInfo` identical); hook tool names are still
+  `apply_patch` / `shell_command`; the shipped `requirements.toml` loads
+  without error (`codex features list`); and a stdio `initialize` answers.
 - Live partial pass of MANUAL-TESTS Test 54 on real Docker (2026-09-10).
 
 ## 1. Facts verified against the Codex source

@@ -159,7 +159,7 @@ Both outside slots default to enabled when their prerequisites are available. To
 
 For another repo, start with [the short Codex quickstart](docs/codex-quickstart.md). No Task&I service or Mac build bridge is required.
 
-The image includes Codex CLI 0.154.0. On an interactive host, run `vibe`, choose Codex, and follow its one-time project authorisation/login prompts. Vibe remembers the runtime for that folder, prepares its local opt-in and required domains, and reuses the host ChatGPT login across projects. Existing GitHub access and project setup are shared with Claude. `vibe --agent codex` switches an existing project.
+The image includes Codex CLI 0.156.1. On an interactive host, run `vibe`, choose Codex, and follow its one-time project authorisation/login prompts. Vibe remembers the runtime for that folder, prepares its local opt-in and required domains, and reuses the host ChatGPT login across projects. Existing GitHub access and project setup are shared with Claude. `vibe --agent codex` switches an existing project.
 
 For manual setup or recovery, use Codex's own login with file storage:
 

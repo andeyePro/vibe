@@ -6,6 +6,22 @@ Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion 
 
 ## 2026-09-25
 
+- [x] **Codex CLI 0.154.0 → 0.156.1** (`devcontainer/Dockerfile`, `README.md`, `docs/codex-integration-plan.md`, `smoke/checks_01_launcher_basics_and_codecheck.py`). This is the "are we up to date" half of the brief. Claude Code already installs at `latest` (2.1.281 in the running image, 2.1.282 published), so its next rebuild picks it up with no change. Codex was pinned two releases behind, because vibe's whole Codex integration (managed policy, hooks, supervisor protocol, delegate flags) was verified against 0.154.0 source. Before moving the pin, 0.156.1 was installed into a scratch prefix and checked against the installed 0.154.0:
+  - `--help` for `codex`, `exec`, `app-server` and `sandbox` is identical apart from a new top-level `--no-daemon`.
+  - `app-server generate-json-schema` is unchanged for every method and notification the supervisor uses. There are new optional response fields only (`disabledPluginIds`, `collaborationMode`, an MCP UI field), `CodexErrorInfo` is identical, and there is a new `thread/compact/start`-adjacent attachment API.
+  - The hook tool names are still `apply_patch` / `shell_command`.
+  - The shipped `requirements.toml` loads without error and still pins `multi_agent`, `multi_agent_v2`, `apps` and `unified_exec` off (`js_repl` is now "removed" upstream; pinning it off is harmless).
+  - A stdio `initialize` answers.
+  - The Stop-hook fields the new keep-going guard relies on (`stop_hook_active`, `last_assistant_message`) are present.
+
+  New in 0.155/0.156, and deliberately left alone:
+  - `worktrees` is now stable and on. Worktree sessions are ordinary hooked sessions, and multi-agent stays off.
+  - Voice (`realtime_conversation`) is on by default. It has no microphone in the container, and its endpoint is not allowlisted.
+  - The background app-server daemon is off unless auto-start is enabled; `daemon_auto_start` is experimental and off.
+  - GPT-6 Sol/Luna join the model picker. vibe-delegate already uses those aliases.
+
+  The liveness gate's version floor stays at 0.154.0. The live check is the next launch's rebuild, plus MANUAL-TESTS 55/59.
+
 - [x] **A supervised Codex run no longer takes "waiting on an answer" as a reason to end** (`devcontainer/codex-supervisor.mjs`, `devcontainer/codex/context.md`, `devcontainer/codex-prompt-prefix.sh`, `devcontainer/commands/vsss.md`, `README.md`, `smoke/checks_19_codex_supervisor.py`). The second half of Martin's brief that a Codex run should list its questions and carry on, not stop. Three gaps were left after the Stop hook:
   - `codex-supervisor` ended the run on ANY final `VSSS-EXIT:` line, so "VSSS-EXIT: blocked on Martin" was a clean exit.
   - Codex's own context document told the model that when "all remaining work is externally blocked" it should checkpoint and end.
