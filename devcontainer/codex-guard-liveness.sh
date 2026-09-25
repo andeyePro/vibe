@@ -274,6 +274,28 @@ while IFS= read -r hook_command; do
   ok "hooks-commands" "$hook_command"
 done <<<"$hook_commands"
 
+# Each program is only meaningful on its own event: the guard adapter on
+# PreToolUse, the prompt prefix on UserPromptSubmit/SessionStart, the /vsss
+# keep-going guard on Stop. A program wired to any other event would pass the
+# form check above while doing nothing where it is needed.
+hook_events=$(jq -r '
+  .hooks
+  | to_entries[]
+  | .key as $event
+  | .value[]?
+  | .hooks[]?
+  | select(.type == "command")
+  | "\($event) \(.command | split("/usr/local/bin/")[-1] | split(" ")[0])"
+' -- "$hooks_file") || fail "hooks-commands — could not parse $hooks_file"
+while read -r hook_event hook_binary; do
+  [ -n "$hook_event" ] || continue
+  case "$hook_binary:$hook_event" in
+    codex-guard-adapter:PreToolUse | codex-prompt-prefix:UserPromptSubmit | \
+      codex-prompt-prefix:SessionStart | vsss-stop-guard:Stop) ;;
+    *) fail "hooks-commands — $hook_binary is wired to the $hook_event event, which is not where it belongs" ;;
+  esac
+done <<<"$hook_events"
+
 # ── (d)/(e) real fixtures through the real adapter ───────────────────────────
 tmpdir=$(mktemp -d) || fail "fixture — could not create a temporary directory"
 trap 'rm -rf "$tmpdir"' EXIT

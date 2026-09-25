@@ -240,3 +240,24 @@ def test_stop_guard_wiring():
           "owner=<$CLAUDE_CODE_SESSION_ID, or $CODEX_THREAD_ID" in vsss)
     check("[stop-guard] its counter is gitignored",
           ".vss/stop-guard*" in (REPO / ".gitignore").read_text())
+
+
+def test_liveness_ties_each_hook_program_to_its_event():
+    print("\n[stop-guard] liveness refuses a hook program wired to the wrong event")
+    from smoke.checks_18_codex_runtime import (CURRENT_OWNER, _codex_liveness_fixture,
+                                                _codex_version_stub, _run_liveness)
+    with tempfile.TemporaryDirectory() as td:
+        root, bin_dir = _codex_liveness_fixture(Path(td))
+        stub_dir = _codex_version_stub(Path(td), "codex-stub", "codex-cli 0.156.1")
+        r = _run_liveness(root, bin_dir, CURRENT_OWNER, path_prepend=stub_dir)
+        check("[stop-guard] shipped chain is healthy in the fixture", r.returncode == 0, r.stdout[-300:] + r.stderr[-300:])
+        check("[stop-guard] shipped hooks.json passes the event mapping",
+              "not where it belongs" not in (r.stdout + r.stderr), r.stdout + r.stderr)
+        hooks_path = root / "hooks" / "hooks.json"
+        data = json.loads(hooks_path.read_text())
+        data["hooks"]["PreToolUse"].append(data["hooks"].pop("Stop")[0])
+        hooks_path.write_text(json.dumps(data))
+        r = _run_liveness(root, bin_dir, CURRENT_OWNER, path_prepend=stub_dir)
+        check("[stop-guard] the keep-going guard moved to PreToolUse fails liveness",
+              r.returncode != 0 and "vsss-stop-guard is wired to the PreToolUse event" in (r.stdout + r.stderr),
+              f"rc={r.returncode} {r.stdout[-300:]} {r.stderr[-300:]}")

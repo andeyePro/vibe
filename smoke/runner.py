@@ -1031,6 +1031,7 @@ def main() -> int:
     test_stop_guard_allow_paths()
     test_stop_guard_caps_refusals_without_a_commit()
     test_stop_guard_wiring()
+    test_liveness_ties_each_hook_program_to_its_event()
     run_supervisor_tests([
         test_codex_supervisor_challenges_a_waiting_exit_once,
         test_codex_supervisor_challenge_rearms_after_a_normal_turn,
