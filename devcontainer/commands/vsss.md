@@ -379,7 +379,7 @@ Claude-only primitives it and the wrapped `/vss`/`/vs` use. Role dispatch
 becomes `vibe-delegate role <role> --model <model> --cwd <workspace>`.
 Unattended runs are driven by `codex-supervisor`: it starts one thread, sends
 `$vsss` as the first turn, re-enters with the literal `continue` after every
-turn that did not end the run, and stops on the report's `VSSS-EXIT:` line.
+turn that did not end the run, and stops on the report's `VSSS-EXIT:` line, once challenging a reason that reads as waiting.
 
 ---
 

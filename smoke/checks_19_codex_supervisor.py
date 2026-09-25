@@ -644,7 +644,7 @@ def test_codex_supervisor_transient_429_backoff():
 
 
 def test_codex_supervisor_turn_failure_retries_same_text():
-    print("\n[codex-supervisor] AC5 exec-policy-forbidden failure -> retry SAME text, turnFailures 1")
+    print("\n[codex-supervisor] AC5 exec-policy-forbidden failure -> retry with continue; a later completed turn resets turnFailures")
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         home, codex_home, workspace, env = _supervisor_fixture(tmp)
@@ -662,7 +662,11 @@ def test_codex_supervisor_turn_failure_retries_same_text():
                               "--codex-bin", str(stub_path)], env)
         check("[codex-supervisor] turn-failure-retry run exits 0", r.returncode == 0, r.stderr)
         state = _read_state(workspace)
-        check("[codex-supervisor] state.turnFailures == 1", state.get("turnFailures") == 1, str(state))
+        # 2026-09-25: a completed turn resets the count — max-turn-failures
+        # bounds failures IN A ROW, so a long run is not ended by three
+        # unrelated failures hours apart.
+        check("[codex-supervisor] state.turnFailures reset to 0 by the completed turn",
+              state.get("turnFailures") == 0, str(state))
         msgs = [m for m in _in_messages(stub_dir) if m.get("method") == "turn/start"]
         check("[codex-supervisor] exactly 2 turn/start calls", len(msgs) == 2, str(msgs))
         if len(msgs) == 2:
@@ -1107,3 +1111,108 @@ def test_wave3b_item27_supervisor_tests_skip_off_linux_platform_gate():
             os.environ.pop("VIBE_SMOKE_FORCE_PLATFORM", None)
         else:
             os.environ["VIBE_SMOKE_FORCE_PLATFORM"] = old
+
+
+# ── 2026-09-25: a wait-shaped VSSS-EXIT is challenged once ──────────────────
+
+def _challenge_run(tmp: Path, turn_events: list, extra_args: list | None = None):
+    home, codex_home, workspace, env = _supervisor_fixture(tmp)
+    stub_dir = tmp / "stub"
+    stub_path = _write_stub(stub_dir, {"turns": [{"events": ev} for ev in turn_events]})
+    prompt = tmp / "prompt.txt"
+    prompt.write_text("/vsss go")
+    r = _run_supervisor(["run", "--cwd", str(workspace), "--prompt-file", str(prompt),
+                         "--codex-bin", str(stub_path), *(extra_args or [])], env)
+    texts = [m["params"]["input"][0]["text"] for m in _in_messages(stub_dir) if m.get("method") == "turn/start"]
+    return r, workspace, texts
+
+
+_CHALLENGE_PREFIX = "codex-supervisor: your report ended on a VSSS-EXIT line whose reason reads as waiting"
+
+
+def test_codex_supervisor_challenges_a_waiting_exit_once():
+    print("\n[codex-supervisor] a wait-shaped VSSS-EXIT is challenged once, then accepted")
+    with tempfile.TemporaryDirectory() as td:
+        r, ws, texts = _challenge_run(Path(td), [
+            _DONE_TURN_EVENTS("i1", "blocked on Martin's answer to T7"),
+            _DONE_TURN_EVENTS("i2", "all remaining work blocked on questions (condition 4)"),
+        ])
+        check("[codex-supervisor] challenged run exits 0", r.returncode == 0, r.stderr)
+        check("[codex-supervisor] two turns: the exit, then the challenge", len(texts) == 2, str(texts))
+        check("[codex-supervisor] second turn/start is the fixed challenge text",
+              len(texts) == 2 and texts[1].startswith(_CHALLENGE_PREFIX), str(texts))
+        state = _read_state(ws)
+        check("[codex-supervisor] the second exit is the one recorded",
+              state.get("exitReason") == "all remaining work blocked on questions (condition 4)", str(state))
+    with tempfile.TemporaryDirectory() as td:
+        r, ws, texts = _challenge_run(Path(td), [_DONE_TURN_EVENTS("i1", "perfection gate: TODO empty")])
+        check("[codex-supervisor] a lawful exit is not challenged", r.returncode == 0 and len(texts) == 1, str(texts))
+    for lawful in ("perfection gate: no pending TODO items",
+                   "three consecutive no-op iterations; remaining items await Martin's input",
+                   "user budget-cap reached while awaiting input"):
+        with tempfile.TemporaryDirectory() as td:
+            r, ws, texts = _challenge_run(Path(td), [_DONE_TURN_EVENTS("i1", lawful)])
+            check(f"[codex-supervisor] lawful exit not challenged: {lawful!r}",
+                  r.returncode == 0 and len(texts) == 1, str(texts))
+    with tempfile.TemporaryDirectory() as td:
+        r, ws, texts = _challenge_run(Path(td), [_DONE_TURN_EVENTS("i1", "blocked on Martin")], ["--max-turns", "1"])
+        check("[codex-supervisor] no challenge when max-turns leaves no room: exit accepted cleanly",
+              r.returncode == 0 and len(texts) == 1 and _read_state(ws).get("exitReason") == "blocked on Martin",
+              f"rc={r.returncode} {texts} {r.stderr}")
+    with tempfile.TemporaryDirectory() as td:
+        r, ws, texts = _challenge_run(Path(td), [_DONE_TURN_EVENTS("i1", "hard-escalate abort: blocked on an SSH step")])
+        check("[codex-supervisor] a hard-escalate abort is not challenged even if it says blocked",
+              r.returncode == 0 and len(texts) == 1, str(texts))
+
+
+def test_codex_supervisor_challenge_rearms_after_a_normal_turn():
+    print("\n[codex-supervisor] a normal turn between two wait-shaped exits re-arms the challenge")
+    with tempfile.TemporaryDirectory() as td:
+        normal = [_turn_started_event(), _agent_message_event("n", "Working on item 3."), _turn_completed_event("completed")]
+        r, ws, texts = _challenge_run(Path(td), [
+            _DONE_TURN_EVENTS("i1", "waiting for input"),
+            normal,
+            _DONE_TURN_EVENTS("i3", "needs Martin"),
+            _DONE_TURN_EVENTS("i4", "no unblocked work left"),
+        ])
+        check("[codex-supervisor] four turns ran", r.returncode == 0 and len(texts) == 4, f"{texts} {r.stderr}")
+        if len(texts) == 4:
+            check("[codex-supervisor] challenge, continue, challenge again",
+                  texts[1].startswith(_CHALLENGE_PREFIX) and texts[2] == "continue"
+                  and texts[3].startswith(_CHALLENGE_PREFIX), str(texts))
+
+
+def test_codex_supervisor_turn_failures_count_in_a_row():
+    print("\n[codex-supervisor] max-turn-failures counts failures in a row, not over the whole run")
+    with tempfile.TemporaryDirectory() as td:
+        failed = [_turn_started_event(), _turn_completed_event("failed", {"message": "tool refused"})]
+        normal = [_turn_started_event(), _agent_message_event("n", "ok"), _turn_completed_event("completed")]
+        r, ws, texts = _challenge_run(Path(td), [
+            failed, failed, normal, failed, failed, _DONE_TURN_EVENTS("i6", "perfection gate"),
+        ], ["--max-turn-failures", "3"])
+        check("[codex-supervisor] four failures split by a success do not hit a ceiling of 3",
+              r.returncode == 0 and len(texts) == 6, f"rc={r.returncode} {r.stderr}")
+    with tempfile.TemporaryDirectory() as td:
+        failed = [_turn_started_event(), _turn_completed_event("failed", {"message": "tool refused"})]
+        r, ws, texts = _challenge_run(Path(td), [failed, failed, failed, _DONE_TURN_EVENTS("i4", "done")],
+                                      ["--max-turn-failures", "3"])
+        check("[codex-supervisor] three failures in a row still stop the run", r.returncode != 0, r.stderr)
+
+
+def test_codex_supervisor_pending_challenge_survives_a_failed_turn():
+    print("\n[codex-supervisor] a challenge whose turn fails is re-sent, not replaced by 'continue'")
+    with tempfile.TemporaryDirectory() as td:
+        failed = [_turn_started_event(), _turn_completed_event("failed", {"message": "tool refused"})]
+        r, ws, texts = _challenge_run(Path(td), [
+            _DONE_TURN_EVENTS("i1", "waiting for an answer"),
+            failed,
+            _DONE_TURN_EVENTS("i3", "nothing unblocked left"),
+        ])
+        check("[codex-supervisor] three turns ran and the run ended", r.returncode == 0 and len(texts) == 3,
+              f"{texts} {r.stderr}")
+        if len(texts) == 3:
+            check("[codex-supervisor] both the challenge and its retry carry the challenge text",
+                  texts[1].startswith(_CHALLENGE_PREFIX) and texts[2].startswith(_CHALLENGE_PREFIX), str(texts))
+        state = _read_state(ws)
+        check("[codex-supervisor] no challenge left pending at the end",
+              state.get("exitChallengePending") is False, str(state))

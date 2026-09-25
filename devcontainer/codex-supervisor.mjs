@@ -10,7 +10,8 @@
 // Safety contract (AC8): never passes `--dangerously-bypass-approvals-and-
 // sandbox`, never sets `-c`, never reads or copies `auth.json`, writes only
 // the state, adjacent ownership/stop files and log, and sends no prompt other than the
-// user's (prefix-rewritten) text and the literal `continue`.
+// user's (prefix-rewritten) text, the literal `continue`, and the fixed
+// EXIT_CHALLENGE text below (sent at most once per exit attempt).
 import { loadConfig, bindingFingerprint } from './taskandi-client.mjs';
 import { acquire, canonicalPath, readRegular, atomicWrite, requestStop, closeServer, ownershipFresh, appendRegular, spawnOwnedServer } from './supervisor-control.mjs';
 import { spawnSync } from 'node:child_process';
@@ -399,6 +400,29 @@ export function classifyError(info) {
   return { kind: 'other', name: 'unknown' };
 }
 
+// A /vsss run must not end just because the model is waiting on an answer:
+// vsss.md says a question is never an exit condition. An exit whose reason
+// reads as waiting (and is not a hard-escalate abort) is challenged ONCE with
+// the fixed text below instead of ending the run; if the very next turn ends
+// on a VSSS-EXIT line again, whatever its reason, the run ends. A normal turn
+// in between clears the challenge, so a later wait-shaped exit is challenged
+// afresh.
+const WAITING_EXIT = /\b(block(?:ed|er|ers|ing)?|unblock\w*|wait(?:ing)?|await\w*|questions?|answers?|input|clarif\w*|decisions?|approv\w*|pending|needs? (?:martin|the user|user|you|a human|human))\b/i;
+// Reasons that name one of vsss.md's own exit conditions are never challenged,
+// even when they mention waiting ("no-op iterations; the rest awaits input").
+const LAWFUL_EXIT = /\bhard[- ]escalat\w*|\bdestructive\b|\bbudget[- ]cap\b|\bperfection[- ]gate\b|\bno-op iterations?\b|\bexit condition [1-5]\b/i;
+export function exitNeedsChallenge(reason) {
+  return typeof reason === 'string' && WAITING_EXIT.test(reason) && !LAWFUL_EXIT.test(reason);
+}
+export const EXIT_CHALLENGE = [
+  'codex-supervisor: your report ended on a VSSS-EXIT line whose reason reads as waiting on an answer.',
+  'A question is not a /vsss exit condition. Put each open question in the FM2C questions file with a',
+  'recommended reversible default, then scan the queue, TODO.md and the repo for work that does not',
+  'depend on those answers, and carry on with it. If you have already done that scan and nothing',
+  'unblocked remains (vsss.md exit condition 4), write the Final state and end your next report on the',
+  'VSSS-EXIT line again; the run will then stop.',
+].join(' ');
+
 // AC7: the exit line must stand alone at the start of a line.
 export function exitReasonFrom(text) {
   if (typeof text !== 'string') return null;
@@ -513,6 +537,8 @@ function freshState(threadId, cwd, promptHash, startedAt) {
     quotaWaits: 0,
     transientRetries: 0,
     turnFailures: 0,
+    exitChallenged: false,
+    exitChallengePending: false,
     lastRateLimits: null,
     waits: [],
     turnSafetyVersion: 1,
@@ -570,6 +596,7 @@ function reconcileTurn(options) {
       state.turns.push({ turnId: evidence.turnId, status: 'completed', at: Math.floor(Date.now() / 1000) });
     }
     if (evidence.outcome === 'failed') state.turnFailures += 1;
+    if (evidence.outcome === 'completed') state.turnFailures = 0;
     // A resolved attempt still consumed the initial prompt slot: even evidence
     // of non-start does not authorize automatic replay of that prompt.
     state.turnsStarted = Math.max(1, Number(state.turnsStarted || 0), state.turns?.length || 0);
@@ -810,6 +837,10 @@ class Supervisor {
     }
     state.lastRateLimits = previous.lastRateLimits ?? null;
     state.reconciliations = previous.reconciliations ?? [];
+    for (const key of ['exitChallenged', 'exitChallengePending']) {
+      if (previous[key] !== undefined && typeof previous[key] !== 'boolean') throw usageError(`invalid persisted flag: ${key}`);
+      state[key] = previous[key] === true;
+    }
     // AC4 (Astra review): `exitReason` makes the state TERMINAL. It must
     // survive adoption, or a finished run would silently start over.
     if (previous.exitReason !== undefined && (typeof previous.exitReason !== 'string' || !previous.exitReason.trim())) throw usageError('invalid persisted terminal reason');
@@ -1129,12 +1160,17 @@ class Supervisor {
     let text = firstText;
     for (;;) {
       this.checkGates();
+      // A challenge that has not yet reached a completed turn is re-sent —
+      // after a crash, a reconnect, or a quota/transient failure alike — so
+      // the one allowed challenge is never used up undelivered.
+      if (this.state.exitChallengePending) text = EXIT_CHALLENGE;
       const { turn, turnId, agentMessage } = await this.runTurn(text);
       // AC5 (Astra re-review): the user's rewritten prompt is sent EXACTLY
       // ONCE per thread — for the very first `turn/start` only. `runTurn`
       // has now sent whatever `text` held, so every `turn/start` after this
       // point in this run — after a completed turn, a quota wait, a
-      // transient back-off or a turn failure — is the literal `continue`;
+      // transient back-off or a turn failure — is the literal `continue`,
+      // or the fixed EXIT_CHALLENGE text while one is pending;
       // the thread already holds the prompt and whatever was done, so
       // re-sending it could repeat actions.
       text = 'continue';
@@ -1145,8 +1181,24 @@ class Supervisor {
           status: 'completed',
           at: this.clock.now(),
         });
+        // A completed turn resets the failure count: max-turn-failures bounds
+        // failures in a row, not over the whole life of a long run.
+        this.state.turnFailures = 0;
+        this.state.exitChallengePending = false;
         const reason = exitReasonFrom(agentMessage);
+        // No challenge when another turn could not run anyway: accepting the
+        // exit beats turning a clean end into a max-turns ceiling.
+        if (reason !== null && !this.state.exitChallenged && exitNeedsChallenge(reason)
+          && this.state.turns.length < this.options.maxTurns) {
+          this.state.exitChallenged = true;
+          this.state.exitChallengePending = true;
+          this.confirmTurnBoundary();
+          this.log(`VSSS-EXIT challenged (reads as waiting): ${reason}`);
+          this.quotaBlindIndex = 0;
+          continue;
+        }
         if (reason !== null) this.state.exitReason = reason;
+        else this.state.exitChallenged = false;
         this.confirmTurnBoundary();
         if (reason !== null) {
           this.log(`VSSS-EXIT: ${reason}`);

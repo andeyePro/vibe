@@ -1031,6 +1031,12 @@ def main() -> int:
     test_stop_guard_allow_paths()
     test_stop_guard_caps_refusals_without_a_commit()
     test_stop_guard_wiring()
+    run_supervisor_tests([
+        test_codex_supervisor_challenges_a_waiting_exit_once,
+        test_codex_supervisor_challenge_rearms_after_a_normal_turn,
+        test_codex_supervisor_turn_failures_count_in_a_row,
+        test_codex_supervisor_pending_challenge_survives_a_failed_turn,
+    ])
 
     print()
     if FAILURES:
