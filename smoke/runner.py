@@ -1036,6 +1036,7 @@ def main() -> int:
         test_codex_supervisor_challenge_rearms_after_a_normal_turn,
         test_codex_supervisor_turn_failures_count_in_a_row,
         test_codex_supervisor_pending_challenge_survives_a_failed_turn,
+        test_codex_supervisor_default_ceilings_allow_a_week_of_windows,
     ])
 
     print()

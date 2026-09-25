@@ -62,13 +62,19 @@ const TRANSIENT_ERRORS = new Set([
   'serverOverloaded', 'responseStreamConnectionFailed',
   'responseStreamDisconnected', 'responseTooManyFailedAttempts',
 ]);
+// Ceilings are a runaway bound, not a schedule. A Claude-led /vsss persists
+// across credit windows until the task is done (vsss.md § Auto-resume), and a
+// Codex-led one must not be cut shorter just for being supervised: the wall
+// and quota-wait ceilings allow a week of windows, including a weekly-limit
+// wait, and turns are long now that the Stop hook keeps a turn going until
+// the run's Final state (2026-09-25; was 50 turns, 12 quota waits, 10 h).
 const DEFAULTS = {
-  maxTurns: 50,
+  maxTurns: 200,
   maxResumes: 20,
-  maxQuotaWaits: 12,
+  maxQuotaWaits: 48,
   maxTransientRetries: 6,
   maxTurnFailures: 3,
-  maxWallSeconds: 36000,
+  maxWallSeconds: 604800,
 };
 const USAGE = [
   'Usage:',

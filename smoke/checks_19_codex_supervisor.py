@@ -1216,3 +1216,16 @@ def test_codex_supervisor_pending_challenge_survives_a_failed_turn():
         state = _read_state(ws)
         check("[codex-supervisor] no challenge left pending at the end",
               state.get("exitChallengePending") is False, str(state))
+
+
+def test_codex_supervisor_default_ceilings_allow_a_week_of_windows():
+    print("\n[codex-supervisor] default ceilings let a supervised run span several credit windows")
+    src = SUPERVISOR.read_text()
+    m = re.search(r"const DEFAULTS = \{(.*?)\};", src, re.S)
+    vals = dict(re.findall(r"(\w+): (\d+)", m.group(1))) if m else {}
+    check("[codex-supervisor] default wall ceiling is at least five days",
+          int(vals.get("maxWallSeconds", 0)) >= 5 * 86400, str(vals))
+    check("[codex-supervisor] default quota waits cover a week of 5-hour windows",
+          int(vals.get("maxQuotaWaits", 0)) >= 7 * 24 // 5, str(vals))
+    check("[codex-supervisor] max-turn-failures stays a small in-a-row bound",
+          0 < int(vals.get("maxTurnFailures", 0)) <= 5, str(vals))
