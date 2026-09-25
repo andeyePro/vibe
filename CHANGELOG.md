@@ -6,6 +6,8 @@ Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion 
 
 ## 2026-09-25
 
+- [x] **`/sp` lists Superpowers' new `diagnosing-superpowers` skill** (`devcontainer/commands/sp.md`, `smoke/_core.py`). `check-sp-current.sh`, the upstream drift probe, reported DRIFT: obra/superpowers has added `skills/diagnosing-superpowers`. You use it after a session went wrong (repeated work, ignored plans, a skill that didn't fire, cost), and it reports what happened from the transcripts, with every finding cited `path:line`. It is now in `/sp`'s skill list, and the probe's no-drift fixture carries it, so the probe is silent again.
+
 - [x] **An `AskUserQuestion` can no longer park an unattended `/vsss` run** (`devcontainer/vsss-stop-guard.sh`, `vibe`, `README.md`, `MANUAL-TESTS.md`, `smoke/checks_35_vsss_stop_guard.py`). Found by this run's optimiser: this was the last Claude-side way a run could halt early. An `AskUserQuestion` never ends the turn, so the keep-going Stop hook never fires. The pending question's `.vss/awaiting-human` marker also, correctly for a hard-escalate, stands the stall watchdog down. So one routine question left an overnight run waiting until Martin came back.
   - The `AskUserQuestion` PreToolUse hook now runs `vsss-stop-guard ask`, with the old inline marker write as the fallback on an image without it.
   - While the run this session owns is live, fresh, has no Final state and has at least one `## Iter` block, the question is denied. Questions asked up front, before the first iteration, are unaffected.
