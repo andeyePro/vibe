@@ -46,6 +46,7 @@ from smoke.checks_33_host_onboarding import *
 from smoke.checks_34_docker_hygiene import *
 from smoke.checks_35_vsss_stop_guard import *
 from smoke.checks_36_native_usage_wait import *
+from smoke.checks_37_capabilities import *
 
 def main() -> int:
     test_docker_preflight_is_shared_and_mac_start_preserves_target()
@@ -1039,6 +1040,11 @@ def main() -> int:
     test_vibe_expands_possibly_empty_arrays_safely()
     test_vs_tester_must_show_a_control_can_fail()
     test_vs_model_economy_carries_the_cache_rules()
+    test_capabilities_finds_the_mac_account_from_the_ssh_config()
+    test_capabilities_without_a_mac_account_says_how_to_get_one()
+    test_capabilities_parsing_edges()
+    test_capabilities_bridge_brief_and_setup_modes()
+    test_capabilities_reach_every_agent()
     test_statusline_records_the_window_reset()
     test_native_wait_detector()
     test_watchdog_stands_aside_during_a_native_wait()

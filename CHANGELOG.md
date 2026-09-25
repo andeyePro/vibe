@@ -6,6 +6,18 @@ Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion 
 
 ## 2026-09-25
 
+- [x] **`vibe-capabilities`: agents check what they can do before saying they can't** (`devcontainer/vibe-capabilities.sh`, `devcontainer/claude-md/capabilities.md`, `devcontainer/codex/context.md`, `devcontainer/codex-prompt-prefix.sh`, `devcontainer/Dockerfile`, `smoke/checks_37_capabilities.py`). Martin: agents keep saying they can't look at an output, though this Mac gives them a dedicated `claude` account to build and observe anything. The capability was real but invisible from inside a container. brain2's `meta/mac-test-account.md` says so itself: "agents otherwise assume it does not exist".
+  - **The new command** prints three lists:
+    - **Available now**, with how to use each item. The Mac account comes first: render or launch there, screenshot, `scp` the PNG back and open it with the Read tool. The list also covers the Mac build bridge, image viewing, the web route, mounts, the Codex login, other SSH hosts, the toolchain and GitHub.
+    - **Could be switched on**, each with its one exact step.
+    - **Genuinely not here**, each with its workaround.
+  - **Where it finds the Mac account:** in the `Host host.docker.internal` / `User …` entry of the mirrored `~/.ssh/config`. That file is mirrored from the Mac into every container, so one line on the Mac declares the account for every vibe on the machine; Martin's config already has it. `VIBE_MAC_USER` can override.
+  - **It never connects anywhere.** It runs no ssh or scp, reads no key and makes no HTTP request; the one probe is a 2-second TCP check of port 22.
+  - **Setup:** `--setup mac-account` prints the one-time steps for a new user. `--brief` gives one line per capability, for hooks.
+  - **Wiring:** Claude is pointed at it by a new always-installed CLAUDE.md fragment. Codex is pointed at it by its context document and by the SessionStart hook's added context.
+  - **Word budget:** the claude-md budget (6,700) was not raised. The fragment is short, and `web-research.md` lost two passages that restated its own earlier sections.
+  - **Tests:** 34 checks, including a stubbed `ssh`/`scp` that must never be called, wildcard and unsafe user names, and a symlinked bridge config.
+
 - [x] **Closed a stale TODO: the checks_27 quota-wait/stop test's residual risk is already guarded** (`TODO.md`). The 2026-09-12 entry kept the test on the real clock on purpose, since an injected clock would race past the checkpoint the test must interrupt. Its one residual worry was that a slower interrupt path would make the test slow without anything noticing. But the test already asserts `quota sleep exits promptly` (exit 130 within 3 s of the stop), so a slower interrupt fails loudly rather than just running slow. Re-run green today.
 
 - [x] **`/vs` Model economy carries the measured prompt-cache rules** (`devcontainer/commands/vs.md`, `smoke/checks_13_spec_first.py`). These come from the 2026-09-08 `claude -p` measurements. Each fresh reviewer call re-writes about 30k cache tokens into the 1-hour bucket at twice the write price; that is prefix instability, not expiry. So:

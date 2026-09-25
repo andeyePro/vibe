@@ -24,7 +24,7 @@ payload=$(cat) || exit 0
 event=$(printf '%s' "$payload" | jq -r '.hook_event_name // empty' 2>/dev/null) || exit 0
 if [ "$event" = "SessionStart" ]; then
   jq -n '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext:
-    "Read /usr/local/share/vibe/codex-context.md for project context discovery and FM2C asynchronous answers. Run codex-context to locate configured references. Read project AGENTS.md and CLAUDE.md before work; preserve active task state on resume."}}' || true
+    "Read /usr/local/share/vibe/codex-context.md for project context discovery and FM2C asynchronous answers. Run codex-context to locate configured references. Read project AGENTS.md and CLAUDE.md before work; preserve active task state on resume. Before telling the user you cannot see, run, build, render or reach something, run vibe-capabilities and use what it lists (for example a Mac account over SSH for screenshots and native builds)."}}' || true
   exit 0
 fi
 # Sentinel capture (Astra re-review): `$(...)` would strip trailing newlines,
