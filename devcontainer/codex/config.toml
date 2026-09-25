@@ -40,6 +40,12 @@
 # under (`--permission-mode bypassPermissions` plus hooks plus firewall); the
 # sandbox mode name is the only thing that differs.
 
+# The CLI lives in a root-owned, write-locked npm tree (Dockerfile) and is
+# changed only by bumping CODEX_VERSION and rebuilding the image. Its own
+# "Update now" (`npm install -g @openai/codex`) therefore always fails as the
+# session user, and the prompt came back on every launch. Off.
+check_for_update_on_startup = false
+
 # Unattended: there is no human to answer an approval prompt, and the
 # requirements file allows no other value.
 approval_policy = "never"

@@ -136,6 +136,54 @@ _vibe_version() {
   echo "${ver:-0.0.0-dev}"
 }
 
+# ── Automatic CLI updates (Claude Code + Codex) ──────────────────────────────
+# Both CLIs are baked into the image, so they only move when it rebuilds. At
+# most once a day (VIBE_UPDATE_CHECK_SECS, default 86400) the launcher asks npm
+# for the latest Claude Code and Codex and rebuilds on this launch if either is
+# newer than what the image holds (recorded in $IMAGE_VERSIONS at each build).
+# VIBE_AUTO_UPDATE=0 turns it off. Codex follows latest only if it passes
+# codex-compat-check at build time; otherwise the build falls back to the last
+# Codex version that passed ("codex-good"), or the Dockerfile's pinned default.
+IMAGE_VERSIONS="$HOME/.vibe/.image-versions"
+UPDATE_STAMP="$HOME/.vibe/.update-check"
+
+# cli_latest_version <npm package> — echoes its latest published version, or
+# nothing (no npm, offline, slow registry, or anything not a plain version).
+cli_latest_version() {
+  local v
+  command -v npm >/dev/null 2>&1 || return 0
+  v=$(npm view "$1" version --fetch-timeout=8000 --fetch-retries=0 2>/dev/null | tail -n 1) || return 0
+  case "$v" in '' | *[!0-9A-Za-z.+-]*) ;; *) echo "$v" ;; esac
+}
+
+# image_version <key> — a KEY=VALUE from the versions file, same charset rule.
+image_version() {
+  local v
+  [ -f "$IMAGE_VERSIONS" ] || return 0
+  v=$(grep -E "^$1=" "$IMAGE_VERSIONS" 2>/dev/null | tail -n 1 | cut -d= -f2-)
+  case "$v" in '' | *[!0-9A-Za-z.+-]*) ;; *) echo "$v" ;; esac
+}
+
+# update_check_due <now> — true once VIBE_UPDATE_CHECK_SECS have passed since
+# the last check (or there was none); false when VIBE_AUTO_UPDATE=0.
+update_check_due() {
+  local now="$1" last secs="${VIBE_UPDATE_CHECK_SECS:-86400}"
+  [ "${VIBE_AUTO_UPDATE:-1}" = 0 ] && return 1
+  case "$secs" in '' | *[!0-9]*) secs=86400 ;; esac
+  [ -f "$UPDATE_STAMP" ] || return 0
+  last=$(head -c 20 "$UPDATE_STAMP" 2>/dev/null | tr -cd '0-9')
+  [ -n "$last" ] || return 0
+  last=$((10#$last))
+  [ "$now" -lt "$last" ] && return 0
+  [ $((now - last)) -ge "$secs" ]
+}
+
+# dockerfile_codex_default — the ARG CODEX_VERSION default in the Dockerfile:
+# the floor-verified fallback when nothing newer has passed the gate yet.
+dockerfile_codex_default() {
+  sed -n 's/^ARG CODEX_VERSION=\([0-9][0-9.]*\)$/\1/p' "$DEVCONTAINER_DIR/Dockerfile" 2>/dev/null | head -n 1
+}
+
 print_version() {
   echo "vibe $(_vibe_version)"
   exit 0
@@ -4269,7 +4317,7 @@ parse_vibe_args() {
   TASK_BIND_ENV=()
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --rebuild) REBUILD=true; shift ;;
+      --rebuild) REBUILD=true; REBUILD_REQUESTED=true; shift ;;
       --continue) CONTINUE=true; shift ;;
       --fable) MODEL_ARG="$FABLE_MODEL_ID"; shift ;;
       --model)
@@ -5325,6 +5373,26 @@ if [ "$REBUILD" = true ] && learning_is_enabled \
   fi
 fi
 
+# Daily update check (see cli_latest_version above): only when an image exists
+# and nothing else has already asked for a rebuild.
+CLAUDE_LATEST="" CODEX_LATEST=""
+if [ "$REBUILD" != true ] && docker image inspect "$BASE_TAG" >/dev/null 2>&1 && update_check_due "$(date +%s)"; then
+  mkdir -p "$(dirname "$UPDATE_STAMP")" && date +%s > "$UPDATE_STAMP" 2>/dev/null || true
+  CLAUDE_LATEST=$(cli_latest_version @anthropic-ai/claude-code)
+  CODEX_LATEST=$(cli_latest_version @openai/codex)
+  update_line=""
+  if [ -n "$CLAUDE_LATEST" ] && [ "$CLAUDE_LATEST" != "$(image_version claude-code)" ]; then
+    update_line="Claude Code ${CLAUDE_LATEST}"
+  fi
+  if [ -n "$CODEX_LATEST" ] && [ "$CODEX_LATEST" != "$(image_version codex)" ] && [ "$CODEX_LATEST" != "$(image_version codex-failed)" ]; then
+    update_line="${update_line:+$update_line, }Codex ${CODEX_LATEST}"
+  fi
+  if [ -n "$update_line" ]; then
+    echo "  ↑ update available: ${update_line} — rebuilding the image (VIBE_AUTO_UPDATE=0 turns this off)."
+    REBUILD=true
+  fi
+fi
+
 BASE_REBUILT=false
 if [ "$REBUILD" = true ] || ! docker image inspect "$BASE_TAG" >/dev/null 2>&1; then
   # Resolve current Claude Code "latest" host-side. Without this the
@@ -5333,9 +5401,19 @@ if [ "$REBUILD" = true ] || ! docker image inspect "$BASE_TAG" >/dev/null 2>&1; 
   # npm `latest` tag has moved on. Passing the resolved version as a
   # build-arg makes the layer cache key version-sensitive. Falls back
   # to "latest" if npm isn't on the host (Dockerfile ARG default).
-  CLAUDE_CC_VERSION="latest"
-  if command -v npm >/dev/null 2>&1; then
-    CLAUDE_CC_VERSION="$(npm view @anthropic-ai/claude-code version 2>/dev/null || echo latest)"
+  CLAUDE_CC_VERSION="${CLAUDE_LATEST:-$(cli_latest_version @anthropic-ai/claude-code)}"
+  CLAUDE_CC_VERSION="${CLAUDE_CC_VERSION:-latest}"
+  # Codex: the latest release, unless that exact version already failed the
+  # compatibility gate; the fallback is the last version that passed, else
+  # the Dockerfile's pinned default.
+  CODEX_FALLBACK="$(image_version codex-good)"
+  CODEX_FALLBACK="${CODEX_FALLBACK:-$(dockerfile_codex_default)}"
+  CODEX_BUILD_VERSION="${CODEX_LATEST:-$(cli_latest_version @openai/codex)}"
+  # A version that failed the gate is skipped until a newer one ships, except
+  # on an explicit `vibe --rebuild`, which retries it (the manual way out).
+  CODEX_KNOWN_FAILED="$(image_version codex-failed)"
+  if [ -z "$CODEX_BUILD_VERSION" ] || { [ "$CODEX_BUILD_VERSION" = "$CODEX_KNOWN_FAILED" ] && [ "${REBUILD_REQUESTED:-false}" != true ]; }; then
+    CODEX_BUILD_VERSION="$CODEX_FALLBACK"
   fi
   # vibe's own version goes into the image (/usr/local/share/vibe/VERSION) so
   # codex-supervisor can report it as its clientInfo.version instead of the
@@ -5343,11 +5421,39 @@ if [ "$REBUILD" = true ] || ! docker image inspect "$BASE_TAG" >/dev/null 2>&1; 
   # to a build.
   VIBE_BUILD_VERSION="$(_vibe_version)"
   case "$VIBE_BUILD_VERSION" in *[!A-Za-z0-9._+-]*) VIBE_BUILD_VERSION="0.0.0-dev" ;; esac
-  echo "  Building vibe container image ($BASE_TAG, claude-code=${CLAUDE_CC_VERSION})..."
-  docker build --build-arg "CLAUDE_CODE_VERSION=${CLAUDE_CC_VERSION}" \
-    --build-arg "VIBE_VERSION=${VIBE_BUILD_VERSION}" -t "$BASE_TAG" "$DEVCONTAINER_DIR"
+  echo "  Building vibe container image ($BASE_TAG, claude-code=${CLAUDE_CC_VERSION}, codex=${CODEX_BUILD_VERSION:-default})..."
+  codex_failed=""
+  [ "$CODEX_BUILD_VERSION" = "$CODEX_FALLBACK" ] && codex_failed="$CODEX_KNOWN_FAILED"
+  build_log=$(mktemp "${TMPDIR:-/tmp}/vibe-build.XXXXXX") || build_log=/dev/null
+  # A failing build is caught here ONLY to retry with the last Codex that
+  # passed, and only when it was codex-compat-check that failed it (any other
+  # failure — network, disk — is not the new Codex's fault and still aborts).
+  # The retry itself is unguarded (set -e).
+  if ! docker build --build-arg "CLAUDE_CODE_VERSION=${CLAUDE_CC_VERSION}" \
+      ${CODEX_BUILD_VERSION:+--build-arg "CODEX_VERSION=${CODEX_BUILD_VERSION}"} \
+      --build-arg "VIBE_VERSION=${VIBE_BUILD_VERSION}" -t "$BASE_TAG" "$DEVCONTAINER_DIR" 2>&1 | tee "$build_log"; then
+    if [ -z "$CODEX_FALLBACK" ] || [ "$CODEX_BUILD_VERSION" = "$CODEX_FALLBACK" ] \
+       || ! grep -q "codex-compat-check: FAIL" "$build_log" 2>/dev/null; then
+      rm -f "$build_log" 2>/dev/null || true
+      echo "  ✗ image build failed" >&2
+      exit 1
+    fi
+    echo "  ⚠ Codex ${CODEX_BUILD_VERSION} failed vibe's compatibility check — building with Codex ${CODEX_FALLBACK}, the last version that passed. It is not retried until a newer Codex ships (or vibe --rebuild)." >&2
+    codex_failed="$CODEX_BUILD_VERSION"
+    CODEX_BUILD_VERSION="$CODEX_FALLBACK"
+    docker build --build-arg "CLAUDE_CODE_VERSION=${CLAUDE_CC_VERSION}" \
+      --build-arg "CODEX_VERSION=${CODEX_BUILD_VERSION}" \
+      --build-arg "VIBE_VERSION=${VIBE_BUILD_VERSION}" -t "$BASE_TAG" "$DEVCONTAINER_DIR"
+  fi
+  [ "$build_log" = /dev/null ] || rm -f "$build_log" 2>/dev/null || true
   mkdir -p "$(dirname "$IMAGE_MARKER")"
   touch "$IMAGE_MARKER"
+  {
+    [ "$CLAUDE_CC_VERSION" != latest ] && printf 'claude-code=%s\n' "$CLAUDE_CC_VERSION"
+    [ -n "$CODEX_BUILD_VERSION" ] && printf 'codex=%s\ncodex-good=%s\n' "$CODEX_BUILD_VERSION" "$CODEX_BUILD_VERSION"
+    [ -n "$codex_failed" ] && printf 'codex-failed=%s\n' "$codex_failed"
+    true
+  } > "$IMAGE_VERSIONS.tmp" 2>/dev/null && mv -f "$IMAGE_VERSIONS.tmp" "$IMAGE_VERSIONS" 2>/dev/null || true
   BASE_REBUILT=true
 fi
 

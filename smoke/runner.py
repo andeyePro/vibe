@@ -48,6 +48,7 @@ from smoke.checks_35_vsss_stop_guard import *
 from smoke.checks_36_native_usage_wait import *
 from smoke.checks_37_capabilities import *
 from smoke.checks_38_vibe_shot import *
+from smoke.checks_39_auto_update import *
 
 def main() -> int:
     test_docker_preflight_is_shared_and_mac_start_preserves_target()
@@ -1054,6 +1055,10 @@ def main() -> int:
     test_vibe_shot_playwright_script_parses()
     test_vibe_shot_native_simulator_and_screen()
     test_vibe_shot_native_failure_paths()
+    test_auto_update_helpers()
+    test_auto_update_rebuilds_when_either_cli_moved()
+    test_auto_update_falls_back_when_codex_fails_the_gate()
+    test_codex_compat_gate_is_wired_and_passes_the_installed_codex()
     test_vibe_shot_is_named_wherever_seeing_comes_up()
     test_statusline_records_the_window_reset()
     test_native_wait_detector()

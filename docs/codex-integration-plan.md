@@ -21,7 +21,8 @@ runtimes, both prefixes; `/ask`; the two backstops are the floor.
   changes; fail-closed when a container cannot be inspected.
 - Guards: `guard-fs.sh` denies tool writes under `/home/node/.codex` and to
   the marker; `guard-bash.sh` blocks the shell idioms.
-- Codex CLI 0.156.1 in the image since 2026-09-25 (was 0.154.0); version floor
+- Codex CLI: the latest release that passes `codex-compat-check` (auto-updated
+  since 2026-09-25; the Dockerfile pin 0.156.1 is the fallback); version floor
   0.154.0 enforced by the helper. The facts below were verified at 0.154.0; for
   0.156.1 the bump re-checked, against the installed binary, that `codex`,
   `codex exec`, `codex app-server` and `codex sandbox` help is unchanged apart

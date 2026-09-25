@@ -14,6 +14,9 @@ ARG TZ
 ENV TZ="$TZ"
 
 ARG CLAUDE_CODE_VERSION=latest
+# The fallback / floor-verified Codex. The launcher normally passes the latest
+# release instead (and falls back to the last version that passed
+# codex-compat-check); this default is used when it can't reach npm.
 ARG CODEX_VERSION=0.156.1
 
 # Install basic development tools and iptables/ipset
@@ -181,6 +184,11 @@ COPY --chown=root:root codex-prompt-prefix.sh /usr/local/bin/codex-prompt-prefix
 # for the same reason the gate is — `node` must not be able to rewrite the
 # file that decides whether `node` gets a Codex session.
 COPY --chown=root:root codex-entry.sh /usr/local/bin/codex-entry
+# The build-time gate for automatic Codex updates: the launcher installs the
+# latest Codex, and this refuses to finish the image unless it still honours
+# vibe's policy, supervisor protocol and hook events (the launcher then falls
+# back to the last version that passed).
+COPY --chown=root:root codex-compat-check.sh /usr/local/bin/codex-compat-check
 # The /vsss keep-going guard: the Stop hook, in both runtimes, that refuses to
 # let a live /vsss run end its turn on a question instead of an exit
 # condition. Root-owned beside the other hook targets — `node` must not be
@@ -234,6 +242,7 @@ RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/refresh-extra-domain
   echo "Defaults!/usr/local/bin/refresh-extra-domains.sh env_reset" >> /etc/sudoers.d/node-firewall && \
   echo "node ALL=(root) NOPASSWD: /usr/sbin/avahi-daemon" >> /etc/sudoers.d/node-firewall && \
   chmod 0440 /etc/sudoers.d/node-firewall
+RUN chmod 0755 /usr/local/bin/codex-compat-check && /usr/local/bin/codex-compat-check
 # vibe's own version (the launcher passes VERSION as a build arg), read by
 # codex-supervisor for its clientInfo.version. Late on purpose: a version bump
 # invalidates this one small layer, not the toolchain above it.

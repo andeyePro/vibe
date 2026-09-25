@@ -6,6 +6,19 @@ Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion 
 
 ## 2026-09-25
 
+- [x] **Claude Code and Codex stay current by themselves; a new Codex is kept only if it passes vibe's compatibility gate** (`vibe`, `devcontainer/codex-compat-check.sh`, `devcontainer/Dockerfile`, `devcontainer/codex/config.toml`, `README.md`, `MANUAL-TESTS.md`, `smoke/checks_39_auto_update.py`). Martin was stuck in Codex's "Update available 0.156.1 → 0.157.0" loop. The CLI sits in the image's root-owned, write-locked npm tree on purpose, so its own `npm install -g` always failed and the prompt came back. He asked for all the latest Codex updates with as little effort as possible.
+  - **Codex's in-app update prompt is off** (`check_for_update_on_startup = false`).
+  - **Daily check:** at most once a day, the launcher asks npm for the latest Claude Code and Codex. If either differs from what `~/.vibe/.image-versions` records for the image, it rebuilds on that launch, with one line of output. `VIBE_AUTO_UPDATE=0` turns this off, and without npm nothing changes. Both CLIs previously moved only when the image happened to rebuild for another reason.
+  - **Codex follows latest,** passed as the `CODEX_VERSION` build arg. The Dockerfile pin (0.156.1) is now only the fallback.
+  - **Build-time gate:** the build runs the new `codex-compat-check`. The new Codex must:
+    - meet the liveness floor;
+    - load the managed policy, with the features output still parseable and `multi_agent`, `multi_agent_v2`, `apps` and `unified_exec` still off;
+    - still accept every app-server method `codex-supervisor` sends;
+    - still know the hook events and Stop fields vibe uses.
+  - **Fallback:** only when that gate is what failed the build, the launcher rebuilds once with the last Codex that passed. It records `codex-failed` and keeps the record through later rebuilds, so a bad release costs one failed build rather than one a day. Any other build failure, such as a network error, is not blamed on Codex and still stops the launch. `vibe --rebuild` retries a failed version by hand.
+  - **Review:** one code-reviewer round (opus). It found the failure record being wiped by the next rebuild, every build failure being blamed on Codex, a gate that passed on unparseable output, the unenforced floor, and an octal crash on a corrupted stamp. All fixed.
+  - **Tests:** checked by hand against Codex 0.154.0, 0.156.1 and 0.157.0 (all pass the gate). 31 checks splice the launcher's real build block under stub `docker` and `npm`. Manual Test 61 covers the live check.
+
 - [x] **`vibe-shot` native modes: review fixes so a capture never quietly lies** (`devcontainer/vibe-shot.sh`, `devcontainer/vibe-capabilities.sh`, `README.md`, `CHANGELOG.md`, `smoke/checks_38_vibe_shot.py`). The optimiser flagged that iter 4 had skipped the review the earlier iterations got, and one opus code-reviewer round confirmed these problems:
   - **Screen captures:** Screen Recording cannot be approved over SSH, so without it `screencapture` "succeeds" with wallpaper only. `--screen` readiness now preflights `CGPreflightScreenCaptureAccess` through `osascript`, treating an error as unknown and only an explicit `false` as not ready. Every screen capture also carries a one-line note on what a wallpaper-only or lock-screen image means. The setup steps now say the permission covers every SSH login on the Mac.
   - **Simulator readiness:** Xcode 15+ ships iOS runtimes separately, so `--check` reported the Simulator ready on a fresh Xcode with no iPhone. Readiness now requires an available iPhone, and the fix names Components and `xcode-select`.

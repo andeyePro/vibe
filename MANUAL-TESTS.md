@@ -1882,6 +1882,13 @@ Offline tests (`smoke/checks_37_capabilities.py`) cover the inventory and the nu
 - [ ] Get it to end a reply with "I can't see the rendered page" (for example, by asking it to skip the check). The turn should not end. A "vibe capability check" message quoting that sentence appears, and the agent either does the check or names the one-line step.
 - [ ] `vibe --agent codex`: the same prompt; Codex runs `vibe-capabilities` (its session context names it), and the same Stop-hook nudge fires once; `codex-guard-liveness` still passes at launch.
 
+### Test 61: Automatic CLI updates
+
+- [ ] `rm ~/.vibe/.update-check` on the Mac, then `vibe`. If npm has a newer Claude Code or Codex than the image, you see `↑ update available: …`, a rebuild, and afterwards `~/.vibe/.image-versions` names the new versions. The build log shows `codex-compat-check: Codex <version> is compatible`.
+- [ ] A second `vibe` the same day does not check again.
+- [ ] Inside `vibe --agent codex`: no "Update available" prompt appears.
+- [ ] `VIBE_AUTO_UPDATE=0 vibe` never checks.
+
 ---
 
 ## Test Summary
