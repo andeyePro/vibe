@@ -6,6 +6,8 @@ Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion 
 
 ## 2026-09-25
 
+- [x] **Closed a stale TODO: a Codex `/vs --panel` uses separate processes** (`TODO.md`). The 2026-09-08 research entry required reviewer independence to come from the process boundary, with a per-rollout nonce check rather than a self-matching sweep. `codex-panel` (task_050) ships exactly that: N separate root `codex exec` reviewers, each with a private temp cwd and its own nonce, no parent fork, and orchestrator-only collection. Its `--verify` reads each reviewer's OWN rollout and requires only its own nonce. The one part not adopted is a separate `CODEX_HOME` per reviewer, because the login is shared; the per-rollout check makes the shared session store safe to verify against.
+
 - [x] **Closed a stale TODO: the Codex session-start guard liveness assertion was already shipped** (`TODO.md`). The 2026-09-08 entry asked that a Codex-led container run each guard against a known-bad fixture at start and refuse to boot otherwise, and that `ask` become a hard block. `codex-guard-liveness` (task_046) does exactly that: fixture-deny (d), fixture-allow (e), ask→deny through the adapter. `codex-entry` (task_049) refuses to start Codex unless it has just exited 0, and this run added the per-event hook mapping to it. The entry was simply never removed.
 
 - [x] **The two smoke checks that failed only on a Mac host are host-agnostic** (`smoke/checks_04_hooks_guards.py`, `smoke/checks_06_autoresume_and_sharedrepos.py`). These were seen in Astra's Mac-side run on 2026-09-10; both were green in the container.
