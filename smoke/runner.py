@@ -45,6 +45,7 @@ from smoke.checks_32_managed_vendor_trust import *
 from smoke.checks_33_host_onboarding import *
 from smoke.checks_34_docker_hygiene import *
 from smoke.checks_35_vsss_stop_guard import *
+from smoke.checks_36_native_usage_wait import *
 
 def main() -> int:
     test_docker_preflight_is_shared_and_mac_start_preserves_target()
@@ -1032,6 +1033,10 @@ def main() -> int:
     test_stop_guard_caps_refusals_without_a_commit()
     test_stop_guard_wiring()
     test_liveness_ties_each_hook_program_to_its_event()
+    test_statusline_records_the_window_reset()
+    test_native_wait_detector()
+    test_watchdog_stands_aside_during_a_native_wait()
+    test_relaunch_gate_ignores_the_native_wait()
     run_supervisor_tests([
         test_codex_supervisor_challenges_a_waiting_exit_once,
         test_codex_supervisor_challenge_rearms_after_a_normal_turn,

@@ -6,6 +6,20 @@ Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion 
 
 ## 2026-09-25
 
+- [x] **The stall watchdog stands aside while Claude Code waits out a 5-hour limit itself** (`vibe`, `README.md`, `smoke/checks_36_native_usage_wait.py`). Found by this run's landscape research and confirmed in the installed binary's settings schema. Since 2.1.234, Claude Code's `autoContinueAtUsageLimit` is on by default: "When a claude.ai usage limit stops your session, wait for the limit to reset and continue the task automatically". The usage-limit picker that the watchdog was built to kill (task_016) therefore no longer wedges on a 5-hour limit. But during the native wait no tool runs, so the heartbeat goes stale exactly as in a wedge. vibe would kill a session that was recovering on its own after 30 minutes, then relaunch it and spend a resume window on it.
+  - The statusLine now also records the five_hour window's `resets_at` (`resets=` in `.vss/rate-limit`, only when it is numeric; the display is byte-identical).
+  - A new `auto_resume_native_wait` is true while the last reading shows `used` ≥ 90 and the reset has not passed by more than 15 minutes (both env-tunable).
+  - Both of `vibe_stall_watchdog`'s kill checks now skip the kill while it is true. A weekly limit with a low 5-hour reading is unaffected.
+
+  The first draft put the veto in `_vibe_stall_armed`; review caught that the post-exit relaunch loop shares that gate. That would have disabled auto-resume after exactly the credit-exhaustion exit it exists for. The veto now lives only in the watchdog, with a test pinning that the relaunch gate still arms.
+
+  The value is written in the container and parsed on the host, so it is hardened:
+  - digits-only, with a length cap;
+  - forced base-10, so a leading zero can no longer abort the arithmetic as octal;
+  - a reset more than one window away is refused, which keeps the veto bounded near 5h15m whatever the input.
+
+  Tests: 26 checks, including every boundary above, a positive-control kill, and a canary proving a shell-shaped `resets_at` is never evaluated.
+
 - [x] **The Codex liveness gate ties each hook program to its event** (`devcontainer/codex-guard-liveness.sh`, `smoke/checks_35_vsss_stop_guard.py`). This came out of the Stop-hook review. The gate checked that every managed hook command had the hardened `env -i` form and pointed at a root-owned program, but not which event the program was wired to. A guard adapter moved to `Stop`, or the keep-going guard moved to `PreToolUse`, would have passed while doing nothing where it is needed. It now requires the guard adapter on `PreToolUse`, the prompt prefix on `UserPromptSubmit`/`SessionStart`, and `vsss-stop-guard` on `Stop`. New test: the shipped chain passes in the fixture, and moving the guard to `PreToolUse` fails with a message that names the move.
 
 - [x] **Codex skills no longer tell the model to end its turn in place of `ScheduleWakeup`** (`devcontainer/codex/skills/{vs,vss,vsss}/SKILL.md`). The substitution table said "not available; end the turn and let the supervisor re-enter". In a live `$vsss` run the new Stop hook refuses exactly that, so the instruction and the guard would have fought each other. It now says to do other queued work instead, and that the supervisor re-enters after a quota wait.

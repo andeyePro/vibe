@@ -957,6 +957,39 @@ auto_resume_rate_headroom() {
   echo "$used"
 }
 
+# auto_resume_native_wait <rl_file> <now_epoch> — true while Claude Code is
+# most likely sitting out a 5-hour limit ITSELF. Since v2.1.234 Claude Code's
+# `autoContinueAtUsageLimit` (on by default) waits in the open session for
+# the window to reset and then carries on — the usage-limit picker that the
+# stall watchdog was built to kill no longer wedges a 5-hour limit. During
+# that wait no tool runs, so the heartbeat goes stale exactly as it would for
+# a wedge. The statusLine's last reading tells them apart: `used` at or above
+# ${VIBE_NATIVE_WAIT_USED_MIN:-90} with a `resets=` epoch (the five_hour
+# window's resets_at) that has not yet passed by more than
+# ${VIBE_NATIVE_WAIT_GRACE_SECS:-900}. Past that the wait should be over, so
+# a still-stale heartbeat is a genuine wedge again. A missing or malformed
+# reading, or no resets= line, is "no native wait" — the historical kill path.
+auto_resume_native_wait() {
+  local file="$1" now="$2" used resets used_min grace
+  used_min="${VIBE_NATIVE_WAIT_USED_MIN:-90}"
+  grace="${VIBE_NATIVE_WAIT_GRACE_SECS:-900}"
+  case "$used_min" in ''|*[!0-9]*) used_min=90 ;; esac
+  case "$grace" in ''|*[!0-9]*) grace=900 ;; esac
+  used=$(auto_resume_field "$file" used)
+  resets=$(auto_resume_field "$file" resets)
+  { [ -n "$used" ] && [ -n "$resets" ]; } || return 1
+  # The file is written inside the container and read here on the host:
+  # base-10 always (a leading zero would otherwise be read as octal and abort
+  # the arithmetic), and a reset more than one window away is not a 5-hour
+  # wait — refusing it keeps the veto bounded by ~5h15m whatever the input.
+  [ "${#used}" -le 6 ] && [ "${#resets}" -le 12 ] || return 1
+  used=$((10#$used))
+  resets=$((10#$resets))
+  [ "$used" -ge "$used_min" ] || return 1
+  [ $(( resets - now )) -le $(( 18000 + grace )) ] || return 1
+  [ "$now" -le $(( resets + grace )) ]
+}
+
 # auto_resume_effective_wait <marker_file> <ratelimit_file> <now_epoch> —
 # echoes the countdown seconds for the relaunch loop. The base case
 # reproduces the historical resume_at-only estimate exactly: unusable
@@ -1022,7 +1055,10 @@ vibe_container_kill_claude() {
 # heartbeat read every retry. awaiting-human lives beside the marker
 # (dirname-derived, not a new parameter) — written by the AskUserQuestion
 # PreToolUse hook and cleared by its PostToolUse counterpart once answered
-# (settings.local.json, install-claude-extras.sh).
+# (settings.local.json, install-claude-extras.sh). NOTE: the relaunch loop
+# after claude exits uses this gate too, so a veto that only makes sense
+# while claude is alive (auto_resume_native_wait) belongs in
+# vibe_stall_watchdog, never here.
 _vibe_stall_armed() {
   local marker="$1" ref="$2" awaiting
   [ "$(auto_resume_field "$marker" active)" = "1" ] || return 1
@@ -1056,11 +1092,13 @@ vibe_stall_watchdog() {
   while kill -0 "$claude_pid" 2>/dev/null; do
     sleep "$poll" 2>/dev/null || true
     if _vibe_stall_armed "$marker" "$ref" \
+       && ! auto_resume_native_wait "$(dirname "$marker")/rate-limit" "$(date +%s)" \
        && auto_resume_stalled "$hb" "$(date +%s)" "$stall_secs"; then
       printf '\n  \a⚠  auto-resume: no activity for over %ss — assuming the usage-limit picker is stuck.\n' "$stall_secs" >&2
       printf '     Waiting %ss then killing this claude window (delete .vss/auto-resume to cancel).\n' "$grace" >&2
       sleep "$grace" 2>/dev/null || true
       if _vibe_stall_armed "$marker" "$ref" \
+         && ! auto_resume_native_wait "$(dirname "$marker")/rate-limit" "$(date +%s)" \
          && auto_resume_stalled "$hb" "$(date +%s)" "$stall_secs"; then
         vibe_container_kill_claude
         sleep "$kill_pause" 2>/dev/null || true
@@ -5413,7 +5451,7 @@ cat > "$WORKSPACE/.claude/settings.local.json" << 'EOF'
   "forceLoginMethod": "claudeai",
   "statusLine": {
     "type": "command",
-    "command": "input=$(cat); m=$(printf '%s' \"$input\" | jq -r '.model.display_name // \"?\"'); case \"$m\" in *Fable*) l=F;; *Opus*) l=O;; *Sonnet*) l=S;; *Haiku*) l=H;; *) l=\"$m\";; esac; ctx=$(printf '%s' \"$input\" | jq -r '.context_window.used_percentage // \"\" | if type==\"number\" then (floor|tostring) else . end'); win=$(printf '%s' \"$input\" | jq -r '.rate_limits.five_hour.used_percentage // \"\" | if type==\"number\" then (floor|tostring) else . end'); out=\"$l · vibe\"; [ -n \"$ctx\" ] && out=\"$out · ctx ${ctx}%\"; [ -n \"$win\" ] && out=\"$out · 5h ${win}%\"; vd=\"${VIBE_VSS_DIR:-/workspace/.vss}\"; if [ -n \"$win\" ] && [ -d \"$vd\" ]; then { printf 'epoch=%s\\nused=%s\\n' \"$(date +%s)\" \"$win\" > \"$vd/rate-limit.tmp.$$\" && mv \"$vd/rate-limit.tmp.$$\" \"$vd/rate-limit\"; } 2>/dev/null || rm -f \"$vd/rate-limit.tmp.$$\" 2>/dev/null; fi; sig_root=\"${VIBE_REPOS_DIR:-/repos}/.signals\"; rwseg=\"\"; if [ -d \"$sig_root\" ]; then for d in \"$sig_root\"/*/; do [ -d \"$d\" ] || continue; meta=\"$d/rw-lock.d/meta\"; req=\"$d/rw-request\"; if [ -f \"$meta\" ] && [ -f \"$req\" ]; then holder=$(grep '^project=' \"$meta\" 2>/dev/null | head -n1 | cut -d= -f2-); if [ -n \"$holder\" ] && [ \"$holder\" = \"${VIBE_PROJECT_NAME:-}\" ]; then requester=$(grep '^project=' \"$req\" 2>/dev/null | head -n1 | cut -d= -f2-); if [ -n \"$requester\" ]; then rwseg=\" · ⚠ rw:${requester}\"; printf '\\a' >&2; break; fi; fi; fi; done; fi; out=\"${out}${rwseg}\"; printf '%s' \"$out\""
+    "command": "input=$(cat); m=$(printf '%s' \"$input\" | jq -r '.model.display_name // \"?\"'); case \"$m\" in *Fable*) l=F;; *Opus*) l=O;; *Sonnet*) l=S;; *Haiku*) l=H;; *) l=\"$m\";; esac; ctx=$(printf '%s' \"$input\" | jq -r '.context_window.used_percentage // \"\" | if type==\"number\" then (floor|tostring) else . end'); win=$(printf '%s' \"$input\" | jq -r '.rate_limits.five_hour.used_percentage // \"\" | if type==\"number\" then (floor|tostring) else . end'); rs=$(printf '%s' \"$input\" | jq -r '.rate_limits.five_hour.resets_at // \"\" | if type==\"number\" then (floor|tostring) else \"\" end'); out=\"$l · vibe\"; [ -n \"$ctx\" ] && out=\"$out · ctx ${ctx}%\"; [ -n \"$win\" ] && out=\"$out · 5h ${win}%\"; vd=\"${VIBE_VSS_DIR:-/workspace/.vss}\"; if [ -n \"$win\" ] && [ -d \"$vd\" ]; then { { printf 'epoch=%s\\nused=%s\\n' \"$(date +%s)\" \"$win\"; if [ -n \"$rs\" ]; then printf 'resets=%s\\n' \"$rs\"; fi; } > \"$vd/rate-limit.tmp.$$\" && mv \"$vd/rate-limit.tmp.$$\" \"$vd/rate-limit\"; } 2>/dev/null || rm -f \"$vd/rate-limit.tmp.$$\" 2>/dev/null; fi; sig_root=\"${VIBE_REPOS_DIR:-/repos}/.signals\"; rwseg=\"\"; if [ -d \"$sig_root\" ]; then for d in \"$sig_root\"/*/; do [ -d \"$d\" ] || continue; meta=\"$d/rw-lock.d/meta\"; req=\"$d/rw-request\"; if [ -f \"$meta\" ] && [ -f \"$req\" ]; then holder=$(grep '^project=' \"$meta\" 2>/dev/null | head -n1 | cut -d= -f2-); if [ -n \"$holder\" ] && [ \"$holder\" = \"${VIBE_PROJECT_NAME:-}\" ]; then requester=$(grep '^project=' \"$req\" 2>/dev/null | head -n1 | cut -d= -f2-); if [ -n \"$requester\" ]; then rwseg=\" · ⚠ rw:${requester}\"; printf '\\a' >&2; break; fi; fi; fi; done; fi; out=\"${out}${rwseg}\"; printf '%s' \"$out\""
   },
   "hooks": {
     "PreToolUse": [
