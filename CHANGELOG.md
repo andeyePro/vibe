@@ -6,6 +6,14 @@ Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion 
 
 ## 2026-09-25
 
+- [x] **`/vs` Model economy carries the measured prompt-cache rules** (`devcontainer/commands/vs.md`, `smoke/checks_13_spec_first.py`). These come from the 2026-09-08 `claude -p` measurements. Each fresh reviewer call re-writes about 30k cache tokens into the 1-hour bucket at twice the write price; that is prefix instability, not expiry. So:
+  - batch one call per diff, not per file, but only to what a reviewer can hold, with hot files alone per `.vs/review-focus.md`;
+  - a panel pays for itself only at three or more same-model reviewers;
+  - stagger panellists, since a cache entry is readable only once the first response streams;
+  - weigh Haiku routing for short tasks against that write.
+
+  The fuller working, including the `ephemeral_5m` overage canary and the rejected `--exclude-dynamic-system-prompt-sections`, stays in brain2 (`vibe-ChatGPT-chat.md`). The vs+vss+vsss budget stays under 14,300: the `--verbosity` interpolation note and the "flags are independent dimensions" paragraph were cut to make room. One new smoke check. Removes the TODO entry.
+
 - [x] **`/vss` no longer implies a hard-escalate reaches Martin's phone** (`devcontainer/commands/vss.md`). The landscape research found that `PushNotification` sends a mobile push only while Remote Control is active, and vibe never starts it. The hard-escalate instruction now says so. The words came out of the same sentence, keeping vs+vss+vsss at their 14,300-word budget. The notification TODO also records the finding that hook output can carry a `terminalSequence`, and why the question-posted trigger belongs host-side.
 
 - [x] **The container learns which terminal it is in: `TERM_PROGRAM` is forwarded** (`vibe`, `smoke/checks_22_codex_agent.py`, `MANUAL-TESTS.md`). This is step one of the landscape research's notification finding. `devcontainer exec` hands the container no `TERM_PROGRAM`, so inside vibe both runtimes saw an unknown terminal:

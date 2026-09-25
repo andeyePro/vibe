@@ -1038,6 +1038,7 @@ def main() -> int:
     test_every_smoke_test_is_registered_in_the_runner()
     test_vibe_expands_possibly_empty_arrays_safely()
     test_vs_tester_must_show_a_control_can_fail()
+    test_vs_model_economy_carries_the_cache_rules()
     test_statusline_records_the_window_reset()
     test_native_wait_detector()
     test_watchdog_stands_aside_during_a_native_wait()

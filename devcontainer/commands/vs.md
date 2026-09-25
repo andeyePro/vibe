@@ -71,6 +71,10 @@ Tier bumps happen on the Step-7 fail path, and ONLY when the Evaluator diagnoses
 
 Log every escalation in `.vs/progress.md` (`escalated generator sonnet→opus: <diagnosis>`) and, under `--cost`, in `cost.json`. Record the tier that finally passed in the pass verdict — that calibrates Planner's starting-tier estimates.
 
+### Prompt-cache rules
+
+Each fresh reviewer call re-writes ~30k cache tokens at 2x price. Batch per diff, not per file, within what a reviewer can hold (hot files alone: `.vs/review-focus.md`); panels pay only at ≥3 same-model reviewers; stagger panellists; weigh Haiku routing against that write.
+
 ## Flags
 
 - `/vs --gen <haiku|sonnet|opus> <prompt>` — override the Generator's starting tier for this run.
@@ -89,7 +93,7 @@ Log every escalation in `.vs/progress.md` (`escalated generator sonnet→opus: <
   - **5** (default): full per-AC assessment with one-sentence rationale per assertion; concerns enumerated in numbered list.
   - **7**: as 5, plus mid-section interpretive commentary explaining why each concern matters and what fixing it would change.
   - **9**: full verbose — every AC enumerated even on pass, edge-cases discussed, alternative interpretations surfaced, references to spec line numbers, "why this AC exists" rationale for the report's reader.
-  - **1, 2, 4, 6, 8**: linearly interpolated between adjacent named levels. Producers should treat the named levels as anchors and fill intermediate levels with proportional content density.
+  - **1, 2, 4, 6, 8**: interpolate between the named levels.
 - `/vs --vN-spec N <prompt>` — Spec Critic-only verbosity override. Same 0-9 scale.
 - `/vs --vN-test N <prompt>` — Tester-only verbosity override.
 - `/vs --vN-eval N <prompt>` — Evaluator-only verbosity override.
@@ -98,8 +102,6 @@ Log every escalation in `.vs/progress.md` (`escalated generator sonnet→opus: <
 - `/vs --spec-first <prompt>` — after Spec Critic passes, commit the spec + TODO entry, mark `tasks.json` `awaiting-approval`, print a summary, and END the run with no Generator dispatch. Resume via `--approve`. Checkpoint mechanics: § Step 3b.
 - `/vs --approve [<task-id>]` — continue a spec-first checkpoint from Step 4, using the newest `awaiting-approval` task if `<task-id>` is omitted; archived specs are un-archived first. Full procedure: § Step 3b.
 - `/vs --TDD <prompt>` — Generator writes a red-first evidence trail (`.vs/cycle-<N>/tdd-trail.md`) before each implementing edit; Tester cross-checks it. Mechanical tests only — incompatible with `--fuzzy`. See § Step 4, § Step 5a.
-
-The `--plain` / `--techy` and `--verbosity` flags are independent dimensions: `--plain --verbosity 9` is verbose plain English; `--techy --verbosity 0` is one-line technical pass/fail. The cross-product is always meaningful.
 
 Per-output overrides win over global `--verbosity` when both are passed: `--verbosity 3 --vN-spec 9` means Spec Critic at v9, Tester+Evaluator at v3.
 

@@ -1133,3 +1133,15 @@ def test_vs_tester_must_show_a_control_can_fail():
     check("[vs] ... absent-mechanism result must not be a pass", "entirely absent (never a pass)" in step5a, "")
     check("[vs] ... positive control required", "positive control" in step5a, "")
     check("[vs] ... unverified assumptions marked", "assumption not checked against an artefact" in step5a, "")
+
+
+def test_vs_model_economy_carries_the_cache_rules():
+    """2026-09-08 measurements: each fresh reviewer call re-writes ~30k cache
+    tokens, so batching and panel size are cost decisions."""
+    print("\n[vs] Model economy: prompt-cache rules")
+    vs = (REPO / "devcontainer" / "commands" / "vs.md").read_text()
+    econ = vs[vs.index("## Model economy"):vs.index("## Flags")]
+    check("[vs] cache rules live under Model economy", "### Prompt-cache rules" in econ, "")
+    for token in ("~30k", "Batch per diff, not per file", "≥3 same-model reviewers", "stagger panellists",
+                  ".vs/review-focus.md"):
+        check(f"[vs] cache rules mention {token!r}", token in econ, "")
