@@ -145,6 +145,7 @@ def _codex_liveness_fixture(tmp: Path) -> tuple[Path, Path]:
         # list codex-guard-liveness checks, so the fixture chain needs a
         # copy too or every liveness check below fails on its absence.
         ("codex-prompt-prefix", PROMPT_PREFIX),
+        ("vsss-stop-guard", REPO / "devcontainer" / "vsss-stop-guard.sh"),
     ):
         dst = bin_dir / name
         dst.write_text(src.read_text())
@@ -340,7 +341,7 @@ def test_codex_hooks_json_ac3():
 
     hooks = data.get("hooks", {})
     check("[codex] guard, prompt and session-start events",
-          set(hooks.keys()) == {"PreToolUse", "UserPromptSubmit", "SessionStart"}, str(hooks.keys()))
+          set(hooks.keys()) == {"PreToolUse", "UserPromptSubmit", "SessionStart", "Stop"}, str(hooks.keys()))
     entries = hooks.get("PreToolUse", [])
     check("[codex] exactly two matcher groups", len(entries) == 2, str(entries))
 

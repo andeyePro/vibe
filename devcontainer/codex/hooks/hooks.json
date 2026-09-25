@@ -43,6 +43,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /bin/bash /usr/local/bin/vsss-stop-guard",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

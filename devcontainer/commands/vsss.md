@@ -78,13 +78,14 @@ Only when the ORIGINAL invocation carried an explicit `--hours`/`--budget` cap d
 
 Automatic continuation across credit windows is the DEFAULT: a `/vsss` run keeps relaunching after out-of-credit halts until the task genuinely completes. `--sessions X` caps the run at X windows total (X-1 relaunches); `--sessions 1` opts out of relaunch entirely. Skill side (this spec) and launcher side (`/workspace/vibe`) split the work:
 
-**Skill side — you maintain the marker.** At session start, write `.vss/auto-resume` (the marker file keeps its name — it's the launcher-side contract; KEY=VALUE lines, digits only — the launcher rejects anything else):
+**Skill side — you maintain the marker.** At session start, write `.vss/auto-resume` (the marker file keeps its name — it's the launcher-side contract; KEY=VALUE lines, digits only except `owner=`, which only the Stop hook reads):
 
 ```
 active=1
 remaining=<X-1 if --sessions X was passed; 9999 otherwise — FRESH invocations only, see below>
 resume_at=<current window's start + 5*3600, epoch seconds>
 session_file=.vss/sessions/<start-ISO>.md
+owner=<$CLAUDE_CODE_SESSION_ID, or $CODEX_THREAD_ID under Codex; re-stamped on resume>
 ```
 
 `9999` is the unbounded-persistence sentinel — the launcher contract is digits-only, and 9999 windows is "as many as it takes" with a runaway failsafe. The launcher decrements it per relaunch like any other value; no launcher change is involved.
@@ -143,6 +144,8 @@ Two corollaries, both of which have caused real multi-hour stalls:
   iteration boundary. Waiting is not a state you can occupy — there is no wall
   clock inside a turn, so "wait 10 minutes and re-check" is not implementable.
   Poll the inbound channel at iteration boundaries instead.
+
+**A Stop hook enforces this** (`vsss-stop-guard`, both runtimes): while the run the marker's `owner=` names is live, ending the turn is refused. Three refusals without a new commit let go.
 
 Between iterations, progress belongs in `.vss/sessions/<start-ISO>.md`, not in a
 message to the user — it is durable, it survives an abort, and Martin is not
@@ -329,11 +332,11 @@ Even with autonomy turned all the way up, never autonomously:
 
 If a wrapped `/vss` iteration tries any of these, the iteration aborts (per `/vss` rules) AND the `/vsss` loop exits per condition 1.
 
-Dispatch rule inherited by every wrapped iteration's subagents: long build/test/ssh runs are foreground with `timeout: 600000`, never `run_in_background`: a backgrounded command's completion notification goes to the chair, not the subagent that launched it, so the subagent parks forever.
+Wrapped iterations' subagents inherit `/vss`'s foreground-only rule for long build/test/ssh runs.
 
 ## Why `/vsss` exists alongside `/vss`
 
-`/vss` is one bounded unit of work — use it to step away briefly. `/vsss` is "burn the rest of my session productively": hours of session credit spent on the project, with the escalate list catching anything dangerous. Higher blast radius, and more spec-level discipline (the optimiser keeps the loop honest).
+`/vss` is one bounded unit of work — use it to step away briefly. `/vsss` is "burn the rest of my session productively": hours of session credit spent on the project, with the escalate list catching anything dangerous.
 
 Three vacuous iterations are the design saying "nothing useful left to do" — let it stop rather than feeding it noise tasks.
 

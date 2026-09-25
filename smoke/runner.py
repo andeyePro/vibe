@@ -44,6 +44,7 @@ from smoke.checks_30_supervisor_reconciliation import *
 from smoke.checks_32_managed_vendor_trust import *
 from smoke.checks_33_host_onboarding import *
 from smoke.checks_34_docker_hygiene import *
+from smoke.checks_35_vsss_stop_guard import *
 
 def main() -> int:
     test_docker_preflight_is_shared_and_mac_start_preserves_target()
@@ -1026,6 +1027,10 @@ def main() -> int:
     test_image_label_agrees_everywhere()
     test_image_label_is_the_last_dockerfile_instruction()
     test_launcher_has_no_volume_removal_anywhere()
+    test_stop_guard_blocks_a_live_owned_run()
+    test_stop_guard_allow_paths()
+    test_stop_guard_caps_refusals_without_a_commit()
+    test_stop_guard_wiring()
 
     print()
     if FAILURES:

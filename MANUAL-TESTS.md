@@ -1836,6 +1836,32 @@ cd ~/Projects/vibe-test && vibe --agent codex
 
 - [ ] the Codex TUI renders in full colour from a truecolor terminal
 
+### Test 59: The /vsss keep-going guard stops an early exit
+
+The Stop hook's logic is covered offline by `smoke/checks_35_vsss_stop_guard.py`.
+What only a live session can show is that each runtime actually feeds the refusal
+back to the model and the model carries on.
+
+**Claude lead:**
+
+```bash
+cd ~/Projects/vibe-test && vibe
+# inside: start a small run, then ask it to stop and wait for you
+/vsss --hours 0.5 tidy the README; when you reach the licence section, stop and ask me which licence to use
+```
+
+- [ ] when it reaches the question, the turn does not end: a hook message quoting
+      "vibe /vsss keep-going guard" appears and the model posts the question to
+      `vibe-fromClaude.md` (or `.vss/`) and moves on
+- [ ] a normal finish (Final state written, `active=0`) ends the turn without a refusal
+- [ ] in a second, ordinary `vibe` session in the same project while the run is live,
+      a turn ends normally (the run is not that session's)
+
+**Codex lead:** repeat with `vibe --agent codex` and `$vsss …`.
+
+- [ ] Codex shows the Stop hook's continuation and keeps working; `codex-guard-liveness`
+      still passes at launch
+
 ---
 
 ## Test Summary
