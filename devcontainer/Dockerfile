@@ -1,6 +1,8 @@
 # Vendored from anthropics/claude-code .devcontainer/Dockerfile
 # Upstream commit: 0385848b4e737831fc3b973d9a78d31950a87d9d
-# Fetched: 2026-04-18
+# Fetched: 2026-04-18. Re-checked 2026-09-25 against upstream main: Dockerfile
+# and devcontainer.json unchanged; init-firewall.sh only dropped
+# statsig.anthropic.com, which vibe had already removed.
 # To resync: re-fetch from
 #   https://raw.githubusercontent.com/anthropics/claude-code/<sha>/.devcontainer/Dockerfile
 # then re-apply the vibe-specific patches (openssh-client, shellcheck,
