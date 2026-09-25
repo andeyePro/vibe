@@ -1813,6 +1813,9 @@ cd ~/Projects/vibe-test && vibe
 ```
 
 - [ ] prints `xterm-256color / truecolor` and `256`
+- [ ] `!echo "$TERM_PROGRAM"` prints your terminal (`ghostty` / `iTerm.app`), and under
+      `vibe --agent codex` a finished turn raises a macOS notification from Ghostty/iTerm2
+      (iTerm2: Profiles > Terminal > "Send escape sequence-generated alerts" must be on)
 - [ ] drag-select some output: the selection is a legible blue, not near-black
       (fullscreen renderer only — `/tui` says which one is live)
 - [ ] `/config` → Input & controls lists "Copy on select"

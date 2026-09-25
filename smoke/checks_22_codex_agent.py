@@ -125,6 +125,10 @@ def _agent_composed_call(home, ws, bindir, agent_arg: str, body: str):
         "HOME": str(home),
         "PATH": f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}",
         "COLORTERM": "truecolor",
+        # Likewise pinned: an empty value is dropped by build_color_env, so the
+        # goldens hold whichever terminal the suite is run from.
+        "TERM_PROGRAM": "",
+        "TERM_PROGRAM_VERSION": "",
     }
     return _source_vibe_call(env, call)
 
@@ -769,8 +773,23 @@ def test_terminal_color_env_reaches_container():
         ("COLORTERM='`id`'",       "TERM=xterm-256color"),
         ("COLORTERM='a b'",        "TERM=xterm-256color"),
     ]
+    cases += [
+        ("COLORTERM=truecolor TERM_PROGRAM=ghostty TERM_PROGRAM_VERSION=1.2.3",
+         "TERM=xterm-256color COLORTERM=truecolor TERM_PROGRAM=ghostty TERM_PROGRAM_VERSION=1.2.3"),
+        ("unset COLORTERM; TERM_PROGRAM=iTerm.app",   "TERM=xterm-256color TERM_PROGRAM=iTerm.app"),
+        ("unset COLORTERM; TERM_PROGRAM=Apple_Terminal", "TERM=xterm-256color TERM_PROGRAM=Apple_Terminal"),
+        ("unset COLORTERM; TERM_PROGRAM='x; id'",     "TERM=xterm-256color"),
+        ("unset COLORTERM; TERM_PROGRAM=ghostty TERM_PROGRAM_VERSION='$(id)'",
+         "TERM=xterm-256color TERM_PROGRAM=ghostty"),
+        ("unset COLORTERM; TERM_PROGRAM=ghostty TERM_PROGRAM_VERSION=1.2.0-main+abc123",
+         "TERM=xterm-256color TERM_PROGRAM=ghostty TERM_PROGRAM_VERSION=1.2.0-main+abc123"),
+        ("unset COLORTERM; TERM_PROGRAM=vscode TERM_PROGRAM_VERSION=1.99.0", "TERM=xterm-256color"),
+        ("unset COLORTERM; TERM_PROGRAM='a b' TERM_PROGRAM_VERSION=1.0", "TERM=xterm-256color"),
+        ("unset COLORTERM; TERM_PROGRAM='*' TERM_PROGRAM_VERSION=1.0", "TERM=xterm-256color"),
+        ("unset COLORTERM; TERM_PROGRAM_VERSION=1.0", "TERM=xterm-256color"),
+    ]
     for prelude, expected in cases:
-        r = _source_vibe_call({}, f"{prelude}; build_color_env")
+        r = _source_vibe_call({}, f"unset TERM_PROGRAM TERM_PROGRAM_VERSION; {prelude}; build_color_env")
         check(f"[color] build_color_env after `{prelude}` -> {expected}",
               r.stdout.strip() == expected, r.stdout + "|" + r.stderr)
 
@@ -792,7 +811,8 @@ def test_terminal_color_env_reaches_container():
             f'{claude_body}\n'
             'launch_claude "" ""\n'
         )
-        env = {"HOME": str(home), "PATH": f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}"}
+        env = {"HOME": str(home), "PATH": f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}",
+               "TERM_PROGRAM": "", "TERM_PROGRAM_VERSION": ""}
         r = _source_vibe_call(env, call)
         calls = _agent_calls(log)
         check("[color] no-COLORTERM host: exactly one devcontainer call",

@@ -780,13 +780,35 @@ build_claude_model_args() {
 # a shell-significant character is dropped rather than sanitised, because a
 # COLORTERM that isn't a plain token is not a colour declaration.
 # Defined above the VIBE_SOURCE_ONLY guard so smoke-test.py can unit-test it.
+#
+# TERM_PROGRAM (+ TERM_PROGRAM_VERSION) are forwarded the same way, for the
+# same reason: they are how Codex (codex-rs/terminal-detection, `TERM_PROGRAM`
+# first) picks OSC 9 desktop notifications for Ghostty/iTerm2 and Claude Code
+# decides whether to emit clickable OSC 8 links. Without them both see an
+# unknown terminal inside the container and fall back to a bell or nothing.
+# `vscode` is not forwarded: Claude Code reads it as "inside the VS Code
+# terminal" and would try IDE integration that cannot work in the container.
+# The version travels only with a forwarded name, and may carry `+` (tip
+# builds, e.g. 1.2.0-main+abc123), which is inert in the command string.
 build_color_env() {
-  local out="TERM=xterm-256color"
+  local out="TERM=xterm-256color" prog="${TERM_PROGRAM:-}" ver="${TERM_PROGRAM_VERSION:-}"
   case "${COLORTERM:-}" in
     "") ;;
     *[!A-Za-z0-9._-]*) ;;
     *) out="$out COLORTERM=$COLORTERM" ;;
   esac
+  case "$prog" in
+    "" | vscode) prog="" ;;
+    *[!A-Za-z0-9._-]*) prog="" ;;
+  esac
+  if [ -n "$prog" ]; then
+    out="$out TERM_PROGRAM=$prog"
+    case "$ver" in
+      "") ;;
+      *[!A-Za-z0-9._+-]*) ;;
+      *) out="$out TERM_PROGRAM_VERSION=$ver" ;;
+    esac
+  fi
   echo "$out"
 }
 
