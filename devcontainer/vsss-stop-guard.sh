@@ -38,7 +38,27 @@
 #   * its own counter is not a regular file, or anything fails: unreadable or
 #     non-JSON input, jq missing, a failed write.
 #
-# The only thing it ever writes is its own counter, .vss/stop-guard.
+# ASK MODE (`vsss-stop-guard ask`, Claude Code's PreToolUse hook on
+# AskUserQuestion): the other way a live run halts. An AskUserQuestion never
+# ends the turn, so the Stop check above never fires, and the pending question
+# (.vss/awaiting-human) also stands the launcher's stall watchdog down — one
+# routine question would park an unattended run until someone came back. So
+# while the owned run is live and past its front-loaded start (its session
+# file has an `## Iter` block), the tool call is DENIED with the same "post it
+# to fromClaude and carry on" instruction. A hard-escalate is still asked: it
+# ends the run, so vsss.md has it write Final state and active=0 first, after
+# which this lets the question through. On every allow in ask mode it writes
+# .vss/awaiting-human exactly as the plain hook it replaces did (only when a
+# marker file exists); it never writes it on a deny. There is no refusal cap
+# here: a denied question traps nothing — the model can carry on or exit; a
+# model that retries the same question forever only burns its own window
+# (each retry is a tool call, so the heartbeat stays fresh). An existing
+# .vss/awaiting-human does NOT short-circuit ask mode: a stale one (an
+# answered question whose PostToolUse never ran) would otherwise let every
+# later question through.
+#
+# Besides that marker, the only thing it ever writes is its own counter,
+# .vss/stop-guard.
 set -uo pipefail
 export PATH=/usr/local/bin:/usr/bin:/bin
 
@@ -48,7 +68,16 @@ fresh=${VIBE_STOP_GUARD_FRESH_SECS:-21600}
 case "$max" in '' | *[!0-9]*) max=3 ;; esac
 case "$fresh" in '' | *[!0-9]*) fresh=21600 ;; esac
 
-allow() { exit 0; }
+mode=stop
+[ "${1:-}" = ask ] && mode=ask
+
+allow() {
+  if [ "$mode" = ask ] && [ -f "$root/.vss/auto-resume" ]; then
+    { date +%s > "$root/.vss/awaiting-human.tmp.$$" && mv -f -- "$root/.vss/awaiting-human.tmp.$$" "$root/.vss/awaiting-human"; } 2>/dev/null ||
+      rm -f -- "$root/.vss/awaiting-human.tmp.$$" 2>/dev/null
+  fi
+  exit 0
+}
 
 command -v jq >/dev/null 2>&1 || allow
 payload=$(cat 2>/dev/null) || allow
@@ -60,7 +89,13 @@ last_message=$(printf '%s' "$payload" | jq -r '.last_assistant_message // empty'
 vss=$root/.vss
 marker=$vss/auto-resume
 [ -f "$marker" ] && [ ! -L "$marker" ] || allow
-[ -e "$vss/awaiting-human" ] && allow
+[ "$mode" = stop ] && [ -e "$vss/awaiting-human" ] && allow
+# Stop mode answers only the Stop event: a newer settings file pointing an
+# older image's guard at another event must fail open, not block the tool.
+if [ "$mode" = stop ]; then
+  event=$(printf '%s' "$payload" | jq -r '.hook_event_name // "Stop"' 2>/dev/null) || allow
+  [ "$event" = Stop ] || allow
+fi
 
 field() { sed -n "s/^$1=//p" "$marker" 2>/dev/null | tail -n1; }
 [ "$(field active)" = 1 ] || allow
@@ -75,6 +110,15 @@ grep -q '^## Final state' "$session" 2>/dev/null && allow
 now=$(date +%s)
 mtime=$(stat -c %Y -- "$marker" 2>/dev/null || stat -f %m -- "$marker" 2>/dev/null) || allow
 [ $((now - mtime)) -le "$fresh" ] || allow
+
+if [ "$mode" = ask ]; then
+  # Front-loaded questions (vsss.md asks some before the autonomous phase)
+  # come before the first iteration block.
+  grep -q '^## Iter' "$session" 2>/dev/null || allow
+  reason="vibe /vsss keep-going guard: the /vsss run in $session_rel is live and unattended. If this question is on the hard-escalate list, you must NOT carry on: write '## Final state' (the abort) to $session_rel and set active=0 in .vss/auto-resume, then ask again and it is allowed. Otherwise do not ask it here, because it would park the run until someone comes back: put it in the fromClaude answer file as a short numbered action point with your recommended reversible default, note in the session file which work it parks, and carry on with the next item that does not depend on it."
+  jq -n --arg reason "$reason" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $reason}}' 2>/dev/null || allow
+  exit 0
+fi
 
 # Progress is a new commit, nothing else: a note appended to the session file
 # is cheap to produce and would let a stuck run reset the count forever.

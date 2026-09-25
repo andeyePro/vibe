@@ -13,7 +13,7 @@ Autonomous loop wrapper around `/vss`. Higher blast radius — read this whole f
 
 Inherited verbatim from `/vss` (raise via `AskUserQuestion`+`PushNotification`, not prose — task_058). Every iteration honours it; see `/vss` for the full list.
 
-A hard-escalate trigger inside any iteration aborts the entire loop, not just that iteration.
+A hard-escalate trigger inside any iteration aborts the entire loop: write Final state and `active=0` first, then ask.
 
 ## Session-budget capture
 

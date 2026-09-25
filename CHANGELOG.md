@@ -6,6 +6,22 @@ Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion 
 
 ## 2026-09-25
 
+- [x] **An `AskUserQuestion` can no longer park an unattended `/vsss` run** (`devcontainer/vsss-stop-guard.sh`, `vibe`, `README.md`, `MANUAL-TESTS.md`, `smoke/checks_35_vsss_stop_guard.py`). Found by this run's optimiser: this was the last Claude-side way a run could halt early. An `AskUserQuestion` never ends the turn, so the keep-going Stop hook never fires. The pending question's `.vss/awaiting-human` marker also, correctly for a hard-escalate, stands the stall watchdog down. So one routine question left an overnight run waiting until Martin came back.
+  - The `AskUserQuestion` PreToolUse hook now runs `vsss-stop-guard ask`, with the old inline marker write as the fallback on an image without it.
+  - While the run this session owns is live, fresh, has no Final state and has at least one `## Iter` block, the question is denied. Questions asked up front, before the first iteration, are unaffected.
+  - The deny reason sends the question to fromClaude and says to carry on. A hard-escalate, which ends the run, writes Final state and `active=0` first, and is then asked normally.
+  - Every allow path writes `awaiting-human` exactly as the old hook did; a deny never does.
+
+  There is no refusal cap: a refused question traps nothing.
+
+  Review round (opus) fixes:
+  - `vsss.md` now says a hard-escalate writes Final state and `active=0` before asking. It used to say "ask, then write Final state at exit", which the deny would have turned into "carry on past a hard-escalate".
+  - The deny reason now leads with the hard-escalate rule.
+  - A stale `awaiting-human` no longer short-circuits ask mode. An answered question whose PostToolUse never ran would otherwise have let every later question through.
+  - Stop mode now fails open on any event other than `Stop`, so a new settings file pointing an older image's guard at `AskUserQuestion` cannot block the tool.
+
+  Tests: 17 checks covering the deny, five allow shapes (each still writing the marker), the stale-marker and 7h-marker cases, the old-image fail-open, garbage input, and the hook wiring. Manual Test 59 gains the live step.
+
 - [x] **The stall watchdog stands aside while Claude Code waits out a 5-hour limit itself** (`vibe`, `README.md`, `smoke/checks_36_native_usage_wait.py`). Found by this run's landscape research and confirmed in the installed binary's settings schema. Since 2.1.234, Claude Code's `autoContinueAtUsageLimit` is on by default: "When a claude.ai usage limit stops your session, wait for the limit to reset and continue the task automatically". The usage-limit picker that the watchdog was built to kill (task_016) therefore no longer wedges on a 5-hour limit. But during the native wait no tool runs, so the heartbeat goes stale exactly as in a wedge. vibe would kill a session that was recovering on its own after 30 minutes, then relaunch it and spend a resume window on it.
   - The statusLine now also records the five_hour window's `resets_at` (`resets=` in `.vss/rate-limit`, only when it is numeric; the display is byte-identical).
   - A new `auto_resume_native_wait` is true while the last reading shows `used` ≥ 90 and the reset has not passed by more than 15 minutes (both env-tunable).

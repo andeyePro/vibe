@@ -1033,6 +1033,7 @@ def main() -> int:
     test_stop_guard_caps_refusals_without_a_commit()
     test_stop_guard_wiring()
     test_liveness_ties_each_hook_program_to_its_event()
+    test_ask_mode_parks_no_live_run_on_a_question()
     test_statusline_records_the_window_reset()
     test_native_wait_detector()
     test_watchdog_stands_aside_during_a_native_wait()

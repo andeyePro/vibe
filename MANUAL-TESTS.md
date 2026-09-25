@@ -1854,6 +1854,9 @@ cd ~/Projects/vibe-test && vibe
       "vibe /vsss keep-going guard" appears and the model posts the question to
       `vibe-fromClaude.md` (or `.vss/`) and moves on
 - [ ] a normal finish (Final state written, `active=0`) ends the turn without a refusal
+- [ ] if it tries to ask you with a pop-up question (AskUserQuestion) after its first
+      iteration, the question is refused with "vibe /vsss keep-going guard … Do not ask
+      it here", and the question lands in fromClaude instead
 - [ ] in a second, ordinary `vibe` session in the same project while the run is live,
       a turn ends normally (the run is not that session's)
 

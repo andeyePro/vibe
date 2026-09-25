@@ -5476,7 +5476,7 @@ cat > "$WORKSPACE/.claude/settings.local.json" << 'EOF'
       {
         "matcher": "AskUserQuestion",
         "hooks": [
-          { "type": "command", "command": "[ -f /workspace/.vss/auto-resume ] && { date +%s > /workspace/.vss/awaiting-human.tmp.$$ && mv /workspace/.vss/awaiting-human.tmp.$$ /workspace/.vss/awaiting-human; } || true" }
+          { "type": "command", "command": "[ -x /usr/local/bin/vsss-stop-guard ] && /usr/local/bin/vsss-stop-guard ask || { [ -f /workspace/.vss/auto-resume ] && { date +%s > /workspace/.vss/awaiting-human.tmp.$$ && mv /workspace/.vss/awaiting-human.tmp.$$ /workspace/.vss/awaiting-human; } || true; }" }
         ]
       }
     ],

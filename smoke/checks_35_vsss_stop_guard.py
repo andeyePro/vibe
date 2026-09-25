@@ -261,3 +261,99 @@ def test_liveness_ties_each_hook_program_to_its_event():
         check("[stop-guard] the keep-going guard moved to PreToolUse fails liveness",
               r.returncode != 0 and "vsss-stop-guard is wired to the PreToolUse event" in (r.stdout + r.stderr),
               f"rc={r.returncode} {r.stdout[-300:]} {r.stderr[-300:]}")
+
+
+def _run_ask(root: Path, payload, extra_env: dict | None = None):
+    env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "VIBE_STOP_GUARD_ROOT": str(root)}
+    if extra_env:
+        env.update(extra_env)
+    data = payload if isinstance(payload, str) else json.dumps(payload)
+    return subprocess.run(["/usr/bin/env", "-i", *[f"{k}={v}" for k, v in env.items()],
+                           "/bin/bash", str(STOP_GUARD), "ask"],
+                          input=data, capture_output=True, text=True, timeout=30)
+
+
+def _ask_payload(session_id: str | None = SID) -> dict:
+    p = {"hook_event_name": "PreToolUse", "tool_name": "AskUserQuestion",
+         "tool_input": {"questions": [{"question": "Which licence?"}]}}
+    if session_id is not None:
+        p["session_id"] = session_id
+    return p
+
+
+def _denied(r) -> bool:
+    try:
+        out = json.loads(r.stdout)["hookSpecificOutput"]
+        return r.returncode == 0 and out["permissionDecision"] == "deny" and out["hookEventName"] == "PreToolUse"
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return False
+
+
+def test_ask_mode_parks_no_live_run_on_a_question():
+    print("\n[stop-guard ask] AskUserQuestion mid-run is denied; everything else is allowed and marked")
+    with tempfile.TemporaryDirectory() as td:
+        root = _guard_fixture(Path(td))
+        r = _run_ask(root, _ask_payload())
+        check("[stop-guard ask] live owned run past its start: question denied", _denied(r), r.stdout + r.stderr)
+        reason = json.loads(r.stdout)["hookSpecificOutput"]["permissionDecisionReason"] if _denied(r) else ""
+        check("[stop-guard ask] reason sends it to fromClaude and says to carry on",
+              "fromClaude" in reason and "carry on" in reason, reason)
+        check("[stop-guard ask] reason leads with the hard-escalate rule",
+              reason.split("unattended. ", 1)[-1].startswith("If this question is on the hard-escalate list, you must NOT carry on")
+              and "## Final state" in reason and "active=0" in reason, reason)
+        check("[stop-guard ask] a denied question writes no awaiting-human marker",
+              not (root / ".vss" / "awaiting-human").exists())
+        check("[stop-guard ask] ask mode never touches the Stop counter",
+              not (root / ".vss" / "stop-guard").exists())
+    allow_cases = [
+        ("front-loaded (no Iter block yet)", {}, _ask_payload(), lambda root: (root / SESSION_REL).write_text("# /vsss session\n")),
+        ("Final state written (a hard-escalate)", dict(final=True), _ask_payload(), None),
+        ("another session", {}, _ask_payload(session_id="other"), None),
+        ("active=0", dict(active="0"), _ask_payload(), None),
+    ]
+    for label, kw, payload, tweak in allow_cases:
+        with tempfile.TemporaryDirectory() as td:
+            root = _guard_fixture(Path(td), **kw)
+            if tweak:
+                tweak(root)
+            r = _run_ask(root, payload)
+            check(f"[stop-guard ask] {label}: allowed", _allowed(r), r.stdout + r.stderr)
+            check(f"[stop-guard ask] {label}: awaiting-human written, as the old hook did",
+                  (root / ".vss" / "awaiting-human").is_file())
+    with tempfile.TemporaryDirectory() as td:
+        root = _guard_fixture(Path(td))
+        (root / ".vss" / "auto-resume").unlink()
+        r = _run_ask(root, _ask_payload())
+        check("[stop-guard ask] no marker: allowed and no awaiting-human (old hook's gate)",
+              _allowed(r) and not (root / ".vss" / "awaiting-human").exists(), r.stdout)
+    with tempfile.TemporaryDirectory() as td:
+        root = _guard_fixture(Path(td))
+        (root / ".vss" / "awaiting-human").write_text("1\n")
+        r = _run_ask(root, _ask_payload())
+        check("[stop-guard ask] a stale awaiting-human marker does not let the question through",
+              _denied(r), r.stdout)
+    with tempfile.TemporaryDirectory() as td:
+        root = _guard_fixture(Path(td))
+        old = time.time() - 7 * 3600
+        os.utime(root / ".vss" / "auto-resume", (old, old))
+        check("[stop-guard ask] a marker not refreshed for 7h: question allowed",
+              _allowed(_run_ask(root, _ask_payload())))
+    with tempfile.TemporaryDirectory() as td:
+        root = _guard_fixture(Path(td))
+        r = _run_guard(root, {**_ask_payload(), "hook_event_name": "PreToolUse"})
+        check("[stop-guard] stop mode handed a PreToolUse payload (old image, new settings) fails open",
+              _allowed(r), r.stdout)
+    with tempfile.TemporaryDirectory() as td:
+        root = _guard_fixture(Path(td))
+        r = _run_ask(root, "not json")
+        check("[stop-guard ask] garbage input fails open and still marks the pending question",
+              _allowed(r) and (root / ".vss" / "awaiting-human").is_file(), r.stdout)
+
+    launcher = VIBE.read_text()
+    start = launcher.index('cat > "$WORKSPACE/.claude/settings.local.json" << \'EOF\'')
+    body = launcher[launcher.index("\n", start) + 1:launcher.index("\nEOF\n", start)]
+    pre = json.loads(body)["hooks"]["PreToolUse"]
+    ask_cmds = [h["command"] for g in pre if g.get("matcher") == "AskUserQuestion" for h in g["hooks"]]
+    check("[stop-guard ask] Claude's AskUserQuestion PreToolUse hook runs the guard in ask mode",
+          len(ask_cmds) == 1 and ask_cmds[0].startswith("[ -x /usr/local/bin/vsss-stop-guard ] && /usr/local/bin/vsss-stop-guard ask || "),
+          str(ask_cmds))
