@@ -632,6 +632,11 @@ def test_review_command_docs() -> None:
         check("[review] AC5: default fan-out matches solo with no available slots",
               "With no available outside slots the default fan-out is identical to --solo." in review_text, "")
 
+        # Martin's T37 report (2026-09-12): /review on a clean tree said
+        # "nothing to review" instead of reviewing the branch.
+        check("[review] clean working tree falls back to the branch's merge-base diff",
+              "if clean, the branch's merge-base diff against the default branch" in review_text, "")
+
         check("[review] AC5: comment is hard-escalate",
               "--comment is GitHub-outward like push: /vss and /vsss treat it as hard-escalate, never auto-fired." in review_text, "")
 
