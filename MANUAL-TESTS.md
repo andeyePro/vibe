@@ -1861,6 +1861,10 @@ cd ~/Projects/vibe-test && vibe
 
 - [ ] Codex shows the Stop hook's continuation and keeps working; `codex-guard-liveness`
       still passes at launch
+- [ ] the id matches: ask Codex to run `echo "$CODEX_THREAD_ID"; grep owner= .vss/auto-resume`,
+      then, after its first refusal, `sed -n 1p .vss/stop-guard` — the `key=` line starts
+      with the same id. If `.vss/stop-guard` never appears, the ids differ and the guard
+      is silently inert under Codex: report both values
 
 ---
 
