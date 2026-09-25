@@ -6,6 +6,8 @@ Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion 
 
 ## 2026-09-25
 
+- [x] **Closed a stale TODO: the checks_27 quota-wait/stop test's residual risk is already guarded** (`TODO.md`). The 2026-09-12 entry kept the test on the real clock on purpose, since an injected clock would race past the checkpoint the test must interrupt. Its one residual worry was that a slower interrupt path would make the test slow without anything noticing. But the test already asserts `quota sleep exits promptly` (exit 130 within 3 s of the stop), so a slower interrupt fails loudly rather than just running slow. Re-run green today.
+
 - [x] **`/vs` Model economy carries the measured prompt-cache rules** (`devcontainer/commands/vs.md`, `smoke/checks_13_spec_first.py`). These come from the 2026-09-08 `claude -p` measurements. Each fresh reviewer call re-writes about 30k cache tokens into the 1-hour bucket at twice the write price; that is prefix instability, not expiry. So:
   - batch one call per diff, not per file, but only to what a reviewer can hold, with hot files alone per `.vs/review-focus.md`;
   - a panel pays for itself only at three or more same-model reviewers;
