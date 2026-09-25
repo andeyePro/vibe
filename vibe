@@ -1136,7 +1136,7 @@ VIBE_EXIT_TRAP_INSTALLED=""
 vibe_on_exit() {
   local _vibe_hook
   [ "${#VIBE_EXIT_HOOKS[@]}" -eq 0 ] && return 0
-  for _vibe_hook in "${VIBE_EXIT_HOOKS[@]}"; do
+  for _vibe_hook in ${VIBE_EXIT_HOOKS[@]+"${VIBE_EXIT_HOOKS[@]}"}; do
     eval "$_vibe_hook" || true
   done
   return 0
@@ -3491,7 +3491,7 @@ _build_override_config() {
   # to before this feature) — no per-call prefix needed for it, unlike
   # VIBE_OP_ADDHOST which is genuinely call-scoped.
   VIBE_OP_ADDHOST="$op_host" \
-    render_devcontainer_with_mounts "$default_cfg" "$dst" "${mount_args[@]}"
+    render_devcontainer_with_mounts "$default_cfg" "$dst" ${mount_args[@]+"${mount_args[@]}"}
   echo "$dst"
 }
 
@@ -5779,7 +5779,7 @@ fi
 # need no extra line here — the per-repo "◆ shared repo:" header line (C1)
 # reports the effective mode, which resolve_mode already flipped.
 if [ "${#VIBE_SHARED_REPO_WARNINGS[@]}" -gt 0 ]; then
-  for _srw_line in "${VIBE_SHARED_REPO_WARNINGS[@]}"; do
+  for _srw_line in ${VIBE_SHARED_REPO_WARNINGS[@]+"${VIBE_SHARED_REPO_WARNINGS[@]}"}; do
     echo "$_srw_line"
   done
 fi

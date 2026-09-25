@@ -530,3 +530,23 @@ def test_every_smoke_test_is_registered_in_the_runner():
     check("[lint] no smoke test is defined but never run", not missing, ", ".join(missing))
     stale = sorted(n for n in UNREGISTERED_TESTS_ALLOWED if n in registered)
     check("[lint] the unregistered allow-list names nothing that is registered", not stale, ", ".join(stale))
+
+
+def test_vibe_expands_possibly_empty_arrays_safely():
+    """`vibe` runs under macOS's bash 3.2 with `set -u`, where expanding an
+    EMPTY array as a bare "${arr[@]}" aborts the launcher (the TASK_BIND_ENV
+    launch break, 2026-09-12). Every array `vibe` ever assigns `=()` must be
+    expanded only in the guarded ${arr[@]+"${arr[@]}"} form."""
+    print("\n[lint] vibe: every possibly-empty array expansion is guarded for bash 3.2")
+    src = VIBE.read_text()
+    arrays = sorted(set(re.findall(r"(?:^|[\s;(])(?:local\s+)?([A-Za-z_]\w*)=\(\)", src, re.M)))
+    check("[lint] found the launcher's =() arrays", len(arrays) >= 3, str(arrays))
+    bare = []
+    for name in arrays:
+        guarded = '${%s[@]+"${%s[@]}"}' % (name, name)
+        for n, line in enumerate(src.splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            if ('"${%s[@]}"' % name) in line.replace(guarded, ""):
+                bare.append(f"vibe:{n} {name}")
+    check("[lint] no bare \"${arr[@]}\" expansion of an array that can be empty", not bare, "; ".join(bare))

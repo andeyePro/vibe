@@ -6,6 +6,12 @@ Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion 
 
 ## 2026-09-25
 
+- [x] **`vibe` expands every possibly-empty array in the bash-3.2-safe form, and a lint keeps it that way** (`vibe`, `smoke/checks_12_harness_lints.py`). Closes the 2026-09-12 follow-up from the `TASK_BIND_ENV` launch break. macOS runs `vibe` under bash 3.2, where a bare `"${arr[@]}"` on an EMPTY array aborts under `set -u`.
+  - **The three remaining bare expansions** were safe, but only because of their context: `VIBE_EXIT_HOOKS` and `VIBE_SHARED_REPO_WARNINGS` sat behind count checks, and `mount_args` always gets the projects mount. All three now use `${arr[@]+"${arr[@]}"}`, which behaves identically.
+  - **The new lint** finds every array `vibe` assigns `=()` and fails on any bare expansion of one. Run against the previous launcher, it flags exactly those three lines.
+
+  The sibling Dockerfile "USER node region" guard is still awaiting Martin's `y` (fromClaude T60).
+
 - [x] **Every smoke test must be registered in the runner (lint)** (`smoke/checks_12_harness_lints.py`, `smoke/runner.py`). Closes the task_043 follow-up: `test_review_command_docs` had been defined and never called, so a whole doc suite was silently dead, and the suite could not report it. A new lint requires every `def test_*` in `smoke/checks_*.py` to appear in `runner.main()`, either called directly or passed to `run_supervisor_tests([...])`. There is an explicit allow-list with a reason for each entry; it is empty today, and entries that are in fact registered are rejected. None were unregistered when it landed.
 
 - [x] **A supervised Codex run recovers from a full context window by compacting, instead of stopping** (`devcontainer/codex-supervisor.mjs`, `smoke/checks_19_codex_supervisor.py`, `README.md`). This was the last early-exit path for a supervised Codex run. `contextWindowExceeded` used to be fatal: checkpoint, exit 1, then someone compacts by hand. Codex usually compacts on its own, so this error means its own compaction failed. Now the supervisor calls `thread/compact/start` and carries on with `continue` (or with a still-pending exit challenge), up to a new `--max-compactions` (default 3). The ceiling counts compactions in a row: a completed turn resets it, like `max-turn-failures`. When it is exhausted, the run stops with exit 3, named as the `max-compactions` ceiling, rather than the old anonymous exit 1.

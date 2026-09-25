@@ -1035,6 +1035,7 @@ def main() -> int:
     test_liveness_ties_each_hook_program_to_its_event()
     test_ask_mode_parks_no_live_run_on_a_question()
     test_every_smoke_test_is_registered_in_the_runner()
+    test_vibe_expands_possibly_empty_arrays_safely()
     test_statusline_records_the_window_reset()
     test_native_wait_detector()
     test_watchdog_stands_aside_during_a_native_wait()
