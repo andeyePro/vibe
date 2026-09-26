@@ -65,6 +65,7 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+from supervisor_completion_fixture import write_completion
 LOG = HERE / "stub.log"
 META = HERE / "meta.json"
 
@@ -116,6 +117,7 @@ def main():
     compact_index = 0
     handshake = fixture.get("handshake", {})
     next_req_id = 100000
+    cwd = fixture.get("cwd", str(HERE.parent / "ws"))
 
     while True:
         line = read_line()
@@ -145,7 +147,10 @@ def main():
                 rl = {"primary": None, "secondary": None}
             send({"id": mid, "result": {"rateLimits": rl}})
         elif method in ("thread/start", "thread/resume"):
+            cwd = msg.get("params", {}).get("cwd", cwd)
             send({"id": mid, "result": {"thread": {"id": thread_id}}})
+        elif method == "thread/read":
+            send({"id": mid, "result": fixture.get("threadRead", {})})
         elif method == "turn/start":
             idx = turn_index
             turn_index += 1
@@ -172,6 +177,7 @@ def main():
                     if resp is None:
                         return
                     continue
+                write_completion(event, cwd, fixture)
                 send(event)
         elif method == "thread/compact/start":
             idx = compact_index
@@ -205,6 +211,7 @@ def _write_stub(stub_dir: Path, fixture: dict) -> Path:
     stub_dir.mkdir(parents=True, exist_ok=True)
     (stub_dir / "fixture.json").write_text(json.dumps(fixture))
     stub_path = stub_dir / "codex"
+    (stub_dir / "supervisor_completion_fixture.py").write_text((REPO / "smoke/supervisor_completion_fixture.py").read_text())
     stub_path.write_text(_CODEX_STUB_SRC)
     stub_path.chmod(0o755)
     return stub_path
@@ -311,7 +318,7 @@ def _extra_files_under_cwd(workspace: Path) -> list[str]:
     documented footprint: the main state/log pair, or a --new-run archive
     named codex-supervisor.<startedAt>.json. .git/ is pre-existing fixture
     scaffolding, not something the supervisor wrote."""
-    allowed = {".vss/codex-supervisor.json", ".vss/codex-supervisor.log"}
+    allowed = {".vss/codex-supervisor.json", ".vss/codex-supervisor.log", ".vss/codex-supervisor.json.completion.json", ".vss/sessions/fixture.md"}
     archive_re = re.compile(r"^\.vss/codex-supervisor\.\d+\.json$")
     found = []
     for p in workspace.rglob("*"):
@@ -1140,7 +1147,8 @@ def _challenge_run(tmp: Path, turn_events: list, extra_args: list | None = None)
     stub_dir = tmp / "stub"
     stub_path = _write_stub(stub_dir, {"turns": [{"events": ev} for ev in turn_events]})
     prompt = tmp / "prompt.txt"
-    prompt.write_text("/vsss go")
+    # Legacy bounded /vss keeps its marker protocol; strict /vsss is covered in checks_41.
+    prompt.write_text("/vss go")
     r = _run_supervisor(["run", "--cwd", str(workspace), "--prompt-file", str(prompt),
                          "--codex-bin", str(stub_path), *(extra_args or [])], env)
     texts = [m["params"]["input"][0]["text"] for m in _in_messages(stub_dir) if m.get("method") == "turn/start"]
@@ -1272,7 +1280,8 @@ def _compaction_run(tmp: Path, turn_events: list, compactions: list | None = Non
         (workspace / ".vss" / "codex-supervisor.json").write_text(json.dumps(state))
     stub_path = _write_stub(stub_dir, fixture)
     prompt = tmp / "prompt.txt"
-    prompt.write_text("/vsss go")
+    # Legacy bounded /vss keeps its marker protocol; strict /vsss is covered in checks_41.
+    prompt.write_text("/vss go")
     r = _run_supervisor(["run", "--cwd", str(workspace), "--prompt-file", str(prompt),
                          "--codex-bin", str(stub_path), *(extra_args or [])], env)
     msgs = _in_messages(stub_dir)
@@ -1393,7 +1402,7 @@ def test_codex_supervisor_pending_challenge_survives_a_compaction():
 def test_codex_supervisor_legacy_state_adopts_zero_compactions():
     print("\n[codex-supervisor] a state file without 'compactions' adopts it as 0")
     def legacy_state(**extra):
-        return {"threadId": "legacy-thread", "promptHash": hashlib.sha256(b"/vsss go").hexdigest(),
+        return {"threadId": "legacy-thread", "promptHash": hashlib.sha256(b"/vss go").hexdigest(),
                 "startedAt": int(time.time()) - 60, "turnsStarted": 1,
                 "turns": [{"turnId": "turn-old", "status": "completed", "at": int(time.time()) - 30}],
                 "resumes": 0, "quotaWaits": 0, "transientRetries": 0, "turnFailures": 0,

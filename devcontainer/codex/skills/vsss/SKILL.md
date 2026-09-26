@@ -5,8 +5,10 @@ description: Runs vibe's /vsss looped autonomous solo by reading and following /
 
 # $vsss
 
-Read `/usr/local/share/vibe/commands/vsss.md` now, in full, and follow it
-exactly as written — it is the single source of truth for this command.
+Read `/usr/local/share/vibe/codex-vsss.md` first and apply its supervised
+handoff before starting work. Inside the owned supervised thread, read
+`/usr/local/share/vibe/commands/vsss.md` in full. The Codex contract overrides
+its launcher, loop, clock and Stop-hook paragraphs; other workflow rules apply.
 Wherever it calls a Claude-only primitive, apply the substitution below
 instead; nothing else about the command body changes.
 

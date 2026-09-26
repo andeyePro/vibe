@@ -73,7 +73,7 @@ done
 CODEX_HOME=$home "$codex" app-server generate-json-schema --out "$home/schema" >/dev/null 2>&1 ||
   fail "codex app-server generate-json-schema failed"
 [ -f "$home/schema/ClientRequest.json" ] || fail "the app-server schema has no ClientRequest.json"
-for method in initialize thread/start thread/resume turn/start turn/interrupt thread/compact/start account/rateLimits/read; do
+for method in initialize thread/start thread/resume thread/read turn/start turn/interrupt thread/compact/start account/rateLimits/read; do
   grep -qF "\"$method\"" "$home/schema/ClientRequest.json" || fail "the app-server no longer accepts $method (codex-supervisor sends it)"
 done
 ok "app-server methods codex-supervisor uses"

@@ -140,6 +140,11 @@ def _codex_liveness_fixture(tmp: Path) -> tuple[Path, Path]:
         ("codex-entry", CODEX_ENTRY),
         ("codex-supervisor", REPO / "devcontainer/codex-supervisor.mjs"),
         ("supervisor-control.mjs", REPO / "devcontainer/supervisor-control.mjs"),
+        ("codex-rpc.mjs", REPO / "devcontainer/codex-rpc.mjs"),
+        ("codex-errors.mjs", REPO / "devcontainer/codex-errors.mjs"),
+        ("codex-completion.mjs", REPO / "devcontainer/codex-completion.mjs"),
+        ("codex-autonomy", REPO / "devcontainer/codex-autonomy.mjs"),
+        ("codex-stop-guard", REPO / "devcontainer/codex-stop-guard.mjs"),
         ("taskandi-client.mjs", REPO / "devcontainer/taskandi-client.mjs"),
         # task_053: the UserPromptSubmit prefix hook joined the ownership
         # list codex-guard-liveness checks, so the fixture chain needs a

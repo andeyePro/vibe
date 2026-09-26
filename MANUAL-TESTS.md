@@ -1863,14 +1863,10 @@ cd ~/Projects/vibe-test && vibe
 - [ ] in a second, ordinary `vibe` session in the same project while the run is live,
       a turn ends normally (the run is not that session's)
 
-**Codex lead:** repeat with `vibe --agent codex` and `$vsss …`.
-
-- [ ] Codex shows the Stop hook's continuation and keeps working; `codex-guard-liveness`
-      still passes at launch
-- [ ] the id matches: ask Codex to run `echo "$CODEX_THREAD_ID"; grep owner= .vss/auto-resume`,
-      then, after its first refusal, `sed -n 1p .vss/stop-guard` — the `key=` line starts
-      with the same id. If `.vss/stop-guard` never appears, the ids differ and the guard
-      is silently inert under Codex: report both values
+**Codex lead:** use Test 61 below. Codex now has its own supervised handoff
+and Stop routing. It deliberately does not write the shared `.vss/stop-guard`
+counter: completed turns return to the supervisor for evidence validation.
+The Claude checks above remain unchanged.
 
 ### Test 60: Agents know their capabilities and use the Mac account
 
@@ -1906,3 +1902,32 @@ After completing all tests, check:
 - [ ] SSH outbound works (if configured)
 - [ ] No credentials leaked to host/container boundary
 - [ ] `vibe clean` and the post-rebuild prune left every named volume intact
+
+
+### Test 61: Codex unattended handoff and recovery (2026-09-26)
+
+Run on a rebuilt image. Offline `checks_41` exercises evidence rejection,
+detached ownership, a SIGKILLed supervisor and read-only reconciliation; it
+does not establish live app-server history fidelity or overnight duration.
+
+- [ ] In interactive Codex, invoke `$vsss` on a disposable project with several
+      independent tasks. It hands off once, prints status/log paths, and the
+      chair stops editing. The worker does not recursively hand off.
+- [ ] Close the initiating terminal after acknowledgement. From another
+      terminal inspect `codex-autonomy status --cwd /workspace`; work continues.
+- [ ] Try another start against the same checkout: it refuses without changing
+      the saved private prompt. Check prompt/control paths are ignored by Git.
+- [ ] Ask the worker to report a milestone without completing the queue. The
+      supervisor continues; unsupported `VSSS-EXIT:` text is not success.
+- [ ] Use a short explicit `--budget 1m`; elapsed downtime counts, and the run
+      checkpoints at the cap without claiming perfection. A run without an
+      explicit cap has no five-hour finish line.
+- [ ] Stop during work and during a retry wait. No new thread or restart follows.
+- [ ] On a disposable run, kill only the supervisor process, retaining the
+      outer runner. Its owned descendants are reaped before any restart. A
+      proven last completed turn recovers without replay; incomplete/unknown
+      turns remain checkpointed for effects review. Never remove a live lock.
+- [ ] Leave a multi-task Codex run overnight; inspect audit, completion evidence,
+      quota/compaction counters and final reason. Record actual duration.
+- [ ] Re-run Test 59's Claude steps: its fourth-stop release, marker handling,
+      launcher watchdog and quota auto-resume retain their existing behavior.

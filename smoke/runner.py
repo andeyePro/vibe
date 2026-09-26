@@ -50,6 +50,7 @@ from smoke.checks_37_capabilities import *
 from smoke.checks_38_vibe_shot import *
 from smoke.checks_39_auto_update import *
 from smoke.checks_40_delegate_connection import *
+from smoke.checks_41_codex_continuation import *
 
 def main() -> int:
     test_docker_preflight_is_shared_and_mac_start_preserves_target()
@@ -1061,6 +1062,21 @@ def main() -> int:
     test_auto_update_falls_back_when_codex_fails_the_gate()
     test_codex_compat_gate_is_wired_and_passes_the_installed_codex()
     test_delegate_refreshes_and_retries_a_connection_failure()
+    run_supervisor_tests([
+        test_codex_evidence_required_for_every_exit,
+        test_codex_completion_identity_and_condition_validation,
+        test_codex_transients_reset_but_telemetry_accumulates,
+        test_codex_stop_guard_is_separate_and_has_no_fourth_escape,
+        test_codex_outer_runner_and_foreign_lock,
+        test_codex_detached_handoff_context_conflict_and_stop,
+        test_codex_runner_bounds_failures_without_completed_progress,
+        test_codex_original_budget_policy_and_retry_deadline,
+        test_codex_runner_does_not_mistake_old_completion_for_new_success,
+        test_codex_direct_watch_cannot_race_prompt_publication,
+        test_codex_new_run_never_discards_unresolved_effects,
+        test_codex_outer_runner_recovers_owned_supervisor_crash,
+        test_codex_known_completed_turn_recovery_never_replays,
+    ])
     test_vibe_shot_is_named_wherever_seeing_comes_up()
     test_statusline_records_the_window_reset()
     test_native_wait_detector()

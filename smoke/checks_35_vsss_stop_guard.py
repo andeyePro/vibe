@@ -21,7 +21,7 @@ CODEX_HOOKS_JSON = REPO / "devcontainer" / "codex" / "hooks" / "hooks.json"
 LIVENESS_SH = REPO / "devcontainer" / "codex-guard-liveness.sh"
 SESSION_REL = ".vss/sessions/2026-09-25T01-09-47Z.md"
 SID = "59891436-b16a-4a36-aecb-9e916123d430"
-GUARD_CMD_CODEX = "/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /bin/bash /usr/local/bin/vsss-stop-guard"
+GUARD_CMD_CODEX = "/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /usr/local/bin/codex-stop-guard"
 GUARD_CMD_CLAUDE = "[ ! -x /usr/local/bin/vsss-stop-guard ] || /usr/local/bin/vsss-stop-guard"
 
 
@@ -209,7 +209,7 @@ def test_stop_guard_wiring():
     cmds = [h.get("command") for g in stop for h in g.get("hooks", [])]
     check("[stop-guard] Codex Stop runs the guard exactly once", cmds.count(GUARD_CMD_CODEX) == 1, str(stop))
     check("[stop-guard] every Codex Stop hook is a hardened env -i form",
-          all(c.startswith("/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /bin/bash /usr/local/bin/") for c in cmds), str(cmds))
+          all(c == GUARD_CMD_CODEX or c.startswith("/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /bin/bash /usr/local/bin/") for c in cmds), str(cmds))
     check("[stop-guard] Codex Stop hook has a timeout and no async",
           all("timeout" in h and "async" not in h for g in stop for h in g.get("hooks", [])), str(stop))
     elsewhere = [h.get("command", "") for ev, gs in hooks.items() if ev != "Stop"
@@ -260,7 +260,7 @@ def test_liveness_ties_each_hook_program_to_its_event():
         hooks_path.write_text(json.dumps(data))
         r = _run_liveness(root, bin_dir, CURRENT_OWNER, path_prepend=stub_dir)
         check("[stop-guard] the keep-going guard moved to PreToolUse fails liveness",
-              r.returncode != 0 and "vsss-stop-guard is wired to the PreToolUse event" in (r.stdout + r.stderr),
+              r.returncode != 0 and "codex-stop-guard is wired to the PreToolUse event" in (r.stdout + r.stderr),
               f"rc={r.returncode} {r.stdout[-300:]} {r.stderr[-300:]}")
 
 

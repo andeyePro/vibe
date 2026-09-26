@@ -7,15 +7,11 @@
 // field is sent or expected (codex-rs/app-server-transport/src/transport/
 // stdio.rs, app-server-protocol/src/rpc.rs at tag rust-v0.154.0).
 //
-// Safety contract (AC8): never passes `--dangerously-bypass-approvals-and-
-// sandbox`, never sets `-c`, never reads or copies `auth.json`, writes only
-// the state, adjacent ownership/stop files and log, and sends no prompt other than the
-// user's (prefix-rewritten) text, the literal `continue`, and the fixed
-// EXIT_CHALLENGE text below (sent at most once per exit attempt). Besides
-// `initialize` and `account/rateLimits/read`, the only requests it sends are
-// `thread/start`, `thread/resume`, `turn/start`, `turn/interrupt`, and
-// `thread/compact/start` (after a `contextWindowExceeded` failure, at most
-// `--max-compactions` times per run state).
+// No approval/sandbox overrides or credential access. Recovery reads thread history
+// and only continues after a matching completed turn is proven.
+import { AppServer } from './codex-rpc.mjs';
+import { SupervisorError, usageError, failError, ceilingError, isRecord } from './codex-errors.mjs';
+import { completionPolicy, validateCompletion, completionChallenge } from './codex-completion.mjs';
 import { loadConfig, bindingFingerprint } from './taskandi-client.mjs';
 import { acquire, canonicalPath, readRegular, atomicWrite, requestStop, closeServer, ownershipFresh, appendRegular, spawnOwnedServer } from './supervisor-control.mjs';
 import { spawnSync } from 'node:child_process';
@@ -98,19 +94,6 @@ const USAGE = [
   'Idle detection: wall deadline is the safe bound; tool silence is not an idle stall.',
 ].join('\n');
 
-// --- small helpers -----------------------------------------------------
-
-class SupervisorError extends Error {
-  constructor(code, message) { super(message); this.code = code; }
-}
-const usageError = (m) => new SupervisorError(EXIT_USAGE, m);
-const failError = (m) => new SupervisorError(EXIT_FAIL, m);
-const ceilingError = (m) => new SupervisorError(EXIT_CEILING, m);
-
-function isRecord(value) {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
 export function rewritePrompt(text) {
   const index = text.search(/\s/);
   const token = index === -1 ? text : text.slice(0, index);
@@ -179,153 +162,6 @@ class Clock {
       this.checkStop?.();
       await new Promise(resolve => setTimeout(resolve, Math.min(100, end - Date.now())));
     }
-  }
-}
-
-// --- app-server client -------------------------------------------------
-
-class AppServer {
-  constructor(child, log) {
-    this.child = child;
-    this.log = log;
-    this.buffer = '';
-    this.pending = new Map();
-    this.queue = [];
-    this.waiter = null;
-    this.nextId = 1;
-    this.closed = false;
-    this.exitNote = null;
-    this.stdinOpen = true;
-
-    child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (chunk) => this.onData(chunk));
-    child.stdout.on('end', () => {
-      this.exitNote ||= 'app-server connection closed (stdout EOF)';
-      this.shutdown();
-    });
-    child.stderr.setEncoding('utf8');
-    child.stderr.on('data', (chunk) => this.log(`[server-stderr] ${String(chunk).trimEnd()}`));
-    child.stdin.on('error', () => { this.stdinOpen = false; });
-    child.on('exit', (code, signal) => {
-      this.exitNote = `app-server exited (code ${code}, signal ${signal})`;
-      this.shutdown();
-    });
-    child.on('error', (error) => {
-      this.exitNote = `app-server could not be started: ${error.message}`;
-      this.shutdown();
-    });
-  }
-
-  shutdown() {
-    this.closed = true;
-    for (const [, entry] of this.pending) {
-      clearTimeout(entry.timer);
-      entry.reject(failError(this.exitNote || 'app-server connection closed'));
-    }
-    this.pending.clear();
-    if (this.waiter) { const w = this.waiter; this.waiter = null; w.wake(); }
-  }
-
-  onData(chunk) {
-    this.buffer += chunk;
-    let index = this.buffer.indexOf('\n');
-    while (index !== -1) {
-      const line = this.buffer.slice(0, index);
-      this.buffer = this.buffer.slice(index + 1);
-      this.onLine(line);
-      index = this.buffer.indexOf('\n');
-    }
-  }
-
-  onLine(line) {
-    if (!line.trim()) return;
-    let message;
-    try { message = JSON.parse(line); } catch {
-      this.log(`[warn] unparseable line from app-server: ${line.slice(0, 200)}`);
-      return;
-    }
-    if (!isRecord(message)) return;
-    const hasId = message.id !== undefined && message.id !== null;
-    if (typeof message.method === 'string' && hasId) {
-      // Server→client request. An unattended supervisor has nobody to ask,
-      // so every one is declined at once and never blocks the turn.
-      this.log(`[declined] ${message.method} (id ${message.id})`);
-      this.write({ id: message.id, error: { code: -32601, message: 'unattended' } });
-      return;
-    }
-    if (typeof message.method === 'string') { this.push(message); return; }
-    if (!hasId) return;
-    const entry = this.pending.get(message.id);
-    if (!entry) { this.log(`[warn] response for unknown id ${message.id}`); return; }
-    this.pending.delete(message.id);
-    clearTimeout(entry.timer);
-    if (message.error !== undefined && message.error !== null) {
-      const detail = isRecord(message.error) ? (message.error.message || JSON.stringify(message.error))
-        : String(message.error);
-      const replyError = failError(`${entry.label} failed: ${detail}`);
-      // An explicit error REPLY proves the server did not act on the request,
-      // unlike a timeout or a closed connection.
-      replyError.replied = true;
-      entry.reject(replyError);
-      return;
-    }
-    entry.resolve(message.result);
-  }
-
-  push(notification) {
-    this.queue.push(notification);
-    if (this.waiter) { const w = this.waiter; this.waiter = null; w.wake(); }
-  }
-
-  write(object) {
-    if (!this.stdinOpen) return;
-    try { this.child.stdin.write(`${JSON.stringify(object)}\n`); }
-    catch { this.stdinOpen = false; }
-  }
-
-  // `onTimeout`, when given, builds the rejection error in place of the
-  // plain `failError` — AC7a's wall-deadline bounding needs a request that
-  // timed out because the wall budget ran out to reject with a ceiling
-  // error (exit 3), never the ordinary protocol-timeout `failError` (exit 1).
-  request(method, params, { timeoutMs = REQUEST_TIMEOUT_MS, timeoutMessage = null, onTimeout = null } = {}) {
-    if (this.closed) return Promise.reject(failError(this.exitNote || 'app-server connection closed'));
-    const id = this.nextId;
-    this.nextId += 1;
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(onTimeout ? onTimeout() : failError(timeoutMessage || `${method} timeout`));
-      }, timeoutMs);
-      if (typeof timer.unref === 'function') timer.unref();
-      this.pending.set(id, { resolve, reject, timer, label: method });
-      // Key order here is the wire order asserted by the tests (AC3).
-      this.write({ id, method, params });
-    });
-  }
-
-  // A request whose response we will not wait for (AC7a's `turn/interrupt`,
-  // sent as the supervisor is on its way out).
-  send(method, params) {
-    const id = this.nextId;
-    this.nextId += 1;
-    this.write({ id, method, params });
-    return id;
-  }
-
-  async nextNotification() {
-    for (;;) {
-      if (this.queue.length) return this.queue.shift();
-      if (this.closed) throw failError(this.exitNote || 'app-server connection closed');
-      await new Promise((resolve) => { this.waiter = { wake: resolve }; });
-    }
-  }
-
-  closeStdin() {
-    if (!this.stdinOpen) return;
-    this.stdinOpen = false;
-    // stdio mode is single-client: EOF on stdin shuts the server down
-    // (app-server/src/lib.rs:1042,1061-1064). No signal or RPC needed.
-    try { this.child.stdin.end(); } catch { /* already gone */ }
   }
 }
 
@@ -479,6 +315,7 @@ const STRING_FLAGS = {
   '--codex-bin': 'codexBin',
   '--now-source': 'nowSource',
   '--evidence-file': 'evidenceFile',
+  '--runner-token': 'runnerToken',
 };
 const NUMBER_FLAGS = {
   '--max-turns': 'maxTurns',
@@ -499,6 +336,7 @@ export function parseArgs(argv) {
   const options = { command, newRun: false, ...DEFAULTS };
   for (let i = 1; i < argv.length; i += 1) {
     const flag = argv[i];
+    if (flag === '--recover-completed') { options.recoverCompleted = true; continue; }
     if (flag === '--new-run') { options.newRun = true; continue; }
     const stringKey = STRING_FLAGS[flag];
     const numberKey = NUMBER_FLAGS[flag];
@@ -540,8 +378,6 @@ export function parseArgs(argv) {
   return options;
 }
 
-// --- state -------------------------------------------------------------
-
 function freshState(threadId, cwd, promptHash, startedAt) {
   return {
     threadId,
@@ -553,6 +389,7 @@ function freshState(threadId, cwd, promptHash, startedAt) {
     resumes: 0,
     quotaWaits: 0,
     transientRetries: 0,
+    consecutiveTransientRetries: 0,
     turnFailures: 0,
     compactions: 0,
     exitChallenged: false,
@@ -693,16 +530,15 @@ class Supervisor {
   }
 
 
-  // The instant the wall ceiling bites, in the clock's own units. Every
-  // deadline decision (awaiting a turn, capping a wait, honouring an
-  // outstanding one) is expressed against this single value. Before
-  // `this.state` exists — during the pre-thread-start handshake and the
-  // initial `account/rateLimits/read` (AC7a) — it falls back to
-  // `startedAtAnchor`, set once at the top of `run()` (the original
-  // `startedAt` on a resumed run, `now()` on a fresh one).
+  // Explicit original caps and the independent runaway ceiling share one deadline.
   deadline(state = this.state) {
     const startedAt = state ? state.startedAt : this.startedAtAnchor;
-    return Number(startedAt) + this.options.maxWallSeconds;
+    return Number(startedAt) + Math.min(this.options.maxWallSeconds, state?.completion?.budgetSeconds ?? Infinity);
+  }
+
+  deadlineName() {
+    const cap = this.state?.completion?.budgetSeconds;
+    return cap != null && cap <= this.options.maxWallSeconds ? `user budget cap (${cap}s from original start)` : `max-wall-seconds (${this.options.maxWallSeconds})`;
   }
 
   // AC7a (Astra re-review): every outstanding request — initialize,
@@ -722,7 +558,7 @@ class Supervisor {
     return this.cancellable(this.server.request(method, params, {
       timeoutMs: Math.min(timeoutMs, remainingMs),
       onTimeout: () => (wallBound
-        ? ceilingError(`ceiling reached: max-wall-seconds (${this.options.maxWallSeconds}) `
+        ? ceilingError(`ceiling reached: ${this.deadlineName()} `
           + `while awaiting ${method}`)
         : failError(timeoutMessage || `${method} timeout`)),
     }));
@@ -737,7 +573,7 @@ class Supervisor {
     if (state.quotaWaits >= o.maxQuotaWaits) {
       throw ceilingError(`ceiling reached: max-quota-waits (${o.maxQuotaWaits})`);
     }
-    if (state.transientRetries >= o.maxTransientRetries) {
+    if (state.consecutiveTransientRetries >= o.maxTransientRetries) {
       throw ceilingError(`ceiling reached: max-transient-retries (${o.maxTransientRetries})`);
     }
     // AC7 (Astra review): without this gate a resumed run could carry an
@@ -746,6 +582,8 @@ class Supervisor {
       throw ceilingError(`ceiling reached: max-turn-failures (${o.maxTurnFailures})`);
     }
     const elapsed = this.clock.now() - Number(state.startedAt);
+    if (state.completion?.budgetSeconds != null && elapsed >= state.completion.budgetSeconds) throw ceilingError(
+      `user budget cap reached (${state.completion.budgetSeconds}s from original start); checkpoint saved`);
     if (elapsed >= o.maxWallSeconds) {
       throw ceilingError(`ceiling reached: max-wall-seconds (${o.maxWallSeconds}, elapsed ${elapsed}s)`);
     }
@@ -823,7 +661,7 @@ class Supervisor {
   // AC4: a state file only resumes when BOTH cwd and promptHash match.
   adoptState(previous, promptHash) {
     if (!previous) return null;
-    if (needsTurnReconciliation(previous)) throw failError('unresolved turn: review prior effects and use reconcile --state <file> --evidence-file <file> before run or --new-run');
+    if (needsTurnReconciliation(previous) && (!this.options.recoverCompleted || this.options.newRun)) throw failError('unresolved turn: review prior effects and use reconcile --state <file> --evidence-file <file> before run or --new-run');
     if (this.options.newRun) { this.archiveState(previous.corrupt ? null : previous); return null; }
     if (previous.cwd !== this.options.cwd) {
       throw usageError(`state file cwd mismatch: state has ${previous.cwd}, --cwd is ${this.options.cwd} `
@@ -843,6 +681,9 @@ class Supervisor {
     for (const key of ['resumes', 'quotaWaits', 'transientRetries', 'turnFailures']) {
       if (!Number.isSafeInteger(previous[key]) || previous[key] < 0) throw usageError(`invalid persisted counter: ${key}`);
     }
+    if (previous.consecutiveTransientRetries === undefined) previous.consecutiveTransientRetries = previous.transientRetries;
+    if (!Number.isSafeInteger(previous.consecutiveTransientRetries) || previous.consecutiveTransientRetries < 0
+      || previous.consecutiveTransientRetries > previous.transientRetries) throw usageError('invalid consecutive transient counter');
     // Legacy snapshots predate compactions: none were ever run by them.
     if (previous.compactions === undefined) previous.compactions = 0;
     if (!Number.isSafeInteger(previous.compactions) || previous.compactions < 0) throw usageError('invalid persisted counter: compactions');
@@ -856,9 +697,14 @@ class Supervisor {
       previous.startedAt);
     state.turns = Array.isArray(previous.turns) ? previous.turns : [];
     state.waits = Array.isArray(previous.waits) ? previous.waits : [];
-    for (const key of ['turnsStarted', 'resumes', 'quotaWaits', 'transientRetries', 'turnFailures', 'compactions']) {
+    for (const key of ['turnsStarted', 'resumes', 'quotaWaits', 'transientRetries', 'turnFailures', 'compactions', 'consecutiveTransientRetries']) {
       state[key] = Number.isFinite(Number(previous[key])) ? Number(previous[key]) : 0;
     }
+    state.unresolvedTurn = previous.unresolvedTurn ?? null;
+    if (needsTurnReconciliation(previous) && !state.unresolvedTurn) throw failError('legacy unresolved turn needs explicit reconciliation');
+    state.completion = previous.completion ?? null;
+    state.completionRejection = previous.completionRejection ?? null;
+    state.completionAccepted = previous.completionAccepted ?? null;
     state.lastRateLimits = previous.lastRateLimits ?? null;
     state.reconciliations = previous.reconciliations ?? [];
     for (const key of ['exitChallenged', 'exitChallengePending']) {
@@ -874,9 +720,7 @@ class Supervisor {
     return state;
   }
 
-  // AC4 (Astra review): a wait recorded before the process went away is
-  // still owed. Honour what is left of it before touching the server —
-  // re-sending a turn into an exhausted quota window just burns a failure.
+  // Persisted waits remain owed after process recovery.
   async honourOutstandingWait(state) {
     const waits = Array.isArray(state.waits) ? state.waits : [];
     const last = waits.length ? waits[waits.length - 1] : null;
@@ -887,7 +731,7 @@ class Supervisor {
     if (until <= now) return;
     const deadline = this.deadline(state);
     if (until > deadline) {
-      throw ceilingError(`ceiling reached: max-wall-seconds (${this.options.maxWallSeconds}): the `
+      throw ceilingError(`ceiling reached: ${this.deadlineName()}: the `
         + `outstanding ${last.reason} wait ends ${until - deadline}s past the ceiling; not sleeping`);
     }
     this.log(`honouring the outstanding ${last.reason} wait: ${until - now}s left until `
@@ -903,6 +747,7 @@ class Supervisor {
       ephemeral: false,
     };
     if (this.options.model) params.model = this.options.model;
+    if (this.state.completion) params.developerInstructions = `This is the owned supervised vsss worker. Do not hand off or start a nested runner. Read /usr/local/share/vibe/codex-vsss.md. State path: ${this.statePath}. Use codex-autonomy context --state ${this.statePath} --cwd ${this.options.cwd}; add supervisor_state=${this.statePath} to your owned auto-resume marker.`;
     this.state.recoveryReason = 'thread-start-unconfirmed';
     this.persist();
     const result = await this.boundedRequest('thread/start', params);
@@ -1206,7 +1051,7 @@ class Supervisor {
       + `${new Date(until * 1000).toISOString()}`);
     const deadline = this.deadline();
     if (until > deadline) {
-      throw ceilingError(`ceiling reached: max-wall-seconds (${this.options.maxWallSeconds}): a `
+      throw ceilingError(`ceiling reached: ${this.deadlineName()}: a `
         + `${seconds}s ${reason} wait would end ${until - deadline}s past the ceiling; not sleeping`);
     }
   }
@@ -1249,8 +1094,9 @@ class Supervisor {
 
   async transientWait(name) {
     this.checkGates();
-    const seconds = backoffSeconds(TRANSIENT_BACKOFF, this.state.transientRetries);
+    const seconds = backoffSeconds(TRANSIENT_BACKOFF, this.state.consecutiveTransientRetries);
     this.state.transientRetries += 1;
+    this.state.consecutiveTransientRetries += 1;
     this.persist();
     this.recordWait('transient', seconds, name);
     await this.sleep(seconds);
@@ -1274,8 +1120,11 @@ class Supervisor {
       // A challenge that has not yet reached a completed turn is re-sent —
       // after a crash, a reconnect, or a quota/transient failure alike — so
       // the one allowed challenge is never used up undelivered.
-      if (this.state.exitChallengePending) text = EXIT_CHALLENGE;
-      const { turn, turnId, agentMessage } = await this.runTurn(text);
+      if (this.state.completionRejection) text = completionChallenge(this.statePath, this.state.completionRejection);
+      else if (this.state.exitChallengePending) text = EXIT_CHALLENGE;
+      const recovered = this.recoveredTurn;
+      this.recoveredTurn = null;
+      const { turn, turnId, agentMessage } = recovered || await this.runTurn(text);
       // AC5 (Astra re-review): the user's rewritten prompt is sent EXACTLY
       // ONCE per thread — for the very first `turn/start` only. `runTurn`
       // has now sent whatever `text` held, so every `turn/start` after this
@@ -1295,11 +1144,29 @@ class Supervisor {
         // A completed turn resets the failure count: max-turn-failures bounds
         // failures in a row, not over the whole life of a long run.
         this.state.turnFailures = 0;
+        this.state.consecutiveTransientRetries = 0;
         // Like max-turn-failures, max-compactions bounds compactions in a
         // row: a completed turn proves the last one worked.
         this.state.compactions = 0;
         this.state.exitChallengePending = false;
         const reason = exitReasonFrom(agentMessage);
+        if (reason === null) delete this.state.completionRejection;
+        if (reason !== null && this.state.completion) {
+          const result = validateCompletion(this.statePath, this.state, this.clock.now());
+          if (!result.ok) {
+            this.state.completionRejection = result.error;
+            this.confirmTurnBoundary();
+            this.log(`completion rejected: ${result.error}`);
+            text = completionChallenge(this.statePath, result.error);
+            continue;
+          }
+          this.state.completionAccepted = result.record;
+          this.state.exitReason = result.record.reason;
+          delete this.state.completionRejection;
+          this.confirmTurnBoundary();
+          this.log(`VSSS-EXIT: ${result.record.reason}`);
+          return EXIT_OK;
+        }
         // No challenge when another turn could not run anyway: accepting the
         // exit beats turning a clean end into a max-turns ceiling.
         if (reason !== null && !this.state.exitChallenged && exitNeedsChallenge(reason)
@@ -1366,6 +1233,16 @@ class Supervisor {
     }
   }
 
+  ensureCompletionPolicy(policy) {
+    if (this.state.completion && (!policy || this.state.completion.version !== 1
+      || this.state.completion.budgetSeconds !== policy.budgetSeconds
+      || !/^[0-9a-f-]{36}$/.test(this.state.completion.runId))) throw usageError('invalid persisted completion policy');
+    if (policy && !this.state.completion) {
+      this.state.completion = { ...policy, runId: randomUUID() };
+      this.persist();
+    }
+  }
+
   async run() {
     const options = this.options;
     let promptRaw;
@@ -1375,6 +1252,7 @@ class Supervisor {
     if (this.taskRef && !/^(?:[A-Za-z][A-Za-z0-9]*-[0-9]+|taskandeye:\/\/node\/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/.test(this.taskRef)) throw usageError('invalid launch task binding');
     this.taskBinding = bindingFingerprint(loadConfig(options.cwd));
     const promptHash = createHash('sha256').update(promptRaw).digest('hex');
+    const policy = completionPolicy(promptRaw);
     const promptText = rewritePrompt(promptRaw.replace(/\s+$/, ''));
     if (!promptText) throw usageError(`--prompt-file is empty: ${options.promptFile}`);
 
@@ -1397,6 +1275,7 @@ class Supervisor {
       this.state = resumed;
       this.state.taskRef = this.taskRef;
       this.state.taskBinding = this.taskBinding;
+      this.ensureCompletionPolicy(policy);
       // Gates BEFORE anything is sent, then any wait the previous process
       // still owed — both without spawning a server we may never use.
       this.checkGates(resumed);
@@ -1417,6 +1296,7 @@ class Supervisor {
       this.state.recoveryReason = 'thread-start-unconfirmed';
       this.persist();
     }
+    this.ensureCompletionPolicy(policy);
     this.spawnServer();
 
     try {
@@ -1424,6 +1304,20 @@ class Supervisor {
       await this.readRateLimits();
       let firstText = promptText;
       if (resumed) {
+        if (needsTurnReconciliation(this.state)) {
+          const pending = this.state.unresolvedTurn;
+          if (!pending?.turnId || pending.kind === 'compaction' || pending.threadId !== this.state.threadId) throw failError('ambiguous turn identity; explicit reconciliation required');
+          const snapshot = await this.boundedRequest('thread/read', { threadId: this.state.threadId, includeTurns: true });
+          const turns = snapshot?.thread?.turns;
+          const last = Array.isArray(turns) ? turns.at(-1) : null;
+          if (snapshot?.thread?.id !== this.state.threadId || last?.id !== pending.turnId || last.status !== 'completed'
+            || !Array.isArray(last.items) || last.items.some(item => item.status === 'inProgress')) {
+            throw failError('last turn is not proven completed; review prior effects and reconcile explicitly');
+          }
+          this.recoveredTurn = { turn: last, turnId: last.id, agentMessage: lastAgentMessageText(last) };
+          this.state.reconciliations.push({ at: this.clock.now(), turnId: last.id, outcome: 'completed', evidence: 'thread/read exact last completed turn; no replay' });
+          this.log(`recovered completed turn ${last.id} from thread/read; no input replayed`);
+        }
         await this.resumeThread(resumed);
         // AC4 (cycle-2 Tester finding): `turns.length` alone can't tell
         // "killed in flight" from "never started" — a turn that never
@@ -1485,14 +1379,14 @@ function stamp(seconds) {
 export function statusReport(state) {
   // Explicit allowlist: never print model text, paths, IDs, errors, or rate-limit metadata.
   const complete = state.exitReason !== undefined;
-  const allowed = new Set(['starting', 'turn', 'turn-boundary', 'initialize', 'thread/start', 'thread/resume', 'turn/start', 'thread/compact/start', 'compaction', 'account/rateLimits/read', 'quota-wait', 'transient-wait', 'stopped']);
+  const allowed = new Set(['starting', 'turn', 'turn-boundary', 'initialize', 'thread/start', 'thread/resume', 'thread/read', 'turn/start', 'thread/compact/start', 'compaction', 'account/rateLimits/read', 'quota-wait', 'transient-wait', 'stopped']);
   const rows = [
     ['state', complete ? 'complete' : state.lifecycle === 'running' ? 'running' : 'checkpointed'],
     ['operation', complete ? 'complete' : allowed.has(state.operation) ? state.operation : 'stopped'],
     ['thread', typeof state.threadId === 'string' ? 'recorded' : 'unknown'],
     ['unresolved turn', needsTurnReconciliation(state) ? 'reconciliation required' : 'none'],
   ];
-  for (const key of ['turnsStarted', 'resumes', 'quotaWaits', 'transientRetries', 'turnFailures']) {
+  for (const key of ['turnsStarted', 'resumes', 'quotaWaits', 'transientRetries', 'consecutiveTransientRetries', 'turnFailures']) {
     rows.push([key, Number.isSafeInteger(state[key]) ? state[key] : 'unknown']);
   }
   // Legacy state files predate the counter: none were ever run by them.
@@ -1530,8 +1424,6 @@ function runStatus(options) {
   return EXIT_OK;
 }
 
-// --- entry point -------------------------------------------------------
-
 export async function main(argv) {
   let options;
   try { options = parseArgs(argv); }
@@ -1556,7 +1448,12 @@ export async function main(argv) {
       return EXIT_OK;
     }
     supervisor = new Supervisor(options);
-    supervisor.owner = acquire(supervisor.statePath);
+    const runnerLock = `${supervisor.statePath}.runner.lock`;
+    if (existsSync(runnerLock)) {
+      const runner = JSON.parse(readRegular(runnerLock));
+      if (!options.runnerToken || runner.token !== options.runnerToken) throw usageError('workspace owned by codex-autonomy runner');
+    } else if (options.runnerToken) throw usageError('runner ownership missing');
+    supervisor.owner = acquire(supervisor.statePath, options.runnerToken);
     removeSignals = installSignalHandlers(supervisor);
     return await supervisor.run();
   } catch (error) {
