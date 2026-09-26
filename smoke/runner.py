@@ -51,6 +51,7 @@ from smoke.checks_38_vibe_shot import *
 from smoke.checks_39_auto_update import *
 from smoke.checks_40_delegate_connection import *
 from smoke.checks_41_codex_continuation import *
+from smoke.checks_42_session_safety import *
 
 def main() -> int:
     test_docker_preflight_is_shared_and_mac_start_preserves_target()
@@ -1082,6 +1083,12 @@ def main() -> int:
     test_native_wait_detector()
     test_watchdog_stands_aside_during_a_native_wait()
     test_relaunch_gate_ignores_the_native_wait()
+    test_main_body_is_one_brace_group()
+    test_statusline_records_the_weekly_window()
+    test_weekly_limit_vetoes_the_watchdog()
+    test_relaunch_countdown_waits_out_a_used_up_week()
+    test_live_session_count()
+    test_recreate_spares_a_live_session()
     run_supervisor_tests([
         test_codex_supervisor_challenges_a_waiting_exit_once,
         test_codex_supervisor_challenge_rearms_after_a_normal_turn,

@@ -1931,3 +1931,11 @@ does not establish live app-server history fidelity or overnight duration.
       quota/compaction counters and final reason. Record actual duration.
 - [ ] Re-run Test 59's Claude steps: its fourth-stop release, marker handling,
       launcher watchdog and quota auto-resume retain their existing behavior.
+
+### Test 62: Sessions survive edits, weekly limits and a second launch (2026-09-26)
+
+- [ ] Start `vibe` in a disposable project and leave claude open. In another terminal, add a comment line near the end of `vibe` (then revert it). Quit claude: the launcher exits cleanly, no `unbound variable` or stray command errors.
+- [ ] With a claude session open in project X, make any change under `devcontainer/` and launch `vibe` in X from a second terminal. It rebuilds the image, then prints "a newer vibe image is ready, but another vibe session is using this project's container" and joins it; the first session keeps running. Close both and relaunch: now it prints "image moved on … recreating it".
+- [ ] Same setup, but add a domain to X's `.vibe/domains` before the second launch: it refuses with "other vibe session(s) are still running in it" and exits 1; the first session is untouched. `vibe --rebuild` from the second terminal ends it, after an "ending the 1 other vibe session(s)" line.
+- [ ] During a live Claude session, and again during a supervised Codex run (`vibe --codex-run <file>`), run `docker exec <cid> ps -eo pid=,ppid=,args=` on the Mac: the session's process (`claude …`, or `node /usr/local/bin/codex-autonomy watch …`) has PPID 0. That is what the live-session check counts.
+- [ ] During a `/vsss` run that reaches a weekly limit (five-hour window not used up), `.vss/rate-limit` carries `used7=` near 100 and `resets7=`, and after 30+ minutes idle the launcher prints no "assuming the usage-limit picker is stuck" warning and does not kill claude.

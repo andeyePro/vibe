@@ -1027,7 +1027,7 @@ auto_resume_rate_headroom() {
   echo "$used"
 }
 
-# auto_resume_native_wait <rl_file> <now_epoch> — true while Claude Code is
+# _auto_resume_five_hour_wait <rl_file> <now_epoch> — true while Claude Code is
 # most likely sitting out a 5-hour limit ITSELF. Since v2.1.234 Claude Code's
 # `autoContinueAtUsageLimit` (on by default) waits in the open session for
 # the window to reset and then carries on — the usage-limit picker that the
@@ -1039,7 +1039,7 @@ auto_resume_rate_headroom() {
 # ${VIBE_NATIVE_WAIT_GRACE_SECS:-900}. Past that the wait should be over, so
 # a still-stale heartbeat is a genuine wedge again. A missing or malformed
 # reading, or no resets= line, is "no native wait" — the historical kill path.
-auto_resume_native_wait() {
+_auto_resume_five_hour_wait() {
   local file="$1" now="$2" used resets used_min grace
   used_min="${VIBE_NATIVE_WAIT_USED_MIN:-90}"
   grace="${VIBE_NATIVE_WAIT_GRACE_SECS:-900}"
@@ -1058,6 +1058,40 @@ auto_resume_native_wait() {
   [ "$used" -ge "$used_min" ] || return 1
   [ $(( resets - now )) -le $(( 18000 + grace )) ] || return 1
   [ "$now" -le $(( resets + grace )) ]
+}
+
+# _auto_resume_weekly_wait <rl_file> <now_epoch> — the same test against the
+# seven_day window (used7= / resets7=, written beside the five_hour reading).
+# 2026-09-26: two /vsss runs on one subscription went quiet together at a
+# weekly limit while the five_hour window read 21%; the five_hour-only veto
+# let the watchdog kill both. Killing there gains nothing — the relaunch hits
+# the same limit, stalls, and is killed again — so a used-up week vetoes the
+# kill until its reset (bounded by 7 days + grace, same shape as above).
+# Its own threshold, default 100 (VIBE_NATIVE_WAIT_WEEK_USED_MIN): a week at
+# 92% is not used up and can sit there for days, and a frozen reading at that
+# level must not hold off the kill of a genuine wedge for a week.
+_auto_resume_weekly_wait() {
+  local file="$1" now="$2" used resets used_min grace
+  used_min="${VIBE_NATIVE_WAIT_WEEK_USED_MIN:-100}"
+  grace="${VIBE_NATIVE_WAIT_GRACE_SECS:-900}"
+  case "$used_min" in ''|*[!0-9]*) used_min=100 ;; esac
+  case "$grace" in ''|*[!0-9]*) grace=900 ;; esac
+  used=$(auto_resume_field "$file" used7)
+  resets=$(auto_resume_field "$file" resets7)
+  { [ -n "$used" ] && [ -n "$resets" ]; } || return 1
+  [ "${#used}" -le 6 ] && [ "${#resets}" -le 12 ] || return 1
+  used=$((10#$used))
+  resets=$((10#$resets))
+  [ "$used" -ge "$used_min" ] || return 1
+  [ $(( resets - now )) -le $(( 604800 + grace )) ] || return 1
+  [ "$now" -le $(( resets + grace )) ]
+}
+
+# auto_resume_native_wait <rl_file> <now_epoch> — true while either window's
+# last reading shows it used up with its reset still ahead (see the two
+# detectors above). The single entry point vibe_stall_watchdog consults.
+auto_resume_native_wait() {
+  _auto_resume_five_hour_wait "$1" "$2" || _auto_resume_weekly_wait "$1" "$2"
 }
 
 # auto_resume_effective_wait <marker_file> <ratelimit_file> <now_epoch> —
@@ -1094,6 +1128,13 @@ auto_resume_effective_wait() {
   fi
   if [ "$wait" -gt "$grace" ] && [ -n "$(auto_resume_rate_headroom "$rl" "$now")" ]; then
     wait=$grace
+  fi
+  # A used-up week outranks both: relaunching before its reset only hits the
+  # same limit again and spends a relaunch (bounded as _auto_resume_weekly_wait).
+  if _auto_resume_weekly_wait "$rl" "$now"; then
+    local resets7
+    resets7=$((10#$(auto_resume_field "$rl" resets7)))
+    [ $(( resets7 - now + grace )) -le "$wait" ] || wait=$(( resets7 - now + grace ))
   fi
   echo "$wait"
 }
@@ -3624,6 +3665,41 @@ remove_existing_flag() {
   fi
 }
 
+# vibe_container_live_sessions <workspace> — echoes how many claude/codex
+# sessions are attached to this workspace's RUNNING container (0 when there is
+# no running container or it cannot be inspected — fail open to the old
+# behaviour, never a false "in use" that blocks a launch).
+# Why: `--remove-existing-container` force-removes the container, and every
+# session inside it with it. On 2026-09-25 a second `vibe` launch saw image
+# drift and recreated this project's container under a live session (claude
+# rc=137, container=removing in .vibe/last-exit.log). A session is a
+# `docker exec`, so its process has PPID 0 inside the container (PID 1 is the
+# keep-alive loop); counting PPID-0 processes whose program is claude, codex,
+# codex-entry or what it execs into (codex-autonomy for a supervised run, a
+# node script, so its program is field 4) skips the launcher's own helper
+# execs (pkill, watchers). Not covered: a /vsss run sitting in its host-side
+# auto-resume countdown has no process in the container, and two launches
+# racing can both see 0. `docker exec` has no timeout here; a paused
+# container would stall the launch (macOS has no timeout(1)).
+vibe_container_live_sessions() {
+  local cids cid procs n total=0
+  cids=$(docker ps -q --filter "label=devcontainer.local_folder=$1" 2>/dev/null) || cids=""
+  for cid in $cids; do
+    procs=$(docker exec "$cid" ps -eo pid=,ppid=,args= 2>/dev/null) || continue
+    n=$(printf '%s\n' "$procs" | awk '
+      $1 != 1 && $2 == 0 {
+        for (i = 3; i <= 4 && i <= NF; i++) {
+          p = $i; sub(/.*\//, "", p)
+          if (p == "claude" || p == "codex" || p == "codex-entry" ||
+              p == "codex-autonomy" || p == "codex-supervisor") { c++; break }
+        }
+      }
+      END { print c + 0 }')
+    total=$(( total + ${n:-0} ))
+  done
+  echo "$total"
+}
+
 # ── Docker hygiene (task_059) ─────────────────────────────────────────────────
 # Defined here, ABOVE the VIBE_SOURCE_ONLY guard, so smoke-test.py can
 # unit-test them by sourcing with VIBE_SOURCE_ONLY=1 and a stubbed docker().
@@ -4986,6 +5062,19 @@ vibe_switch_after_exit() {
 # without running the main launch logic below.
 [ "${VIBE_SOURCE_ONLY:-}" = "1" ] && return 0 2>/dev/null
 
+# ── Main body: one brace group, parsed whole before any of it runs ────────────
+# bash reads a script as it executes it. A launcher sits in this body for the
+# whole session (claude, then the /vsss auto-resume loop), so when `vibe`
+# itself is edited meanwhile — a commit in the vibe repo, an auto-update —
+# the running launcher resumed at its old byte offset in the NEW file and ran
+# whatever fragment it landed on (2026-09-26: moneyandeye's auto-resume died
+# on "$3: unbound variable", so an unattended run never relaunched). A `{ … }`
+# group is read to its closing brace before the first command in it runs, so
+# later edits cannot reach a launcher already inside it. Keep the closing
+# brace the file's last line and every exit path inside the group; do not
+# re-indent the body (history/blame matter more than the cosmetic).
+{
+
 # ── Learn subcommand dispatch ─────────────────────────────────────────────────
 # Must be BEFORE the --* flag-parser loop. Dispatches and exits; does NOT enter
 # workspace resolution, preflight, image build, GitHub setup, or container launch.
@@ -5576,7 +5665,9 @@ fi
 #                                               (tmp+mv) drops the reading
 #                                               into .vss/rate-limit
 #                                               (epoch=<now>, used=<floored
-#                                               %>) — the launcher's
+#                                               %>, resets=, plus used7=/
+#                                               resets7= for the seven_day
+#                                               window) — the launcher's
 #                                               auto-resume countdown
 #                                               consults this to skip a stale
 #                                               worst-case resume_at estimate
@@ -5592,7 +5683,7 @@ cat > "$WORKSPACE/.claude/settings.local.json" << 'EOF'
   "forceLoginMethod": "claudeai",
   "statusLine": {
     "type": "command",
-    "command": "input=$(cat); m=$(printf '%s' \"$input\" | jq -r '.model.display_name // \"?\"'); case \"$m\" in *Fable*) l=F;; *Opus*) l=O;; *Sonnet*) l=S;; *Haiku*) l=H;; *) l=\"$m\";; esac; ctx=$(printf '%s' \"$input\" | jq -r '.context_window.used_percentage // \"\" | if type==\"number\" then (floor|tostring) else . end'); win=$(printf '%s' \"$input\" | jq -r '.rate_limits.five_hour.used_percentage // \"\" | if type==\"number\" then (floor|tostring) else . end'); rs=$(printf '%s' \"$input\" | jq -r '.rate_limits.five_hour.resets_at // \"\" | if type==\"number\" then (floor|tostring) else \"\" end'); out=\"$l · vibe\"; [ -n \"$ctx\" ] && out=\"$out · ctx ${ctx}%\"; [ -n \"$win\" ] && out=\"$out · 5h ${win}%\"; vd=\"${VIBE_VSS_DIR:-/workspace/.vss}\"; if [ -n \"$win\" ] && [ -d \"$vd\" ]; then { { printf 'epoch=%s\\nused=%s\\n' \"$(date +%s)\" \"$win\"; if [ -n \"$rs\" ]; then printf 'resets=%s\\n' \"$rs\"; fi; } > \"$vd/rate-limit.tmp.$$\" && mv \"$vd/rate-limit.tmp.$$\" \"$vd/rate-limit\"; } 2>/dev/null || rm -f \"$vd/rate-limit.tmp.$$\" 2>/dev/null; fi; sig_root=\"${VIBE_REPOS_DIR:-/repos}/.signals\"; rwseg=\"\"; if [ -d \"$sig_root\" ]; then for d in \"$sig_root\"/*/; do [ -d \"$d\" ] || continue; meta=\"$d/rw-lock.d/meta\"; req=\"$d/rw-request\"; if [ -f \"$meta\" ] && [ -f \"$req\" ]; then holder=$(grep '^project=' \"$meta\" 2>/dev/null | head -n1 | cut -d= -f2-); if [ -n \"$holder\" ] && [ \"$holder\" = \"${VIBE_PROJECT_NAME:-}\" ]; then requester=$(grep '^project=' \"$req\" 2>/dev/null | head -n1 | cut -d= -f2-); if [ -n \"$requester\" ]; then rwseg=\" · ⚠ rw:${requester}\"; printf '\\a' >&2; break; fi; fi; fi; done; fi; out=\"${out}${rwseg}\"; printf '%s' \"$out\""
+    "command": "input=$(cat); m=$(printf '%s' \"$input\" | jq -r '.model.display_name // \"?\"'); case \"$m\" in *Fable*) l=F;; *Opus*) l=O;; *Sonnet*) l=S;; *Haiku*) l=H;; *) l=\"$m\";; esac; ctx=$(printf '%s' \"$input\" | jq -r '.context_window.used_percentage // \"\" | if type==\"number\" then (floor|tostring) else . end'); win=$(printf '%s' \"$input\" | jq -r '.rate_limits.five_hour.used_percentage // \"\" | if type==\"number\" then (floor|tostring) else . end'); rs=$(printf '%s' \"$input\" | jq -r '.rate_limits.five_hour.resets_at // \"\" | if type==\"number\" then (floor|tostring) else \"\" end'); wk=$(printf '%s' \"$input\" | jq -r '.rate_limits.seven_day.used_percentage // \"\" | if type==\"number\" then (floor|tostring) else \"\" end'); wrs=$(printf '%s' \"$input\" | jq -r '.rate_limits.seven_day.resets_at // \"\" | if type==\"number\" then (floor|tostring) else \"\" end'); out=\"$l · vibe\"; [ -n \"$ctx\" ] && out=\"$out · ctx ${ctx}%\"; [ -n \"$win\" ] && out=\"$out · 5h ${win}%\"; vd=\"${VIBE_VSS_DIR:-/workspace/.vss}\"; if [ -n \"$win\" ] && [ -d \"$vd\" ]; then { { printf 'epoch=%s\\nused=%s\\n' \"$(date +%s)\" \"$win\"; if [ -n \"$rs\" ]; then printf 'resets=%s\\n' \"$rs\"; fi; if [ -n \"$wk\" ] && [ -n \"$wrs\" ]; then printf 'used7=%s\\nresets7=%s\\n' \"$wk\" \"$wrs\"; fi; } > \"$vd/rate-limit.tmp.$$\" && mv \"$vd/rate-limit.tmp.$$\" \"$vd/rate-limit\"; } 2>/dev/null || rm -f \"$vd/rate-limit.tmp.$$\" 2>/dev/null; fi; sig_root=\"${VIBE_REPOS_DIR:-/repos}/.signals\"; rwseg=\"\"; if [ -d \"$sig_root\" ]; then for d in \"$sig_root\"/*/; do [ -d \"$d\" ] || continue; meta=\"$d/rw-lock.d/meta\"; req=\"$d/rw-request\"; if [ -f \"$meta\" ] && [ -f \"$req\" ]; then holder=$(grep '^project=' \"$meta\" 2>/dev/null | head -n1 | cut -d= -f2-); if [ -n \"$holder\" ] && [ \"$holder\" = \"${VIBE_PROJECT_NAME:-}\" ]; then requester=$(grep '^project=' \"$req\" 2>/dev/null | head -n1 | cut -d= -f2-); if [ -n \"$requester\" ]; then rwseg=\" · ⚠ rw:${requester}\"; printf '\\a' >&2; break; fi; fi; fi; done; fi; out=\"${out}${rwseg}\"; printf '%s' \"$out\""
   },
   "hooks": {
     "PreToolUse": [
@@ -5943,7 +6034,7 @@ mount_drift=""
 projects_drift=""
 domains_drift=""
 codex_drift=""
-if [ "$REBUILD" != true ] && [ -z "$drift_marker" ]; then
+if [ "$REBUILD" != true ]; then
   actual_mounts="$(container_shared_mounts "$WORKSPACE")"
   mount_drift="$(shared_repos_mount_drift "$SHARED_REPOS_SCAN" "$actual_mounts")"
   projects_drift="$(projects_bind_mount_drift "$(vibe_projects_bind_path "$WORKSPACE")" "$actual_mounts")"
@@ -5957,6 +6048,35 @@ if [ "$REBUILD" != true ] && [ -z "$drift_marker" ]; then
   codex_drift="$(codex_mount_drift "$(_codex_desired_source "$WORKSPACE" 2>/dev/null)" "$actual_mounts")"
 fi
 extra_flag="$(remove_existing_flag "$REBUILD" "${drift_marker}${mount_drift}${projects_drift}${domains_drift}${codex_drift}")"
+# A recreate removes the container along with every session inside it. When
+# another vibe session is still using it (vibe_container_live_sessions):
+#   - image drift alone → keep the container; the new image waits for a launch
+#     with no other session open. Nothing is lost by waiting.
+#   - any other drift (shared-repo mounts, history bind, firewall domains,
+#     Codex login mount) → those must not be skipped, so refuse this launch
+#     rather than kill the other session. Its container is no less safe for it.
+#   - explicit --rebuild → the user asked; proceed, but say what it ends.
+live_sessions=0
+if [ -n "$extra_flag" ]; then
+  live_sessions="$(vibe_container_live_sessions "$WORKSPACE")"
+fi
+if [ "${live_sessions:-0}" -gt 0 ]; then
+  if [ "$REBUILD" = true ]; then
+    echo "  ⚠ --rebuild: ending the ${live_sessions} other vibe session(s) still open in this project's container."
+    echo ""
+  elif [ -z "${mount_drift}${projects_drift}${domains_drift}${codex_drift}" ]; then
+    extra_flag=""
+    drift_marker=""
+    echo "  ◆ a newer vibe image is ready, but another vibe session is using this project's container,"
+    echo "    so this session joins it on the current image. Close every session here and relaunch to update."
+    echo ""
+  else
+    echo "  ✗ this project's container has to be recreated (its mounts, firewall domains or Codex login changed),"
+    echo "    but ${live_sessions} other vibe session(s) are still running in it, and recreating would end them."
+    echo "    Close those sessions and relaunch - or run 'vibe --rebuild' to end them now."
+    exit 1
+  fi
+fi
 [ -n "$extra_flag" ] && UP_ARGS+=("$extra_flag")
 # task_059: --remove-existing-container removes the ONE container the
 # devcontainer CLI finds for this workspace. Anything else this workspace left
@@ -6007,6 +6127,13 @@ fi
 # Retry once with --remove-existing-container to get a clean state. If that
 # still fails, surface the error rather than hide it.
 if ! devcontainer "${UP_ARGS[@]}"; then
+  # The retry removes the container; never do that under a live session.
+  if [ "$(vibe_container_live_sessions "$WORKSPACE")" -gt 0 ]; then
+    echo ""
+    echo "  ✗ devcontainer up failed, and another vibe session is still running in this project's container,"
+    echo "    so it was not removed for a retry. Close that session and relaunch."
+    exit 1
+  fi
   echo ""
   echo "  ⚠  postStartCommand failed — container is in a partial state."
   echo "     Removing it and retrying once with a fresh container."
@@ -6328,3 +6455,4 @@ done
 # `|| true` swallow is gone, superseded by launch_claude_supervised capturing
 # CLAUDE_EXIT past `set -e`.
 exit "$CLAUDE_EXIT"
+}
