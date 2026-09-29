@@ -5096,6 +5096,18 @@ _vibe_on_terminal() {
 
 _vibe_interactive() { [ -t 0 ] && { [ -t 1 ] || _vibe_log_on_terminal; }; }
 
+# _vibe_colour_env - rc 0 when devcontainer up should get FORCE_COLOR=1: the
+# launch log is holding a real terminal. With stdout on the log's pipe, Node tools (the devcontainer CLI)
+# decide they are not on a terminal and drop their colours; FORCE_COLOR is the
+# switch they honour instead. A pseudo-terminal (script(1)) was tried and
+# dropped on review, 2026-09-29: it swallowed Ctrl-C into a bogus "partial
+# state, remove and retry", and BSD/util-linux/BusyBox script disagree on
+# flags - too much risk on the firewall-critical `devcontainer up` for colour.
+# Callers build an env array: `UP_ENV=(env); _vibe_colour_env && UP_ENV+=(FORCE_COLOR=1)`.
+_vibe_colour_env() {
+  _vibe_log_on_terminal
+}
+
 # _vibe_onboard_soft <what> <subcommand> [args...] — run a host-onboarding
 # subcommand whose failure must NOT abort the launch (review item 5,
 # 2026-09-12). host-onboarding.py exits 1 on any OSError/ValueError, and every
@@ -6293,11 +6305,11 @@ extra_flag="$(remove_existing_flag "$REBUILD" "${drift_marker}${mount_drift}${pr
 #     Codex login mount) → those must not be skipped, so refuse this launch
 #     rather than kill the other session. Its container is no less safe for it.
 #   - explicit --rebuild → the user asked; proceed, but say what it ends.
+# Probed on every launch, not only on a recreate: a second session in the
+# same project also gets the heads-up below (2026-09-29).
 live_sessions=0
-if [ -n "$extra_flag" ]; then
-  live_sessions="$(vibe_container_live_sessions "$WORKSPACE")"
-fi
-if [ "${live_sessions:-0}" -gt 0 ]; then
+live_sessions="$(vibe_container_live_sessions "$WORKSPACE")" || live_sessions=0
+if [ -n "$extra_flag" ] && [ "${live_sessions:-0}" -gt 0 ]; then
   if [ "$REBUILD" = true ]; then
     echo "  ⚠ --rebuild: ending the ${live_sessions} other vibe session(s) still open in this project's container."
     echo ""
@@ -6315,6 +6327,13 @@ if [ "${live_sessions:-0}" -gt 0 ]; then
   fi
 fi
 [ -n "$extra_flag" ] && UP_ARGS+=("$extra_flag")
+# Joining is supported on purpose (a question or review alongside a long
+# run, a Claude and a Codex session side by side), so this is a heads-up,
+# not a refusal: both sessions share one working tree and one git branch.
+if [ "${live_sessions:-0}" -gt 0 ] && [ "$REBUILD" != true ]; then
+  _vibe_notice "  ◆ ${live_sessions} other vibe session(s) already open in this project. They share its files and git branch:" \
+    "    fine for questions or reviews next to a run; avoid two agents changing the same code at once."
+fi
 # task_059: --remove-existing-container removes the ONE container the
 # devcontainer CLI finds for this workspace. Anything else this workspace left
 # behind — a container stopped by a crash, or one the CLI orphaned — keeps
@@ -6363,7 +6382,9 @@ fi
 # skip postStart entirely and silently use a half-locked-down firewall.
 # Retry once with --remove-existing-container to get a clean state. If that
 # still fails, surface the error rather than hide it.
-if ! devcontainer "${UP_ARGS[@]}"; then
+UP_ENV=(env)
+_vibe_colour_env && UP_ENV+=(FORCE_COLOR=1)
+if ! "${UP_ENV[@]}" devcontainer "${UP_ARGS[@]}"; then
   # The retry removes the container; never do that under a live session.
   if [ "$(vibe_container_live_sessions "$WORKSPACE")" -gt 0 ]; then
     echo ""
@@ -6375,7 +6396,7 @@ if ! devcontainer "${UP_ARGS[@]}"; then
   echo "  ⚠  postStartCommand failed — container is in a partial state."
   echo "     Removing it and retrying once with a fresh container."
   echo ""
-  if ! devcontainer "${UP_BASE_ARGS[@]}" --remove-existing-container; then
+  if ! "${UP_ENV[@]}" devcontainer "${UP_BASE_ARGS[@]}" --remove-existing-container; then
     echo ""
     echo "  ✗ Retry also failed. Fix the underlying error above and re-run."
     echo "    If the image itself is suspect: vibe --rebuild"

@@ -102,19 +102,41 @@ fi
 
 # ── probes ───────────────────────────────────────────────────────────────────
 
-# The User of the first `Host` block in the SSH config that names the Mac host.
-# The config is mirrored from the Mac's own ~/.ssh, so one entry there declares
-# the account for every vibe container on that machine.
-mac_user_from_ssh_config() {
+# ssh_host_values <keyword> [wildcard] - every value of <keyword> in the SSH
+# config's `Host` blocks that name the Mac host (and, with "wildcard", also
+# `Host *` blocks), in file order. Understands `Keyword value`,
+# `Keyword=value` and a double-quoted value. One parser for both lookups
+# below, so a fix to the block logic cannot reach one and miss the other.
+# The config is mirrored from the Mac's own ~/.ssh, so one entry there
+# declares the account for every vibe container on that machine.
+ssh_host_values() {
   [ -r "$ssh_config" ] || return 0
-  awk -v target="$mac_host" '
-    tolower($1) == "host" {
+  awk -v target="$mac_host" -v key="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" -v wild="${2:-}" '
+    {
+      line = $0
+      sub(/^[ \t]+/, "", line)
+      if (line == "" || substr(line, 1, 1) == "#") next
+      kw = line; sub(/[ \t=].*$/, "", kw); kw = tolower(kw)
+      val = substr(line, length(kw) + 1); sub(/^[ \t]*=?[ \t]*/, "", val); sub(/[ \t]+$/, "", val)
+    }
+    kw == "host" || kw == "match" {
       inblock = 0
-      for (i = 2; i <= NF; i++) if ($i == target) inblock = 1
+      if (kw == "host") {
+        n = split(val, pats, /[ \t]+/)
+        for (i = 1; i <= n; i++) if (pats[i] == target || (wild == "wildcard" && pats[i] == "*")) inblock = 1
+      }
       next
     }
-    inblock && tolower($1) == "user" { print $2; exit }
+    inblock && kw == key {
+      if (val ~ /^".*"$/) val = substr(val, 2, length(val) - 2)
+      print val
+    }
   ' "$ssh_config" 2>/dev/null
+}
+
+# The User of the first `Host` block in the SSH config that names the Mac host.
+mac_user_from_ssh_config() {
+  ssh_host_values user | head -n 1
 }
 
 mac_user=${VIBE_MAC_USER:-}
@@ -124,6 +146,28 @@ if [ -z "$mac_user" ]; then
   mac_user_source="the SSH config (Host $mac_host)"
 fi
 case "$mac_user" in *[!A-Za-z0-9._-]*) mac_user="" ;; esac
+
+# The IdentityFile(s) ssh would try for the Mac host: its own block's plus
+# any `Host *` block's. The config can name a key only some containers have
+# (a per-project bridge key under one project's /workspace/.vibe, say).
+# Existence is checked, the key is never read. When keys are named and none
+# of them is here, SSH will fail, so the account must not be offered as
+# "available now" (2026-09-29: it was, and the connection was refused).
+# ~ and %d expand to the home directory; any other %-token is left alone and
+# counts as present (unknowable here - never hide an account on a guess).
+mac_key_missing=""
+if [ -n "$mac_user" ]; then
+  mac_key_found=0
+  while IFS= read -r mac_identity; do
+    [ -n "$mac_identity" ] || continue
+    # shellcheck disable=SC2088  # matching a literal "~/" from the config, not expanding one
+    case "$mac_identity" in "~/"*) mac_identity="$home/${mac_identity#\~/}" ;; esac
+    case "$mac_identity" in "%d/"*) mac_identity="$home/${mac_identity#%d/}" ;; esac
+    case "$mac_identity" in *%*) mac_key_found=1; continue ;; esac
+    if [ -e "$mac_identity" ]; then mac_key_found=1; else mac_key_missing="${mac_key_missing:+$mac_key_missing, }$mac_identity"; fi
+  done < <(ssh_host_values identityfile wildcard)
+  [ "$mac_key_found" = 1 ] && mac_key_missing=""
+fi
 
 mac_port=unknown
 if [ -n "$mac_user" ] && [ "${VIBE_CAP_NO_PROBE:-0}" != 1 ]; then
@@ -216,7 +260,7 @@ EOF
 fi
 
 if [ "$mode" = brief ]; then
-  [ -n "$mac_user" ] && echo "- $(mac_line)"
+  [ -n "$mac_user" ] && [ -z "$mac_key_missing" ] && echo "- $(mac_line)"
   [ "$mac_build" = yes ] && echo "- mac-build doctor|build|test|screenshot (this project's Mac build bridge)"
   echo "- view images: Claude's Read tool displays PNG/JPG; Codex can view image files"
   echo "- web: search tools route outside the firewall; direct HTTP only to GitHub, npm, Anthropic, VS Code marketplace${extra_domains:+ and $extra_domains}"
@@ -234,7 +278,7 @@ echo "Run this before telling anyone you can't see, build, run or reach somethin
 echo
 echo "## Available now"
 echo
-[ -n "$mac_user" ] && echo "- $(mac_line)"
+[ -n "$mac_user" ] && [ -z "$mac_key_missing" ] && echo "- $(mac_line)"
 [ "$mac_build" = yes ] && echo "- Mac build bridge: \`mac-build doctor|build|test|screenshot\` builds this project's snapshot on the Mac and returns logs and artifacts (docs/mac-build-protocol.md in the vibe repo)."
 echo "- Look at images: Claude's Read tool displays PNG/JPG files; Codex can view an image file. A screenshot you fetched is something you can see."
 echo "- Web: WebSearch/WebFetch-style tools route outside the container firewall. Direct HTTP from the shell reaches only GitHub, npm, Anthropic, the VS Code marketplace${extra_domains:+ and the project extra domains $extra_domains}."
@@ -252,6 +296,7 @@ echo
 echo "## Could be switched on (say exactly this, then carry on with other work)"
 echo
 [ -z "$mac_user" ] && echo "- A Mac account for screenshots, browsers and native builds: \`vibe-capabilities --setup mac-account\` prints the one-time steps."
+[ -n "$mac_key_missing" ] && echo "- The Mac account \`$mac_user@$mac_host\` is declared, but no SSH key the config names for it (\`$mac_key_missing\`) is in this container, so connecting fails. Give this project its own key: \`ssh-keygen -t ed25519 -N '' -f $ws/.vibe/id_ed25519_mac\` (.vibe/ is gitignored by vibe's managed block; check it still is), have the user append the .pub to that account's ~/.ssh/authorized_keys on the Mac and add \`IdentityFile /workspace/.vibe/id_ed25519_mac\` under \`Host $mac_host\` in their Mac's ~/.ssh/config (one key per project, the same file name in every project, so one line serves them all). Until the relaunch that picks up the config: \`ssh -i $ws/.vibe/id_ed25519_mac $mac_user@$mac_host\`."
 [ -n "$mac_user" ] && [ "$mac_port" = closed ] && echo "- The Mac account is declared but port 22 is closed: turn on Remote Login for \`$mac_user\` (System Settings → General → Sharing)."
 [ -n "$mac_user" ] && [ "$ssh_auto" = no ] && echo "- Use the Mac account without asking each time: \`touch .vibe-allow-ssh\` in the project (untracked), then relaunch vibe."
 [ "$mac_build" = no ] && echo "- A Mac build bridge for this project: tell the agent \"Set up native builds using Vibe's Mac setup guide\" (docs/mac-build-setup.md)."

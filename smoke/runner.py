@@ -1046,6 +1046,7 @@ def main() -> int:
     test_launch_log_survives_ctrl_c()
     test_launch_log_can_be_disabled()
     test_launch_log_terminal_detection_is_main_shell_only()
+    test_colour_env_only_while_the_log_holds_a_terminal()
     test_launch_log_wiring()
     test_stop_guard_blocks_a_live_owned_run()
     test_stop_guard_allow_paths()
@@ -1058,6 +1059,7 @@ def main() -> int:
     test_vs_tester_must_show_a_control_can_fail()
     test_vs_model_economy_carries_the_cache_rules()
     test_capabilities_finds_the_mac_account_from_the_ssh_config()
+    test_capabilities_missing_mac_key_is_not_available()
     test_capabilities_without_a_mac_account_says_how_to_get_one()
     test_capabilities_parsing_edges()
     test_capabilities_bridge_brief_and_setup_modes()
@@ -1100,6 +1102,7 @@ def main() -> int:
     test_weekly_limit_vetoes_the_watchdog()
     test_relaunch_countdown_waits_out_a_used_up_week()
     test_live_session_count()
+    test_second_session_gets_a_heads_up()
     test_recreate_spares_a_live_session()
     run_supervisor_tests([
         test_codex_supervisor_challenges_a_waiting_exit_once,

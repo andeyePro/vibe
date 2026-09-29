@@ -75,6 +75,37 @@ def test_capabilities_finds_the_mac_account_from_the_ssh_config():
         check("[caps] ... and the 'switch on' list no longer offers it", "touch .vibe-allow-ssh" not in r.stdout, r.stdout)
 
 
+def test_capabilities_missing_mac_key_is_not_available():
+    print("\n[caps] a Mac account whose IdentityFile is absent here is not offered as available")
+    with tempfile.TemporaryDirectory() as t:
+        td = Path(t)
+        missing = td / "nope" / "id_ed25519_other_project"
+        home, ws, bindir = _caps_fixture(td, MAC_CONFIG + f"    IdentityFile {missing}\n")
+        r = _caps(td, home, ws, bindir)
+        avail = r.stdout.split("## Available now", 1)[-1].split("## Could be", 1)[0]
+        check("[caps] missing key -> not under Available now", "Mac account `claude@" not in avail, avail)
+        check("[caps] ... the switch-on list names the missing key",
+              str(missing) in r.stdout and "is in this container" in r.stdout, r.stdout)
+        brief = _caps(td, home, ws, bindir, "--brief").stdout
+        check("[caps] ... and --brief leaves it out", "claude@" not in brief, brief)
+        present = ws / ".vibe" / "id_ed25519_mac"
+        present.write_text("")
+        (home / ".ssh" / "config").write_text(
+            MAC_CONFIG + f"    IdentityFile {missing}\n    IdentityFile {present}\n")
+        r = _caps(td, home, ws, bindir)
+        avail = r.stdout.split("## Available now", 1)[-1].split("## Could be", 1)[0]
+        check("[caps] one of several keys present -> available", "Mac account `claude@" in avail, avail)
+        (home / ".ssh" / "config").write_text(
+            MAC_CONFIG + f"    IdentityFile {missing}\nHost *\n  IdentityFile=\"{present}\"\n")
+        r = _caps(td, home, ws, bindir)
+        avail = r.stdout.split("## Available now", 1)[-1].split("## Could be", 1)[0]
+        check("[caps] a key from `Host *` (=, quoted) counts too", "Mac account `claude@" in avail, avail)
+        (home / ".ssh" / "config").write_text(MAC_CONFIG + "    IdentityFile %d/.ssh/nope\n")
+        r = _caps(td, home, ws, bindir)
+        check("[caps] %d expands to home (missing key reported under its real path)",
+              f"{home}/.ssh/nope" in r.stdout, r.stdout)
+
+
 def test_capabilities_without_a_mac_account_says_how_to_get_one():
     print("\n[caps] no Mac account declared: the inventory says exactly how to switch one on")
     with tempfile.TemporaryDirectory() as t:

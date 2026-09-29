@@ -227,7 +227,7 @@ def test_hygiene_stale_removal_wired_into_the_recreate_path() -> None:
     text = VIBE.read_text()
     idx_flag = text.find('extra_flag="$(remove_existing_flag')
     idx_reap = text.find('vibe_remove_stale_workspace_containers "$WORKSPACE"')
-    idx_up = text.find('if ! devcontainer "${UP_ARGS[@]}"; then')
+    idx_up = text.find('if ! "${UP_ENV[@]}" devcontainer "${UP_ARGS[@]}"; then')
     check("[hygiene] launch path reaps stale containers", idx_reap != -1, "call not found")
     check("[hygiene] reaping is gated on the recreate decision",
           idx_flag != -1 and idx_flag < idx_reap, f"{idx_flag} !< {idx_reap}")
@@ -661,6 +661,22 @@ echo "sub=$(_vibe_log_on_terminal && echo yes || echo no)"
     check("[launch-log] a command substitution does not", "sub=no" in r.stdout, r.stdout)
 
 
+def test_colour_env_only_while_the_log_holds_a_terminal() -> None:
+    body = """
+_vibe_colour_env && echo off=yes || echo off=no
+VIBE_LAUNCH_LOG_ACTIVE=1 VIBE_LAUNCH_LOG_TTY=1
+_vibe_colour_env && echo on=yes || echo on=no
+echo "sub=$(_vibe_colour_env && echo yes || echo no)"
+"""
+    r = _hyg(body)
+    check("[colour] no log on a terminal: no FORCE_COLOR", "off=no" in r.stdout, r.stdout)
+    check("[colour] log holding a terminal, main shell: FORCE_COLOR", "on=yes" in r.stdout, r.stdout)
+    check("[colour] not from inside a command substitution", "sub=no" in r.stdout, r.stdout)
+    text = VIBE.read_text()
+    check("[colour] devcontainer up keeps its native exit status and Ctrl-C (no pty wrapper)",
+          "_vibe_with_pty" not in text and "script -q" not in text, "")
+
+
 def test_launch_log_wiring() -> None:
     text = VIBE.read_text()
     main = text[text.index('[ "${VIBE_SOURCE_ONLY:-}" = "1" ] && return 0'):]
@@ -680,6 +696,9 @@ def test_launch_log_wiring() -> None:
     for needle in ("_vibe_on_terminal gh auth login",
                    "_vibe_on_terminal _vibe_codex_host_login",
                    "_vibe_on_terminal _vibe_host_onboarding setup",
-                   "_vibe_on_terminal --quiet _vibe_host_onboarding docker-start"):
+                   "_vibe_on_terminal --quiet _vibe_host_onboarding docker-start",
+                   'if ! "${UP_ENV[@]}" devcontainer "${UP_ARGS[@]}"; then',
+                   'if ! "${UP_ENV[@]}" devcontainer "${UP_BASE_ARGS[@]}" --remove-existing-container; then',
+                   '_vibe_colour_env && UP_ENV+=(FORCE_COLOR=1)'):
         check(f"[launch-log] interactive step gets the real terminal: {needle}",
               needle in text, needle)

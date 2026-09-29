@@ -177,6 +177,26 @@ def _run_recreate(live: int, rebuild: bool, other_drift: str, image_drift: str =
     return run(["bash", "-c", script])
 
 
+def test_second_session_gets_a_heads_up():
+    print("\n[session-safety] launching into a project with a live session prints a (replayed) heads-up")
+    src = VIBE.read_text()
+    check("[session-safety] live sessions are probed on every launch, not only on a recreate",
+          'live_sessions=0\nlive_sessions="$(vibe_container_live_sessions "$WORKSPACE")" || live_sessions=0\n' in src)
+    i_up = src.find('[ -n "$extra_flag" ] && UP_ARGS+=("$extra_flag")')
+    tail = src[i_up:i_up + 800]
+    check("[session-safety] the heads-up is a replayed notice, skipped under --rebuild",
+          '_vibe_notice "  ◆ ${live_sessions} other vibe session(s) already open' in tail
+          and '[ "$REBUILD" != true ]' in tail, tail)
+    block = _recreate_block()
+    script = ('vibe_container_live_sessions() { echo 1; }; REBUILD=false; WORKSPACE=/ws; UP_ARGS=(up); '
+              'drift_marker=""; mount_drift=""; projects_drift=""; codex_drift=""; domains_drift=""; '
+              'extra_flag=""; ' + block + 'echo "FLAG=[$extra_flag] ARGS=[${UP_ARGS[*]}]"')
+    r = run(["bash", "-c", script])
+    check("[session-safety] joining with no drift at all claims no 'newer image'",
+          r.returncode == 0 and "newer vibe image" not in r.stdout and "FLAG=[] ARGS=[up]" in r.stdout,
+          r.stdout + r.stderr)
+
+
 def test_recreate_spares_a_live_session():
     print("\n[session-safety] a recreate never removes a container another session is using")
     check("[session-safety] recreate gate block found in the launcher", bool(_recreate_block()))
@@ -203,7 +223,7 @@ def test_recreate_spares_a_live_session():
           "ARGS=[up --remove-existing-container]" in r.stdout and "ending the 1 other" in r.stdout,
           r.stdout + r.stderr)
     src = VIBE.read_text()
-    retry = src[src.index('if ! devcontainer "${UP_ARGS[@]}"; then'):]
+    retry = src[src.index('if ! "${UP_ENV[@]}" devcontainer "${UP_ARGS[@]}"; then'):]
     retry = retry[:retry.index("--remove-existing-container")]
     check("[session-safety] the failed-up retry checks for live sessions before removing",
           "vibe_container_live_sessions" in retry, retry[:300])
