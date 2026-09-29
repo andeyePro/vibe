@@ -400,7 +400,7 @@ create_github_repo() {
   local gh_user
   if _vibe_interactive && ! gh auth status >/dev/null 2>&1; then
     if ask_yes_no 'Sign in to GitHub CLI to continue GitHub setup?' n; then
-      gh auth login || { echo "  Skipping — launching without GitHub."; return 0; }
+      _vibe_on_terminal gh auth login || { echo "  Skipping — launching without GitHub."; return 0; }
     else
       echo "  Skipping — launching without GitHub."
       return 0
@@ -3720,7 +3720,9 @@ vibe_container_live_sessions() {
 #      project's OWN stopped containers, so an image can actually be reclaimed.
 #   2. vibe_prune_after_build - after a rebuild, reclaim vibe's dangling
 #      images and stale build cache. Scoped: never other projects' leftovers.
-#   3. vibe_hygiene_check + `vibe clean` - warn, then reclaim on demand.
+#   3. vibe_hygiene_check - on low disk or a lot of reclaimable space, run
+#      vibe_auto_clean (`vibe clean`'s default scope, unattended, 2026-09-29);
+#      only what that cannot fix is left to the user, as a launch notice.
 # NONE of them ever touches a volume. The launcher has no code path that runs
 # `docker volume rm` or passes `--volumes`/`-v` to a prune or rm - that is the
 # invariant this whole section is built around, and smoke-test.py asserts it.
@@ -3792,47 +3794,164 @@ _vibe_marker_fresh() {
   [ -n "$(find "$f" -mmin "-$((hours * 60))" 2>/dev/null)" ]
 }
 
-# vibe_hygiene_check [marker] - advisory preflight. Warns (stderr) when the
-# host disk is running low, or when Docker is sitting on a lot of reclaimable
-# space. Never fails a launch: every path returns 0, and a missing/unhappy
-# docker degrades to silence rather than noise.
+# ── Launch notices ───────────────────────────────────────────────────────────
+# A notice is a warning that needs the user to act. It is printed where it
+# arises AND collected, so vibe_notices_replay can repeat the lot as the last
+# thing before the agent's TUI starts - the one spot on screen that does not
+# scroll away (and it lands in .vibe/last-launch.log either way).
+VIBE_NOTICES=""
+
+# _vibe_notice <line>... - print to stderr and remember for the replay.
+_vibe_notice() {
+  local line
+  for line in "$@"; do
+    printf '%s\n' "$line" >&2
+    VIBE_NOTICES="${VIBE_NOTICES}${line}"$'\n'
+  done
+}
+
+vibe_notices_replay() {
+  [ -n "$VIBE_NOTICES" ] || return 0
+  printf '\n  ── Needs you (also saved in .vibe/last-launch.log) ──\n' >&2
+  printf '%s' "$VIBE_NOTICES" >&2
+  printf '\n' >&2
+}
+
+# _vibe_mib_human <mib> - "12 GB" / "812 MB".
+_vibe_mib_human() {
+  if [ "${1:-0}" -ge 1024 ]; then printf '%s GB' "$(($1 / 1024))"; else printf '%s MB' "${1:-0}"; fi
+}
+
+# vibe_hygiene_check [marker] - launch-time disk hygiene. Never fails a launch:
+# every path returns 0, and a missing/unhappy docker degrades to silence.
 #
-# The cheap half (df) runs on every launch. The expensive half
-# (`docker system df`, which walks the image store) is throttled to once per
-# VIBE_HYGIENE_INTERVAL_HOURS (default 24) via the marker's mtime, so it never
-# adds a second to a routine launch.
-#   VIBE_HYGIENE=0                  - disable both halves
+# Two triggers, both of which now CLEAN rather than only warn (a warning in a
+# scrolling launch is a chore handed to the user, and one they will miss):
+#   - host disk low (checked every launch; cheap `df`). The clean itself is
+#     throttled to once an hour so a disk that stays low after cleaning does
+#     not cost every launch a sweep that finds nothing.
+#   - Docker holding a lot of reclaimable space (`docker system df`, which
+#     walks the image store - throttled to once per VIBE_HYGIENE_INTERVAL_HOURS
+#     via the marker's mtime; the marker is machine-wide, not per-project).
+# The clean is vibe_auto_clean: `vibe clean`'s default scope, never a volume,
+# never a running container, never a container created in the last hour.
+# Whatever still needs the user afterwards becomes a notice (see above).
+#   VIBE_HYGIENE=0                  - disable all of it
+#   VIBE_AUTO_CLEAN=0               - warn only, as before (no automatic clean)
 #   VIBE_DISK_WARN_GIB              - host free-space threshold (default 20)
 #   VIBE_DOCKER_RECLAIM_WARN_GIB    - reclaimable threshold (default 20)
 # shellcheck disable=SC2120  # the optional marker arg is passed only by tests
 vibe_hygiene_check() {
   [ "${VIBE_HYGIENE:-1}" = "0" ] && return 0
   local marker="${1:-$HOME/.vibe/.hygiene-checked}"
+  local clean_marker="${marker}.auto-clean"
   local disk_warn="${VIBE_DISK_WARN_GIB:-20}"
   local reclaim_warn="${VIBE_DOCKER_RECLAIM_WARN_GIB:-20}"
   local interval="${VIBE_HYGIENE_INTERVAL_HOURS:-24}"
+  local auto="${VIBE_AUTO_CLEAN:-1}"
 
-  local free_mib
+  local free_mib low=0
   free_mib="$(_vibe_host_free_mib "$HOME")"
   if [ -n "$free_mib" ] && [ "$free_mib" -lt $((disk_warn * 1024)) ]; then
-    printf '  ⚠ only %s GB free on this disk. Docker writes its whole VM disk here;\n' \
-      "$((free_mib / 1024))" >&2
-    printf '    if it fills mid-write the image store can corrupt. Reclaim: vibe clean\n' >&2
-    printf '    Cap it for good: Docker Desktop > Settings > Resources > Advanced > Disk usage limit.\n' >&2
+    low=1
   fi
 
-  _vibe_marker_fresh "$marker" "$interval" && return 0
-  mkdir -p "$(dirname "$marker")" 2>/dev/null || true
-  : > "$marker" 2>/dev/null || true
+  local run_df=0
+  _vibe_marker_fresh "$marker" "$interval" || run_df=1
+  if [ "$low" = 1 ] && [ "$auto" != 0 ] && ! _vibe_marker_fresh "$clean_marker" 1; then
+    run_df=1
+  fi
 
-  local reclaimable
-  reclaimable="$(_vibe_docker_reclaimable_mib)"
+  local reclaimable="" cleaned=0
+  if [ "$run_df" = 1 ]; then
+    mkdir -p "$(dirname "$marker")" 2>/dev/null || true
+    : > "$marker" 2>/dev/null || true
+    reclaimable="$(_vibe_docker_reclaimable_mib)"
+    if [ "$auto" != 0 ] && { [ "$low" = 1 ] || [ "${reclaimable:-0}" -gt $((reclaim_warn * 1024)) ]; }; then
+      : > "$clean_marker" 2>/dev/null || true
+      vibe_auto_clean "$reclaimable" || true
+      cleaned=1
+      reclaimable="$VIBE_AUTO_CLEAN_AFTER"
+      free_mib="$(_vibe_host_free_mib "$HOME")"
+      low=0
+      if [ -n "$free_mib" ] && [ "$free_mib" -lt $((disk_warn * 1024)) ]; then low=1; fi
+    fi
+  fi
+
+  if [ "$low" = 1 ]; then
+    _vibe_notice \
+      "  ⚠ only $((free_mib / 1024)) GB free on this disk. Docker writes its whole VM disk here;" \
+      "    if it fills mid-write the image store can corrupt." \
+      "    Cap it for good: Docker Desktop > Settings > Resources > Advanced > Disk usage limit."
+    if [ "$cleaned" = 1 ] || { [ "$auto" != 0 ] && _vibe_marker_fresh "$clean_marker" 1; }; then
+      _vibe_notice "    vibe already cleaned up what it safely could. For more: vibe clean --all (volumes are never touched)."
+    else
+      _vibe_notice "    Reclaim: vibe clean"
+    fi
+  fi
   if [ -n "$reclaimable" ] && [ "$reclaimable" -gt $((reclaim_warn * 1024)) ]; then
-    printf '  ⚠ Docker is holding %s GB of reclaimable images, containers and build cache.\n' \
-      "$((reclaimable / 1024))" >&2
-    printf '    Reclaim it (volumes are never touched): vibe clean\n' >&2
+    if [ "$cleaned" = 1 ]; then
+      _vibe_notice "  ⚠ Docker still holds $(_vibe_mib_human "$reclaimable") reclaimable that the safe automatic clean leaves alone." \
+        "    Widen the sweep (volumes are never touched): vibe clean --all"
+    else
+      _vibe_notice "  ⚠ Docker is holding $(_vibe_mib_human "$reclaimable") of reclaimable images, containers and build cache." \
+        "    Reclaim it (volumes are never touched): vibe clean"
+    fi
   fi
   return 0
+}
+
+# vibe_auto_clean [before-mib] - the unattended form of `vibe clean`. Same
+# prunes, but a NARROWER container scope ("auto"): only stopped vibe
+# containers whose image has been superseded (docker shows a bare sha256 once
+# the tag has moved on), and none created within about the last hour.
+# Those are exactly the containers that pin old images - the space - and
+# exactly the ones the next launch of their project would recreate anyway
+# (image drift on a stopped container means a recreate), so removing them
+# costs the user nothing a launch would not. A stopped container still on the
+# current image holds no image space and is left for its project.
+# Leaves the post-clean reclaimable figure in VIBE_AUTO_CLEAN_AFTER so the
+# caller need not walk the image store again. Prints one line saying what it
+# did (nothing if it did nothing).
+VIBE_AUTO_CLEAN_AFTER=""
+vibe_auto_clean() {
+  local rows removed before="${1:-}" after freed
+  [ -n "$before" ] || before="$(_vibe_docker_reclaimable_mib)"
+  rows="$(_clean_stopped_containers auto)"
+  removed="$(_vibe_reclaim "$rows" "")"
+  after="$(_vibe_docker_reclaimable_mib)"
+  VIBE_AUTO_CLEAN_AFTER="$after"
+  freed=0
+  if [ -n "$before" ] && [ -n "$after" ] && [ "$before" -gt "$after" ]; then
+    freed=$((before - after))
+  fi
+  [ "${removed:-0}" -gt 0 ] || [ "$freed" -gt 0 ] || return 0
+  printf '  ✓ auto-clean: removed %s stopped vibe container(s), freed about %s inside Docker (volumes untouched; VIBE_AUTO_CLEAN=0 turns this off).\n' \
+    "${removed:-0}" "$(_vibe_mib_human "$freed")" >&2
+}
+
+# _vibe_reclaim <rows> <all> - remove the containers in <rows> (as printed by
+# _clean_stopped_containers) and prune images and build cache: label- and
+# age-scoped by default, everything dangling when <all> is "all". Echoes how
+# many containers were removed. Shared by `vibe clean` and vibe_auto_clean so
+# the two can never drift apart on what "safe" means.
+_vibe_reclaim() {
+  local rows="$1" all="${2:-}" removed=0 id img folder
+  if [ -n "$rows" ]; then
+    while IFS=$'\t' read -r id img folder; do
+      [ -n "$id" ] || continue
+      # No -f (nothing here is running) and no -v (never delete volumes).
+      docker rm "$id" >/dev/null 2>&1 && removed=$((removed + 1))
+    done <<< "$rows"
+  fi
+  if [ "$all" = "all" ]; then
+    docker image prune -f >/dev/null 2>&1 || true
+    docker builder prune -f >/dev/null 2>&1 || true
+  else
+    docker image prune -f --filter "label=$VIBE_IMAGE_LABEL" >/dev/null 2>&1 || true
+    docker builder prune -f --filter "until=168h" >/dev/null 2>&1 || true
+  fi
+  echo "$removed"
 }
 
 # vibe_workspace_stale_containers <workspace> - ids of NON-running containers
@@ -3937,12 +4056,29 @@ EOF
 # Docker ps format shared by the listing helpers. The label literal must match
 # VIBE_IMAGE_LABEL (smoke-test.py asserts it does); it cannot be interpolated
 # without making the Go-template quoting unreadable.
+#
+# `|`-separated, not tab: IFS treats a tab as whitespace and collapses an EMPTY
+# field, which shifted a missing label's neighbour into the label slot. The
+# folder (the only free-text field) goes last, so a `|` inside a path lands
+# in it rather than splitting it.
 _clean_docker_ps_format() {
-  printf '%s' '{{.ID}}\t{{.Image}}\t{{.Label "devcontainer.local_folder"}}\t{{.Label "com.andeye.vibe.image"}}'
+  printf '%s' '{{.ID}}|{{.Image}}|{{.RunningFor}}|{{.Label "com.andeye.vibe.image"}}|{{.Label "devcontainer.local_folder"}}'
 }
 
-# _clean_stopped_containers [all] - echo "id<TAB>image<TAB>folder" per stopped
-# container in scope, one per line.
+# _clean_is_young <docker RunningFor> - rc 0 when the container was created
+# under about an hour ago ("45 seconds ago", "12 minutes ago"), or when the
+# age cannot be read - the unattended clean skips anything it cannot age.
+_clean_is_young() {
+  case "${1:-}" in
+    ''|*second*|*minute*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# _clean_stopped_containers [all|auto] - echo "id<TAB>image<TAB>folder" per
+# stopped container in scope, one per line. "auto" (vibe_auto_clean) narrows
+# the default scope to superseded images and skips anything created within
+# about the last hour - see vibe_auto_clean for why.
 #
 # In scope by default:
 #   - anything carrying vibe's image label (survives the vibe-dev tag moving on)
@@ -3954,9 +4090,13 @@ _clean_docker_ps_format() {
 #     because on a shared machine this class can include another tool's
 #     devcontainers.
 _clean_stopped_containers() {
-  local all="${1:-}" id img folder lbl
-  while IFS=$'\t' read -r id img folder lbl; do
+  local all="${1:-}" id img age folder lbl
+  while IFS='|' read -r id img age lbl folder; do
     [ -n "$id" ] || continue
+    if [ "$all" = "auto" ]; then
+      [ "${img#sha256:}" != "$img" ] || continue
+      _clean_is_young "$age" && continue
+    fi
     if [ -n "$lbl" ]; then
       :
     elif [ "${img#vibe-dev}" != "$img" ]; then
@@ -4052,33 +4192,15 @@ clean_handle_subcommand() {
     _clean_confirm "Remove the above?" || { echo "  Nothing removed."; exit 0; }
   fi
 
-  local removed=0 id img folder
-  if [ -n "$rows" ]; then
-    while IFS=$'\t' read -r id img folder; do
-      [ -n "$id" ] || continue
-      # No -f (nothing here is running) and no -v (never delete volumes).
-      docker rm "$id" >/dev/null 2>&1 && removed=$((removed + 1))
-    done <<< "$rows"
-  fi
-
-  if [ "$all" -eq 1 ]; then
-    docker image prune -f >/dev/null 2>&1 || true
-    docker builder prune -f >/dev/null 2>&1 || true
-  else
-    docker image prune -f --filter "label=$VIBE_IMAGE_LABEL" >/dev/null 2>&1 || true
-    docker builder prune -f --filter "until=168h" >/dev/null 2>&1 || true
-  fi
+  local removed
+  removed="$(_vibe_reclaim "$rows" "$all_arg")"
 
   local after freed
   after="$(_vibe_docker_reclaimable_mib)"
   echo "  ✓ removed $removed stopped container(s)."
   if [ -n "$before" ] && [ -n "$after" ] && [ "$before" -gt "$after" ]; then
     freed=$((before - after))
-    if [ "$freed" -ge 1024 ]; then
-      echo "  ✓ reclaimed about $((freed / 1024)) GB."
-    else
-      echo "  ✓ reclaimed about $freed MB."
-    fi
+    echo "  ✓ reclaimed about $(_vibe_mib_human "$freed")."
   fi
   if [ "$all" -ne 1 ] && [ "$count" -eq 0 ]; then
     echo "    If Docker is still large, the space is pinned by images that older"
@@ -4869,7 +4991,110 @@ _vibe_host_onboarding() {
     python3 "$DEVCONTAINER_DIR/host-onboarding.py" "$@"
 }
 
-_vibe_interactive() { [ -t 0 ] && [ -t 1 ]; }
+# ── Launch log (the pre-session output, kept) ─────────────────────────────────
+# Everything the launcher prints before the agent's TUI takes over is copied,
+# colour codes stripped, to <project>/.vibe/last-launch.log (the one before it
+# is kept as prev-launch.log). Warnings scroll past fast on a busy launch; the
+# log means neither the user nor the in-container agent (which sees .vibe/ at
+# /workspace/.vibe) has to catch them live. VIBE_LAUNCH_LOG=0 turns it off.
+#
+# Mechanism: fd 1 and fd 2 are pointed at one tee (stderr merged, so the log
+# keeps the order the terminal showed), and the real terminal is parked on
+# fds 7 and 8. vibe_launch_log_stop puts them back before the TUI starts.
+#
+# The catch: with stdout on a pipe, `[ -t 1 ]` goes false, and interactive
+# tools (gh auth login, codex login, host-onboarding.py's isatty(1) gates)
+# would decide they are not on a terminal. So:
+#   - _vibe_interactive also accepts "stdout is the launch-log tee", which is
+#     true exactly when the log is running on a terminal AND we are in the
+#     launcher's main shell (BASH_SUBSHELL 0). Inside $(...) or a pipeline
+#     BASH_SUBSHELL is >0 and the answer is what it always was.
+#   - _vibe_on_terminal runs one command on the parked real terminal. Those
+#     prompts are deliberately not logged (a login flow prints one-time codes).
+VIBE_LAUNCH_LOG_TTY=0
+VIBE_LAUNCH_LOG_ACTIVE=0
+
+# _vibe_log_strip - stdin -> stdout with CSI/OSC escapes removed and each
+# carriage-return-overwritten line reduced to what was left visible. Written
+# for BSD and GNU sed alike: the escape bytes come from $'...', not \x.
+_vibe_log_strip() {
+  LC_ALL=C sed -e $'s/\033\\[[0-9;?]*[ -/]*[@-~]//g' \
+               -e $'s/\033\\][^\a]*\a//g' \
+               -e $'s/.*\r\\(.\\)/\\1/' -e $'s/\r$//'
+}
+
+# vibe_launch_log_start <workspace> - begin copying output to the log.
+# Never fails a launch: any problem leaves output exactly as it was.
+vibe_launch_log_start() {
+  [ "${VIBE_LAUNCH_LOG:-1}" = "0" ] && return 0
+  [ "$VIBE_LAUNCH_LOG_ACTIVE" = 1 ] && return 0
+  local dir="$1/.vibe" log prev
+  log="$dir/last-launch.log"
+  prev="$dir/prev-launch.log"
+  # The workspace is repo content: a committed symlink here would point this
+  # HOST-side write outside the project. Any symlink on the path, no log.
+  { [ -L "$dir" ] || [ -L "$log" ] || [ -L "$prev" ]; } && return 0
+  mkdir -p "$dir" 2>/dev/null || return 0
+  [ -f "$log" ] && { mv -f "$log" "$prev" 2>/dev/null || true; }
+  printf 'vibe launch %s in %s\n\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" > "$log" 2>/dev/null || return 0
+  VIBE_LAUNCH_LOG_PIDFILE="$(mktemp "${TMPDIR:-/tmp}/vibe-launch-log.XXXXXX" 2>/dev/null)" || VIBE_LAUNCH_LOG_PIDFILE=""
+  [ -t 1 ] && VIBE_LAUNCH_LOG_TTY=1
+  exec 7>&1 8>&2
+  # INT ignored in the tee (and the sed it spawns): they share the launcher's
+  # process group, so a Ctrl-C meant for docker would otherwise kill them and
+  # the launcher's next echo would die of SIGPIPE, silently, skipping its EXIT
+  # hooks. The tee writes its pid (bash 3.2 has no $! for this) so the
+  # hand-back can wait for it to drain.
+  # Ignored in the launcher too for the instant of the fork, so there is no
+  # window before the subshell's own trap runs; the launcher has no INT trap
+  # of its own at this point, so `trap - INT` restores the default.
+  trap '' INT
+  exec > >(trap '' INT; [ -n "$VIBE_LAUNCH_LOG_PIDFILE" ] && sh -c 'echo $PPID' > "$VIBE_LAUNCH_LOG_PIDFILE"; exec tee >(_vibe_log_strip >> "$log") >&7) 2>&1
+  trap - INT
+  VIBE_LAUNCH_LOG_ACTIVE=1
+}
+
+# vibe_launch_log_stop - hand the real terminal back. Idempotent.
+# Waits (up to ~2 s) for the tee to drain, so the last lines - the "Needs
+# you" replay above all - reach the terminal before the agent's TUI takes it.
+vibe_launch_log_stop() {
+  [ "$VIBE_LAUNCH_LOG_ACTIVE" = 1 ] || return 0
+  exec 1>&7 2>&8 7>&- 8>&-
+  VIBE_LAUNCH_LOG_ACTIVE=0
+  VIBE_LAUNCH_LOG_TTY=0
+  local pid="" i=0
+  if [ -n "${VIBE_LAUNCH_LOG_PIDFILE:-}" ]; then
+    pid="$(cat "$VIBE_LAUNCH_LOG_PIDFILE" 2>/dev/null)" || pid=""
+    rm -f "$VIBE_LAUNCH_LOG_PIDFILE" 2>/dev/null || true
+  fi
+  case "$pid" in ''|*[!0-9]*) return 0 ;; esac
+  while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 20 ]; do
+    sleep 0.1; i=$((i + 1))
+  done
+  return 0
+}
+
+_vibe_log_on_terminal() {
+  [ "$VIBE_LAUNCH_LOG_ACTIVE" = 1 ] && [ "$VIBE_LAUNCH_LOG_TTY" = 1 ] && [ "${BASH_SUBSHELL:-1}" -eq 0 ]
+}
+
+# _vibe_on_terminal [--quiet] <cmd...> - run <cmd> with stdout/stderr on the
+# real terminal when the launch log has them, otherwise exactly as given.
+# --quiet discards stderr: a caller's own `2>/dev/null` on this function would
+# otherwise be overridden by the 2>&8 inside it.
+_vibe_on_terminal() {
+  local quiet=0
+  [ "${1:-}" = "--quiet" ] && { quiet=1; shift; }
+  if _vibe_log_on_terminal; then
+    if [ "$quiet" = 1 ]; then "$@" >&7 2>/dev/null; else "$@" >&7 2>&8; fi
+  elif [ "$quiet" = 1 ]; then
+    "$@" 2>/dev/null
+  else
+    "$@"
+  fi
+}
+
+_vibe_interactive() { [ -t 0 ] && { [ -t 1 ] || _vibe_log_on_terminal; }; }
 
 # _vibe_onboard_soft <what> <subcommand> [args...] — run a host-onboarding
 # subcommand whose failure must NOT abort the launch (review item 5,
@@ -4889,7 +5114,7 @@ _vibe_onboard_soft() {
 vibe_docker_preflight() {
   local attempt
   _vibe_host_onboarding docker-ready 2>/dev/null && return 0
-  if _vibe_interactive && _vibe_host_onboarding docker-start 2>/dev/null; then
+  if _vibe_interactive && _vibe_on_terminal --quiet _vibe_host_onboarding docker-start; then
     for attempt in 1 2 3 4 5 6; do
       _vibe_host_onboarding docker-ready 2>/dev/null && return 0
       if [ "$attempt" -lt 6 ]; then sleep 2; fi
@@ -5024,11 +5249,17 @@ vibe_onboard_codex() {
     if vibe_codex_login_status "$source"; then logged=1; fi
   fi
   if [ "$logged" != 1 ]; then
-    (cd / && CODEX_HOME="$source" codex -c 'cli_auth_credentials_store="file"' \
-      -c 'forced_login_method="chatgpt"' login) || return 1
+    _vibe_on_terminal _vibe_codex_host_login "$source" || return 1
     vibe_codex_login_status "$source" || { printf '%s\n' 'ChatGPT file-store login was not confirmed.' >&2; return 1; }
   fi
-  _vibe_host_onboarding setup "$ws" "${VIBE_EXTRA_DOMAINS:-}" "$source"
+  _vibe_on_terminal _vibe_host_onboarding setup "$ws" "${VIBE_EXTRA_DOMAINS:-}" "$source"
+}
+
+# The ChatGPT login itself, as one function so _vibe_on_terminal can give it
+# the real terminal (a subshell would hide the launcher's main shell from it).
+_vibe_codex_host_login() {
+  (cd / && CODEX_HOME="$1" codex -c 'cli_auth_credentials_store="file"' \
+    -c 'forced_login_method="chatgpt"' login)
 }
 
 # Apply an explicit in-session request only after the TUI has exited cleanly.
@@ -5195,6 +5426,10 @@ else
   fi
 fi
 
+# From here to the agent's hand-over, everything printed is also kept in
+# .vibe/last-launch.log (see vibe_launch_log_start).
+vibe_launch_log_start "$WORKSPACE" || true
+
 # ── task_017 Cycle 3 (AC13) integrator note ──────────────────────────────────
 # VIBE_PROJECT_NAME identifies THIS session for shared-repo rw-lock/claim
 # resolution. Exported here (remoteEnv only, mirroring the GITHUB_TOKEN export
@@ -5211,8 +5446,10 @@ export VIBE_PROJECT_NAME
 require docker       "Install OrbStack (https://orbstack.dev) or Docker Desktop."
 require devcontainer "Install with: npm install -g @devcontainers/cli"
 vibe_docker_preflight || exit 1
-# Advisory only — warns on a low host disk or a lot of reclaimable Docker
-# space, never blocks a launch (task_059). VIBE_HYGIENE=0 silences it.
+# Never blocks a launch (task_059). On a low host disk or a lot of reclaimable
+# Docker space it runs vibe_auto_clean (removes superseded stopped vibe
+# containers, prunes vibe's dangling images and old build cache; never a
+# volume), then warns about what is left. VIBE_HYGIENE=0 turns all of it off.
 vibe_hygiene_check || true
 # GitHub CLI is checked only when GitHub setup is requested; local work needs no gh.
 
@@ -6174,6 +6411,11 @@ fi
 # build_claude_resume_args echoes "" / "--continue" / "--resume" / "--resume <uuid>".
 # RESUME_UID is restricted to UUID format by is_uuid in the parser, so embedding
 # it in the command string is injection-safe.
+# Hand-over: repeat anything that needs the user where it cannot scroll away
+# (the last lines before the TUI), then give the agent the real terminal.
+vibe_notices_replay || true
+vibe_launch_log_stop || true
+
 WATCHER_PID=""
 if [[ "$(uname)" == "Darwin" ]] && command -v pbcopy >/dev/null 2>&1; then
   mkdir -p "$WORKSPACE/.vibe"

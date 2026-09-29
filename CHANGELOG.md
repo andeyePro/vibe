@@ -4,6 +4,16 @@ vibe's done-work audit log. Each entry is a closed task — either successful (`
 
 Convention adopted 2026-05-08 after the AEP-Plugin PR review surfaced confusion between TODO and CHANGELOG. Before this date, closed items lived in `TODO.md ## Done`; they migrated here verbatim. New closed items append to this file.
 
+## 2026-09-29
+
+- [x] **Launch output is kept, and disk clean-up is automatic** — Martin saw a "only 14 GB free" warning scroll past, and a "reclaimable" line in one project but not the next. The second was the machine-wide 24-hour throttle on the `docker system df` check, not a per-project difference. His point: "Nothing should be left to the user to fix based on information in a rapidly scrolling loading script."
+  - `vibe_launch_log_start`/`_stop`: from workspace resolution to the agent hand-over, stdout and stderr go through one `tee` into `.vibe/last-launch.log` (ANSI stripped, previous kept as `prev-launch.log`, `VIBE_LAUNCH_LOG=0` off). With stdout on a pipe `[ -t 1 ]` is false, so `_vibe_interactive` also accepts "stdout is the log's tee in the launcher's main shell" (`BASH_SUBSHELL` 0, so the answer inside `$(...)` is unchanged). `_vibe_on_terminal` gives `gh auth login`, the ChatGPT login, host-onboarding `setup` and `docker-start` the real terminal (their `isatty(1)` gates hold, and login codes are not logged).
+  - `vibe_hygiene_check` now cleans instead of only warning: low disk (every launch, clean throttled hourly) or reclaimable space over the threshold (daily) runs `vibe_auto_clean`: unattended, and narrower than `vibe clean` — only stopped vibe containers whose image is superseded (a bare sha256; they pin the old images, and their project's next launch recreates them anyway), none created within about an hour, plus the same scoped prunes. It reuses the `docker system df` figure already taken, so a cleaning launch walks the image store twice, not four times. `vibe clean` and the auto clean share `_vibe_reclaim`, so what counts as safe cannot drift between them. `VIBE_AUTO_CLEAN=0` restores warn-only.
+  - The log's `tee` ignores SIGINT (also ignored in the launcher for the instant of the fork — a first full run caught the window before the subshell's own trap) (a Ctrl-C during a build used to be able to kill it, and the launcher's next echo would die of SIGPIPE, skipping its EXIT hooks); the hand-back waits up to 2 s for it to drain; a symlinked `.vibe/` or log path disables the log rather than writing through it. Found by `/code-review high`.
+  - Anything still needing the user becomes a notice (`_vibe_notice`) and is repeated under "Needs you" just before the hand-over.
+  - `_clean_docker_ps_format` is now `|`-separated with the folder last, and carries `RunningFor`. The old tab separator collapsed an empty field under IFS, which shifted a missing folder label's neighbour into the label slot.
+  - Tests: 11 new in `smoke/checks_34_docker_hygiene.py` (auto-clean scope and the young-container guard, throttling, notices, log capture/strip/rotation/hand-back, main-shell-only terminal detection, wiring). Live checks: MANUAL-TESTS Test 63.
+
 ## 2026-09-26
 
 - [x] **Running sessions no longer ended by an edit, a weekly limit or a second launch** — three kills seen 2026-09-25/26 across the vibe, ambi4 and moneyandeye projects.

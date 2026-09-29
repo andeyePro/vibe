@@ -1939,3 +1939,11 @@ does not establish live app-server history fidelity or overnight duration.
 - [ ] Same setup, but add a domain to X's `.vibe/domains` before the second launch: it refuses with "other vibe session(s) are still running in it" and exits 1; the first session is untouched. `vibe --rebuild` from the second terminal ends it, after an "ending the 1 other vibe session(s)" line.
 - [ ] During a live Claude session, and again during a supervised Codex run (`vibe --codex-run <file>`), run `docker exec <cid> ps -eo pid=,ppid=,args=` on the Mac: the session's process (`claude …`, or `node /usr/local/bin/codex-autonomy watch …`) has PPID 0. That is what the live-session check counts.
 - [ ] During a `/vsss` run that reaches a weekly limit (five-hour window not used up), `.vss/rate-limit` carries `used7=` near 100 and `resets7=`, and after 30+ minutes idle the launcher prints no "assuming the usage-limit picker is stuck" warning and does not kill claude.
+
+### Test 63: Launch log and automatic clean (2026-09-29)
+
+- [ ] Launch `vibe` in any project, exit Claude, then `cat .vibe/last-launch.log`: it holds the launch header and every line printed before Claude started, with no colour-code garbage, and nothing from the Claude session itself. Launch again: the previous log is now `.vibe/prev-launch.log`.
+- [ ] The Claude TUI looks and behaves exactly as before (colours, resizing, mouse, paste). The log is handed back before Claude starts, so nothing should differ.
+- [ ] In a project with no GitHub CLI login (or after `gh auth logout`), launch and accept the sign-in: the `gh auth login` prompts work normally, and its one-time code does not appear in `.vibe/last-launch.log`.
+- [ ] With some other project's vibe container stopped for over an hour (`docker ps -a --filter status=exited`), launch with `VIBE_DOCKER_RECLAIM_WARN_GIB=0 VIBE_HYGIENE_INTERVAL_HOURS=0 vibe`: a `✓ auto-clean:` line appears, that stopped container is gone, `docker volume ls` still lists `vibe-claude-config` and `vibe-bash-history`, and every running container is still running.
+- [ ] Launch with `VIBE_DISK_WARN_GIB=100000 vibe` (pretends the disk is low): the low-disk warning is repeated under "Needs you" as the last lines before Claude starts.

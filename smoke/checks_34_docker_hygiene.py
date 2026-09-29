@@ -15,23 +15,37 @@ from smoke._core import *  # noqa: F401,F403
 
 import re
 import shlex
+import time
 
 DOCKERFILE = REPO / "devcontainer" / "Dockerfile"
 
 
 # ── A stubbed docker, so none of this touches the real daemon ────────────────
 
-# Default fleet the stub reports for `docker ps -a`, as
-# id / image / devcontainer.local_folder label / com.andeye.vibe.image label:
+# Default fleet the stub reports for `docker ps -a`, in _clean_docker_ps_format's
+# `|`-separated order: id | image | RunningFor | com.andeye.vibe.image label |
+# devcontainer.local_folder label:
 #   c1  a container on the current vibe-dev tag        (in scope always)
 #   c2  a labelled vibe container whose image is gone  (in scope always)
 #   c3  a devcontainer whose image is gone, unlabelled (in scope under --all)
 #   c4  an unrelated postgres container                (never in scope)
+#   c5  a vibe container created minutes ago           (in scope for `vibe
+#       clean`, skipped by the unattended auto-clean - it may be another
+#       project's launch in progress)
+#   c6  labelled, NO folder label - the row whose empty field used to shift
+#       under a tab separator                          (in scope always)
+#   c7  labelled, image superseded, created minutes ago (in scope for `vibe
+#       clean`; auto-clean skips it as too young)
+# The unattended auto-clean takes only SUPERSEDED images (a bare sha256):
+# of the above, c2 and c6.
 _PS_A_ROWS = (
-    "c1\tvibe-dev:latest\t/Users/x/projA\t\n"
-    "c2\tsha256:deadbeef\t/Users/x/projB\tvibe-dev\n"
-    "c3\tsha256:cafe\t/Users/x/projC\t\n"
-    "c4\tpostgres:16\t\t\n"
+    "c1|vibe-dev:latest|2 hours ago||/Users/x/projA\n"
+    "c2|sha256:deadbeef|3 days ago|vibe-dev|/Users/x/projB\n"
+    "c3|sha256:cafe|2 weeks ago||/Users/x/projC\n"
+    "c4|postgres:16|5 hours ago||\n"
+    "c5|vibe-dev:latest|4 minutes ago||/Users/x/projD\n"
+    "c6|sha256:beef|About an hour ago|vibe-dev|\n"
+    "c7|sha256:f00d|10 minutes ago|vibe-dev|/Users/x/projE\n"
 )
 
 # Doubled %% on purpose: this string is embedded in the stub's `printf`
@@ -461,3 +475,211 @@ def test_image_carries_vibes_own_version():
     supervisor = (REPO / "devcontainer" / "codex-supervisor.mjs").read_text()
     check("[image] codex-supervisor reads that same path",
           "'/usr/local/share/vibe/VERSION'" in supervisor, "")
+
+
+# ── Automatic clean (2026-09-29) ─────────────────────────────────────────────
+# Martin: "Nothing should be left to the user to fix based on information in
+# a rapidly scrolling loading script." The launch path now cleans vibe's own
+# leftovers itself; only what it cannot fix is left, as a replayed notice.
+
+def test_clean_empty_label_does_not_shift_fields() -> None:
+    r = _hyg('_clean_stopped_containers')
+    rows = {ln.split("\t")[0]: ln.split("\t") for ln in r.stdout.splitlines() if ln.strip()}
+    check("[clean] a labelled container with no folder label is still in scope",
+          "c6" in rows, r.stdout)
+    check("[clean] the folder column is read from the folder label, not the age",
+          rows.get("c1", ["", "", ""])[2] == "/Users/x/projA", r.stdout)
+
+
+def test_auto_clean_skips_young_containers_and_volumes() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        log = str(Path(tmp) / "docker.log")
+        r = _hyg('vibe_auto_clean', log=log)
+        calls = Path(log).read_text()
+        check("[auto-clean] removes stopped containers pinning a superseded image",
+              "rm c2" in calls and "rm c6" in calls, calls)
+        check("[auto-clean] leaves a stopped container on the current image for its project",
+              "rm c1" not in calls and "rm c5" not in calls, calls)
+        check("[auto-clean] skips a superseded container created minutes ago",
+              "rm c7" not in calls, calls)
+        check("[auto-clean] never widens to --all scope",
+              "rm c3" not in calls and "rm c4" not in calls, calls)
+        check("[auto-clean] prunes label- and age-scoped",
+              "image prune -f --filter label=com.andeye.vibe.image" in calls
+              and "builder prune -f --filter until=168h" in calls, calls)
+        check("[auto-clean] no volume, no -f, no -v",
+              "volume" not in calls and " -f " not in f" {calls} ".replace("prune -f", "")
+              and " -v" not in calls, calls)
+        check("[auto-clean] says what it did", "auto-clean" in r.stderr, r.stderr)
+        check("[auto-clean] never fails", r.returncode == 0, r.stderr)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        log = str(Path(tmp) / "docker.log")
+        _hyg('clean_handle_subcommand clean --yes', log=log)
+        calls = Path(log).read_text()
+        check("[clean] the interactive clean still takes a young container", "rm c5" in calls, calls)
+
+
+def test_hygiene_cleans_instead_of_only_warning() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        marker = str(Path(tmp) / "m")
+        log = str(Path(tmp) / "docker.log")
+        env = {"VIBE_DISK_WARN_GIB": "0", "VIBE_DOCKER_RECLAIM_WARN_GIB": "1"}
+        r = _hyg(f'vibe_hygiene_check {shlex.quote(marker)}', env_extra=env, log=log)
+        calls = Path(log).read_text()
+        check("[hygiene] high reclaimable space triggers the automatic clean",
+              "rm c2" in calls, calls)
+        check("[hygiene] what the clean leaves behind points at --all",
+              "vibe clean --all" in r.stderr, r.stderr)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        marker = str(Path(tmp) / "m")
+        log = str(Path(tmp) / "docker.log")
+        env = {"VIBE_DISK_WARN_GIB": "0", "VIBE_DOCKER_RECLAIM_WARN_GIB": "1",
+               "VIBE_AUTO_CLEAN": "0"}
+        r = _hyg(f'vibe_hygiene_check {shlex.quote(marker)}', env_extra=env, log=log)
+        calls = Path(log).read_text()
+        check("[hygiene] VIBE_AUTO_CLEAN=0 removes nothing", "rm " not in calls, calls)
+        check("[hygiene] VIBE_AUTO_CLEAN=0 still warns", "vibe clean" in r.stderr, r.stderr)
+
+
+def test_hygiene_low_disk_bypasses_daily_throttle_but_not_hourly() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        marker = Path(tmp) / "m"
+        marker.touch()  # the 24 h docker-df throttle is fresh
+        log = str(Path(tmp) / "docker.log")
+        env = {"VIBE_DISK_WARN_GIB": "999999"}
+        r = _hyg(f'vibe_hygiene_check {shlex.quote(str(marker))}', env_extra=env, log=log)
+        calls = Path(log).read_text()
+        check("[hygiene] low disk cleans even inside the daily throttle", "rm c2" in calls, calls)
+        check("[hygiene] low disk after cleaning is a notice naming the disk limit",
+              "Disk usage limit" in r.stderr, r.stderr)
+        Path(log).write_text("")
+        r2 = _hyg(f'vibe_hygiene_check {shlex.quote(str(marker))}', env_extra=env, log=log)
+        check("[hygiene] a second low-disk launch within the hour does not re-clean",
+              "rm " not in Path(log).read_text(), Path(log).read_text())
+        check("[hygiene] ...and does not send the user to the sweep that just ran",
+              "vibe clean --all" in r2.stderr and "Reclaim: vibe clean\n" not in r2.stderr, r2.stderr)
+
+
+def test_notices_are_replayed_at_hand_over() -> None:
+    body = """
+_vibe_notice "  ⚠ first thing" "    second line"
+vibe_notices_replay
+"""
+    r = _hyg(body)
+    check("[notices] a notice prints where it arises and again in the replay",
+          r.stderr.count("first thing") == 2 and "Needs you" in r.stderr, r.stderr)
+    r2 = _hyg("vibe_notices_replay")
+    check("[notices] no notices, no replay block", r2.stderr.strip() == "", r2.stderr)
+
+
+# ── Launch log ───────────────────────────────────────────────────────────────
+
+def test_launch_log_captures_and_strips() -> None:
+    with tempfile.TemporaryDirectory() as ws:
+        (Path(ws) / ".vibe").mkdir()
+        (Path(ws) / ".vibe" / "last-launch.log").write_text("older launch\n")
+        body = f"""
+vibe_launch_log_start {shlex.quote(ws)}
+printf '\\033[1;33mcoloured\\033[0m out\\n'
+printf 'to stderr\\n' >&2
+printf 'progress 1%%\\rprogress 100%%\\n'
+vibe_launch_log_stop
+printf 'after hand-over\\n'
+"""
+        r = _hyg(body)
+        log = (Path(ws) / ".vibe" / "last-launch.log")
+        # the tee/sed pair finish asynchronously after the hand-over
+        for _ in range(50):
+            if "progress 100%" in log.read_text():
+                break
+            time.sleep(0.1)
+        text = log.read_text()
+        check("[launch-log] the terminal still shows the output",
+              "coloured" in r.stdout and "after hand-over" in r.stdout, r.stdout)
+        check("[launch-log] stdout and stderr are both captured",
+              "coloured out" in text and "to stderr" in text, text)
+        check("[launch-log] colour codes are stripped", "\x1b" not in text, repr(text))
+        check("[launch-log] a carriage-return progress line keeps its final state",
+              "progress 100%" in text and "progress 1%" not in text, repr(text))
+        check("[launch-log] nothing after the hand-over is captured",
+              "after hand-over" not in text, text)
+        check("[launch-log] the previous launch's log is kept",
+              (Path(ws) / ".vibe" / "prev-launch.log").read_text() == "older launch\n", "")
+
+
+def test_launch_log_refuses_symlinks() -> None:
+    """.vibe/ is repo content; a committed symlink must not steer this
+    host-side write outside the project."""
+    with tempfile.TemporaryDirectory() as ws, tempfile.TemporaryDirectory() as elsewhere:
+        target = Path(elsewhere) / "planted"
+        (Path(ws) / ".vibe").mkdir()
+        (Path(ws) / ".vibe" / "last-launch.log").symlink_to(target)
+        _hyg(f"vibe_launch_log_start {shlex.quote(ws)}; echo hi; vibe_launch_log_stop")
+        check("[launch-log] a symlinked log path is never written through",
+              not target.exists(), str(target))
+
+
+def test_launch_log_survives_ctrl_c() -> None:
+    """A Ctrl-C reaches the whole foreground process group. The tee must
+    survive it, or the launcher's next echo dies of SIGPIPE."""
+    with tempfile.TemporaryDirectory() as ws:
+        body = f"""
+vibe_launch_log_start {shlex.quote(ws)}
+trap '' INT
+kill -INT 0
+sleep 0.3
+echo still-alive
+vibe_launch_log_stop
+"""
+        r = run(["setsid", "bash", "-c", _hygiene_script(body)],
+                env={**_isolate_extras_env(dict(os.environ)), "VIBE_SOURCE_ONLY": "1"})
+        check("[launch-log] the launcher still writes after a Ctrl-C",
+              "still-alive" in r.stdout, r.stdout + r.stderr)
+
+
+def test_launch_log_can_be_disabled() -> None:
+    with tempfile.TemporaryDirectory() as ws:
+        _hyg(f"vibe_launch_log_start {shlex.quote(ws)}; echo hi",
+             env_extra={"VIBE_LAUNCH_LOG": "0"})
+        check("[launch-log] VIBE_LAUNCH_LOG=0 writes no log",
+              not (Path(ws) / ".vibe" / "last-launch.log").exists(), "")
+
+
+def test_launch_log_terminal_detection_is_main_shell_only() -> None:
+    """With stdout on the log's tee, `-t 1` is false. _vibe_interactive must
+    still say yes in the launcher's main shell - and keep saying no inside a
+    command substitution, where it always said no."""
+    body = """
+VIBE_LAUNCH_LOG_ACTIVE=1 VIBE_LAUNCH_LOG_TTY=1
+_vibe_log_on_terminal && echo main=yes || echo main=no
+echo "sub=$(_vibe_log_on_terminal && echo yes || echo no)"
+"""
+    r = _hyg(body)
+    check("[launch-log] main shell counts as on the terminal", "main=yes" in r.stdout, r.stdout)
+    check("[launch-log] a command substitution does not", "sub=no" in r.stdout, r.stdout)
+
+
+def test_launch_log_wiring() -> None:
+    text = VIBE.read_text()
+    main = text[text.index('[ "${VIBE_SOURCE_ONLY:-}" = "1" ] && return 0'):]
+    i_ws = main.find('# ── Resolve workspace')
+    i_start = main.find('vibe_launch_log_start "$WORKSPACE" || true')
+    i_pre = main.find('vibe_docker_preflight || exit 1')
+    i_replay = main.find('vibe_notices_replay || true')
+    i_stop = main.find('vibe_launch_log_stop || true')
+    i_codex = main.find('\n  launch_codex_plain\n')
+    i_claude = main.find('\nlaunch_claude_supervised "$CLAUDE_RESUME_ARGS"')
+    check("[launch-log] starts once the workspace is known, before preflight",
+          -1 < i_ws < i_start < i_pre, f"{i_ws} {i_start} {i_pre}")
+    check("[launch-log] notices replay, then the terminal is handed back",
+          -1 < i_replay < i_stop, f"{i_replay} {i_stop}")
+    check("[launch-log] hand-back happens before either agent starts",
+          -1 < i_stop < i_codex and i_stop < i_claude, f"{i_stop} {i_codex} {i_claude}")
+    for needle in ("_vibe_on_terminal gh auth login",
+                   "_vibe_on_terminal _vibe_codex_host_login",
+                   "_vibe_on_terminal _vibe_host_onboarding setup",
+                   "_vibe_on_terminal --quiet _vibe_host_onboarding docker-start"):
+        check(f"[launch-log] interactive step gets the real terminal: {needle}",
+              needle in text, needle)

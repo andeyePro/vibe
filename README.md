@@ -247,7 +247,8 @@ Three things now keep it in check:
 
 - **On every recreate**, vibe removes the stopped containers the project has left behind, so the image they pinned can be reclaimed.
 - **After every rebuild**, vibe prunes its own dangling images and build cache older than a week. Both prunes are scoped — to vibe's image label, and to cache age — so a shared machine keeps other projects' images and warm cache.
-- **On launch**, vibe warns when the disk is running low, or (at most once a day) when Docker is holding a lot of reclaimable space.
+- **On launch**, vibe cleans up by itself when the disk is running low (checked every launch; the clean runs at most once an hour) or when Docker is holding a lot of reclaimable space (checked at most once a day). The clean runs with no prompt and is narrower than `vibe clean`: it removes only stopped vibe containers whose image has been superseded by a rebuild (those hold the old images, which is where the space is, and their project's next launch would recreate them anyway), skips any created within about the last hour, and prunes vibe's dangling images and build cache older than a week. It prints one `✓ auto-clean:` line. Whatever still needs you afterwards, such as a disk that is still low, is repeated under **Needs you** as the last thing printed before Claude starts, where it cannot scroll away.
+- **Every launch's output is kept**: everything printed before Claude starts, colour codes stripped, goes to `<project>/.vibe/last-launch.log` (the one before is `prev-launch.log`). The agent inside the container can read it there too. Login prompts (GitHub, ChatGPT) are shown on the terminal but not logged.
 
 `vibe clean` does the sweep on demand:
 
@@ -264,9 +265,11 @@ Tuning, in `~/.vibe/config`:
 
 | Variable | Default | Effect |
 |---|---|---|
-| `VIBE_HYGIENE` | `1` | `=0` silences the launch-time warnings entirely |
-| `VIBE_DISK_WARN_GIB` | `20` | warn below this much free host disk |
-| `VIBE_DOCKER_RECLAIM_WARN_GIB` | `20` | warn above this much reclaimable Docker space |
+| `VIBE_HYGIENE` | `1` | `=0` turns off the launch-time check entirely: no automatic clean and no warnings |
+| `VIBE_AUTO_CLEAN` | `1` | `=0` turns the automatic clean off and goes back to warning only |
+| `VIBE_LAUNCH_LOG` | `1` | `=0` stops writing `.vibe/last-launch.log` |
+| `VIBE_DISK_WARN_GIB` | `20` | clean (then warn) below this much free host disk |
+| `VIBE_DOCKER_RECLAIM_WARN_GIB` | `20` | clean (then warn) above this much reclaimable Docker space |
 | `VIBE_HYGIENE_INTERVAL_HOURS` | `24` | how often the (slower) `docker system df` half runs |
 
 And cap Docker itself: **Docker Desktop > Settings > Resources > Advanced > "Disk usage limit"** defaults to the whole drive. Setting it (100 GiB suits vibe) turns "the Mac fills up" into "Docker runs out of room", which is a far better failure. OrbStack sizes its disk on demand and needs no equivalent.
