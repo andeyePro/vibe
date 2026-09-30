@@ -689,7 +689,8 @@ def test_codex_mount_drift_with_desired_source():
         ws = _codex_git_ws(root)
         (ws / ".vibe-allow-codex").write_text("")
         registry = home / ".vibe" / "codex-allow"
-        actual = f"/home/node/.codex\t{codex_dir}\trw"
+        actual = (f"/home/node/.codex\t{codex_dir}\trw\n"
+                  "/home/node/.codex-sqlite\t/var/lib/docker/volumes/vibe-codex-sqlite/_data\trw")
 
         def drift():
             call = (f'desired="$(_codex_desired_source {shlex.quote(str(ws))})"; '

@@ -1075,6 +1075,7 @@ def main() -> int:
     test_auto_update_helpers()
     test_auto_update_rebuilds_when_either_cli_moved()
     test_auto_update_falls_back_when_codex_fails_the_gate()
+    test_codex_databases_live_on_a_container_only_volume()
     test_codex_compat_gate_is_wired_and_passes_the_installed_codex()
     test_delegate_refreshes_and_retries_a_connection_failure()
     run_supervisor_tests([

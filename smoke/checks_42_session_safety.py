@@ -192,6 +192,13 @@ def test_second_session_gets_a_heads_up():
               'drift_marker=""; mount_drift=""; projects_drift=""; codex_drift=""; domains_drift=""; '
               'extra_flag=""; ' + block + 'echo "FLAG=[$extra_flag] ARGS=[${UP_ARGS[*]}]"')
     r = run(["bash", "-c", script])
+    script2 = ('vibe_container_live_sessions() { echo 1; }; REBUILD=false; WORKSPACE=/ws; UP_ARGS=(up); '
+               'drift_marker=""; codex_vol_drift=1; mount_drift=""; projects_drift=""; codex_drift=""; domains_drift=""; '
+               'extra_flag=--remove-existing-container; ' + block + 'echo "FLAG=[$extra_flag] ARGS=[${UP_ARGS[*]}]"')
+    r2 = run(["bash", "-c", script2])
+    check("[session-safety] a container predating Codex's database volume is joined, not refused, under a live session",
+          r2.returncode == 0 and "FLAG=[] ARGS=[up]" in r2.stdout and "database volume" in r2.stdout
+          and "newer vibe image" not in r2.stdout, r2.stdout + r2.stderr)
     check("[session-safety] joining with no drift at all claims no 'newer image'",
           r.returncode == 0 and "newer vibe image" not in r.stdout and "FLAG=[] ARGS=[up]" in r.stdout,
           r.stdout + r.stderr)

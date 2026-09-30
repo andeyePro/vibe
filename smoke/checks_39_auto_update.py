@@ -11,6 +11,7 @@ the end of the base build) and run it against stub `docker` and `npm`.
 """
 from smoke._core import *  # noqa: F401,F403
 
+import json
 import os
 import subprocess
 import tempfile
@@ -184,6 +185,49 @@ def test_auto_update_falls_back_when_codex_fails_the_gate():
               r.returncode == 0 and f"CODEX_VERSION={default}" in log and "CLAUDE_CODE_VERSION=latest" in log, log + r.stderr)
 
 
+def test_codex_databases_live_on_a_container_only_volume():
+    """The Mac's ~/.codex is shared read-write for the login; Codex's SQLite
+    databases must not be (2026-09-30: the Mac app and a container corrupted
+    each other's). Same path in the requirement, the system config, the
+    image's mount point and devcontainer.json's volume."""
+    print("\n[codex-sqlite] Codex's databases pinned to the vibe-codex-sqlite volume")
+    import tomllib
+    pin = "/home/node/.codex-sqlite"
+    req = tomllib.loads((REPO / "devcontainer/codex/requirements.toml").read_text())
+    cfg = tomllib.loads((REPO / "devcontainer/codex/config.toml").read_text())
+    check("[codex-sqlite] requirements.toml pins sqlite_home (top level)", req.get("sqlite_home") == pin, repr(req.get("sqlite_home")))
+    check("[codex-sqlite] the system config.toml carries the same default (top level, not inside a table)",
+          cfg.get("sqlite_home") == pin, repr(cfg.get("sqlite_home")))
+    dc = json.loads((REPO / "devcontainer/devcontainer.json").read_text())
+    check("[codex-sqlite] the base config does NOT mount it (only Codex-opted-in projects get it)",
+          not any("codex-sqlite" in str(m) for m in dc.get("mounts", [])), str(dc.get("mounts")))
+    launcher = (REPO / "vibe").read_text()
+    login = launcher.index('mount_args+=("$codex" "/home/node/.codex" "0")')
+    check("[codex-sqlite] the launcher mounts the volume right beside the Codex login, inside its opt-in branch",
+          f'mount_args+=("vibe-codex-sqlite" "{pin}" "volume")' in launcher[login:login + 900]
+          and launcher[login:login + 900].index("vibe-codex-sqlite") < launcher[login:].index("\n  fi\n"))
+    with tempfile.TemporaryDirectory() as t:
+        src, dst = Path(t) / "in.json", Path(t) / "out.json"
+        src.write_text('{"mounts": []}')
+        env = _isolate_extras_env(dict(os.environ)); env["VIBE_SOURCE_ONLY"] = "1"
+        r = subprocess.run(["bash", "-c", f'source {REPO / "vibe"}; render_devcontainer_with_mounts "$1" "$2" '
+                            f'vibe-codex-sqlite {pin} volume /h/.codex /home/node/.codex 0', "_", str(src), str(dst)],
+                           capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL, timeout=60)
+        mounts = json.loads(dst.read_text())["mounts"] if dst.exists() else []
+        check("[codex-sqlite] a 'volume' triple renders as a named volume; a bind stays a bind",
+              {"source": "vibe-codex-sqlite", "target": pin, "type": "volume"} in mounts
+              and {"source": "/h/.codex", "target": "/home/node/.codex", "type": "bind"} in mounts,
+              str(mounts) + r.stderr)
+    dockerfile = (REPO / "devcontainer/Dockerfile").read_text()
+    check("[codex-sqlite] the image creates the mount point node-owned (a fresh volume inherits it)",
+          f"mkdir -p /workspace /home/node/.claude {pin}" in dockerfile
+          and f"chown -R node:node /workspace /home/node/.claude {pin}" in dockerfile)
+    check("[codex-sqlite] the volume is not nested under the shared ~/.codex bind",
+          not pin.startswith("/home/node/.codex/"))
+    check("[codex-sqlite] after the root-run gate, the mount point is emptied and handed back to node",
+          "/usr/local/bin/codex-compat-check && \\\n  find /home/node/.codex-sqlite -mindepth 1 -delete && chown node:node /home/node/.codex-sqlite" in dockerfile)
+
+
 def test_codex_compat_gate_is_wired_and_passes_the_installed_codex():
     print("\n[update] codex-compat-check: in the image build, and passing for the installed Codex")
     dockerfile = (REPO / "devcontainer/Dockerfile").read_text()
@@ -195,10 +239,37 @@ def test_codex_compat_gate_is_wired_and_passes_the_installed_codex():
     import shutil
     if shutil.which("codex") and Path("/etc/codex/requirements.toml").exists():
         cfg = str(REPO / "devcontainer/codex/config.toml")
+        repo_req = {**os.environ, "VIBE_CODEX_REQUIREMENTS": str(REPO / "devcontainer/codex/requirements.toml")}
         r = subprocess.run(["bash", str(GATE), "--config", cfg], capture_output=True, text=True, timeout=120,
-                           stdin=subprocess.DEVNULL)
-        check("[update] the installed Codex passes the gate under the repo's policy",
-              r.returncode == 0 and "is compatible" in r.stdout and "no native sub-agents" in r.stdout, r.stdout + r.stderr)
+                           stdin=subprocess.DEVNULL, env=repo_req)
+        # The sqlite_home proof needs the REQUIREMENT enforced, i.e. the
+        # installed /etc/codex; an image built before it fails exactly there.
+        installed_pin = "sqlite_home" in Path("/etc/codex/requirements.toml").read_text()
+        check("[update] the installed Codex passes the gate under the repo's policy, or (image predating the "
+              "sqlite_home pin) fails only on it",
+              (r.returncode == 0 and "is compatible" in r.stdout and "no native sub-agents" in r.stdout
+               and "Codex databases under /home/node/.codex-sqlite" in r.stdout)
+              or (not installed_pin and "no native sub-agents" in r.stdout
+                  and "FAIL Codex databases are not pinned to /home/node/.codex-sqlite" in r.stderr
+                  and "decoy-cli" in r.stderr),
+              r.stdout + r.stderr)
+        with tempfile.TemporaryDirectory() as t:
+            req = Path(t) / "requirements.toml"
+            req.write_text("allow_managed_hooks_only = true\n")
+            r = subprocess.run(["bash", str(GATE), "--config", cfg], capture_output=True, text=True, timeout=120,
+                               stdin=subprocess.DEVNULL, env={**os.environ, "VIBE_CODEX_REQUIREMENTS": str(req)})
+            check("[update] a policy that does not pin sqlite_home fails the gate",
+                  r.returncode != 0 and "does not pin sqlite_home" in r.stderr, r.stdout + r.stderr)
+            req.write_text('sqlite_home = "/nonexistent/vibe-pin"\n')
+            r = subprocess.run(["bash", str(GATE), "--config", cfg], capture_output=True, text=True, timeout=120,
+                               stdin=subprocess.DEVNULL, env={**os.environ, "VIBE_CODEX_REQUIREMENTS": str(req)})
+            check("[update] a Codex whose databases land anywhere but the pin fails the gate",
+                  r.returncode != 0 and "not pinned to /nonexistent/vibe-pin" in r.stderr, r.stdout + r.stderr)
+            req.write_text("[features]\nsqlite_home = \"/x\"\n")
+            r = subprocess.run(["bash", str(GATE), "--config", cfg], capture_output=True, text=True, timeout=120,
+                               stdin=subprocess.DEVNULL, env={**os.environ, "VIBE_CODEX_REQUIREMENTS": str(req)})
+            check("[update] a sqlite_home inside a [table] is not the top-level pin",
+                  r.returncode != 0 and "does not pin sqlite_home" in r.stderr, r.stdout + r.stderr)
         empty = Path(tempfile.mkdtemp()) / "config.toml"
         empty.write_text("# no [agents] section\n")
         r = subprocess.run(["bash", str(GATE), "--config", str(empty)], capture_output=True, text=True, timeout=120,

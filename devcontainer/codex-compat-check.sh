@@ -15,9 +15,12 @@
 #      unified_exec: "false", or gone upstream as "removed");
 #   3. speaks every app-server method codex-supervisor sends;
 #   4. still knows the hook events and Stop-hook fields vibe's hooks use.
+#   5. keeps every SQLite database under the requirements' sqlite_home pin,
+#      even against -c and $CODEX_SQLITE_HOME decoys.
 # A failed build makes the launcher fall back to the last Codex version that
 # passed (vibe: build_base_image). Nothing here touches the network; it only
-# runs the local binary.
+# runs the local binary, apart from `codex doctor`'s endpoint probes in the
+# sqlite_home check (time-limited; they fail harmlessly offline).
 #
 # Usage: codex-compat-check [--codex <path>] [--config <config.toml>]
 #   --config layers a policy file as the user config, so the smoke tests can
@@ -99,5 +102,46 @@ if printf '%s' "$prompt" | grep -qE 'spawn_agent|wait_agent'; then
   fail "the model is offered native sub-agents (spawn_agent) under the managed policy"
 fi
 ok "no native sub-agents offered to the model"
+
+# Codex's SQLite databases must land on the container-only volume the
+# requirements pin (sqlite_home), never in the Mac's shared ~/.codex, where the
+# Mac's Codex app writes the same files and locking fails across Docker's VM
+# boundary (2026-09-30). `codex doctor --json` resolves every database path
+# without a login and creates none. It does probe OpenAI's endpoints (the one
+# network touch in this script; they fail harmlessly offline), hence the
+# timeout. The decoys are the strongest competitors a requirement has: a
+# command-line `-c sqlite_home` (the top config layer) and $CODEX_SQLITE_HOME.
+# Only an enforced EXACT requirement survives both — the system config.toml
+# default alone would lose to `-c`, so this proves requirements.toml, not it.
+req=${VIBE_CODEX_REQUIREMENTS:-/etc/codex/requirements.toml}
+# Top-level key only (stop at the first [table]); "…" or '…' string.
+want=$(awk '/^[[:space:]]*\[/ { exit }
+  /^[[:space:]]*sqlite_home[[:space:]]*=/ {
+    v = $0; sub(/^[^=]*=[[:space:]]*/, "", v)
+    q = substr(v, 1, 1); if (q != "\"" && q != "'"'"'") exit
+    v = substr(v, 2); sub(q ".*$", "", v); print v; exit
+  }' "$req" 2>/dev/null)
+[ -n "$want" ] || fail "$req does not pin sqlite_home; Codex would keep its databases in the shared ~/.codex"
+doctor=$(CODEX_HOME=$home CODEX_SQLITE_HOME=$home/decoy-env timeout 60 "$codex" doctor --json \
+  -c "sqlite_home=\"$home/decoy-cli\"" 2>/dev/null) # exits 1 without a login
+verdict=$(printf '%s' "$doctor" | node -e '
+  let s = ""; process.stdin.on("data", d => s += d).on("end", () => {
+    let d; try { d = JSON.parse(s).checks["state.paths"].details; } catch { console.log("unreadable"); return; }
+    if (!d || d["sqlite home"] === undefined) { console.log("unreadable"); return; }
+    const want = process.argv[1], path = v => String(v).replace(/ \(.*\)$/, "");
+    const dbs = Object.entries(d).filter(([k]) => / DB$/.test(k));
+    if (path(d["sqlite home"]) !== want) { console.log("sqlite home is " + d["sqlite home"]); return; }
+    // At least one database must be listed, or the stray check below proves
+    // nothing; the stray check, not a fixed count, is what matters, so a
+    // Codex that adds, drops or merges a database is not refused for it.
+    if (dbs.length < 1) { console.log("no databases listed"); return; }
+    const stray = dbs.filter(([, v]) => !path(v).startsWith(want + "/"));
+    console.log(stray.length ? "outside " + want + ": " + stray.map(([k, v]) => k + " " + v).join(", ") : "ok " + dbs.length);
+  });' "$want")
+case "$verdict" in
+  unreadable) fail "codex doctor --json gave no readable state.paths report (timed out, failed, or changed shape); cannot check the sqlite_home pin" ;;
+  "ok "*) ok "all ${verdict#ok } Codex databases under $want (the requirement beats -c and \$CODEX_SQLITE_HOME decoys)" ;;
+  *) fail "Codex databases are not pinned to $want: $verdict" ;;
+esac
 
 echo "codex-compat-check: Codex $version is compatible with vibe's policy"

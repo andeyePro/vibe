@@ -198,8 +198,10 @@ def test_codex_requirements_toml_ac1():
           set(data.keys()) == {
               "allowed_approval_policies", "allowed_sandbox_modes",
               "allowed_web_search_modes", "allow_managed_hooks_only",
-              "features", "mcp_servers", "hooks", "rules",
+              "features", "mcp_servers", "hooks", "rules", "sqlite_home",
           }, str(sorted(data.keys())))
+    check("[codex] sqlite_home pins Codex's databases to the container-only volume",
+          data.get("sqlite_home") == "/home/node/.codex-sqlite", repr(data.get("sqlite_home")))
 
     check("[codex] allowed_approval_policies == ['never']",
           data.get("allowed_approval_policies") == ["never"], str(data.get("allowed_approval_policies")))

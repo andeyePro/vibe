@@ -1745,7 +1745,8 @@ learning_commit_message() {
 # render_devcontainer_with_mounts <src_json> <dst_json> [<source> <target> <ro>]...
 # Reads src JSON, appends one bind-mount entry per (source, target, ro) triple
 # to the mounts array (creating it if absent), writes dst. ro is "1" for
-# readonly, anything else for read-write. Paths are passed as argv (not
+# readonly, "volume" for a read-write NAMED VOLUME (source is the volume
+# name), anything else for a read-write bind. Paths are passed as argv (not
 # interpolated into JSON text) so sources with spaces/quotes are safe.
 render_devcontainer_with_mounts() {
   local src="$1" dst="$2"
@@ -1761,7 +1762,9 @@ if not isinstance(cfg.get("mounts"), list):
 for i in range(0, len(rest), 3):
     source, target, ro = rest[i], rest[i + 1], rest[i + 2]
     entry = {"source": source, "target": target, "type": "bind"}
-    if ro == "1":
+    if ro == "volume":
+        entry["type"] = "volume"
+    elif ro == "1":
         entry["readonly"] = True
     cfg["mounts"].append(entry)
 # OpenProject MCP: map the sidecar's real hostname to the host gateway so the
@@ -3549,6 +3552,15 @@ _build_override_config() {
   codex="$(_codex_desired_source "$workspace")"
   if [ -n "$codex" ]; then
     mount_args+=("$codex" "/home/node/.codex" "0")
+    # Codex's SQLite databases (2026-09-30): pinned by the image's
+    # /etc/codex/requirements.toml to this named volume, OFF the Mac's shared
+    # ~/.codex, where the Mac's Codex app writes the same files and locking
+    # fails across Docker's VM boundary. Mounted only alongside the login, so
+    # a project that is not opted in to Codex cannot read or seed databases
+    # the opted-in projects' Codex sessions use (the same trust group that
+    # already shares ~/.codex). A container without it keeps them in its own
+    # layer, never on the Mac.
+    mount_args+=("vibe-codex-sqlite" "/home/node/.codex-sqlite" "volume")
   fi
 
   # Shared repos declared in this project's .vibe-repos (task_017 cycle 1).
@@ -4043,8 +4055,9 @@ Usage: vibe clean [--dry-run] [--yes] [--all]
                   before vibe started labelling its images.
 
   Named volumes are NEVER removed, in any mode. Your Claude login
-  (vibe-claude-config) and bash history (vibe-bash-history) survive
-  every run of this command.
+  (vibe-claude-config), bash history (vibe-bash-history) and the
+  containers' Codex databases (vibe-codex-sqlite) survive every run
+  of this command.
 
   A stopped container pins the image it was built from, so Docker cannot
   reclaim that image until the container goes. That is usually where the
@@ -4177,7 +4190,7 @@ clean_handle_subcommand() {
   else
     echo "  Plus: dangling vibe images, and build cache older than 7 days."
   fi
-  echo "  Named volumes (vibe-claude-config, vibe-bash-history): untouched."
+  echo "  Named volumes (vibe-claude-config, vibe-bash-history, vibe-codex-sqlite): untouched."
   echo ""
   if [ -n "$before" ] && [ "$before" -gt 0 ]; then
     printf '  Docker currently reports %s GB reclaimable in total.\n\n' "$((before / 1024))"
@@ -4396,6 +4409,10 @@ projects_bind_mount_drift() {
 # credential bind the gates no longer grant (marker removed, dir gone,
 # VIBE_CODEX_PATH=off) OR would run without one the gates now grant. Without
 # this, `off` would stop the header line while the token stayed mounted.
+# It also emits "1" for a vibe-codex-sqlite volume left on a container whose
+# opt-in is gone (the opted-in projects' databases). The opposite case, an
+# opted-in container that predates the volume, is codex_volume_drift below:
+# nothing leaks there, so it is recreated like image drift, not refused.
 # "NONE" (no container) is a fresh create, never drift.
 codex_mount_drift() {
   local desired="$1" actual="$2"
@@ -4404,8 +4421,12 @@ codex_mount_drift() {
   # whether or not the opt-in currently stands — the one thing that must not
   # happen is a lingering credential bind nobody could see.
   if [ "$actual" = "UNKNOWN" ]; then echo 1; return 0; fi
-  local dest src mode found=""
+  # The vibe-codex-sqlite volume travels with the login (2026-09-30): a
+  # container that kept it after the opt-in was withdrawn would still hold
+  # the opted-in projects' databases, so that is drift here.
+  local dest src mode found="" vol=""
   while IFS=$'\t' read -r dest src mode; do
+    [ "$dest" = "/home/node/.codex-sqlite" ] && { vol=1; continue; }
     [ "$dest" = "/home/node/.codex" ] || continue
     if [ -n "$desired" ] && [ "$src" = "$desired" ] && [ "$mode" = "rw" ]; then
       found=1
@@ -4414,7 +4435,27 @@ codex_mount_drift() {
       return 0
     fi
   done <<< "$actual"
-  [ -n "$desired" ] && [ -z "$found" ] && echo 1
+  if [ -n "$desired" ]; then
+    [ -z "$found" ] && echo 1
+  else
+    [ -n "$vol" ] && echo 1
+  fi
+  return 0
+}
+
+# codex_volume_drift <desired_source_or_empty> <actual_mounts>
+# Pure comparator. "1" iff the project is opted in to Codex and its container
+# carries the login but not the vibe-codex-sqlite volume (every such
+# container built before 2026-09-30). Recreating fixes it; until then Codex
+# keeps its databases in the container's own layer, never on the Mac, so the
+# launch flow treats this like image drift: recreate when no other session is
+# using the container, join it otherwise.
+codex_volume_drift() {
+  local desired="$1" actual="$2"
+  [ -n "$desired" ] || return 0
+  case "$actual" in NONE|UNKNOWN) return 0 ;; esac
+  printf '%s\n' "$actual" | grep -q '^/home/node/\.codex'$'\t' || return 0
+  printf '%s\n' "$actual" | grep -q '^/home/node/\.codex-sqlite'$'\t' || echo 1
   return 0
 }
 
@@ -6283,6 +6324,7 @@ mount_drift=""
 projects_drift=""
 domains_drift=""
 codex_drift=""
+codex_vol_drift=""
 if [ "$REBUILD" != true ]; then
   actual_mounts="$(container_shared_mounts "$WORKSPACE")"
   mount_drift="$(shared_repos_mount_drift "$SHARED_REPOS_SCAN" "$actual_mounts")"
@@ -6295,8 +6337,9 @@ if [ "$REBUILD" != true ]; then
   # phase 1a: the Codex login bind is a credential; a container must never
   # keep it after the project's opt-in (or the global switch) is withdrawn.
   codex_drift="$(codex_mount_drift "$(_codex_desired_source "$WORKSPACE" 2>/dev/null)" "$actual_mounts")"
+  codex_vol_drift="$(codex_volume_drift "$(_codex_desired_source "$WORKSPACE" 2>/dev/null)" "$actual_mounts")"
 fi
-extra_flag="$(remove_existing_flag "$REBUILD" "${drift_marker}${mount_drift}${projects_drift}${domains_drift}${codex_drift}")"
+extra_flag="$(remove_existing_flag "$REBUILD" "${drift_marker}${mount_drift}${projects_drift}${domains_drift}${codex_drift}${codex_vol_drift}")"
 # A recreate removes the container along with every session inside it. When
 # another vibe session is still using it (vibe_container_live_sessions):
 #   - image drift alone → keep the container; the new image waits for a launch
@@ -6315,9 +6358,16 @@ if [ -n "$extra_flag" ] && [ "${live_sessions:-0}" -gt 0 ]; then
     echo ""
   elif [ -z "${mount_drift}${projects_drift}${domains_drift}${codex_drift}" ]; then
     extra_flag=""
+    if [ -n "$drift_marker" ]; then
+      echo "  ◆ a newer vibe image is ready, but another vibe session is using this project's container,"
+      echo "    so this session joins it on the current image. Close every session here and relaunch to update."
+    else
+      # codex_vol_drift alone: the container predates Codex's database volume.
+      echo "  ◆ this project's container is due to be recreated (to give Codex its own database volume), but"
+      echo "    another vibe session is using it, so this session joins it. Close every session here and relaunch to update."
+    fi
     drift_marker=""
-    echo "  ◆ a newer vibe image is ready, but another vibe session is using this project's container,"
-    echo "    so this session joins it on the current image. Close every session here and relaunch to update."
+    codex_vol_drift=""
     echo ""
   else
     echo "  ✗ this project's container has to be recreated (its mounts, firewall domains or Codex login changed),"

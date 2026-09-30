@@ -66,6 +66,14 @@ web_search = "disabled"
 # are enforced by the sandbox, which is unavailable (see header), so listing
 # them would read as protection that is not there.
 
+# Codex's SQLite databases on the container-only vibe-codex-sqlite volume, not
+# in the Mac's shared ~/.codex (2026-09-30). The binding copy of this is the
+# EXACT requirement in requirements.toml; this system-config default is the
+# second layer, so the databases still land here should a Codex release stop
+# honouring the requirement. A user config setting it would then win, which is
+# why codex-compat-check tests the requirement itself, against a -c decoy.
+sqlite_home = "/home/node/.codex-sqlite"
+
 # Codex's native sub-agents (spawn_agent / wait_agent / send_message) are OFF.
 # The requirements pin multi_agent and multi_agent_v2, but that does NOT
 # remove them: `codex debug prompt-input` under this policy still offered the

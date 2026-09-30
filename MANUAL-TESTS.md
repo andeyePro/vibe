@@ -1949,3 +1949,13 @@ does not establish live app-server history fidelity or overnight duration.
 - [ ] Launch with `VIBE_DISK_WARN_GIB=100000 vibe` (pretends the disk is low): the low-disk warning is repeated under "Needs you" as the last lines before Claude starts.
 - [ ] On the Mac, note whether `devcontainer up`'s output is coloured during a launch (it gets `FORCE_COLOR=1`; whether the CLI honours it is unverified), and that Ctrl-C during it still stops the launch.
 - [ ] With one vibe session open in a project, launch a second: "1 other vibe session(s) already open in this project" appears under "Needs you".
+
+### Test 64: Codex's databases stay out of the Mac's ~/.codex (2026-09-30)
+
+- [ ] `vibe --rebuild` in a Codex-enabled project: the build log shows `codex-compat-check: ok   all 7 Codex databases under /home/node/.codex-sqlite (the requirement beats -c and $CODEX_SQLITE_HOME decoys)`.
+- [ ] On the Mac, note the modification times: `ls -la ~/.codex/*.sqlite*`. In vibe, run `codex doctor | grep -A3 "sqlite home"` (it says `/home/node/.codex-sqlite`), then `/ask astra say ok` or one Codex-led turn. On the Mac, `ls -la ~/.codex/*.sqlite*` again: no file there has a newer time from that turn (the Mac's own Codex app may still touch them).
+- [ ] `docker volume ls` lists `vibe-codex-sqlite`; `docker run --rm -v vibe-codex-sqlite:/v alpine ls -la /v` shows the Codex databases owned by uid 1000.
+- [ ] The "couldn't save diagnostic logs" warning no longer appears in a vibe Codex session.
+- [ ] With a Codex session open in an opted-in project from before this change, launch a second session there: it says the container is due to be recreated for Codex's database volume and joins it (not refused).
+- [ ] In a project WITHOUT the Codex opt-in, `ls /home/node/.codex-sqlite` inside vibe is empty or missing (the volume is not mounted there).
+

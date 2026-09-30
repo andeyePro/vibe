@@ -79,8 +79,11 @@ ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 
 # Create workspace and config directories and set permissions
-RUN mkdir -p /workspace /home/node/.claude && \
-  chown -R node:node /workspace /home/node/.claude
+# /home/node/.codex-sqlite is the mount point of the vibe-codex-sqlite volume
+# (Codex's databases, pinned by /etc/codex/requirements.toml sqlite_home).
+# Created node-owned here so a fresh named volume inherits that ownership.
+RUN mkdir -p /workspace /home/node/.claude /home/node/.codex-sqlite && \
+  chown -R node:node /workspace /home/node/.claude /home/node/.codex-sqlite
 
 WORKDIR /workspace
 
@@ -248,7 +251,12 @@ RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/refresh-extra-domain
   echo "Defaults!/usr/local/bin/refresh-extra-domains.sh env_reset" >> /etc/sudoers.d/node-firewall && \
   echo "node ALL=(root) NOPASSWD: /usr/sbin/avahi-daemon" >> /etc/sudoers.d/node-firewall && \
   chmod 0440 /etc/sudoers.d/node-firewall
-RUN chmod 0755 /usr/local/bin/codex-compat-check && /usr/local/bin/codex-compat-check
+# The gate runs as root under the sqlite_home pin, so anything a future Codex
+# initialises during its probes would land root-owned at the volume's mount
+# point, be copied into a fresh vibe-codex-sqlite volume, and be unwritable
+# for `node`. Empty it and hand it back to `node` afterwards.
+RUN chmod 0755 /usr/local/bin/codex-compat-check && /usr/local/bin/codex-compat-check && \
+  find /home/node/.codex-sqlite -mindepth 1 -delete && chown node:node /home/node/.codex-sqlite
 # vibe's own version (the launcher passes VERSION as a build arg), read by
 # codex-supervisor for its clientInfo.version. Late on purpose: a version bump
 # invalidates this one small layer, not the toolchain above it.
