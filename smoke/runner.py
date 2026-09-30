@@ -52,6 +52,7 @@ from smoke.checks_39_auto_update import *
 from smoke.checks_40_delegate_connection import *
 from smoke.checks_41_codex_continuation import *
 from smoke.checks_42_session_safety import *
+from smoke.checks_43_op_diagnostics import *
 
 def main() -> int:
     test_docker_preflight_is_shared_and_mac_start_preserves_target()
@@ -1104,6 +1105,8 @@ def main() -> int:
     test_container_run_state()
     test_exit_note_names_a_stopped_container()
     test_auto_resume_stops_on_dead_container()
+    test_forwarder_logs_unreachable_upstream()
+    test_register_names_the_failing_side()
     test_statusline_records_the_weekly_window()
     test_weekly_limit_vetoes_the_watchdog()
     test_relaunch_countdown_waits_out_a_used_up_week()
