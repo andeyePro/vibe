@@ -62,9 +62,12 @@ def test_task028_fragment_merges_and_fable_grant() -> None:
     # you can't"). The cap was NOT raised: the fragment was kept short and
     # web-research.md lost its "Relation to the vibe Firewall" section, which
     # restated its own "Why This Matters".
+    # 2026-09-30 raised 6700 -> 6760 for capabilities.md's Mac-build rule
+    # (one build tree per project per piece of software on the Mac account):
+    # a fifth of Martin's disk had gone to per-session `.build` copies there.
     all_text = "".join((claude_md_dir / f).read_text() for f in all_md_files)
     total_words = len(all_text.split())
-    check("[ac2] total fragment words <= 6700", total_words <= 6700, f"found {total_words}")
+    check("[ac2] total fragment words <= 6760", total_words <= 6760, f"found {total_words}")
     
     # AC3: content-guard.md 400-600 words, contains "README.md" and "Content guard"
     content_guard_text = (claude_md_dir / "content-guard.md").read_text()

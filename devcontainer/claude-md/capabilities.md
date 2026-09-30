@@ -7,3 +7,5 @@ Before telling the user you can't see, run, build, render or reach something ("I
 - **Genuinely not here**: say so, with its workaround.
 
 SSH to that account keeps the per-action ask unless the project pre-authorises it. Setup for users: `vibe-capabilities --setup mac-account`.
+
+**Builds on the Mac account**: one build tree per project per piece of software, reused every time: your project's bridge script's tree, else `~/builds/<project>/<software>`. Never a fresh copy per session, branch or worktree. Point Xcode's `-derivedDataPath` inside that tree. After a one-off build, delete its `.build` and derived data.

@@ -1063,6 +1063,7 @@ def main() -> int:
     test_capabilities_missing_mac_key_is_not_available()
     test_capabilities_without_a_mac_account_says_how_to_get_one()
     test_capabilities_parsing_edges()
+    test_capabilities_fragment_has_mac_build_discipline()
     test_capabilities_bridge_brief_and_setup_modes()
     test_capabilities_reach_every_agent()
     test_capability_nudge_sends_a_cant_back_once()

@@ -74,6 +74,8 @@ Two vibe-wide behaviour changes shipped and took effect on this rebuild — surf
 
 ## Open
 
+- [ ] **Mac-account builds: bring the per-project bridge scripts in line, and tidy automatically** (2026-09-30) — the shared-instructions rule (one build tree per project per piece of software, `capabilities.md`) covers agents, but the per-project bridge scripts (`andeye/pro-mac-test.sh` template and its copies in Time&I, Money&I, Pro) live in other repos and need the same check: one fixed tree each, Xcode `-derivedDataPath` inside it. Then consider a vibe-owned tidy on the `claude` account (delete `.build`/DerivedData untouched for N days), which needs the account's layout first (inventory command in fromClaude T79).
+
 - [ ] **Martin-gated: decide what protects the Claude login from a Docker reset** (2026-09-17, task_059 item 5). Recommendation below; do not implement without Martin's `y`.
 
   **What is actually at risk is narrower than it first looked.** Since task_014 `/home/node/.claude/projects` is ALWAYS a host bind (`vibe_projects_bind_path`, `~/.vibe/projects/<sha1>/`), so conversation transcripts and per-project auto-memory already live on the Mac and already survive a Docker reset. What `vibe-claude-config` still holds, and what the 2026-09-17 Docker.raw deletion actually destroyed, is: the Pro/Max OAuth credential, `settings.json`, and the synced commands/agents/CLAUDE.md fragments. The last of those `install-claude-extras.sh` rebuilds on every container start. So the real loss is one re-obtainable login — plus, for Martin specifically, any history predating task_014, which lived in the old shared volume and is genuinely gone.

@@ -288,3 +288,12 @@ def test_capability_nudge_is_wired_into_both_runtimes():
     liveness = (REPO / "devcontainer/codex-guard-liveness.sh").read_text()
     check("[caps nudge] liveness accepts it only on Stop and checks its ownership",
           "vibe-capabilities:Stop" in liveness and 'check_owned "$bin/vibe-capabilities"' in liveness)
+
+
+def test_capabilities_fragment_has_mac_build_discipline() -> None:
+    print("\n[capabilities] fragment limits Mac-account builds to one tree per project per software")
+    text = FRAGMENT.read_text()
+    check("[capabilities] one build tree per project per piece of software",
+          "one build tree per project per piece of software" in text, "")
+    check("[capabilities] no per-session copies", "per session, branch or worktree" in text, "")
+    check("[capabilities] derived data kept inside the tree", "-derivedDataPath" in text, "")
