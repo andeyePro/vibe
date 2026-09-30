@@ -74,7 +74,7 @@ Two vibe-wide behaviour changes shipped and took effect on this rebuild — surf
 
 ## Open
 
-- [ ] **Mac-account builds: bring the per-project bridge scripts in line, and tidy automatically** (2026-09-30) — the shared-instructions rule (one build tree per project per piece of software, `capabilities.md`) covers agents, but the per-project bridge scripts (`andeye/pro-mac-test.sh` template and its copies in Time&I, Money&I, Pro) live in other repos and need the same check: one fixed tree each, Xcode `-derivedDataPath` inside it. Then consider a vibe-owned tidy on the `claude` account (delete `.build`/DerivedData untouched for N days), which needs the account's layout first (inventory command in fromClaude T79).
+- [ ] **Mac-account builds: bring the per-project bridge scripts in line, and tidy automatically** (2026-09-30) — the shared-instructions rule (one build tree per project per piece of software, `capabilities.md`) covers agents, but the per-project bridge scripts (`andeye/pro-mac-test.sh` template and its copies in Time&I, Money&I, Pro) live in other repos and need the same check: one fixed tree each, Xcode `-derivedDataPath` inside it. Then consider a vibe-owned tidy on the `claude` account (delete `.build`/DerivedData untouched for N days), which needs the account's layout first (inventory command in fromClaude T80).
 
 - [ ] **Martin-gated: decide what protects the Claude login from a Docker reset** (2026-09-17, task_059 item 5). Recommendation below; do not implement without Martin's `y`.
 
