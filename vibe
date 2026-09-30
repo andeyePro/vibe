@@ -4273,6 +4273,32 @@ claude_exit_note() {
   if [ "$rc" -ge 128 ]; then
     echo "    rc>=128 means killed by signal $(( rc - 128 )) (137=SIGKILL: OOM or watchdog; 139=segfault)."
   fi
+  # A container that is no longer running took claude down with it — the
+  # rc above is then a symptom, not the cause. 2026-09-30: every open vibe
+  # session died at once with rc=137 oomkilled=false container=exited when
+  # the Mac disk hit 1 GB free and Docker Desktop fell over.
+  case "$cstate" in
+    container=exited*|container=dead*|container=gone)
+      echo "    The container itself stopped, so this was not claude crashing: Docker stopped or restarted underneath it."
+      echo "    The usual cause is a nearly full disk — check free space, then 'vibe clean'."
+      ;;
+  esac
+  return 0
+}
+
+# container_run_state <workspace> — "running", "stopped" or "gone" for the
+# workspace's devcontainer, or "unknown" when docker itself cannot be asked.
+# Always returns 0.
+container_run_state() {
+  local cids cid running
+  cids=$(docker ps -aq --filter "label=devcontainer.local_folder=$1" 2>/dev/null) || { echo unknown; return 0; }
+  cid="${cids%%$'\n'*}"
+  if [ -z "$cid" ]; then
+    echo gone
+    return 0
+  fi
+  running=$(docker inspect --format '{{.State.Running}}' "$cid" 2>/dev/null) || { echo unknown; return 0; }
+  if [ "$running" = "true" ]; then echo running; else echo stopped; fi
   return 0
 }
 
@@ -6735,6 +6761,21 @@ if auto_resume_pending "$AUTO_RESUME_MARKER" && ! _vibe_stall_armed "$AUTO_RESUM
   echo "    To discard it: delete .vss/auto-resume."
 fi
 while auto_resume_pending "$AUTO_RESUME_MARKER" && _vibe_stall_armed "$AUTO_RESUME_MARKER" "$VIBE_SESSION_REF"; do
+  # Relaunching into a container that is no longer running can only fail:
+  # `devcontainer exec` dies in under a second, and the loop used to burn a
+  # relaunch every 2 minutes on it (2026-09-30 moneyandeye: 13 dead retries,
+  # then a 271-minute wait on a container vibe clean had since removed).
+  # Restarting it here is not safe — a bare `docker start` skips
+  # postStartCommand, so the firewall would never be rebuilt — so stop, and
+  # leave the marker for the next launch's "/vsss --resume".
+  _ar_cstate=$(container_run_state "$WORKSPACE")
+  if [ "$_ar_cstate" != "running" ]; then
+    echo ""
+    echo "  ◆ auto-resume: stopped — this project's container is ${_ar_cstate} (Docker stopped or restarted?)."
+    echo "    Relaunching into it would only fail. Once Docker is healthy, run 'vibe --continue' here"
+    echo "    and type '/vsss --resume' to pick the run back up."
+    break
+  fi
   _ar_remaining=$(auto_resume_field "$AUTO_RESUME_MARKER" remaining)
   _ar_now=$(date +%s)
   # Wait = resume_at estimate (30 min default / +2 min future pad / 2 min

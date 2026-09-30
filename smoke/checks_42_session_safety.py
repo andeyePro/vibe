@@ -234,3 +234,66 @@ def test_recreate_spares_a_live_session():
     retry = retry[:retry.index("--remove-existing-container")]
     check("[session-safety] the failed-up retry checks for live sessions before removing",
           "vibe_container_live_sessions" in retry, retry[:300])
+
+
+# 2026-09-30: the Mac disk hit 1 GB free, Docker Desktop fell over and every
+# open session died with rc=137 oomkilled=false container=exited. The exit note
+# blamed OOM or the watchdog, and moneyandeye's /vsss auto-resume kept
+# relaunching into the dead container every two minutes.
+
+def _run_state_stub(ps_rc: int = 0, cid: str = "abc123", running: str = "true",
+                    inspect_rc: int = 0) -> str:
+    return (
+        'docker() { case "$1" in '
+        f'ps) printf "%s\\n" {shlex.quote(cid)}; return {ps_rc} ;; '
+        f'inspect) printf "%s\\n" {shlex.quote(running)}; return {inspect_rc} ;; '
+        '*) return 1 ;; esac; }; '
+    )
+
+
+def test_container_run_state():
+    print("\n[session-safety] container_run_state tells running from stopped, gone and unknown")
+    cases = (("RUNNING", _run_state_stub(), "running"),
+             ("STOPPED", _run_state_stub(running="false"), "stopped"),
+             ("GONE", _run_state_stub(cid=""), "gone"),
+             ("NODOCKER", _run_state_stub(ps_rc=1, cid=""), "unknown"),
+             ("INSPECTFAIL", _run_state_stub(inspect_rc=1), "unknown"))
+    for tag, stub, want in cases:
+        r = _source_vibe_call({}, stub + 'echo "S=[$(container_run_state /ws)] RC=$?"')
+        check(f"[session-safety] {tag} -> {want}", f"S=[{want}] RC=0" in r.stdout, r.stdout + r.stderr)
+
+
+def test_exit_note_names_a_stopped_container():
+    print("\n[session-safety] claude_exit_note says when the container itself stopped")
+    stopped = ('docker() { case "$1" in ps) echo abc123 ;; '
+               'inspect) echo "container=exited oomkilled=false container_exit=0" ;; esac; }; ')
+    running = ('docker() { case "$1" in ps) echo abc123 ;; '
+               'inspect) echo "container=running oomkilled=false container_exit=0" ;; esac; }; ')
+    with tempfile.TemporaryDirectory() as td:
+        ws = shlex.quote(td)
+        r = _source_vibe_call({}, stopped + f'claude_exit_note 137 {ws}')
+        check("[session-safety] exited container -> 'container itself stopped'",
+              "container itself stopped" in r.stdout and "full disk" in r.stdout, r.stdout + r.stderr)
+        r = _source_vibe_call({}, running + f'claude_exit_note 137 {ws}')
+        check("[session-safety] running container -> no container-stopped line",
+              "container itself stopped" not in r.stdout and "signal 9" in r.stdout, r.stdout + r.stderr)
+
+
+def test_auto_resume_stops_on_dead_container():
+    print("\n[session-safety] the auto-resume loop stops instead of relaunching into a dead container")
+    src = VIBE.read_text()
+    m = re.search(r'^while auto_resume_pending .*?^done\n', src, re.S | re.M)
+    check("[session-safety] auto-resume loop found", m is not None, "")
+    if not m:
+        return
+    loop = m.group(0)
+    at_check = loop.find('container_run_state "$WORKSPACE"')
+    at_break = loop.find("break")
+    at_sleep = loop.find('sleep "$_ar_wait"')
+    at_decr = loop.find("auto_resume_decrement")
+    check("[session-safety] container checked before the countdown",
+          0 <= at_check < at_sleep, f"check={at_check} sleep={at_sleep}")
+    check("[session-safety] a dead container breaks out before any decrement",
+          at_check < at_break < at_decr, f"break={at_break} decrement={at_decr}")
+    check("[session-safety] the stop tells the user how to resume",
+          "'/vsss --resume'" in loop[at_check:at_sleep], "")

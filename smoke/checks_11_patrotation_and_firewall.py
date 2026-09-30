@@ -1178,3 +1178,26 @@ def test_task014_projects_bind_mount_drift() -> None:
           'projects_drift="$(projects_bind_mount_drift "$(vibe_projects_bind_path "$WORKSPACE")" "$actual_mounts")"' in src, "")
     check("[task014] projects_drift feeds remove_existing_flag",
           '${drift_marker}${mount_drift}${projects_drift}' in src, "")
+
+
+def test_host_internal_resolves_ipv4() -> None:
+    """Docker Desktop now publishes an IPv6 address for host.docker.internal
+    too, and `getent hosts` answers it first; the firewall's IPv4-only rule
+    then skipped the OpenProject forwarder path (seen 2026-09-29/30)."""
+    print("\n[firewall: host.docker.internal resolves to IPv4]")
+    src = INIT_FIREWALL.read_text()
+    check("firewall uses host_internal_ipv4 for the forwarder rule",
+          "HOST_INTERNAL_IP=$(host_internal_ipv4)" in src, "")
+    check("no plain `getent hosts host.docker.internal` left",
+          "getent hosts host.docker.internal" not in src, "")
+    stub = ('getent() { case "$1" in '
+            'ahostsv4) printf "192.168.65.254  STREAM host.docker.internal\\n'
+            '192.168.65.254  DGRAM  \\n" ;; '
+            'hosts) echo "fdc4:f303:9324::254 host.docker.internal" ;; '
+            '*) return 2 ;; esac; }; ')
+    with tempfile.TemporaryDirectory() as td:
+        r, _ = _fw_run(Path(td), "exit 1", stub + 'echo "IP=[$(host_internal_ipv4)]"')
+        check("dual-stack answer -> the IPv4 address", "IP=[192.168.65.254]" in r.stdout,
+              r.stdout[-300:] + r.stderr[-300:])
+        r, _ = _fw_run(Path(td), "exit 1", 'getent() { return 2; }; echo "IP=[$(host_internal_ipv4)]"')
+        check("unresolvable -> empty", "IP=[]" in r.stdout, r.stdout[-300:] + r.stderr[-300:])

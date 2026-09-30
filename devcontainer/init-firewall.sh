@@ -359,6 +359,16 @@ if [ -n "${1:-}" ]; then
     [ -n "$_extra_seen" ] && echo "Extra allowlist domains (project-supplied):$_extra_seen"
 fi
 
+# host_internal_ipv4 — the first IPv4 address host.docker.internal resolves
+# to, or nothing. Asks for IPv4 explicitly: since Docker Desktop started
+# publishing an IPv6 address for it too (fdc4:...::254, seen 2026-09-29),
+# plain `getent hosts` answers IPv6 first, the IPv4 check below rejected it,
+# and the OpenProject forwarder path was never allowlisted — so /op reported
+# "forwarder down?" while the forwarder was fine.
+host_internal_ipv4() {
+    getent ahostsv4 host.docker.internal 2>/dev/null | awk '{print $1; exit}'
+}
+
 # Test hook: stop here when sourced for unit testing, before anything mutates
 # the host's network state.
 if [ -n "${VIBE_FIREWALL_SOURCE_ONLY:-}" ]; then
@@ -578,7 +588,7 @@ iptables -A OUTPUT -d "$HOST_NETWORK" -j ACCEPT
 # Non-fatal, exactly like the per-domain loop earlier: a resolution miss must
 # NOT abort before the DROP policy below — warn and carry on, so /op simply
 # stays unavailable rather than the firewall being left half-built (fail-closed).
-HOST_INTERNAL_IP=$(getent hosts host.docker.internal 2>/dev/null | awk '{print $1; exit}') || true
+HOST_INTERNAL_IP=$(host_internal_ipv4) || true
 if [ -z "$HOST_INTERNAL_IP" ]; then
     echo "Note: host.docker.internal did not resolve - OP MCP forwarder path not allowlisted (harmless unless using /op)"
 elif [[ "$HOST_INTERNAL_IP" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
