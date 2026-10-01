@@ -9,7 +9,12 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
+        with:
+          # Full history: the task034 checks compare against historical commits
+          # registered in smoke/_core.py's HISTORICAL_PINS_ALLOWED; a shallow
+          # clone has none of them, which is why CI has failed since 2026-09-10.
+          fetch-depth: 0
 
       - name: Install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck

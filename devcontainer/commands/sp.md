@@ -46,6 +46,7 @@ If Superpowers is loaded, apply its methodology to `$ARGUMENTS`. Lean on the ski
 - `superpowers:finishing-a-development-branch` – merge or PR decision
 - `superpowers:using-git-worktrees` – isolated workspace per task
 - `superpowers:writing-skills` – create or edit skills
+- `superpowers:diagnosing-superpowers` – when a session went wrong (repeated work, ignored plans, a skill that didn't fire, cost): report what happened from the transcripts, every finding cited `path:line`
 
 ## Note: `/sp` is additive, not a wrapper
 

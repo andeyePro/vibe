@@ -1,18 +1,23 @@
 # Vendored from anthropics/claude-code .devcontainer/Dockerfile
 # Upstream commit: 0385848b4e737831fc3b973d9a78d31950a87d9d
-# Fetched: 2026-04-18
+# Fetched: 2026-04-18. Re-checked 2026-09-25 against upstream main: Dockerfile
+# and devcontainer.json unchanged; init-firewall.sh only dropped
+# statsig.anthropic.com, which vibe had already removed.
 # To resync: re-fetch from
 #   https://raw.githubusercontent.com/anthropics/claude-code/<sha>/.devcontainer/Dockerfile
 # then re-apply the vibe-specific patches (openssh-client, shellcheck,
 # credential-helper, agents/, commands/).
 
-FROM node:20
+FROM node:22
 
 ARG TZ
 ENV TZ="$TZ"
 
 ARG CLAUDE_CODE_VERSION=latest
-ARG CODEX_VERSION=0.154.0
+# The fallback / floor-verified Codex. The launcher normally passes the latest
+# release instead (and falls back to the last version that passed
+# codex-compat-check); this default is used when it can't reach npm.
+ARG CODEX_VERSION=0.156.1
 
 # Install basic development tools and iptables/ipset
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -68,14 +73,17 @@ RUN SNIPPET="export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhisto
 ENV DEVCONTAINER=true
 
 # UTF-8 locale so terminal UIs (Claude Code spinner glyphs, box-drawing) render
-# correctly. node:20 inherits glibc's `C` default, which strips non-ASCII.
+# correctly. node:22 inherits glibc's `C` default, which strips non-ASCII.
 # C.UTF-8 is provided by glibc — no locale-gen required.
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 
 # Create workspace and config directories and set permissions
-RUN mkdir -p /workspace /home/node/.claude && \
-  chown -R node:node /workspace /home/node/.claude
+# /home/node/.codex-sqlite is the mount point of the vibe-codex-sqlite volume
+# (Codex's databases, pinned by /etc/codex/requirements.toml sqlite_home).
+# Created node-owned here so a fresh named volume inherits that ownership.
+RUN mkdir -p /workspace /home/node/.claude /home/node/.codex-sqlite && \
+  chown -R node:node /workspace /home/node/.claude /home/node/.codex-sqlite
 
 WORKDIR /workspace
 
@@ -158,6 +166,12 @@ COPY --chown=root:root codex/ /etc/codex/
 # must not be able to rewrite the thing that decides when to stop.
 COPY --chown=root:root codex-supervisor.mjs /usr/local/bin/codex-supervisor
 COPY --chown=root:root supervisor-control.mjs /usr/local/bin/supervisor-control.mjs
+COPY --chown=root:root codex-rpc.mjs /usr/local/bin/codex-rpc.mjs
+COPY --chown=root:root codex-errors.mjs /usr/local/bin/codex-errors.mjs
+COPY --chown=root:root codex-completion.mjs /usr/local/bin/codex-completion.mjs
+COPY --chown=root:root codex-autonomy.mjs /usr/local/bin/codex-autonomy
+COPY --chown=root:root codex-stop-guard.mjs /usr/local/bin/codex-stop-guard
+COPY --chown=root:root codex/vsss.md /usr/local/share/vibe/codex-vsss.md
 COPY --chown=root:root taskandi-client.mjs /usr/local/bin/taskandi-client.mjs
 COPY --chown=root:root taskandi-usage.mjs /usr/local/bin/taskandi-usage.mjs
 COPY --chown=root:root mac-build.mjs /usr/local/bin/mac-build
@@ -179,6 +193,21 @@ COPY --chown=root:root codex-prompt-prefix.sh /usr/local/bin/codex-prompt-prefix
 # for the same reason the gate is — `node` must not be able to rewrite the
 # file that decides whether `node` gets a Codex session.
 COPY --chown=root:root codex-entry.sh /usr/local/bin/codex-entry
+# The build-time gate for automatic Codex updates: the launcher installs the
+# latest Codex, and this refuses to finish the image unless it still honours
+# vibe's policy, supervisor protocol and hook events (the launcher then falls
+# back to the last version that passed).
+COPY --chown=root:root codex-compat-check.sh /usr/local/bin/codex-compat-check
+# The /vsss keep-going guard: the Stop hook, in both runtimes, that refuses to
+# let a live /vsss run end its turn on a question instead of an exit
+# condition. Root-owned beside the other hook targets — `node` must not be
+# able to rewrite the thing that decides whether a run may stop.
+COPY --chown=root:root vsss-stop-guard.sh /usr/local/bin/vsss-stop-guard
+# The capability inventory every agent is pointed at before it may say "I
+# can't" (claude-md/capabilities.md, Codex session context). Read-only probes.
+COPY --chown=root:root vibe-capabilities.sh /usr/local/bin/vibe-capabilities
+# One command for "look at it" on the Mac account (vibe-capabilities names it).
+COPY --chown=root:root vibe-shot.sh /usr/local/bin/vibe-shot
 # Curated Claude Code agents + slash commands. Staged under /usr/local/share
 # because /home/node/.claude is a persistent Docker volume at runtime — files
 # COPY'd there at build time would be shadowed. install-claude-extras.sh syncs
@@ -211,7 +240,7 @@ RUN ln -sf taskandi-client.mjs /usr/local/bin/taskandi-client
 # to a root script whose whole job is widening the firewall. The script body
 # also never reads its own argv, so this is belt and braces — but the rule is
 # what makes it true for every future version of the script.
-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/refresh-extra-domains.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/guard-bash.sh /usr/local/bin/guard-fs.sh /usr/local/bin/install-claude-extras.sh /usr/local/bin/check-sp-current.sh /usr/local/bin/register-op-mcp.sh /usr/local/bin/vibe-credential-helper /usr/local/bin/vibe-copy /usr/local/bin/vibe-delegate /usr/local/bin/codex-context /usr/local/bin/codex-guard-adapter /usr/local/bin/codex-guard-liveness /usr/local/bin/codex-supervisor /usr/local/bin/mac-build /usr/local/bin/taskandi-client /usr/local/bin/codex-panel /usr/local/bin/codex-entry /usr/local/bin/codex-prompt-prefix /usr/local/bin/vibe-agent && \
+RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/refresh-extra-domains.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/guard-bash.sh /usr/local/bin/guard-fs.sh /usr/local/bin/install-claude-extras.sh /usr/local/bin/check-sp-current.sh /usr/local/bin/register-op-mcp.sh /usr/local/bin/vibe-credential-helper /usr/local/bin/vibe-copy /usr/local/bin/vibe-delegate /usr/local/bin/codex-context /usr/local/bin/codex-guard-adapter /usr/local/bin/codex-guard-liveness /usr/local/bin/codex-supervisor /usr/local/bin/codex-autonomy /usr/local/bin/codex-stop-guard /usr/local/bin/mac-build /usr/local/bin/taskandi-client /usr/local/bin/codex-panel /usr/local/bin/codex-entry /usr/local/bin/codex-prompt-prefix /usr/local/bin/vsss-stop-guard /usr/local/bin/vibe-capabilities /usr/local/bin/vibe-shot /usr/local/bin/vibe-agent && \
   chmod 0755 /etc/codex /etc/codex/hooks && \
   chmod 0644 /etc/codex/requirements.toml /etc/codex/config.toml /etc/codex/hooks/hooks.json && \
   chmod 0755 /etc/codex/skills /etc/codex/skills/vs /etc/codex/skills/vss /etc/codex/skills/vsss && \
@@ -222,4 +251,27 @@ RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/refresh-extra-domain
   echo "Defaults!/usr/local/bin/refresh-extra-domains.sh env_reset" >> /etc/sudoers.d/node-firewall && \
   echo "node ALL=(root) NOPASSWD: /usr/sbin/avahi-daemon" >> /etc/sudoers.d/node-firewall && \
   chmod 0440 /etc/sudoers.d/node-firewall
+# The gate runs as root under the sqlite_home pin, so anything a future Codex
+# initialises during its probes would land root-owned at the volume's mount
+# point, be copied into a fresh vibe-codex-sqlite volume, and be unwritable
+# for `node`. Empty it and hand it back to `node` afterwards.
+RUN chmod 0755 /usr/local/bin/codex-compat-check && /usr/local/bin/codex-compat-check && \
+  find /home/node/.codex-sqlite -mindepth 1 -delete && chown node:node /home/node/.codex-sqlite
+# vibe's own version (the launcher passes VERSION as a build arg), read by
+# codex-supervisor for its clientInfo.version. Late on purpose: a version bump
+# invalidates this one small layer, not the toolchain above it.
+ARG VIBE_VERSION=0.0.0-dev
+RUN printf '%s\n' "$VIBE_VERSION" > /usr/local/share/vibe/VERSION && \
+  chmod 0644 /usr/local/share/vibe/VERSION
 USER node
+
+# task_059: stamp the image so vibe can recognise its own leftovers after the
+# vibe-dev tag has moved on. A dangling image is untagged by definition, so
+# without a label there is no way to tell one of vibe's superseded builds from
+# another project's — and a bare `docker image prune -f` would delete both.
+# Labels are inherited by every child image built FROM this one, and by every
+# container created from either, which is also what lets `vibe clean` find
+# stopped containers whose image is long gone. LAST instruction on purpose: changing it invalidates one
+# metadata layer, not the whole build cache. Keep the value in sync with
+# VIBE_IMAGE_LABEL in the vibe launcher (smoke-test.py checks that they agree).
+LABEL com.andeye.vibe.image="vibe-dev"

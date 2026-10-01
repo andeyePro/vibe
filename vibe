@@ -43,6 +43,12 @@
 #   vibe repos list          # show the machine's shared-repo registry
 #   vibe codex allow|deny|list [path]    # host-side opt-in registry for the Codex login mount
 #   vibe audit [--history|--staged]      # scan git history (default) or the staged diff for secrets/PII
+#   vibe clean [--dry-run|--yes|--all]   # reclaim stopped vibe containers, dangling images, build cache
+#
+# `vibe clean` is host-side too. It never removes a named volume in any mode,
+# so your Claude login (vibe-claude-config) and bash history survive it. Cap
+# Docker's disk appetite as well: Docker Desktop > Settings > Resources >
+# Advanced > "Disk usage limit" defaults to the whole drive.
 #
 # `vibe pat` runs on the HOST shell too, same as `vibe learn` above — not
 # available inside the container. With no argument the repo is detected
@@ -128,6 +134,54 @@ _vibe_version() {
   local vfile="$VIBE_REPO_DIR/VERSION" ver=""
   [ -f "$vfile" ] && ver="$(head -n1 "$vfile" | tr -d '[:space:]')"
   echo "${ver:-0.0.0-dev}"
+}
+
+# ── Automatic CLI updates (Claude Code + Codex) ──────────────────────────────
+# Both CLIs are baked into the image, so they only move when it rebuilds. At
+# most once a day (VIBE_UPDATE_CHECK_SECS, default 86400) the launcher asks npm
+# for the latest Claude Code and Codex and rebuilds on this launch if either is
+# newer than what the image holds (recorded in $IMAGE_VERSIONS at each build).
+# VIBE_AUTO_UPDATE=0 turns it off. Codex follows latest only if it passes
+# codex-compat-check at build time; otherwise the build falls back to the last
+# Codex version that passed ("codex-good"), or the Dockerfile's pinned default.
+IMAGE_VERSIONS="$HOME/.vibe/.image-versions"
+UPDATE_STAMP="$HOME/.vibe/.update-check"
+
+# cli_latest_version <npm package> — echoes its latest published version, or
+# nothing (no npm, offline, slow registry, or anything not a plain version).
+cli_latest_version() {
+  local v
+  command -v npm >/dev/null 2>&1 || return 0
+  v=$(npm view "$1" version --fetch-timeout=8000 --fetch-retries=0 2>/dev/null | tail -n 1) || return 0
+  case "$v" in '' | *[!0-9A-Za-z.+-]*) ;; *) echo "$v" ;; esac
+}
+
+# image_version <key> — a KEY=VALUE from the versions file, same charset rule.
+image_version() {
+  local v
+  [ -f "$IMAGE_VERSIONS" ] || return 0
+  v=$(grep -E "^$1=" "$IMAGE_VERSIONS" 2>/dev/null | tail -n 1 | cut -d= -f2-)
+  case "$v" in '' | *[!0-9A-Za-z.+-]*) ;; *) echo "$v" ;; esac
+}
+
+# update_check_due <now> — true once VIBE_UPDATE_CHECK_SECS have passed since
+# the last check (or there was none); false when VIBE_AUTO_UPDATE=0.
+update_check_due() {
+  local now="$1" last secs="${VIBE_UPDATE_CHECK_SECS:-86400}"
+  [ "${VIBE_AUTO_UPDATE:-1}" = 0 ] && return 1
+  case "$secs" in '' | *[!0-9]*) secs=86400 ;; esac
+  [ -f "$UPDATE_STAMP" ] || return 0
+  last=$(head -c 20 "$UPDATE_STAMP" 2>/dev/null | tr -cd '0-9')
+  [ -n "$last" ] || return 0
+  last=$((10#$last))
+  [ "$now" -lt "$last" ] && return 0
+  [ $((now - last)) -ge "$secs" ]
+}
+
+# dockerfile_codex_default — the ARG CODEX_VERSION default in the Dockerfile:
+# the floor-verified fallback when nothing newer has passed the gate yet.
+dockerfile_codex_default() {
+  sed -n 's/^ARG CODEX_VERSION=\([0-9][0-9.]*\)$/\1/p' "$DEVCONTAINER_DIR/Dockerfile" 2>/dev/null | head -n 1
 }
 
 print_version() {
@@ -346,7 +400,7 @@ create_github_repo() {
   local gh_user
   if _vibe_interactive && ! gh auth status >/dev/null 2>&1; then
     if ask_yes_no 'Sign in to GitHub CLI to continue GitHub setup?' n; then
-      gh auth login || { echo "  Skipping — launching without GitHub."; return 0; }
+      _vibe_on_terminal gh auth login || { echo "  Skipping — launching without GitHub."; return 0; }
     else
       echo "  Skipping — launching without GitHub."
       return 0
@@ -749,6 +803,63 @@ build_claude_model_args() {
   fi
 }
 
+# build_color_env echoes the terminal-colour env that every in-container
+# command is started with: TERM always, plus COLORTERM when the host terminal
+# advertises one.
+#
+# `devcontainer exec` hands the container a bare TERM=xterm and no COLORTERM at
+# all, whatever the outer terminal is. Claude Code's (and Codex's) colour-depth
+# ladder reads COLORTERM=truecolor / xterm-ghostty / xterm-kitty as 24-bit,
+# *-256color as 256, and bare xterm as *16 colours* — so every rgb() theme
+# colour was being crushed to the nearest of 16. Most visible in the fullscreen
+# renderer, which paints the selection itself: the dark theme's rgb(38,79,120)
+# selection blue degraded to a near-black that reads as unhighlighted text.
+#
+# TERM is claimed unconditionally — xterm-256color terminfo ships in the image
+# (`TERM=xterm-256color tput colors` → 256) and every terminal vibe supports
+# handles it. COLORTERM is FORWARDED rather than hardcoded: Ghostty, iTerm2,
+# Kitty and WezTerm set it to truecolor, Apple Terminal (256-colour only) does
+# not, so the host terminal's own capability decides and there is no allowlist
+# to go stale. A host with no COLORTERM gets 256 colours, not a mangled 24-bit
+# stream it can't render.
+#
+# The value is embedded in the bash -c command string sent to the container, so
+# it is charset-restricted exactly like MODEL_ARG and RESUME_UID; anything with
+# a shell-significant character is dropped rather than sanitised, because a
+# COLORTERM that isn't a plain token is not a colour declaration.
+# Defined above the VIBE_SOURCE_ONLY guard so smoke-test.py can unit-test it.
+#
+# TERM_PROGRAM (+ TERM_PROGRAM_VERSION) are forwarded the same way, for the
+# same reason: they are how Codex (codex-rs/terminal-detection, `TERM_PROGRAM`
+# first) picks OSC 9 desktop notifications for Ghostty/iTerm2 and Claude Code
+# decides whether to emit clickable OSC 8 links. Without them both see an
+# unknown terminal inside the container and fall back to a bell or nothing.
+# `vscode` is not forwarded: Claude Code reads it as "inside the VS Code
+# terminal" and would try IDE integration that cannot work in the container.
+# The version travels only with a forwarded name, and may carry `+` (tip
+# builds, e.g. 1.2.0-main+abc123), which is inert in the command string.
+build_color_env() {
+  local out="TERM=xterm-256color" prog="${TERM_PROGRAM:-}" ver="${TERM_PROGRAM_VERSION:-}"
+  case "${COLORTERM:-}" in
+    "") ;;
+    *[!A-Za-z0-9._-]*) ;;
+    *) out="$out COLORTERM=$COLORTERM" ;;
+  esac
+  case "$prog" in
+    "" | vscode) prog="" ;;
+    *[!A-Za-z0-9._-]*) prog="" ;;
+  esac
+  if [ -n "$prog" ]; then
+    out="$out TERM_PROGRAM=$prog"
+    case "$ver" in
+      "") ;;
+      *[!A-Za-z0-9._+-]*) ;;
+      *) out="$out TERM_PROGRAM_VERSION=$ver" ;;
+    esac
+  fi
+  echo "$out"
+}
+
 # fable_billing_phase [yyyymmdd] — echoes "free" before the credits cutover
 # date, "credits" from it onward. Date injectable for tests; defaults to the
 # host's local date (day-level precision is enough for a billing notice).
@@ -916,6 +1027,73 @@ auto_resume_rate_headroom() {
   echo "$used"
 }
 
+# _auto_resume_five_hour_wait <rl_file> <now_epoch> — true while Claude Code is
+# most likely sitting out a 5-hour limit ITSELF. Since v2.1.234 Claude Code's
+# `autoContinueAtUsageLimit` (on by default) waits in the open session for
+# the window to reset and then carries on — the usage-limit picker that the
+# stall watchdog was built to kill no longer wedges a 5-hour limit. During
+# that wait no tool runs, so the heartbeat goes stale exactly as it would for
+# a wedge. The statusLine's last reading tells them apart: `used` at or above
+# ${VIBE_NATIVE_WAIT_USED_MIN:-90} with a `resets=` epoch (the five_hour
+# window's resets_at) that has not yet passed by more than
+# ${VIBE_NATIVE_WAIT_GRACE_SECS:-900}. Past that the wait should be over, so
+# a still-stale heartbeat is a genuine wedge again. A missing or malformed
+# reading, or no resets= line, is "no native wait" — the historical kill path.
+_auto_resume_five_hour_wait() {
+  local file="$1" now="$2" used resets used_min grace
+  used_min="${VIBE_NATIVE_WAIT_USED_MIN:-90}"
+  grace="${VIBE_NATIVE_WAIT_GRACE_SECS:-900}"
+  case "$used_min" in ''|*[!0-9]*) used_min=90 ;; esac
+  case "$grace" in ''|*[!0-9]*) grace=900 ;; esac
+  used=$(auto_resume_field "$file" used)
+  resets=$(auto_resume_field "$file" resets)
+  { [ -n "$used" ] && [ -n "$resets" ]; } || return 1
+  # The file is written inside the container and read here on the host:
+  # base-10 always (a leading zero would otherwise be read as octal and abort
+  # the arithmetic), and a reset more than one window away is not a 5-hour
+  # wait — refusing it keeps the veto bounded by ~5h15m whatever the input.
+  [ "${#used}" -le 6 ] && [ "${#resets}" -le 12 ] || return 1
+  used=$((10#$used))
+  resets=$((10#$resets))
+  [ "$used" -ge "$used_min" ] || return 1
+  [ $(( resets - now )) -le $(( 18000 + grace )) ] || return 1
+  [ "$now" -le $(( resets + grace )) ]
+}
+
+# _auto_resume_weekly_wait <rl_file> <now_epoch> — the same test against the
+# seven_day window (used7= / resets7=, written beside the five_hour reading).
+# 2026-09-26: two /vsss runs on one subscription went quiet together at a
+# weekly limit while the five_hour window read 21%; the five_hour-only veto
+# let the watchdog kill both. Killing there gains nothing — the relaunch hits
+# the same limit, stalls, and is killed again — so a used-up week vetoes the
+# kill until its reset (bounded by 7 days + grace, same shape as above).
+# Its own threshold, default 100 (VIBE_NATIVE_WAIT_WEEK_USED_MIN): a week at
+# 92% is not used up and can sit there for days, and a frozen reading at that
+# level must not hold off the kill of a genuine wedge for a week.
+_auto_resume_weekly_wait() {
+  local file="$1" now="$2" used resets used_min grace
+  used_min="${VIBE_NATIVE_WAIT_WEEK_USED_MIN:-100}"
+  grace="${VIBE_NATIVE_WAIT_GRACE_SECS:-900}"
+  case "$used_min" in ''|*[!0-9]*) used_min=100 ;; esac
+  case "$grace" in ''|*[!0-9]*) grace=900 ;; esac
+  used=$(auto_resume_field "$file" used7)
+  resets=$(auto_resume_field "$file" resets7)
+  { [ -n "$used" ] && [ -n "$resets" ]; } || return 1
+  [ "${#used}" -le 6 ] && [ "${#resets}" -le 12 ] || return 1
+  used=$((10#$used))
+  resets=$((10#$resets))
+  [ "$used" -ge "$used_min" ] || return 1
+  [ $(( resets - now )) -le $(( 604800 + grace )) ] || return 1
+  [ "$now" -le $(( resets + grace )) ]
+}
+
+# auto_resume_native_wait <rl_file> <now_epoch> — true while either window's
+# last reading shows it used up with its reset still ahead (see the two
+# detectors above). The single entry point vibe_stall_watchdog consults.
+auto_resume_native_wait() {
+  _auto_resume_five_hour_wait "$1" "$2" || _auto_resume_weekly_wait "$1" "$2"
+}
+
 # auto_resume_effective_wait <marker_file> <ratelimit_file> <now_epoch> —
 # echoes the countdown seconds for the relaunch loop. The base case
 # reproduces the historical resume_at-only estimate exactly: unusable
@@ -951,6 +1129,13 @@ auto_resume_effective_wait() {
   if [ "$wait" -gt "$grace" ] && [ -n "$(auto_resume_rate_headroom "$rl" "$now")" ]; then
     wait=$grace
   fi
+  # A used-up week outranks both: relaunching before its reset only hits the
+  # same limit again and spends a relaunch (bounded as _auto_resume_weekly_wait).
+  if _auto_resume_weekly_wait "$rl" "$now"; then
+    local resets7
+    resets7=$((10#$(auto_resume_field "$rl" resets7)))
+    [ $(( resets7 - now + grace )) -le "$wait" ] || wait=$(( resets7 - now + grace ))
+  fi
   echo "$wait"
 }
 
@@ -981,7 +1166,10 @@ vibe_container_kill_claude() {
 # heartbeat read every retry. awaiting-human lives beside the marker
 # (dirname-derived, not a new parameter) — written by the AskUserQuestion
 # PreToolUse hook and cleared by its PostToolUse counterpart once answered
-# (settings.local.json, install-claude-extras.sh).
+# (settings.local.json, install-claude-extras.sh). NOTE: the relaunch loop
+# after claude exits uses this gate too, so a veto that only makes sense
+# while claude is alive (auto_resume_native_wait) belongs in
+# vibe_stall_watchdog, never here.
 _vibe_stall_armed() {
   local marker="$1" ref="$2" awaiting
   [ "$(auto_resume_field "$marker" active)" = "1" ] || return 1
@@ -1015,11 +1203,13 @@ vibe_stall_watchdog() {
   while kill -0 "$claude_pid" 2>/dev/null; do
     sleep "$poll" 2>/dev/null || true
     if _vibe_stall_armed "$marker" "$ref" \
+       && ! auto_resume_native_wait "$(dirname "$marker")/rate-limit" "$(date +%s)" \
        && auto_resume_stalled "$hb" "$(date +%s)" "$stall_secs"; then
       printf '\n  \a⚠  auto-resume: no activity for over %ss — assuming the usage-limit picker is stuck.\n' "$stall_secs" >&2
       printf '     Waiting %ss then killing this claude window (delete .vss/auto-resume to cancel).\n' "$grace" >&2
       sleep "$grace" 2>/dev/null || true
       if _vibe_stall_armed "$marker" "$ref" \
+         && ! auto_resume_native_wait "$(dirname "$marker")/rate-limit" "$(date +%s)" \
          && auto_resume_stalled "$hb" "$(date +%s)" "$stall_secs"; then
         vibe_container_kill_claude
         sleep "$kill_pause" 2>/dev/null || true
@@ -1057,7 +1247,7 @@ VIBE_EXIT_TRAP_INSTALLED=""
 vibe_on_exit() {
   local _vibe_hook
   [ "${#VIBE_EXIT_HOOKS[@]}" -eq 0 ] && return 0
-  for _vibe_hook in "${VIBE_EXIT_HOOKS[@]}"; do
+  for _vibe_hook in ${VIBE_EXIT_HOOKS[@]+"${VIBE_EXIT_HOOKS[@]}"}; do
     eval "$_vibe_hook" || true
   done
   return 0
@@ -1555,7 +1745,8 @@ learning_commit_message() {
 # render_devcontainer_with_mounts <src_json> <dst_json> [<source> <target> <ro>]...
 # Reads src JSON, appends one bind-mount entry per (source, target, ro) triple
 # to the mounts array (creating it if absent), writes dst. ro is "1" for
-# readonly, anything else for read-write. Paths are passed as argv (not
+# readonly, "volume" for a read-write NAMED VOLUME (source is the volume
+# name), anything else for a read-write bind. Paths are passed as argv (not
 # interpolated into JSON text) so sources with spaces/quotes are safe.
 render_devcontainer_with_mounts() {
   local src="$1" dst="$2"
@@ -1571,7 +1762,9 @@ if not isinstance(cfg.get("mounts"), list):
 for i in range(0, len(rest), 3):
     source, target, ro = rest[i], rest[i + 1], rest[i + 2]
     entry = {"source": source, "target": target, "type": "bind"}
-    if ro == "1":
+    if ro == "volume":
+        entry["type"] = "volume"
+    elif ro == "1":
         entry["readonly"] = True
     cfg["mounts"].append(entry)
 # OpenProject MCP: map the sidecar's real hostname to the host gateway so the
@@ -3359,6 +3552,15 @@ _build_override_config() {
   codex="$(_codex_desired_source "$workspace")"
   if [ -n "$codex" ]; then
     mount_args+=("$codex" "/home/node/.codex" "0")
+    # Codex's SQLite databases (2026-09-30): pinned by the image's
+    # /etc/codex/requirements.toml to this named volume, OFF the Mac's shared
+    # ~/.codex, where the Mac's Codex app writes the same files and locking
+    # fails across Docker's VM boundary. Mounted only alongside the login, so
+    # a project that is not opted in to Codex cannot read or seed databases
+    # the opted-in projects' Codex sessions use (the same trust group that
+    # already shares ~/.codex). A container without it keeps them in its own
+    # layer, never on the Mac.
+    mount_args+=("vibe-codex-sqlite" "/home/node/.codex-sqlite" "volume")
   fi
 
   # Shared repos declared in this project's .vibe-repos (task_017 cycle 1).
@@ -3412,7 +3614,7 @@ _build_override_config() {
   # to before this feature) — no per-call prefix needed for it, unlike
   # VIBE_OP_ADDHOST which is genuinely call-scoped.
   VIBE_OP_ADDHOST="$op_host" \
-    render_devcontainer_with_mounts "$default_cfg" "$dst" "${mount_args[@]}"
+    render_devcontainer_with_mounts "$default_cfg" "$dst" ${mount_args[@]+"${mount_args[@]}"}
   echo "$dst"
 }
 
@@ -3475,6 +3677,552 @@ remove_existing_flag() {
   fi
 }
 
+# vibe_container_live_sessions <workspace> — echoes how many claude/codex
+# sessions are attached to this workspace's RUNNING container (0 when there is
+# no running container or it cannot be inspected — fail open to the old
+# behaviour, never a false "in use" that blocks a launch).
+# Why: `--remove-existing-container` force-removes the container, and every
+# session inside it with it. On 2026-09-25 a second `vibe` launch saw image
+# drift and recreated this project's container under a live session (claude
+# rc=137, container=removing in .vibe/last-exit.log). A session is a
+# `docker exec`, so its process has PPID 0 inside the container (PID 1 is the
+# keep-alive loop); counting PPID-0 processes whose program is claude, codex,
+# codex-entry or what it execs into (codex-autonomy for a supervised run, a
+# node script, so its program is field 4) skips the launcher's own helper
+# execs (pkill, watchers). Not covered: a /vsss run sitting in its host-side
+# auto-resume countdown has no process in the container, and two launches
+# racing can both see 0. `docker exec` has no timeout here; a paused
+# container would stall the launch (macOS has no timeout(1)).
+vibe_container_live_sessions() {
+  local cids cid procs n total=0
+  cids=$(docker ps -q --filter "label=devcontainer.local_folder=$1" 2>/dev/null) || cids=""
+  for cid in $cids; do
+    procs=$(docker exec "$cid" ps -eo pid=,ppid=,args= 2>/dev/null) || continue
+    n=$(printf '%s\n' "$procs" | awk '
+      $1 != 1 && $2 == 0 {
+        for (i = 3; i <= 4 && i <= NF; i++) {
+          p = $i; sub(/.*\//, "", p)
+          if (p == "claude" || p == "codex" || p == "codex-entry" ||
+              p == "codex-autonomy" || p == "codex-supervisor") { c++; break }
+        }
+      }
+      END { print c + 0 }')
+    total=$(( total + ${n:-0} ))
+  done
+  echo "$total"
+}
+
+# ── Docker hygiene (task_059) ─────────────────────────────────────────────────
+# Defined here, ABOVE the VIBE_SOURCE_ONLY guard, so smoke-test.py can
+# unit-test them by sourcing with VIBE_SOURCE_ONLY=1 and a stubbed docker().
+#
+# Why this section exists: vibe rebuilds vibe-dev:latest whenever devcontainer/
+# changes, and `devcontainer up` never removes a container. Before this, every
+# rebuild orphaned the previous image (dangling, or pinned forever by some
+# idle project's stopped container) and left its build cache behind, and
+# nothing ever reclaimed either. On 2026-09-17 that filled a 926 GB Mac:
+# Docker.raw at 245 GB, ~20 vibe containers pinning ~18 distinct images,
+# Docker Desktop's disk limit left at its default (the whole drive), and the
+# containerd content store corrupted by the disk filling mid-write. Recovery
+# meant deleting Docker.raw, which took the vibe-claude-config volume (the
+# Claude login and every session history) with it.
+#
+# Three defences, in order of how quietly they work:
+#   1. vibe_remove_stale_workspace_containers - on every recreate, drop this
+#      project's OWN stopped containers, so an image can actually be reclaimed.
+#   2. vibe_prune_after_build - after a rebuild, reclaim vibe's dangling
+#      images and stale build cache. Scoped: never other projects' leftovers.
+#   3. vibe_hygiene_check - on low disk or a lot of reclaimable space, run
+#      vibe_auto_clean (`vibe clean`'s default scope, unattended, 2026-09-29);
+#      only what that cannot fix is left to the user, as a launch notice.
+# NONE of them ever touches a volume. The launcher has no code path that runs
+# `docker volume rm` or passes `--volumes`/`-v` to a prune or rm - that is the
+# invariant this whole section is built around, and smoke-test.py asserts it.
+
+# Image label stamped by devcontainer/Dockerfile's final LABEL instruction and
+# inherited by profile child images (and by every container created from one).
+# It is what makes "vibe's leftovers" a decidable question after the vibe-dev
+# tag has moved on. MUST stay in sync with the Dockerfile and with the literal
+# in _clean_docker_ps_format below (smoke-test.py checks all three agree).
+VIBE_IMAGE_LABEL="com.andeye.vibe.image"
+
+# _vibe_size_to_mib <human-size> - "245GB", "1.5GiB", "812.3MB", "0B",
+# "12.5GB (58%)" -> whole MiB on stdout. Anything unparseable -> 0, never an
+# error: these feed advisory warnings, never a decision to delete something.
+#
+# Docker prints sizes with units.HumanSize, which is DECIMAL - "245GB" means
+# 245e9 bytes, not 245 GiB. Treating it as binary overstates by ~7% at GB
+# scale, so a suffix is read as decimal unless it carries the `i` (GiB, MiB).
+# All arithmetic in awk because macOS ships bash 3.2 (no float math).
+_vibe_size_to_mib() {
+  awk -v s="${1:-}" 'BEGIN {
+    sub(/ .*$/, "", s); gsub(/,/, "", s)
+    if (match(s, /^[0-9]+(\.[0-9]+)?/) == 0) { print 0; exit }
+    num = substr(s, 1, RLENGTH) + 0
+    unit = tolower(substr(s, RLENGTH + 1))
+    binary = (unit ~ /i/)
+    sub(/i?b$/, "", unit)
+    mult = binary ? 1024 : 1000
+    if (unit == "k") bytes = num * mult
+    else if (unit == "m") bytes = num * mult * mult
+    else if (unit == "g") bytes = num * mult * mult * mult
+    else if (unit == "t") bytes = num * mult * mult * mult * mult
+    else bytes = num
+    printf "%d\n", int(bytes / 1048576 + 0.5)
+  }'
+}
+
+# _vibe_docker_reclaimable_mib - total reclaimable MiB across images,
+# containers and build cache. Local Volumes are EXCLUDED on purpose: docker
+# counts an unused volume as reclaimable, but vibe never reclaims one, so
+# including it would warn about space this tool will not free.
+_vibe_docker_reclaimable_mib() {
+  local type size total=0 mib
+  while IFS=$'\t' read -r type size; do
+    [ -n "$size" ] || continue
+    case "$type" in
+      "Local Volumes") continue ;;
+    esac
+    mib="$(_vibe_size_to_mib "$size")"
+    total=$((total + mib))
+  done < <(docker system df --format '{{.Type}}'$'\t''{{.Reclaimable}}' 2>/dev/null || true)
+  echo "$total"
+}
+
+# _vibe_host_free_mib [path] - free MiB on the filesystem holding <path>
+# (default $HOME). Empty string when df says nothing useful.
+_vibe_host_free_mib() {
+  df -P -k "${1:-$HOME}" 2>/dev/null | awk 'NR==2 && $4 ~ /^[0-9]+$/ { printf "%d\n", $4/1024 }'
+}
+
+# _vibe_marker_fresh <file> <hours> - rc 0 iff <file> exists and was touched
+# within the last <hours>. A missing file, or a find that cannot answer, is
+# "not fresh", so a check throttled on it runs rather than being skipped
+# forever. `find -mmin` is the one mtime test both BSD and GNU find agree on;
+# stat(1) syntax differs between macOS and Linux and is not worth branching on.
+_vibe_marker_fresh() {
+  local f="${1:-}" hours="${2:-24}"
+  [ -n "$f" ] && [ -f "$f" ] || return 1
+  [ -n "$(find "$f" -mmin "-$((hours * 60))" 2>/dev/null)" ]
+}
+
+# ── Launch notices ───────────────────────────────────────────────────────────
+# A notice is a warning that needs the user to act. It is printed where it
+# arises AND collected, so vibe_notices_replay can repeat the lot as the last
+# thing before the agent's TUI starts - the one spot on screen that does not
+# scroll away (and it lands in .vibe/last-launch.log either way).
+VIBE_NOTICES=""
+
+# _vibe_notice <line>... - print to stderr and remember for the replay.
+_vibe_notice() {
+  local line
+  for line in "$@"; do
+    printf '%s\n' "$line" >&2
+    VIBE_NOTICES="${VIBE_NOTICES}${line}"$'\n'
+  done
+}
+
+vibe_notices_replay() {
+  [ -n "$VIBE_NOTICES" ] || return 0
+  printf '\n  ── Needs you (also saved in .vibe/last-launch.log) ──\n' >&2
+  printf '%s' "$VIBE_NOTICES" >&2
+  printf '\n' >&2
+}
+
+# _vibe_mib_human <mib> - "12 GB" / "812 MB".
+_vibe_mib_human() {
+  if [ "${1:-0}" -ge 1024 ]; then printf '%s GB' "$(($1 / 1024))"; else printf '%s MB' "${1:-0}"; fi
+}
+
+# vibe_hygiene_check [marker] - launch-time disk hygiene. Never fails a launch:
+# every path returns 0, and a missing/unhappy docker degrades to silence.
+#
+# Two triggers, both of which now CLEAN rather than only warn (a warning in a
+# scrolling launch is a chore handed to the user, and one they will miss):
+#   - host disk low (checked every launch; cheap `df`). The clean itself is
+#     throttled to once an hour so a disk that stays low after cleaning does
+#     not cost every launch a sweep that finds nothing.
+#   - Docker holding a lot of reclaimable space (`docker system df`, which
+#     walks the image store - throttled to once per VIBE_HYGIENE_INTERVAL_HOURS
+#     via the marker's mtime; the marker is machine-wide, not per-project).
+# The clean is vibe_auto_clean: `vibe clean`'s default scope, never a volume,
+# never a running container, never a container created in the last hour.
+# Whatever still needs the user afterwards becomes a notice (see above).
+#   VIBE_HYGIENE=0                  - disable all of it
+#   VIBE_AUTO_CLEAN=0               - warn only, as before (no automatic clean)
+#   VIBE_DISK_WARN_GIB              - host free-space threshold (default 20)
+#   VIBE_DOCKER_RECLAIM_WARN_GIB    - reclaimable threshold (default 20)
+# shellcheck disable=SC2120  # the optional marker arg is passed only by tests
+vibe_hygiene_check() {
+  [ "${VIBE_HYGIENE:-1}" = "0" ] && return 0
+  local marker="${1:-$HOME/.vibe/.hygiene-checked}"
+  local clean_marker="${marker}.auto-clean"
+  local disk_warn="${VIBE_DISK_WARN_GIB:-20}"
+  local reclaim_warn="${VIBE_DOCKER_RECLAIM_WARN_GIB:-20}"
+  local interval="${VIBE_HYGIENE_INTERVAL_HOURS:-24}"
+  local auto="${VIBE_AUTO_CLEAN:-1}"
+
+  local free_mib low=0
+  free_mib="$(_vibe_host_free_mib "$HOME")"
+  if [ -n "$free_mib" ] && [ "$free_mib" -lt $((disk_warn * 1024)) ]; then
+    low=1
+  fi
+
+  local run_df=0
+  _vibe_marker_fresh "$marker" "$interval" || run_df=1
+  if [ "$low" = 1 ] && [ "$auto" != 0 ] && ! _vibe_marker_fresh "$clean_marker" 1; then
+    run_df=1
+  fi
+
+  local reclaimable="" cleaned=0
+  if [ "$run_df" = 1 ]; then
+    mkdir -p "$(dirname "$marker")" 2>/dev/null || true
+    : > "$marker" 2>/dev/null || true
+    reclaimable="$(_vibe_docker_reclaimable_mib)"
+    if [ "$auto" != 0 ] && { [ "$low" = 1 ] || [ "${reclaimable:-0}" -gt $((reclaim_warn * 1024)) ]; }; then
+      : > "$clean_marker" 2>/dev/null || true
+      vibe_auto_clean "$reclaimable" || true
+      cleaned=1
+      reclaimable="$VIBE_AUTO_CLEAN_AFTER"
+      free_mib="$(_vibe_host_free_mib "$HOME")"
+      low=0
+      if [ -n "$free_mib" ] && [ "$free_mib" -lt $((disk_warn * 1024)) ]; then low=1; fi
+    fi
+  fi
+
+  if [ "$low" = 1 ]; then
+    _vibe_notice \
+      "  ⚠ only $((free_mib / 1024)) GB free on this disk. Docker writes its whole VM disk here;" \
+      "    if it fills mid-write the image store can corrupt." \
+      "    Cap it for good: Docker Desktop > Settings > Resources > Advanced > Disk usage limit."
+    if [ "$cleaned" = 1 ] || { [ "$auto" != 0 ] && _vibe_marker_fresh "$clean_marker" 1; }; then
+      _vibe_notice "    vibe already cleaned up what it safely could. For more: vibe clean --all (volumes are never touched)."
+    else
+      _vibe_notice "    Reclaim: vibe clean"
+    fi
+  fi
+  if [ -n "$reclaimable" ] && [ "$reclaimable" -gt $((reclaim_warn * 1024)) ]; then
+    if [ "$cleaned" = 1 ]; then
+      _vibe_notice "  ⚠ Docker still holds $(_vibe_mib_human "$reclaimable") reclaimable that the safe automatic clean leaves alone." \
+        "    Widen the sweep (volumes are never touched): vibe clean --all"
+    else
+      _vibe_notice "  ⚠ Docker is holding $(_vibe_mib_human "$reclaimable") of reclaimable images, containers and build cache." \
+        "    Reclaim it (volumes are never touched): vibe clean"
+    fi
+  fi
+  return 0
+}
+
+# vibe_auto_clean [before-mib] - the unattended form of `vibe clean`. Same
+# prunes, but a NARROWER container scope ("auto"): only stopped vibe
+# containers whose image has been superseded (docker shows a bare sha256 once
+# the tag has moved on), and none created within about the last hour.
+# Those are exactly the containers that pin old images - the space - and
+# exactly the ones the next launch of their project would recreate anyway
+# (image drift on a stopped container means a recreate), so removing them
+# costs the user nothing a launch would not. A stopped container still on the
+# current image holds no image space and is left for its project.
+# Leaves the post-clean reclaimable figure in VIBE_AUTO_CLEAN_AFTER so the
+# caller need not walk the image store again. Prints one line saying what it
+# did (nothing if it did nothing).
+VIBE_AUTO_CLEAN_AFTER=""
+vibe_auto_clean() {
+  local rows removed before="${1:-}" after freed
+  [ -n "$before" ] || before="$(_vibe_docker_reclaimable_mib)"
+  rows="$(_clean_stopped_containers auto)"
+  removed="$(_vibe_reclaim "$rows" "")"
+  after="$(_vibe_docker_reclaimable_mib)"
+  VIBE_AUTO_CLEAN_AFTER="$after"
+  freed=0
+  if [ -n "$before" ] && [ -n "$after" ] && [ "$before" -gt "$after" ]; then
+    freed=$((before - after))
+  fi
+  [ "${removed:-0}" -gt 0 ] || [ "$freed" -gt 0 ] || return 0
+  printf '  ✓ auto-clean: removed %s stopped vibe container(s), freed about %s inside Docker (volumes untouched; VIBE_AUTO_CLEAN=0 turns this off).\n' \
+    "${removed:-0}" "$(_vibe_mib_human "$freed")" >&2
+}
+
+# _vibe_reclaim <rows> <all> - remove the containers in <rows> (as printed by
+# _clean_stopped_containers) and prune images and build cache: label- and
+# age-scoped by default, everything dangling when <all> is "all". Echoes how
+# many containers were removed. Shared by `vibe clean` and vibe_auto_clean so
+# the two can never drift apart on what "safe" means.
+_vibe_reclaim() {
+  local rows="$1" all="${2:-}" removed=0 id img folder
+  if [ -n "$rows" ]; then
+    while IFS=$'\t' read -r id img folder; do
+      [ -n "$id" ] || continue
+      # No -f (nothing here is running) and no -v (never delete volumes).
+      docker rm "$id" >/dev/null 2>&1 && removed=$((removed + 1))
+    done <<< "$rows"
+  fi
+  if [ "$all" = "all" ]; then
+    docker image prune -f >/dev/null 2>&1 || true
+    docker builder prune -f >/dev/null 2>&1 || true
+  else
+    docker image prune -f --filter "label=$VIBE_IMAGE_LABEL" >/dev/null 2>&1 || true
+    docker builder prune -f --filter "until=168h" >/dev/null 2>&1 || true
+  fi
+  echo "$removed"
+}
+
+# vibe_workspace_stale_containers <workspace> - ids of NON-running containers
+# labelled for this workspace, newline-separated. Running containers are never
+# listed: this only ever reaps what is already dead.
+vibe_workspace_stale_containers() {
+  local out
+  out=$(docker ps -aq \
+          --filter "label=devcontainer.local_folder=$1" \
+          --filter status=exited --filter status=created --filter status=dead \
+          2>/dev/null) || out=""
+  printf '%s' "$out"
+}
+
+# vibe_remove_stale_workspace_containers <workspace> - `docker rm` each one.
+# Echoes how many were removed. Deliberately `docker rm` with NO flags: no
+# -f (a running container is out of scope by construction) and no -v (which
+# would delete anonymous volumes). Failure to remove any one of them is not an
+# error - the recreate proceeds either way.
+vibe_remove_stale_workspace_containers() {
+  local ids id removed=0
+  ids="$(vibe_workspace_stale_containers "$1")"
+  [ -n "$ids" ] || { echo 0; return 0; }
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    docker rm "$id" >/dev/null 2>&1 && removed=$((removed + 1))
+  done <<< "$ids"
+  echo "$removed"
+}
+
+# vibe_prune_after_build [cache_age_hours] - reclaim what a rebuild just
+# superseded. Echoes a one-line human summary, or nothing when there was
+# nothing to reclaim.
+#
+# Both prunes are SCOPED on purpose:
+#   - `docker image prune --filter label=$VIBE_IMAGE_LABEL` touches only
+#     images built from vibe's Dockerfile; a bare prune would also delete
+#     other projects' dangling images on a shared machine.
+#   - `docker builder prune --filter until=<age>` leaves cache newer than the
+#     age alone, so a rebuild never throws away another project's warm cache.
+# `docker image prune` never removes an image that ANY container still
+# references, running or stopped - so a project whose stopped container is
+# still pinned to an old image keeps it until `vibe clean` reaps the container.
+# That is why vibe clean exists as well as this.
+# shellcheck disable=SC2120  # the optional cache-age arg is passed only by tests
+vibe_prune_after_build() {
+  local age="${1:-168}" img_out cache_out freed=""
+  img_out=$(docker image prune -f --filter "label=$VIBE_IMAGE_LABEL" 2>/dev/null) || img_out=""
+  cache_out=$(docker builder prune -f --filter "until=${age}h" 2>/dev/null) || cache_out=""
+  local img_mib cache_mib total
+  img_mib="$(_vibe_size_to_mib "$(printf '%s\n' "$img_out" | awk '/[Rr]eclaimed space/ { print $NF }' | tail -n 1)")"
+  cache_mib="$(_vibe_size_to_mib "$(printf '%s\n' "$cache_out" | awk '/[Rr]eclaimed space/ { print $NF }' | tail -n 1)")"
+  total=$((img_mib + cache_mib))
+  [ "$total" -gt 0 ] || return 0
+  if [ "$total" -ge 1024 ]; then
+    freed="$((total / 1024)) GB"
+  else
+    freed="$total MB"
+  fi
+  printf '  reclaimed %s of superseded image layers and build cache.\n' "$freed"
+}
+
+# ── `vibe clean` subcommand (task_059) ────────────────────────────────────────
+# Host-side, docker-only. Reclaims the three things vibe is responsible for
+# accumulating - stopped vibe containers, dangling vibe images, build cache -
+# and NOTHING else. Volumes are out of scope by construction: there is no
+# `docker volume` call and no `--volumes`/`-v` flag anywhere below, so no
+# invocation of this command, in any mode, can lose the Claude login in
+# vibe-claude-config or the shell history in vibe-bash-history.
+# Defined above the VIBE_SOURCE_ONLY guard so smoke-test.py can unit-test it
+# against a stubbed docker().
+
+_clean_usage() {
+  cat <<'EOF'
+Usage: vibe clean [--dry-run] [--yes] [--all]
+
+  Reclaims the Docker space vibe is responsible for:
+
+    - stopped vibe containers   (running ones are never touched)
+    - dangling vibe images      (untagged leftovers of past rebuilds)
+    - build cache older than 7 days
+
+  --dry-run, -n   list what would be removed, remove nothing
+  --yes, -y       skip the confirmation prompt
+  --all           widen the sweep: build cache of ANY age, ALL dangling
+                  images (including other tools' - they are untagged and
+                  unreferenced either way), and stopped devcontainers whose
+                  image no longer exists. Use this to clear a fleet built
+                  before vibe started labelling its images.
+
+  Named volumes are NEVER removed, in any mode. Your Claude login
+  (vibe-claude-config), bash history (vibe-bash-history) and the
+  containers' Codex databases (vibe-codex-sqlite) survive every run
+  of this command.
+
+  A stopped container pins the image it was built from, so Docker cannot
+  reclaim that image until the container goes. That is usually where the
+  space actually is.
+EOF
+  exit 0
+}
+
+# Docker ps format shared by the listing helpers. The label literal must match
+# VIBE_IMAGE_LABEL (smoke-test.py asserts it does); it cannot be interpolated
+# without making the Go-template quoting unreadable.
+#
+# `|`-separated, not tab: IFS treats a tab as whitespace and collapses an EMPTY
+# field, which shifted a missing label's neighbour into the label slot. The
+# folder (the only free-text field) goes last, so a `|` inside a path lands
+# in it rather than splitting it.
+_clean_docker_ps_format() {
+  printf '%s' '{{.ID}}|{{.Image}}|{{.RunningFor}}|{{.Label "com.andeye.vibe.image"}}|{{.Label "devcontainer.local_folder"}}'
+}
+
+# _clean_is_young <docker RunningFor> - rc 0 when the container was created
+# under about an hour ago ("45 seconds ago", "12 minutes ago"), or when the
+# age cannot be read - the unattended clean skips anything it cannot age.
+_clean_is_young() {
+  case "${1:-}" in
+    ''|*second*|*minute*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# _clean_stopped_containers [all|auto] - echo "id<TAB>image<TAB>folder" per
+# stopped container in scope, one per line. "auto" (vibe_auto_clean) narrows
+# the default scope to superseded images and skips anything created within
+# about the last hour - see vibe_auto_clean for why.
+#
+# In scope by default:
+#   - anything carrying vibe's image label (survives the vibe-dev tag moving on)
+#   - anything whose image name still reads vibe-dev* (pre-label fleet)
+# Additionally with "all":
+#   - a devcontainer whose image is a bare sha256 - i.e. the image it was built
+#     from is gone, so the container cannot be started meaningfully anyway.
+#     Only under --all, and every one is listed by folder before the prompt,
+#     because on a shared machine this class can include another tool's
+#     devcontainers.
+_clean_stopped_containers() {
+  local all="${1:-}" id img age folder lbl
+  while IFS='|' read -r id img age lbl folder; do
+    [ -n "$id" ] || continue
+    if [ "$all" = "auto" ]; then
+      [ "${img#sha256:}" != "$img" ] || continue
+      _clean_is_young "$age" && continue
+    fi
+    if [ -n "$lbl" ]; then
+      :
+    elif [ "${img#vibe-dev}" != "$img" ]; then
+      :
+    elif [ "$all" = "all" ] && [ -n "$folder" ] && [ "${img#sha256:}" != "$img" ]; then
+      :
+    else
+      continue
+    fi
+    printf '%s\t%s\t%s\n' "$id" "$img" "$folder"
+  done < <(docker ps -a \
+             --filter status=exited --filter status=created --filter status=dead \
+             --format "$(_clean_docker_ps_format)" 2>/dev/null || true)
+}
+
+# _clean_confirm <prompt> - rc 0 on an explicit yes. Non-interactive stdin is
+# a NO: a piped or cron-driven `vibe clean` must not delete anything it was
+# never told to delete. --yes is the deliberate way to say yes without a tty.
+_clean_confirm() {
+  [ -t 0 ] || { echo "  not a terminal - re-run with --yes to confirm non-interactively." >&2; return 1; }
+  ask_yes_no "$1" n
+}
+
+clean_handle_subcommand() {
+  shift || true   # drop the literal "clean"
+  local dry=0 assume_yes=0 all=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --dry-run|-n) dry=1 ;;
+      --yes|-y)     assume_yes=1 ;;
+      --all)        all=1 ;;
+      --help|-h)    _clean_usage ;;
+      *)
+        echo "vibe clean: unknown argument '$1'" >&2
+        echo "  try: vibe clean --help" >&2
+        exit 1
+        ;;
+    esac
+    shift
+  done
+
+  command -v docker >/dev/null 2>&1 || {
+    echo "vibe clean: docker not found. Install OrbStack (https://orbstack.dev) or Docker Desktop." >&2
+    exit 1
+  }
+  docker info >/dev/null 2>&1 || {
+    echo "vibe clean: Docker is not running - start it and try again." >&2
+    exit 1
+  }
+
+  local all_arg=""
+  [ "$all" -eq 1 ] && all_arg="all"
+
+  local rows count
+  rows="$(_clean_stopped_containers "$all_arg")"
+  count=0
+  [ -n "$rows" ] && count=$(printf '%s\n' "$rows" | grep -c . || true)
+
+  local before
+  before="$(_vibe_docker_reclaimable_mib)"
+
+  echo ""
+  echo "  vibe clean — reclaimable Docker space"
+  echo ""
+  if [ "$count" -gt 0 ]; then
+    echo "  Stopped containers to remove ($count):"
+    local id img folder
+    while IFS=$'\t' read -r id img folder; do
+      [ -n "$id" ] || continue
+      printf '    %s  %-28s %s\n' "$id" "$img" "${folder:-(no project folder recorded)}"
+    done <<< "$rows"
+  else
+    echo "  Stopped containers to remove: none"
+  fi
+  echo ""
+  if [ "$all" -eq 1 ]; then
+    echo "  Plus: all dangling images, and all build cache regardless of age."
+  else
+    echo "  Plus: dangling vibe images, and build cache older than 7 days."
+  fi
+  echo "  Named volumes (vibe-claude-config, vibe-bash-history, vibe-codex-sqlite): untouched."
+  echo ""
+  if [ -n "$before" ] && [ "$before" -gt 0 ]; then
+    printf '  Docker currently reports %s GB reclaimable in total.\n\n' "$((before / 1024))"
+  fi
+
+  if [ "$dry" -eq 1 ]; then
+    echo "  --dry-run: nothing removed."
+    exit 0
+  fi
+
+  if [ "$assume_yes" -ne 1 ]; then
+    _clean_confirm "Remove the above?" || { echo "  Nothing removed."; exit 0; }
+  fi
+
+  local removed
+  removed="$(_vibe_reclaim "$rows" "$all_arg")"
+
+  local after freed
+  after="$(_vibe_docker_reclaimable_mib)"
+  echo "  ✓ removed $removed stopped container(s)."
+  if [ -n "$before" ] && [ -n "$after" ] && [ "$before" -gt "$after" ]; then
+    freed=$((before - after))
+    echo "  ✓ reclaimed about $(_vibe_mib_human "$freed")."
+  fi
+  if [ "$all" -ne 1 ] && [ "$count" -eq 0 ]; then
+    echo "    If Docker is still large, the space is pinned by images that older"
+    echo "    containers still reference: vibe clean --all widens the sweep."
+  fi
+  echo ""
+  exit 0
+}
+
 # ── Terminal hygiene + crash forensics (task_031) ─────────────────────────────
 # claude enables xterm mouse tracking (and bracketed paste, focus reporting,
 # the alternate screen). When it dies abnormally it never sends the disable
@@ -3525,6 +4273,32 @@ claude_exit_note() {
   if [ "$rc" -ge 128 ]; then
     echo "    rc>=128 means killed by signal $(( rc - 128 )) (137=SIGKILL: OOM or watchdog; 139=segfault)."
   fi
+  # A container that is no longer running took claude down with it — the
+  # rc above is then a symptom, not the cause. 2026-09-30: every open vibe
+  # session died at once with rc=137 oomkilled=false container=exited when
+  # the Mac disk hit 1 GB free and Docker Desktop fell over.
+  case "$cstate" in
+    container=exited*|container=dead*|container=gone)
+      echo "    The container itself stopped, so this was not claude crashing: Docker stopped or restarted underneath it."
+      echo "    The usual cause is a nearly full disk — check free space, then 'vibe clean'."
+      ;;
+  esac
+  return 0
+}
+
+# container_run_state <workspace> — "running", "stopped" or "gone" for the
+# workspace's devcontainer, or "unknown" when docker itself cannot be asked.
+# Always returns 0.
+container_run_state() {
+  local cids cid running
+  cids=$(docker ps -aq --filter "label=devcontainer.local_folder=$1" 2>/dev/null) || { echo unknown; return 0; }
+  cid="${cids%%$'\n'*}"
+  if [ -z "$cid" ]; then
+    echo gone
+    return 0
+  fi
+  running=$(docker inspect --format '{{.State.Running}}' "$cid" 2>/dev/null) || { echo unknown; return 0; }
+  if [ "$running" = "true" ]; then echo running; else echo stopped; fi
   return 0
 }
 
@@ -3661,6 +4435,10 @@ projects_bind_mount_drift() {
 # credential bind the gates no longer grant (marker removed, dir gone,
 # VIBE_CODEX_PATH=off) OR would run without one the gates now grant. Without
 # this, `off` would stop the header line while the token stayed mounted.
+# It also emits "1" for a vibe-codex-sqlite volume left on a container whose
+# opt-in is gone (the opted-in projects' databases). The opposite case, an
+# opted-in container that predates the volume, is codex_volume_drift below:
+# nothing leaks there, so it is recreated like image drift, not refused.
 # "NONE" (no container) is a fresh create, never drift.
 codex_mount_drift() {
   local desired="$1" actual="$2"
@@ -3669,8 +4447,12 @@ codex_mount_drift() {
   # whether or not the opt-in currently stands — the one thing that must not
   # happen is a lingering credential bind nobody could see.
   if [ "$actual" = "UNKNOWN" ]; then echo 1; return 0; fi
-  local dest src mode found=""
+  # The vibe-codex-sqlite volume travels with the login (2026-09-30): a
+  # container that kept it after the opt-in was withdrawn would still hold
+  # the opted-in projects' databases, so that is drift here.
+  local dest src mode found="" vol=""
   while IFS=$'\t' read -r dest src mode; do
+    [ "$dest" = "/home/node/.codex-sqlite" ] && { vol=1; continue; }
     [ "$dest" = "/home/node/.codex" ] || continue
     if [ -n "$desired" ] && [ "$src" = "$desired" ] && [ "$mode" = "rw" ]; then
       found=1
@@ -3679,7 +4461,27 @@ codex_mount_drift() {
       return 0
     fi
   done <<< "$actual"
-  [ -n "$desired" ] && [ -z "$found" ] && echo 1
+  if [ -n "$desired" ]; then
+    [ -z "$found" ] && echo 1
+  else
+    [ -n "$vol" ] && echo 1
+  fi
+  return 0
+}
+
+# codex_volume_drift <desired_source_or_empty> <actual_mounts>
+# Pure comparator. "1" iff the project is opted in to Codex and its container
+# carries the login but not the vibe-codex-sqlite volume (every such
+# container built before 2026-09-30). Recreating fixes it; until then Codex
+# keeps its databases in the container's own layer, never on the Mac, so the
+# launch flow treats this like image drift: recreate when no other session is
+# using the container, join it otherwise.
+codex_volume_drift() {
+  local desired="$1" actual="$2"
+  [ -n "$desired" ] || return 0
+  case "$actual" in NONE|UNKNOWN) return 0 ;; esac
+  printf '%s\n' "$actual" | grep -q '^/home/node/\.codex'$'\t' || return 0
+  printf '%s\n' "$actual" | grep -q '^/home/node/\.codex-sqlite'$'\t' || echo 1
   return 0
 }
 
@@ -3780,7 +4582,7 @@ parse_vibe_args() {
   TASK_BIND_ENV=()
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --rebuild) REBUILD=true; shift ;;
+      --rebuild) REBUILD=true; REBUILD_REQUESTED=true; shift ;;
       --continue) CONTINUE=true; shift ;;
       --fable) MODEL_ARG="$FABLE_MODEL_ID"; shift ;;
       --model)
@@ -4256,7 +5058,122 @@ _vibe_host_onboarding() {
     python3 "$DEVCONTAINER_DIR/host-onboarding.py" "$@"
 }
 
-_vibe_interactive() { [ -t 0 ] && [ -t 1 ]; }
+# ── Launch log (the pre-session output, kept) ─────────────────────────────────
+# Everything the launcher prints before the agent's TUI takes over is copied,
+# colour codes stripped, to <project>/.vibe/last-launch.log (the one before it
+# is kept as prev-launch.log). Warnings scroll past fast on a busy launch; the
+# log means neither the user nor the in-container agent (which sees .vibe/ at
+# /workspace/.vibe) has to catch them live. VIBE_LAUNCH_LOG=0 turns it off.
+#
+# Mechanism: fd 1 and fd 2 are pointed at one tee (stderr merged, so the log
+# keeps the order the terminal showed), and the real terminal is parked on
+# fds 7 and 8. vibe_launch_log_stop puts them back before the TUI starts.
+#
+# The catch: with stdout on a pipe, `[ -t 1 ]` goes false, and interactive
+# tools (gh auth login, codex login, host-onboarding.py's isatty(1) gates)
+# would decide they are not on a terminal. So:
+#   - _vibe_interactive also accepts "stdout is the launch-log tee", which is
+#     true exactly when the log is running on a terminal AND we are in the
+#     launcher's main shell (BASH_SUBSHELL 0). Inside $(...) or a pipeline
+#     BASH_SUBSHELL is >0 and the answer is what it always was.
+#   - _vibe_on_terminal runs one command on the parked real terminal. Those
+#     prompts are deliberately not logged (a login flow prints one-time codes).
+VIBE_LAUNCH_LOG_TTY=0
+VIBE_LAUNCH_LOG_ACTIVE=0
+
+# _vibe_log_strip - stdin -> stdout with CSI/OSC escapes removed and each
+# carriage-return-overwritten line reduced to what was left visible. Written
+# for BSD and GNU sed alike: the escape bytes come from $'...', not \x.
+_vibe_log_strip() {
+  LC_ALL=C sed -e $'s/\033\\[[0-9;?]*[ -/]*[@-~]//g' \
+               -e $'s/\033\\][^\a]*\a//g' \
+               -e $'s/.*\r\\(.\\)/\\1/' -e $'s/\r$//'
+}
+
+# vibe_launch_log_start <workspace> - begin copying output to the log.
+# Never fails a launch: any problem leaves output exactly as it was.
+vibe_launch_log_start() {
+  [ "${VIBE_LAUNCH_LOG:-1}" = "0" ] && return 0
+  [ "$VIBE_LAUNCH_LOG_ACTIVE" = 1 ] && return 0
+  local dir="$1/.vibe" log prev
+  log="$dir/last-launch.log"
+  prev="$dir/prev-launch.log"
+  # The workspace is repo content: a committed symlink here would point this
+  # HOST-side write outside the project. Any symlink on the path, no log.
+  { [ -L "$dir" ] || [ -L "$log" ] || [ -L "$prev" ]; } && return 0
+  mkdir -p "$dir" 2>/dev/null || return 0
+  [ -f "$log" ] && { mv -f "$log" "$prev" 2>/dev/null || true; }
+  printf 'vibe launch %s in %s\n\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" > "$log" 2>/dev/null || return 0
+  VIBE_LAUNCH_LOG_PIDFILE="$(mktemp "${TMPDIR:-/tmp}/vibe-launch-log.XXXXXX" 2>/dev/null)" || VIBE_LAUNCH_LOG_PIDFILE=""
+  [ -t 1 ] && VIBE_LAUNCH_LOG_TTY=1
+  exec 7>&1 8>&2
+  # INT ignored in the tee (and the sed it spawns): they share the launcher's
+  # process group, so a Ctrl-C meant for docker would otherwise kill them and
+  # the launcher's next echo would die of SIGPIPE, silently, skipping its EXIT
+  # hooks. The tee writes its pid (bash 3.2 has no $! for this) so the
+  # hand-back can wait for it to drain.
+  # Ignored in the launcher too for the instant of the fork, so there is no
+  # window before the subshell's own trap runs; the launcher has no INT trap
+  # of its own at this point, so `trap - INT` restores the default.
+  trap '' INT
+  exec > >(trap '' INT; [ -n "$VIBE_LAUNCH_LOG_PIDFILE" ] && sh -c 'echo $PPID' > "$VIBE_LAUNCH_LOG_PIDFILE"; exec tee >(_vibe_log_strip >> "$log") >&7) 2>&1
+  trap - INT
+  VIBE_LAUNCH_LOG_ACTIVE=1
+}
+
+# vibe_launch_log_stop - hand the real terminal back. Idempotent.
+# Waits (up to ~2 s) for the tee to drain, so the last lines - the "Needs
+# you" replay above all - reach the terminal before the agent's TUI takes it.
+vibe_launch_log_stop() {
+  [ "$VIBE_LAUNCH_LOG_ACTIVE" = 1 ] || return 0
+  exec 1>&7 2>&8 7>&- 8>&-
+  VIBE_LAUNCH_LOG_ACTIVE=0
+  VIBE_LAUNCH_LOG_TTY=0
+  local pid="" i=0
+  if [ -n "${VIBE_LAUNCH_LOG_PIDFILE:-}" ]; then
+    pid="$(cat "$VIBE_LAUNCH_LOG_PIDFILE" 2>/dev/null)" || pid=""
+    rm -f "$VIBE_LAUNCH_LOG_PIDFILE" 2>/dev/null || true
+  fi
+  case "$pid" in ''|*[!0-9]*) return 0 ;; esac
+  while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 20 ]; do
+    sleep 0.1; i=$((i + 1))
+  done
+  return 0
+}
+
+_vibe_log_on_terminal() {
+  [ "$VIBE_LAUNCH_LOG_ACTIVE" = 1 ] && [ "$VIBE_LAUNCH_LOG_TTY" = 1 ] && [ "${BASH_SUBSHELL:-1}" -eq 0 ]
+}
+
+# _vibe_on_terminal [--quiet] <cmd...> - run <cmd> with stdout/stderr on the
+# real terminal when the launch log has them, otherwise exactly as given.
+# --quiet discards stderr: a caller's own `2>/dev/null` on this function would
+# otherwise be overridden by the 2>&8 inside it.
+_vibe_on_terminal() {
+  local quiet=0
+  [ "${1:-}" = "--quiet" ] && { quiet=1; shift; }
+  if _vibe_log_on_terminal; then
+    if [ "$quiet" = 1 ]; then "$@" >&7 2>/dev/null; else "$@" >&7 2>&8; fi
+  elif [ "$quiet" = 1 ]; then
+    "$@" 2>/dev/null
+  else
+    "$@"
+  fi
+}
+
+_vibe_interactive() { [ -t 0 ] && { [ -t 1 ] || _vibe_log_on_terminal; }; }
+
+# _vibe_colour_env - rc 0 when devcontainer up should get FORCE_COLOR=1: the
+# launch log is holding a real terminal. With stdout on the log's pipe, Node tools (the devcontainer CLI)
+# decide they are not on a terminal and drop their colours; FORCE_COLOR is the
+# switch they honour instead. A pseudo-terminal (script(1)) was tried and
+# dropped on review, 2026-09-29: it swallowed Ctrl-C into a bogus "partial
+# state, remove and retry", and BSD/util-linux/BusyBox script disagree on
+# flags - too much risk on the firewall-critical `devcontainer up` for colour.
+# Callers build an env array: `UP_ENV=(env); _vibe_colour_env && UP_ENV+=(FORCE_COLOR=1)`.
+_vibe_colour_env() {
+  _vibe_log_on_terminal
+}
 
 # _vibe_onboard_soft <what> <subcommand> [args...] — run a host-onboarding
 # subcommand whose failure must NOT abort the launch (review item 5,
@@ -4276,7 +5193,7 @@ _vibe_onboard_soft() {
 vibe_docker_preflight() {
   local attempt
   _vibe_host_onboarding docker-ready 2>/dev/null && return 0
-  if _vibe_interactive && _vibe_host_onboarding docker-start 2>/dev/null; then
+  if _vibe_interactive && _vibe_on_terminal --quiet _vibe_host_onboarding docker-start; then
     for attempt in 1 2 3 4 5 6; do
       _vibe_host_onboarding docker-ready 2>/dev/null && return 0
       if [ "$attempt" -lt 6 ]; then sleep 2; fi
@@ -4411,11 +5328,17 @@ vibe_onboard_codex() {
     if vibe_codex_login_status "$source"; then logged=1; fi
   fi
   if [ "$logged" != 1 ]; then
-    (cd / && CODEX_HOME="$source" codex -c 'cli_auth_credentials_store="file"' \
-      -c 'forced_login_method="chatgpt"' login) || return 1
+    _vibe_on_terminal _vibe_codex_host_login "$source" || return 1
     vibe_codex_login_status "$source" || { printf '%s\n' 'ChatGPT file-store login was not confirmed.' >&2; return 1; }
   fi
-  _vibe_host_onboarding setup "$ws" "${VIBE_EXTRA_DOMAINS:-}" "$source"
+  _vibe_on_terminal _vibe_host_onboarding setup "$ws" "${VIBE_EXTRA_DOMAINS:-}" "$source"
+}
+
+# The ChatGPT login itself, as one function so _vibe_on_terminal can give it
+# the real terminal (a subshell would hide the launcher's main shell from it).
+_vibe_codex_host_login() {
+  (cd / && CODEX_HOME="$1" codex -c 'cli_auth_credentials_store="file"' \
+    -c 'forced_login_method="chatgpt"' login)
 }
 
 # Apply an explicit in-session request only after the TUI has exited cleanly.
@@ -4448,6 +5371,19 @@ vibe_switch_after_exit() {
 # Allow smoke-test.py to source this file for pure unit-testing of helpers
 # without running the main launch logic below.
 [ "${VIBE_SOURCE_ONLY:-}" = "1" ] && return 0 2>/dev/null
+
+# ── Main body: one brace group, parsed whole before any of it runs ────────────
+# bash reads a script as it executes it. A launcher sits in this body for the
+# whole session (claude, then the /vsss auto-resume loop), so when `vibe`
+# itself is edited meanwhile — a commit in the vibe repo, an auto-update —
+# the running launcher resumed at its old byte offset in the NEW file and ran
+# whatever fragment it landed on (2026-09-26: moneyandeye's auto-resume died
+# on "$3: unbound variable", so an unattended run never relaunched). A `{ … }`
+# group is read to its closing brace before the first command in it runs, so
+# later edits cannot reach a launcher already inside it. Keep the closing
+# brace the file's last line and every exit path inside the group; do not
+# re-indent the body (history/blame matter more than the cosmetic).
+{
 
 # ── Learn subcommand dispatch ─────────────────────────────────────────────────
 # Must be BEFORE the --* flag-parser loop. Dispatches and exits; does NOT enter
@@ -4490,6 +5426,17 @@ fi
 if [ "${1:-}" = "audit" ]; then
   audit_handle_subcommand "$@"
   # audit_handle_subcommand's sub-functions always exit; this is a safety net.
+  exit $?
+fi
+
+# ── Clean subcommand dispatch (task_059) ──────────────────────────────────────
+# Must be BEFORE the --* flag-parser loop — mirrors `learn`/`repos`/`audit`
+# above. Host-side, docker-only: it reclaims stopped vibe containers, dangling
+# vibe images and build cache, and never enters workspace resolution,
+# preflight, image build, GitHub setup, or container launch. Never removes a
+# volume in any mode. Dispatches and exits; this is a safety net.
+if [ "${1:-}" = "clean" ]; then
+  clean_handle_subcommand "$@"
   exit $?
 fi
 
@@ -4558,6 +5505,10 @@ else
   fi
 fi
 
+# From here to the agent's hand-over, everything printed is also kept in
+# .vibe/last-launch.log (see vibe_launch_log_start).
+vibe_launch_log_start "$WORKSPACE" || true
+
 # ── task_017 Cycle 3 (AC13) integrator note ──────────────────────────────────
 # VIBE_PROJECT_NAME identifies THIS session for shared-repo rw-lock/claim
 # resolution. Exported here (remoteEnv only, mirroring the GITHUB_TOKEN export
@@ -4574,6 +5525,11 @@ export VIBE_PROJECT_NAME
 require docker       "Install OrbStack (https://orbstack.dev) or Docker Desktop."
 require devcontainer "Install with: npm install -g @devcontainers/cli"
 vibe_docker_preflight || exit 1
+# Never blocks a launch (task_059). On a low host disk or a lot of reclaimable
+# Docker space it runs vibe_auto_clean (removes superseded stopped vibe
+# containers, prunes vibe's dangling images and old build cache; never a
+# volume), then warns about what is left. VIBE_HYGIENE=0 turns all of it off.
+vibe_hygiene_check || true
 # GitHub CLI is checked only when GitHub setup is requested; local work needs no gh.
 
 # Resolve onboarding before GitHub setup: local Git is useful even when the
@@ -4822,6 +5778,26 @@ if [ "$REBUILD" = true ] && learning_is_enabled \
   fi
 fi
 
+# Daily update check (see cli_latest_version above): only when an image exists
+# and nothing else has already asked for a rebuild.
+CLAUDE_LATEST="" CODEX_LATEST=""
+if [ "$REBUILD" != true ] && docker image inspect "$BASE_TAG" >/dev/null 2>&1 && update_check_due "$(date +%s)"; then
+  mkdir -p "$(dirname "$UPDATE_STAMP")" && date +%s > "$UPDATE_STAMP" 2>/dev/null || true
+  CLAUDE_LATEST=$(cli_latest_version @anthropic-ai/claude-code)
+  CODEX_LATEST=$(cli_latest_version @openai/codex)
+  update_line=""
+  if [ -n "$CLAUDE_LATEST" ] && [ "$CLAUDE_LATEST" != "$(image_version claude-code)" ]; then
+    update_line="Claude Code ${CLAUDE_LATEST}"
+  fi
+  if [ -n "$CODEX_LATEST" ] && [ "$CODEX_LATEST" != "$(image_version codex)" ] && [ "$CODEX_LATEST" != "$(image_version codex-failed)" ]; then
+    update_line="${update_line:+$update_line, }Codex ${CODEX_LATEST}"
+  fi
+  if [ -n "$update_line" ]; then
+    echo "  ↑ update available: ${update_line} — rebuilding the image (VIBE_AUTO_UPDATE=0 turns this off)."
+    REBUILD=true
+  fi
+fi
+
 BASE_REBUILT=false
 if [ "$REBUILD" = true ] || ! docker image inspect "$BASE_TAG" >/dev/null 2>&1; then
   # Resolve current Claude Code "latest" host-side. Without this the
@@ -4830,15 +5806,69 @@ if [ "$REBUILD" = true ] || ! docker image inspect "$BASE_TAG" >/dev/null 2>&1; 
   # npm `latest` tag has moved on. Passing the resolved version as a
   # build-arg makes the layer cache key version-sensitive. Falls back
   # to "latest" if npm isn't on the host (Dockerfile ARG default).
-  CLAUDE_CC_VERSION="latest"
-  if command -v npm >/dev/null 2>&1; then
-    CLAUDE_CC_VERSION="$(npm view @anthropic-ai/claude-code version 2>/dev/null || echo latest)"
+  CLAUDE_CC_VERSION="${CLAUDE_LATEST:-$(cli_latest_version @anthropic-ai/claude-code)}"
+  CLAUDE_CC_VERSION="${CLAUDE_CC_VERSION:-latest}"
+  # Codex: the latest release, unless that exact version already failed the
+  # compatibility gate; the fallback is the last version that passed, else
+  # the Dockerfile's pinned default.
+  CODEX_FALLBACK="$(image_version codex-good)"
+  CODEX_FALLBACK="${CODEX_FALLBACK:-$(dockerfile_codex_default)}"
+  CODEX_BUILD_VERSION="${CODEX_LATEST:-$(cli_latest_version @openai/codex)}"
+  # A version that failed the gate is skipped until a newer one ships, except
+  # on an explicit `vibe --rebuild`, which retries it (the manual way out).
+  CODEX_KNOWN_FAILED="$(image_version codex-failed)"
+  if [ -z "$CODEX_BUILD_VERSION" ] || { [ "$CODEX_BUILD_VERSION" = "$CODEX_KNOWN_FAILED" ] && [ "${REBUILD_REQUESTED:-false}" != true ]; }; then
+    CODEX_BUILD_VERSION="$CODEX_FALLBACK"
   fi
-  echo "  Building vibe container image ($BASE_TAG, claude-code=${CLAUDE_CC_VERSION})..."
-  docker build --build-arg "CLAUDE_CODE_VERSION=${CLAUDE_CC_VERSION}" -t "$BASE_TAG" "$DEVCONTAINER_DIR"
+  # vibe's own version goes into the image (/usr/local/share/vibe/VERSION) so
+  # codex-supervisor can report it as its clientInfo.version instead of the
+  # 0.0.0 placeholder; charset-restricted like every other value vibe hands
+  # to a build.
+  VIBE_BUILD_VERSION="$(_vibe_version)"
+  case "$VIBE_BUILD_VERSION" in *[!A-Za-z0-9._+-]*) VIBE_BUILD_VERSION="0.0.0-dev" ;; esac
+  echo "  Building vibe container image ($BASE_TAG, claude-code=${CLAUDE_CC_VERSION}, codex=${CODEX_BUILD_VERSION:-default})..."
+  codex_failed=""
+  [ "$CODEX_BUILD_VERSION" = "$CODEX_FALLBACK" ] && codex_failed="$CODEX_KNOWN_FAILED"
+  build_log=$(mktemp "${TMPDIR:-/tmp}/vibe-build.XXXXXX") || build_log=/dev/null
+  # A failing build is caught here ONLY to retry with the last Codex that
+  # passed, and only when it was codex-compat-check that failed it (any other
+  # failure — network, disk — is not the new Codex's fault and still aborts).
+  # The retry itself is unguarded (set -e).
+  if ! docker build --build-arg "CLAUDE_CODE_VERSION=${CLAUDE_CC_VERSION}" \
+      ${CODEX_BUILD_VERSION:+--build-arg "CODEX_VERSION=${CODEX_BUILD_VERSION}"} \
+      --build-arg "VIBE_VERSION=${VIBE_BUILD_VERSION}" -t "$BASE_TAG" "$DEVCONTAINER_DIR" 2>&1 | tee "$build_log"; then
+    if [ -z "$CODEX_FALLBACK" ] || [ "$CODEX_BUILD_VERSION" = "$CODEX_FALLBACK" ] \
+       || ! grep -q "codex-compat-check: FAIL" "$build_log" 2>/dev/null; then
+      rm -f "$build_log" 2>/dev/null || true
+      echo "  ✗ image build failed" >&2
+      exit 1
+    fi
+    echo "  ⚠ Codex ${CODEX_BUILD_VERSION} failed vibe's compatibility check — building with Codex ${CODEX_FALLBACK}, the last version that passed. It is not retried until a newer Codex ships (or vibe --rebuild)." >&2
+    codex_failed="$CODEX_BUILD_VERSION"
+    CODEX_BUILD_VERSION="$CODEX_FALLBACK"
+    docker build --build-arg "CLAUDE_CODE_VERSION=${CLAUDE_CC_VERSION}" \
+      --build-arg "CODEX_VERSION=${CODEX_BUILD_VERSION}" \
+      --build-arg "VIBE_VERSION=${VIBE_BUILD_VERSION}" -t "$BASE_TAG" "$DEVCONTAINER_DIR"
+  fi
+  [ "$build_log" = /dev/null ] || rm -f "$build_log" 2>/dev/null || true
   mkdir -p "$(dirname "$IMAGE_MARKER")"
   touch "$IMAGE_MARKER"
+  {
+    [ "$CLAUDE_CC_VERSION" != latest ] && printf 'claude-code=%s\n' "$CLAUDE_CC_VERSION"
+    [ -n "$CODEX_BUILD_VERSION" ] && printf 'codex=%s\ncodex-good=%s\n' "$CODEX_BUILD_VERSION" "$CODEX_BUILD_VERSION"
+    [ -n "$codex_failed" ] && printf 'codex-failed=%s\n' "$codex_failed"
+    true
+  } > "$IMAGE_VERSIONS.tmp" 2>/dev/null && mv -f "$IMAGE_VERSIONS.tmp" "$IMAGE_VERSIONS" 2>/dev/null || true
   BASE_REBUILT=true
+fi
+
+# task_059: a rebuild is the moment the PREVIOUS image becomes garbage. Reclaim
+# it (and stale build cache) right here rather than letting every rebuild add a
+# few GB to Docker.raw forever. Scoped to vibe's own label and to cache older
+# than a week, so a shared machine keeps other projects' images and warm cache.
+# Fail-safe: a prune that errors prints nothing and never blocks the launch.
+if [ "$BASE_REBUILT" = true ]; then
+  vibe_prune_after_build || true
 fi
 
 # ── Build the selected language-profile image, if any (task_040) ────────────
@@ -4856,6 +5886,9 @@ if [ -n "$PROFILE" ] && { [ "$REBUILD" = true ] || ! docker image inspect "$IMAG
   docker build --build-arg "BASE=$BASE_TAG" -t "$IMAGE_TAG" "$(profile_dir "$PROFILE")"
   mkdir -p "$(dirname "$PROFILE_MARKER")"
   touch "$PROFILE_MARKER"
+  # Same reasoning as the base build above (task_059): the superseded profile
+  # image is dangling from this point on, so reclaim it now.
+  vibe_prune_after_build || true
 fi
 
 # ── Write persistent session settings ────────────────────────────────────────
@@ -4879,6 +5912,22 @@ fi
 #                                               feeding the launcher's stall
 #                                               watchdog (see the auto-resume
 #                                               comment block above);
+#                                               Stop also runs
+#                                               /usr/local/bin/vsss-stop-guard,
+#                                               which refuses to let a live
+#                                               /vsss run this session owns
+#                                               end its turn before the
+#                                               session file has a Final
+#                                               state (it tells the model to
+#                                               post its questions and carry
+#                                               on with unblocked work; every
+#                                               doubt allows the stop);
+#                                               Stop also runs
+#                                               vibe-capabilities --stop-hook,
+#                                               which sends a final message
+#                                               that says "I can't see/run/
+#                                               build…" back ONCE with the
+#                                               container's capability list;
 #                                               PreToolUse/PostToolUse also
 #                                               matcher-gate on AskUserQuestion
 #                                               to set/clear .vss/awaiting-
@@ -4932,7 +5981,9 @@ fi
 #                                               (tmp+mv) drops the reading
 #                                               into .vss/rate-limit
 #                                               (epoch=<now>, used=<floored
-#                                               %>) — the launcher's
+#                                               %>, resets=, plus used7=/
+#                                               resets7= for the seven_day
+#                                               window) — the launcher's
 #                                               auto-resume countdown
 #                                               consults this to skip a stale
 #                                               worst-case resume_at estimate
@@ -4948,7 +5999,7 @@ cat > "$WORKSPACE/.claude/settings.local.json" << 'EOF'
   "forceLoginMethod": "claudeai",
   "statusLine": {
     "type": "command",
-    "command": "input=$(cat); m=$(printf '%s' \"$input\" | jq -r '.model.display_name // \"?\"'); case \"$m\" in *Fable*) l=F;; *Opus*) l=O;; *Sonnet*) l=S;; *Haiku*) l=H;; *) l=\"$m\";; esac; ctx=$(printf '%s' \"$input\" | jq -r '.context_window.used_percentage // \"\" | if type==\"number\" then (floor|tostring) else . end'); win=$(printf '%s' \"$input\" | jq -r '.rate_limits.five_hour.used_percentage // \"\" | if type==\"number\" then (floor|tostring) else . end'); out=\"$l · vibe\"; [ -n \"$ctx\" ] && out=\"$out · ctx ${ctx}%\"; [ -n \"$win\" ] && out=\"$out · 5h ${win}%\"; vd=\"${VIBE_VSS_DIR:-/workspace/.vss}\"; if [ -n \"$win\" ] && [ -d \"$vd\" ]; then { printf 'epoch=%s\\nused=%s\\n' \"$(date +%s)\" \"$win\" > \"$vd/rate-limit.tmp.$$\" && mv \"$vd/rate-limit.tmp.$$\" \"$vd/rate-limit\"; } 2>/dev/null || rm -f \"$vd/rate-limit.tmp.$$\" 2>/dev/null; fi; sig_root=\"${VIBE_REPOS_DIR:-/repos}/.signals\"; rwseg=\"\"; if [ -d \"$sig_root\" ]; then for d in \"$sig_root\"/*/; do [ -d \"$d\" ] || continue; meta=\"$d/rw-lock.d/meta\"; req=\"$d/rw-request\"; if [ -f \"$meta\" ] && [ -f \"$req\" ]; then holder=$(grep '^project=' \"$meta\" 2>/dev/null | head -n1 | cut -d= -f2-); if [ -n \"$holder\" ] && [ \"$holder\" = \"${VIBE_PROJECT_NAME:-}\" ]; then requester=$(grep '^project=' \"$req\" 2>/dev/null | head -n1 | cut -d= -f2-); if [ -n \"$requester\" ]; then rwseg=\" · ⚠ rw:${requester}\"; printf '\\a' >&2; break; fi; fi; fi; done; fi; out=\"${out}${rwseg}\"; printf '%s' \"$out\""
+    "command": "input=$(cat); m=$(printf '%s' \"$input\" | jq -r '.model.display_name // \"?\"'); case \"$m\" in *Fable*) l=F;; *Opus*) l=O;; *Sonnet*) l=S;; *Haiku*) l=H;; *) l=\"$m\";; esac; ctx=$(printf '%s' \"$input\" | jq -r '.context_window.used_percentage // \"\" | if type==\"number\" then (floor|tostring) else . end'); win=$(printf '%s' \"$input\" | jq -r '.rate_limits.five_hour.used_percentage // \"\" | if type==\"number\" then (floor|tostring) else . end'); rs=$(printf '%s' \"$input\" | jq -r '.rate_limits.five_hour.resets_at // \"\" | if type==\"number\" then (floor|tostring) else \"\" end'); wk=$(printf '%s' \"$input\" | jq -r '.rate_limits.seven_day.used_percentage // \"\" | if type==\"number\" then (floor|tostring) else \"\" end'); wrs=$(printf '%s' \"$input\" | jq -r '.rate_limits.seven_day.resets_at // \"\" | if type==\"number\" then (floor|tostring) else \"\" end'); out=\"$l · vibe\"; [ -n \"$ctx\" ] && out=\"$out · ctx ${ctx}%\"; [ -n \"$win\" ] && out=\"$out · 5h ${win}%\"; vd=\"${VIBE_VSS_DIR:-/workspace/.vss}\"; if [ -n \"$win\" ] && [ -d \"$vd\" ]; then { { printf 'epoch=%s\\nused=%s\\n' \"$(date +%s)\" \"$win\"; if [ -n \"$rs\" ]; then printf 'resets=%s\\n' \"$rs\"; fi; if [ -n \"$wk\" ] && [ -n \"$wrs\" ]; then printf 'used7=%s\\nresets7=%s\\n' \"$wk\" \"$wrs\"; fi; } > \"$vd/rate-limit.tmp.$$\" && mv \"$vd/rate-limit.tmp.$$\" \"$vd/rate-limit\"; } 2>/dev/null || rm -f \"$vd/rate-limit.tmp.$$\" 2>/dev/null; fi; sig_root=\"${VIBE_REPOS_DIR:-/repos}/.signals\"; rwseg=\"\"; if [ -d \"$sig_root\" ]; then for d in \"$sig_root\"/*/; do [ -d \"$d\" ] || continue; meta=\"$d/rw-lock.d/meta\"; req=\"$d/rw-request\"; if [ -f \"$meta\" ] && [ -f \"$req\" ]; then holder=$(grep '^project=' \"$meta\" 2>/dev/null | head -n1 | cut -d= -f2-); if [ -n \"$holder\" ] && [ \"$holder\" = \"${VIBE_PROJECT_NAME:-}\" ]; then requester=$(grep '^project=' \"$req\" 2>/dev/null | head -n1 | cut -d= -f2-); if [ -n \"$requester\" ]; then rwseg=\" · ⚠ rw:${requester}\"; printf '\\a' >&2; break; fi; fi; fi; done; fi; out=\"${out}${rwseg}\"; printf '%s' \"$out\""
   },
   "hooks": {
     "PreToolUse": [
@@ -4973,7 +6024,7 @@ cat > "$WORKSPACE/.claude/settings.local.json" << 'EOF'
       {
         "matcher": "AskUserQuestion",
         "hooks": [
-          { "type": "command", "command": "[ -f /workspace/.vss/auto-resume ] && { date +%s > /workspace/.vss/awaiting-human.tmp.$$ && mv /workspace/.vss/awaiting-human.tmp.$$ /workspace/.vss/awaiting-human; } || true" }
+          { "type": "command", "command": "[ -x /usr/local/bin/vsss-stop-guard ] && /usr/local/bin/vsss-stop-guard ask || { [ -f /workspace/.vss/auto-resume ] && { date +%s > /workspace/.vss/awaiting-human.tmp.$$ && mv /workspace/.vss/awaiting-human.tmp.$$ /workspace/.vss/awaiting-human; } || true; }" }
         ]
       }
     ],
@@ -4996,7 +6047,9 @@ cat > "$WORKSPACE/.claude/settings.local.json" << 'EOF'
         "matcher": "",
         "hooks": [
           { "type": "command", "command": "printf '\\a' >&2" },
-          { "type": "command", "command": "[ -f /workspace/.vss/auto-resume ] && { date +%s > /workspace/.vss/heartbeat.tmp.$$ && mv /workspace/.vss/heartbeat.tmp.$$ /workspace/.vss/heartbeat; } || true" }
+          { "type": "command", "command": "[ -f /workspace/.vss/auto-resume ] && { date +%s > /workspace/.vss/heartbeat.tmp.$$ && mv /workspace/.vss/heartbeat.tmp.$$ /workspace/.vss/heartbeat; } || true" },
+          { "type": "command", "command": "[ ! -x /usr/local/bin/vsss-stop-guard ] || /usr/local/bin/vsss-stop-guard" },
+          { "type": "command", "command": "[ ! -x /usr/local/bin/vibe-capabilities ] || /usr/local/bin/vibe-capabilities --stop-hook" }
         ]
       }
     ],
@@ -5275,7 +6328,7 @@ fi
 # need no extra line here — the per-repo "◆ shared repo:" header line (C1)
 # reports the effective mode, which resolve_mode already flipped.
 if [ "${#VIBE_SHARED_REPO_WARNINGS[@]}" -gt 0 ]; then
-  for _srw_line in "${VIBE_SHARED_REPO_WARNINGS[@]}"; do
+  for _srw_line in ${VIBE_SHARED_REPO_WARNINGS[@]+"${VIBE_SHARED_REPO_WARNINGS[@]}"}; do
     echo "$_srw_line"
   done
 fi
@@ -5297,7 +6350,8 @@ mount_drift=""
 projects_drift=""
 domains_drift=""
 codex_drift=""
-if [ "$REBUILD" != true ] && [ -z "$drift_marker" ]; then
+codex_vol_drift=""
+if [ "$REBUILD" != true ]; then
   actual_mounts="$(container_shared_mounts "$WORKSPACE")"
   mount_drift="$(shared_repos_mount_drift "$SHARED_REPOS_SCAN" "$actual_mounts")"
   projects_drift="$(projects_bind_mount_drift "$(vibe_projects_bind_path "$WORKSPACE")" "$actual_mounts")"
@@ -5309,9 +6363,69 @@ if [ "$REBUILD" != true ] && [ -z "$drift_marker" ]; then
   # phase 1a: the Codex login bind is a credential; a container must never
   # keep it after the project's opt-in (or the global switch) is withdrawn.
   codex_drift="$(codex_mount_drift "$(_codex_desired_source "$WORKSPACE" 2>/dev/null)" "$actual_mounts")"
+  codex_vol_drift="$(codex_volume_drift "$(_codex_desired_source "$WORKSPACE" 2>/dev/null)" "$actual_mounts")"
 fi
-extra_flag="$(remove_existing_flag "$REBUILD" "${drift_marker}${mount_drift}${projects_drift}${domains_drift}${codex_drift}")"
+extra_flag="$(remove_existing_flag "$REBUILD" "${drift_marker}${mount_drift}${projects_drift}${domains_drift}${codex_drift}${codex_vol_drift}")"
+# A recreate removes the container along with every session inside it. When
+# another vibe session is still using it (vibe_container_live_sessions):
+#   - image drift alone → keep the container; the new image waits for a launch
+#     with no other session open. Nothing is lost by waiting.
+#   - any other drift (shared-repo mounts, history bind, firewall domains,
+#     Codex login mount) → those must not be skipped, so refuse this launch
+#     rather than kill the other session. Its container is no less safe for it.
+#   - explicit --rebuild → the user asked; proceed, but say what it ends.
+# Probed on every launch, not only on a recreate: a second session in the
+# same project also gets the heads-up below (2026-09-29).
+live_sessions=0
+live_sessions="$(vibe_container_live_sessions "$WORKSPACE")" || live_sessions=0
+if [ -n "$extra_flag" ] && [ "${live_sessions:-0}" -gt 0 ]; then
+  if [ "$REBUILD" = true ]; then
+    echo "  ⚠ --rebuild: ending the ${live_sessions} other vibe session(s) still open in this project's container."
+    echo ""
+  elif [ -z "${mount_drift}${projects_drift}${domains_drift}${codex_drift}" ]; then
+    extra_flag=""
+    if [ -n "$drift_marker" ]; then
+      echo "  ◆ a newer vibe image is ready, but another vibe session is using this project's container,"
+      echo "    so this session joins it on the current image. Close every session here and relaunch to update."
+    else
+      # codex_vol_drift alone: the container predates Codex's database volume.
+      echo "  ◆ this project's container is due to be recreated (to give Codex its own database volume), but"
+      echo "    another vibe session is using it, so this session joins it. Close every session here and relaunch to update."
+    fi
+    drift_marker=""
+    codex_vol_drift=""
+    echo ""
+  else
+    echo "  ✗ this project's container has to be recreated (its mounts, firewall domains or Codex login changed),"
+    echo "    but ${live_sessions} other vibe session(s) are still running in it, and recreating would end them."
+    echo "    Close those sessions and relaunch - or run 'vibe --rebuild' to end them now."
+    exit 1
+  fi
+fi
 [ -n "$extra_flag" ] && UP_ARGS+=("$extra_flag")
+# Joining is supported on purpose (a question or review alongside a long
+# run, a Claude and a Codex session side by side), so this is a heads-up,
+# not a refusal: both sessions share one working tree and one git branch.
+if [ "${live_sessions:-0}" -gt 0 ] && [ "$REBUILD" != true ]; then
+  _vibe_notice "  ◆ ${live_sessions} other vibe session(s) already open in this project. They share its files and git branch:" \
+    "    fine for questions or reviews next to a run; avoid two agents changing the same code at once."
+fi
+# task_059: --remove-existing-container removes the ONE container the
+# devcontainer CLI finds for this workspace. Anything else this workspace left
+# behind — a container stopped by a crash, or one the CLI orphaned — keeps
+# pinning the image it was built from, and Docker cannot reclaim an image while
+# any container references it. That is how ~18 superseded vibe-dev images came
+# to occupy 245 GB of Docker.raw on 2026-09-17. So when a recreate is already
+# happening, first drop every NON-RUNNING container labelled for this
+# workspace. `docker rm` with no flags: nothing running is in scope, and no -v,
+# so no volume is ever removed.
+if [ -n "$extra_flag" ]; then
+  reaped="$(vibe_remove_stale_workspace_containers "$WORKSPACE")"
+  if [ "${reaped:-0}" -gt 0 ]; then
+    echo "  removed $reaped stopped container(s) this project had left behind."
+    echo ""
+  fi
+fi
 # Print a distinct status line when drift (not --rebuild) triggered the recreate.
 if [ -n "$drift_marker" ] && [ "$REBUILD" != true ]; then
   echo "  image moved on since this project's container was built - recreating it."
@@ -5344,12 +6458,21 @@ fi
 # skip postStart entirely and silently use a half-locked-down firewall.
 # Retry once with --remove-existing-container to get a clean state. If that
 # still fails, surface the error rather than hide it.
-if ! devcontainer "${UP_ARGS[@]}"; then
+UP_ENV=(env)
+_vibe_colour_env && UP_ENV+=(FORCE_COLOR=1)
+if ! "${UP_ENV[@]}" devcontainer "${UP_ARGS[@]}"; then
+  # The retry removes the container; never do that under a live session.
+  if [ "$(vibe_container_live_sessions "$WORKSPACE")" -gt 0 ]; then
+    echo ""
+    echo "  ✗ devcontainer up failed, and another vibe session is still running in this project's container,"
+    echo "    so it was not removed for a retry. Close that session and relaunch."
+    exit 1
+  fi
   echo ""
   echo "  ⚠  postStartCommand failed — container is in a partial state."
   echo "     Removing it and retrying once with a fresh container."
   echo ""
-  if ! devcontainer "${UP_BASE_ARGS[@]}" --remove-existing-container; then
+  if ! "${UP_ENV[@]}" devcontainer "${UP_BASE_ARGS[@]}" --remove-existing-container; then
     echo ""
     echo "  ✗ Retry also failed. Fix the underlying error above and re-run."
     echo "    If the image itself is suspect: vibe --rebuild"
@@ -5364,6 +6487,10 @@ fi
 #   - `LC_ALL=C.UTF-8 LANG=C.UTF-8` — silences the bash "locale not supported"
 #     warning when the host inherits en_US.UTF-8 (and neutralises any older
 #     image whose zsh-in-docker .zshrc re-exports it before the Dockerfile sed)
+#   - `$(build_color_env)` — `TERM=xterm-256color`, plus the host's own
+#     COLORTERM when it has one. Without it devcontainer exec's bare
+#     TERM=xterm pins the session to 16 colours and every rgb() theme colour
+#     in claude/codex is crushed to the nearest of them (see build_color_env)
 #
 # Note: two issues recommend switching away from Apple's Terminal.app
 # (and similar stock/restricted terminals):
@@ -5381,6 +6508,11 @@ fi
 # build_claude_resume_args echoes "" / "--continue" / "--resume" / "--resume <uuid>".
 # RESUME_UID is restricted to UUID format by is_uuid in the parser, so embedding
 # it in the command string is injection-safe.
+# Hand-over: repeat anything that needs the user where it cannot scroll away
+# (the last lines before the TUI), then give the agent the real terminal.
+vibe_notices_replay || true
+vibe_launch_log_stop || true
+
 WATCHER_PID=""
 if [[ "$(uname)" == "Darwin" ]] && command -v pbcopy >/dev/null 2>&1; then
   mkdir -p "$WORKSPACE/.vibe"
@@ -5437,7 +6569,7 @@ launch_claude() {
   exec devcontainer exec \
     --workspace-folder "$WORKSPACE" \
     --override-config "$OVERRIDE_CONFIG" \
-    ${TASK_BIND_ENV[@]+"${TASK_BIND_ENV[@]}"} /bin/bash --noprofile --norc -c "exec env SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 claude ${1:+$1 }${CLAUDE_MODEL_ARGS:+$CLAUDE_MODEL_ARGS }--permission-mode bypassPermissions${2:+ '$2'}"
+    ${TASK_BIND_ENV[@]+"${TASK_BIND_ENV[@]}"} /bin/bash --noprofile --norc -c "exec env SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 $(build_color_env) claude ${1:+$1 }${CLAUDE_MODEL_ARGS:+$CLAUDE_MODEL_ARGS }--permission-mode bypassPermissions${2:+ '$2'}"
 }
 
 # launch_codex — the Codex-led sibling of launch_claude (task_049). Same
@@ -5465,16 +6597,20 @@ launch_codex() {
   CODEX_SUPERVISE_EXTRA=()
   [ "${CODEX_NEW_RUN:-false}" != true ] || CODEX_SUPERVISE_EXTRA=(--new-run)
   if [ -n "${CODEX_ACTION:-}" ]; then
+    # shellcheck disable=SC2046  # build_color_env's output is deliberately
+    # split into separate KEY=VALUE argv words for `env`; its charset is
+    # restricted to [A-Za-z0-9._-] plus the single separating space, so the
+    # split can only ever produce the one or two assignments it built.
     exec devcontainer exec --workspace-folder "$WORKSPACE" --override-config "$OVERRIDE_CONFIG" \
       ${TASK_BIND_ENV[@]+"${TASK_BIND_ENV[@]}"} /usr/bin/env -u BASH_ENV -u ENV PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/share/npm-global/bin \
-      SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 CODEX_HOME=/home/node/.codex \
+      SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 $(build_color_env) CODEX_HOME=/home/node/.codex \
       /usr/local/bin/codex-entry --supervise -- run --cwd /workspace --prompt-file "/workspace/$CODEX_PROMPT_REL" \
       ${CODEX_SUPERVISE_EXTRA[@]+"${CODEX_SUPERVISE_EXTRA[@]}"}
   fi
   exec devcontainer exec \
     --workspace-folder "$WORKSPACE" \
     --override-config "$OVERRIDE_CONFIG" \
-    ${TASK_BIND_ENV[@]+"${TASK_BIND_ENV[@]}"} /usr/bin/env -u BASH_ENV -u ENV /bin/bash --noprofile --norc -c "exec /usr/bin/env -u BASH_ENV -u ENV PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/share/npm-global/bin SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 CODEX_HOME=/home/node/.codex /usr/local/bin/codex-entry"
+    ${TASK_BIND_ENV[@]+"${TASK_BIND_ENV[@]}"} /usr/bin/env -u BASH_ENV -u ENV /bin/bash --noprofile --norc -c "exec /usr/bin/env -u BASH_ENV -u ENV PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/share/npm-global/bin SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 $(build_color_env) CODEX_HOME=/home/node/.codex /usr/local/bin/codex-entry"
 }
 
 # VIBE_SESSION_REF — a session-start reference file, used solely for its
@@ -5625,6 +6761,21 @@ if auto_resume_pending "$AUTO_RESUME_MARKER" && ! _vibe_stall_armed "$AUTO_RESUM
   echo "    To discard it: delete .vss/auto-resume."
 fi
 while auto_resume_pending "$AUTO_RESUME_MARKER" && _vibe_stall_armed "$AUTO_RESUME_MARKER" "$VIBE_SESSION_REF"; do
+  # Relaunching into a container that is no longer running can only fail:
+  # `devcontainer exec` dies in under a second, and the loop used to burn a
+  # relaunch every 2 minutes on it (2026-09-30 moneyandeye: 13 dead retries,
+  # then a 271-minute wait on a container vibe clean had since removed).
+  # Restarting it here is not safe — a bare `docker start` skips
+  # postStartCommand, so the firewall would never be rebuilt — so stop, and
+  # leave the marker for the next launch's "/vsss --resume".
+  _ar_cstate=$(container_run_state "$WORKSPACE")
+  if [ "$_ar_cstate" != "running" ]; then
+    echo ""
+    echo "  ◆ auto-resume: stopped — this project's container is ${_ar_cstate} (Docker stopped or restarted?)."
+    echo "    Relaunching into it would only fail. Once Docker is healthy, run 'vibe --continue' here"
+    echo "    and type '/vsss --resume' to pick the run back up."
+    break
+  fi
   _ar_remaining=$(auto_resume_field "$AUTO_RESUME_MARKER" remaining)
   _ar_now=$(date +%s)
   # Wait = resume_at estimate (30 min default / +2 min future pad / 2 min
@@ -5658,3 +6809,4 @@ done
 # `|| true` swallow is gone, superseded by launch_claude_supervised capturing
 # CLAUDE_EXIT past `set -e`.
 exit "$CLAUDE_EXIT"
+}

@@ -116,7 +116,20 @@ def _agent_composed_call(home, ws, bindir, agent_arg: str, body: str):
         'CLAUDE_MODEL_ARGS=""\n'
         f'{body}\n'
     )
-    env = {"HOME": str(home), "PATH": f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}"}
+    # COLORTERM is pinned, not inherited: build_color_env forwards the host's
+    # own COLORTERM (see vibe), so a developer running the suite from Ghostty
+    # would otherwise get a different argv than one running it from a terminal
+    # that sets none. Pinned here, the goldens below assert the with-COLORTERM
+    # branch; test_terminal_color_env_reaches_container covers the other.
+    env = {
+        "HOME": str(home),
+        "PATH": f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}",
+        "COLORTERM": "truecolor",
+        # Likewise pinned: an empty value is dropped by build_color_env, so the
+        # goldens hold whichever terminal the suite is run from.
+        "TERM_PROGRAM": "",
+        "TERM_PROGRAM_VERSION": "",
+    }
     return _source_vibe_call(env, call)
 
 
@@ -349,7 +362,8 @@ def test_agent_codex_argv_granted():
                 "/usr/bin/env", "-u", "BASH_ENV", "-u", "ENV",
                 "/bin/bash", "--noprofile", "--norc", "-c",
                 "exec /usr/bin/env -u BASH_ENV -u ENV PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/share/npm-global/bin "
-                "SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 CODEX_HOME=/home/node/.codex "
+                "SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 "
+                "TERM=xterm-256color COLORTERM=truecolor CODEX_HOME=/home/node/.codex "
                 "/usr/local/bin/codex-entry",
             ]
             check("[agent] granted --agent codex: devcontainer exec argv equals AC3 exactly",
@@ -427,7 +441,8 @@ def test_agent_claude_argv_default_and_flag():
                 expected = [
                     "exec", "--workspace-folder", str(ws), "--override-config",
                     "/tmp/fixture-override.json", "/bin/bash", "--noprofile", "--norc", "-c",
-                    "exec env SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 claude "
+                    "exec env SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 "
+                    "TERM=xterm-256color COLORTERM=truecolor claude "
                     "--permission-mode bypassPermissions",
                 ]
                 check(f"[agent] --agent {label}: launch_claude argv is the unchanged golden string",
@@ -489,7 +504,8 @@ def test_launch_claude_unchanged_vs_head():
         '  exec devcontainer exec \\\n'
         '    --workspace-folder "$WORKSPACE" \\\n'
         '    --override-config "$OVERRIDE_CONFIG" \\\n'
-        '    /bin/bash --noprofile --norc -c "exec env SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 claude '
+        '    /bin/bash --noprofile --norc -c "exec env SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 '
+        '$(build_color_env) claude '
         '${1:+$1 }${CLAUDE_MODEL_ARGS:+$CLAUDE_MODEL_ARGS }--permission-mode bypassPermissions${2:+ \'$2\'}"\n'
         '}'
     )
@@ -595,8 +611,8 @@ def test_codex_entry_offline_refusals_and_success():
         check("[agent] entry: success -> the proven line printed before exec",
               "codex-led session: guard chain proven, starting codex" in r.stdout, r.stdout)
         calls = [json.loads(l) for l in argv_log.read_text().splitlines()] if argv_log.exists() else []
-        check("[agent] entry: success -> codex exec'd exactly once with the args after --",
-              calls == [["--flag", "value"]], str(calls))
+        check("[agent] entry: success -> codex exec'd exactly once: sub-agents off, then the args after --",
+              calls == [["-c", "agents.enabled=false", "--flag", "value"]], str(calls))
         check("[agent] entry: success -> liveness invoked with --root/--bin and our --codex",
               liveness_log.exists() and str(root) in liveness_log.read_text() and
               str(bindir) in liveness_log.read_text() and str(codex_stub) in liveness_log.read_text(),
@@ -638,7 +654,11 @@ def test_codex_entry_no_dangerously_no_dash_c():
     print("\n[agent] AC4: codex-entry.sh never spells --dangerously... or a literal ` -c `")
     src = CODEX_ENTRY.read_text()
     check("[agent] codex-entry.sh contains no 'dangerously'", "dangerously" not in src, "")
-    check("[agent] codex-entry.sh contains no literal ' -c '", " -c " not in src, "")
+    # The one -c codex-entry may pass TIGHTENS the policy (native sub-agents
+    # off, beating a user/project config); any other -c is still refused.
+    check("[agent] codex-entry.sh's only ' -c ' is the sub-agents-off override",
+          src.replace(" -c agents.enabled=false ", " ").count(" -c ") == 0
+          and src.count(" -c agents.enabled=false ") == 1, "")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -716,3 +736,95 @@ def test_codex_integration_plan_item7_delivered():
           "DELIVERED, pending live trial (task_049)" in plan, "")
     check("[agent] item 7 row names the live trial as MANUAL-TESTS Test 55's Codex-led block",
           "MANUAL-TESTS Test 55" in plan, "")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Terminal colour env (2026-09-18) — lives here, beside the launch argv
+# goldens it constrains, rather than in checks_01: those goldens and this
+# test are the same surface, and splitting them would let one drift while
+# the other still passed.
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_terminal_color_env_reaches_container():
+    print("\n[color] TERM always reaches the container; COLORTERM only when the host has one")
+    src = VIBE.read_text()
+
+    # ── (a) every launch site builds the colour env, none hardcodes it ──────
+    claude_body = _extract_func(src, "launch_claude")
+    codex_body = _extract_func(src, "launch_codex")
+    check("[color] launch_claude passes $(build_color_env) into the container",
+          claude_body.count("$(build_color_env)") == 1, claude_body)
+    check("[color] launch_codex passes it on BOTH branches (supervised and plain)",
+          codex_body.count("$(build_color_env)") == 2, codex_body)
+    check("[color] no launch site hardcodes a COLORTERM value",
+          "COLORTERM=truecolor" not in claude_body and "COLORTERM=truecolor" not in codex_body,
+          claude_body + "\n---\n" + codex_body)
+
+    # ── (b) build_color_env's own contract ─────────────────────────────────
+    # Bare TERM=xterm (what devcontainer exec supplies) pins claude/codex to
+    # 16 colours, so TERM is always claimed; COLORTERM is forwarded, never
+    # invented, so a 256-colour-only host (Apple Terminal) is not sent 24-bit
+    # sequences it cannot render. The output is embedded in a bash -c command
+    # string, so a COLORTERM carrying shell metacharacters is DROPPED, not
+    # quoted: a value that isn't a plain token is not a colour declaration.
+    cases = [
+        ("unset COLORTERM",        "TERM=xterm-256color"),
+        ("COLORTERM=truecolor",    "TERM=xterm-256color COLORTERM=truecolor"),
+        ("COLORTERM=24bit",        "TERM=xterm-256color COLORTERM=24bit"),
+        ("COLORTERM=''",           "TERM=xterm-256color"),
+        ("COLORTERM='a; id'",      "TERM=xterm-256color"),
+        ("COLORTERM='$(id)'",      "TERM=xterm-256color"),
+        ("COLORTERM='`id`'",       "TERM=xterm-256color"),
+        ("COLORTERM='a b'",        "TERM=xterm-256color"),
+    ]
+    cases += [
+        ("COLORTERM=truecolor TERM_PROGRAM=ghostty TERM_PROGRAM_VERSION=1.2.3",
+         "TERM=xterm-256color COLORTERM=truecolor TERM_PROGRAM=ghostty TERM_PROGRAM_VERSION=1.2.3"),
+        ("unset COLORTERM; TERM_PROGRAM=iTerm.app",   "TERM=xterm-256color TERM_PROGRAM=iTerm.app"),
+        ("unset COLORTERM; TERM_PROGRAM=Apple_Terminal", "TERM=xterm-256color TERM_PROGRAM=Apple_Terminal"),
+        ("unset COLORTERM; TERM_PROGRAM='x; id'",     "TERM=xterm-256color"),
+        ("unset COLORTERM; TERM_PROGRAM=ghostty TERM_PROGRAM_VERSION='$(id)'",
+         "TERM=xterm-256color TERM_PROGRAM=ghostty"),
+        ("unset COLORTERM; TERM_PROGRAM=ghostty TERM_PROGRAM_VERSION=1.2.0-main+abc123",
+         "TERM=xterm-256color TERM_PROGRAM=ghostty TERM_PROGRAM_VERSION=1.2.0-main+abc123"),
+        ("unset COLORTERM; TERM_PROGRAM=vscode TERM_PROGRAM_VERSION=1.99.0", "TERM=xterm-256color"),
+        ("unset COLORTERM; TERM_PROGRAM='a b' TERM_PROGRAM_VERSION=1.0", "TERM=xterm-256color"),
+        ("unset COLORTERM; TERM_PROGRAM='*' TERM_PROGRAM_VERSION=1.0", "TERM=xterm-256color"),
+        ("unset COLORTERM; TERM_PROGRAM_VERSION=1.0", "TERM=xterm-256color"),
+    ]
+    for prelude, expected in cases:
+        r = _source_vibe_call({}, f"unset TERM_PROGRAM TERM_PROGRAM_VERSION; {prelude}; build_color_env")
+        check(f"[color] build_color_env after `{prelude}` -> {expected}",
+              r.stdout.strip() == expected, r.stdout + "|" + r.stderr)
+
+    # ── (c) runtime: a host with no COLORTERM still gets 256 colours ───────
+    # The with-COLORTERM argv is the golden in test_agent_claude_or_none_argv
+    # (its fixture pins COLORTERM=truecolor); this is the other branch.
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        home = root / "home"; home.mkdir()
+        ws = root / "ws"; ws.mkdir()
+        bindir = root / "bin"
+        log = root / "devcontainer.log"
+        _agent_devcontainer_stub(bindir, log)
+        call = (
+            f'WORKSPACE={shlex.quote(str(ws))}\n'
+            'OVERRIDE_CONFIG=/tmp/fixture-override.json\n'
+            'CLAUDE_MODEL_ARGS=""\n'
+            'unset COLORTERM\n'
+            f'{claude_body}\n'
+            'launch_claude "" ""\n'
+        )
+        env = {"HOME": str(home), "PATH": f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}",
+               "TERM_PROGRAM": "", "TERM_PROGRAM_VERSION": ""}
+        r = _source_vibe_call(env, call)
+        calls = _agent_calls(log)
+        check("[color] no-COLORTERM host: exactly one devcontainer call",
+              len(calls) == 1, str(calls) + "|" + r.stdout + r.stderr)
+        if calls:
+            expected_tail = (
+                "exec env SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 "
+                "TERM=xterm-256color claude --permission-mode bypassPermissions"
+            )
+            check("[color] no-COLORTERM host: TERM is claimed, COLORTERM is not",
+                  calls[0][-1] == expected_tail, str(calls[0]))

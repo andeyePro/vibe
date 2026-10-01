@@ -5,8 +5,10 @@ description: Runs vibe's /vsss looped autonomous solo by reading and following /
 
 # $vsss
 
-Read `/usr/local/share/vibe/commands/vsss.md` now, in full, and follow it
-exactly as written — it is the single source of truth for this command.
+Read `/usr/local/share/vibe/codex-vsss.md` first and apply its supervised
+handoff before starting work. Inside the owned supervised thread, read
+`/usr/local/share/vibe/commands/vsss.md` in full. The Codex contract overrides
+its launcher, loop, clock and Stop-hook paragraphs; other workflow rules apply.
 Wherever it calls a Claude-only primitive, apply the substitution below
 instead; nothing else about the command body changes.
 
@@ -19,7 +21,7 @@ instead; nothing else about the command body changes.
 | a nested `/vs ...` / `/vss ...` step inside `vss.md` / `vsss.md` | read `/usr/local/share/vibe/commands/<that>.md` now and follow it in this same turn — skill output is never rescanned for `$` mentions, so a nested mention loads nothing |
 | `Read` / `Write` / `Edit` | your own file tools |
 | `Bash`, `Grep`, `Glob` | your own shell tool (`rg`, `find`) |
-| `ScheduleWakeup` | not available; end the turn and let the supervisor re-enter |
+| `ScheduleWakeup` | not available; do other queued work instead (in a live `$vsss` run the Stop hook refuses an early turn end, and the supervisor re-enters after a quota wait) |
 | `/learnings` writes | refused; there is no ask in Codex |
 
 ## The `/` form

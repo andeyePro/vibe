@@ -23,7 +23,7 @@ def test_task028_fragment_merges_and_fable_grant() -> None:
     #                output-consolidation, project-hygiene, todo-changelog, vibe-cli, workspace-is-the-repo
     claude_md_dir = REPO / "devcontainer" / "claude-md"
     all_md_files = sorted([f.name for f in claude_md_dir.glob("*.md")])
-    check("[ac1] exactly 16 .md files in claude-md/", len(all_md_files) == 16, f"found {len(all_md_files)}")
+    check("[ac1] exactly 17 .md files in claude-md/", len(all_md_files) == 17, f"found {len(all_md_files)}")
 
     deleted_names = ["learn-hook.md", "feedback-auto-promote.md", "conversation-history.md"]
     for name in deleted_names:
@@ -39,6 +39,7 @@ def test_task028_fragment_merges_and_fable_grant() -> None:
         "todo-changelog.md", "vibe-cli.md", "workspace-is-the-repo.md",
         "learnings.md", "auto-memory-scope.md", "content-guard.md",
         "extra-domains-refresh.md", "dollar-prefix.md", "agent-switch.md",
+        "capabilities.md",
     }
     check("[ac1] all expected fragment names present", set(all_md_files) == expected_names,
           f"diff: {set(all_md_files).symmetric_difference(expected_names)}")
@@ -57,9 +58,16 @@ def test_task028_fragment_merges_and_fable_grant() -> None:
     # total to 6,563 — still under 6,700, so this cap was NOT raised (unlike
     # task_042's squeeze, where the new fragment did not fit and the cap moved
     # by exactly its word count).
+    # 2026-09-25 added capabilities.md ("run vibe-capabilities before saying
+    # you can't"). The cap was NOT raised: the fragment was kept short and
+    # web-research.md lost its "Relation to the vibe Firewall" section, which
+    # restated its own "Why This Matters".
+    # 2026-09-30 raised 6700 -> 6760 for capabilities.md's Mac-build rule
+    # (one build tree per project per piece of software on the Mac account):
+    # a fifth of Martin's disk had gone to per-session `.build` copies there.
     all_text = "".join((claude_md_dir / f).read_text() for f in all_md_files)
     total_words = len(all_text.split())
-    check("[ac2] total fragment words <= 6700", total_words <= 6700, f"found {total_words}")
+    check("[ac2] total fragment words <= 6760", total_words <= 6760, f"found {total_words}")
     
     # AC3: content-guard.md 400-600 words, contains "README.md" and "Content guard"
     content_guard_text = (claude_md_dir / "content-guard.md").read_text()

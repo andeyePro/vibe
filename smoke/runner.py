@@ -43,6 +43,16 @@ from smoke.checks_31_mac_build_recovery import *
 from smoke.checks_30_supervisor_reconciliation import *
 from smoke.checks_32_managed_vendor_trust import *
 from smoke.checks_33_host_onboarding import *
+from smoke.checks_34_docker_hygiene import *
+from smoke.checks_35_vsss_stop_guard import *
+from smoke.checks_36_native_usage_wait import *
+from smoke.checks_37_capabilities import *
+from smoke.checks_38_vibe_shot import *
+from smoke.checks_39_auto_update import *
+from smoke.checks_40_delegate_connection import *
+from smoke.checks_41_codex_continuation import *
+from smoke.checks_42_session_safety import *
+from smoke.checks_43_op_diagnostics import *
 
 def main() -> int:
     test_docker_preflight_is_shared_and_mac_start_preserves_target()
@@ -640,6 +650,7 @@ def main() -> int:
     test_task028_ac9_still_locks_down_at_the_end()
     test_task028_ac10_changelog_entry_present()
     test_task029_default_patience()
+    test_host_internal_resolves_ipv4()
     test_task030_mount_drift()
     test_task031_terminal_restore_and_exit_note()
     test_task014_ac1_sha1_helper()
@@ -874,6 +885,7 @@ def main() -> int:
     test_agent_claude_argv_default_and_flag()
     test_launch_codex_source_shape()
     test_launch_claude_unchanged_vs_head()
+    test_terminal_color_env_reaches_container()
     test_codex_entry_offline_refusals_and_success()
     test_codex_entry_no_dangerously_no_dash_c()
     test_dockerfile_codex_entry_copy_and_chmod()
@@ -996,6 +1008,129 @@ def main() -> int:
         test_codex_supervisor_review18_interrupted_confirms_boundary,   # item 18
     ])
     test_codex_panel_review19_partial_startup_failure_cleans_up()      # item 19
+
+    # task_059 — Docker hygiene: post-rebuild pruning, stale-container
+    # reaping, `vibe clean`, and the invariant that none of it can remove
+    # a volume.
+    test_hygiene_size_parser_decimal_and_binary()
+    test_hygiene_reclaimable_excludes_volumes()
+    test_hygiene_prune_after_build_is_scoped()
+    test_hygiene_prune_silent_when_nothing_reclaimed()
+    test_hygiene_helpers_survive_a_broken_docker()
+    test_hygiene_stale_container_query_excludes_running()
+    test_hygiene_stale_container_removal_never_forces_or_takes_volumes()
+    test_hygiene_stale_removal_wired_into_the_recreate_path()
+    test_hygiene_prune_wired_after_each_build()
+    test_clean_scope_default_and_all()
+    test_clean_dry_run_removes_nothing()
+    test_clean_without_a_tty_refuses_rather_than_deleting()
+    test_clean_yes_removes_containers_and_prunes_scoped()
+    test_clean_all_widens_both_sweeps()
+    test_clean_never_removes_a_volume_in_any_mode()
+    test_clean_rejects_unknown_arguments()
+    test_clean_usage_promises_volume_safety()
+    test_clean_is_dispatched_before_flag_parsing()
+    test_hygiene_check_warns_and_throttles()
+    test_hygiene_check_can_be_disabled()
+    test_hygiene_check_wired_into_preflight()
+    test_image_label_agrees_everywhere()
+    test_image_label_is_the_last_dockerfile_instruction()
+    test_launcher_has_no_volume_removal_anywhere()
+    test_image_carries_vibes_own_version()
+    # 2026-09-29 — automatic clean, launch notices, launch log.
+    test_clean_empty_label_does_not_shift_fields()
+    test_auto_clean_skips_young_containers_and_volumes()
+    test_hygiene_cleans_instead_of_only_warning()
+    test_hygiene_low_disk_bypasses_daily_throttle_but_not_hourly()
+    test_notices_are_replayed_at_hand_over()
+    test_launch_log_captures_and_strips()
+    test_launch_log_refuses_symlinks()
+    test_launch_log_survives_ctrl_c()
+    test_launch_log_can_be_disabled()
+    test_launch_log_terminal_detection_is_main_shell_only()
+    test_colour_env_only_while_the_log_holds_a_terminal()
+    test_launch_log_wiring()
+    test_stop_guard_blocks_a_live_owned_run()
+    test_stop_guard_allow_paths()
+    test_stop_guard_caps_refusals_without_a_commit()
+    test_stop_guard_wiring()
+    test_liveness_ties_each_hook_program_to_its_event()
+    test_ask_mode_parks_no_live_run_on_a_question()
+    test_every_smoke_test_is_registered_in_the_runner()
+    test_vibe_expands_possibly_empty_arrays_safely()
+    test_vs_tester_must_show_a_control_can_fail()
+    test_vs_model_economy_carries_the_cache_rules()
+    test_capabilities_finds_the_mac_account_from_the_ssh_config()
+    test_capabilities_missing_mac_key_is_not_available()
+    test_capabilities_without_a_mac_account_says_how_to_get_one()
+    test_capabilities_parsing_edges()
+    test_capabilities_fragment_has_mac_build_discipline()
+    test_capabilities_bridge_brief_and_setup_modes()
+    test_capabilities_reach_every_agent()
+    test_capability_nudge_sends_a_cant_back_once()
+    test_capability_nudge_is_wired_into_both_runtimes()
+    test_vibe_shot_url_round_trip()
+    test_vibe_shot_uploads_a_folder_or_file()
+    test_vibe_shot_refusals_and_check()
+    test_vibe_shot_playwright_script_parses()
+    test_vibe_shot_native_simulator_and_screen()
+    test_vibe_shot_native_failure_paths()
+    test_auto_update_helpers()
+    test_auto_update_rebuilds_when_either_cli_moved()
+    test_auto_update_falls_back_when_codex_fails_the_gate()
+    test_codex_databases_live_on_a_container_only_volume()
+    test_codex_compat_gate_is_wired_and_passes_the_installed_codex()
+    test_delegate_refreshes_and_retries_a_connection_failure()
+    run_supervisor_tests([
+        test_codex_evidence_required_for_every_exit,
+        test_codex_completion_identity_and_condition_validation,
+        test_codex_transients_reset_but_telemetry_accumulates,
+        test_codex_stop_guard_is_separate_and_has_no_fourth_escape,
+        test_codex_outer_runner_and_foreign_lock,
+        test_codex_detached_handoff_context_conflict_and_stop,
+        test_codex_runner_bounds_failures_without_completed_progress,
+        test_codex_original_budget_policy_and_retry_deadline,
+        test_codex_runner_does_not_mistake_old_completion_for_new_success,
+        test_codex_direct_watch_cannot_race_prompt_publication,
+        test_codex_new_run_never_discards_unresolved_effects,
+        test_codex_outer_runner_recovers_owned_supervisor_crash,
+        test_codex_known_completed_turn_recovery_never_replays,
+    ])
+    test_vibe_shot_is_named_wherever_seeing_comes_up()
+    test_statusline_records_the_window_reset()
+    test_native_wait_detector()
+    test_watchdog_stands_aside_during_a_native_wait()
+    test_relaunch_gate_ignores_the_native_wait()
+    test_main_body_is_one_brace_group()
+    test_container_run_state()
+    test_exit_note_names_a_stopped_container()
+    test_auto_resume_stops_on_dead_container()
+    test_forwarder_logs_unreachable_upstream()
+    test_register_names_the_failing_side()
+    test_statusline_records_the_weekly_window()
+    test_weekly_limit_vetoes_the_watchdog()
+    test_relaunch_countdown_waits_out_a_used_up_week()
+    test_live_session_count()
+    test_second_session_gets_a_heads_up()
+    test_recreate_spares_a_live_session()
+    run_supervisor_tests([
+        test_codex_supervisor_challenges_a_waiting_exit_once,
+        test_codex_supervisor_challenge_rearms_after_a_normal_turn,
+        test_codex_supervisor_turn_failures_count_in_a_row,
+        test_codex_supervisor_pending_challenge_survives_a_failed_turn,
+        test_codex_supervisor_default_ceilings_allow_a_week_of_windows,
+    ])
+    run_supervisor_tests([
+        test_codex_supervisor_context_exceeded_compacts_then_continues,
+        test_codex_supervisor_compaction_ceiling_is_fatal,
+        test_codex_supervisor_failed_compaction_is_fatal,
+        test_codex_supervisor_unfinished_compaction_needs_reconciliation,
+        test_codex_supervisor_pending_challenge_survives_a_compaction,
+        test_codex_supervisor_legacy_state_adopts_zero_compactions,
+        test_codex_supervisor_compactions_count_in_a_row,
+        test_codex_supervisor_compaction_refused_by_server,
+        test_codex_supervisor_compaction_binds_only_this_threads_turn,
+    ])
 
     print()
     if FAILURES:

@@ -15,7 +15,7 @@ def test_codex_container_plumbing():
           not any(".codex" in str(m) for m in cfg["mounts"]), str(cfg["mounts"]))
     dockerfile = DOCKERFILE.read_text()
     check("[codex] pinned vendor binary installed in image",
-          "ARG CODEX_VERSION=0.154.0" in dockerfile and
+          "ARG CODEX_VERSION=0.156.1" in dockerfile and
           "npm install -g @openai/codex@${CODEX_VERSION}" in dockerfile, "")
     check("[codex] delegate helper shipped",
           "COPY vibe-delegate.mjs /usr/local/bin/vibe-delegate" in dockerfile, "")
@@ -115,11 +115,15 @@ def test_codex_mount_drift():
     """Phase 1a: withdrawing the opt-in (marker gone, dir gone, VIBE_CODEX_PATH=off)
     must recreate a container that still carries the credential bind."""
     print("\n[codex] login-mount drift comparator")
-    kept = "/home/node/.codex\t/Users/m/.codex\trw"
-    ro = "/home/node/.codex\t/Users/m/.codex\tro"
+    vol = "\n/home/node/.codex-sqlite\t/var/lib/docker/volumes/vibe-codex-sqlite/_data\trw"
+    login = "/home/node/.codex\t/Users/m/.codex\trw"
+    kept = login + vol
+    ro = "/home/node/.codex\t/Users/m/.codex\tro" + vol
     other = "/x\t/y\trw"
     for label, desired, actual, expect in [
         ("gates pass, bind present rw", "/Users/m/.codex", kept, ""),
+        ("login bound, database volume missing: not this comparator's (codex_volume_drift)", "/Users/m/.codex", login, ""),
+        ("opt-in withdrawn, only the database volume left", "", other + vol, "1"),
         ("opt-in withdrawn, bind still present", "", kept, "1"),
         ("opt-in granted, bind missing", "/Users/m/.codex", other, "1"),
         ("bind present but ro", "/Users/m/.codex", ro, "1"),
@@ -139,6 +143,19 @@ def test_codex_mount_drift():
         r = _source_vibe_call({}, f'printf "%s" "$({fn} "" UNKNOWN)"')
         check(f"[codex] {fn} also fails closed on UNKNOWN", r.returncode == 0 and r.stdout == "1",
               f"rc={r.returncode} out={r.stdout!r}")
+    for label, desired, actual, expect in [
+        ("opted in, login bound, volume missing", "/Users/m/.codex", login, "1"),
+        ("opted in, login and volume both present", "/Users/m/.codex", kept, ""),
+        ("not opted in: never this comparator's business", "", login, ""),
+        ("opted in but no login bound yet (codex_mount_drift recreates)", "/Users/m/.codex", other, ""),
+        ("no container", "/Users/m/.codex", "NONE", ""),
+    ]:
+        r = _source_vibe_call({}, f'printf "%s" "$(codex_volume_drift {shlex.quote(desired)} "$(printf {shlex.quote(actual)})")"')
+        check(f"[codex] volume drift: {label}", r.returncode == 0 and r.stdout == expect,
+              f"rc={r.returncode} out={r.stdout!r} err={r.stderr[:200]}")
+    check("[codex] volume drift joins a live session like image drift (recreate flag, soft class)",
+          '${codex_drift}${codex_vol_drift}")"' in src
+          and 'elif [ -z "${mount_drift}${projects_drift}${domains_drift}${codex_drift}" ]; then' in src, "")
     check("[codex] launch flow computes codex_mount_drift",
           'codex_drift="$(codex_mount_drift' in src and '${codex_drift}' in src, "")
 

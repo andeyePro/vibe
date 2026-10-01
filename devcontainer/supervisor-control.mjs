@@ -17,12 +17,12 @@ export function canonicalPath(path, create = false) {
   return result;
 }
 
-export function readRegular(path) {
+export function readRegular(path, encoding = 'utf8') {
   const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const st = fstatSync(fd);
     if (!st.isFile() || st.nlink !== 1 || st.size > 16 * 1024 * 1024) throw new Error('unsafe control file');
-    return readFileSync(fd, 'utf8');
+    return readFileSync(fd, encoding);
   } finally { closeSync(fd); }
 }
 
@@ -38,9 +38,8 @@ export function atomicWrite(path, value) {
   } finally { try { unlinkSync(tmp); } catch {} }
 }
 
-export function acquire(path) {
+export function acquire(path, token = randomUUID()) {
   const lock = `${path}.lock`;
-  const token = randomUUID();
   let fd;
   try { fd = openSync(lock, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600); }
   catch { throw new Error(`Ownership lock exists or is unsafe: ${lock}. No stale lock is stolen. Confirm the previous owner and its children have ended, then explicitly remove this lock and its token-specific stop file before resuming.`); }
@@ -105,7 +104,7 @@ if root == 0:
     signal.signal(signal.SIGTERM, signal.SIG_DFL)
     signal.signal(signal.SIGINT, signal.SIG_DFL)
     try:
-        os.execvpe(sys.argv[1], [sys.argv[1], 'app-server'], os.environ)
+        os.execvpe(sys.argv[1], sys.argv[1:], os.environ)
     except Exception as error:
         print(str(error), file=sys.stderr)
         os._exit(127)
@@ -136,8 +135,12 @@ while True:
 `;
 
 export function spawnOwnedServer(binary, env) {
+  return spawnOwnedProcess(binary, ['app-server'], env);
+}
+
+export function spawnOwnedProcess(binary, args, env) {
   if (process.platform !== 'linux') throw new Error('Owned process-tree cleanup requires Linux');
-  const child = spawn('/usr/bin/python3', ['-I', '-c', REAPER, binary], {
+  const child = spawn('/usr/bin/python3', ['-I', '-c', REAPER, binary, ...args], {
     env, stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
   });
   child.treeEmpty = false;

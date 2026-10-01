@@ -36,7 +36,8 @@
 #   hooks-commands         (c) every command in hooks.json is the hardened
 #                              `/usr/bin/env -i PATH=<fixed> /bin/bash
 #                              /usr/local/bin/codex-guard-adapter <mode>`
-#                              or `/usr/local/bin/codex-prompt-prefix` form,
+#                              or `/usr/local/bin/codex-prompt-prefix` /
+#                              `/usr/local/bin/vsss-stop-guard` form,
 #                              and the target program exists as an
 #                              executable (task_053).
 #   fixture-deny           (d) four known-bad calls are refused: a shell
@@ -182,6 +183,11 @@ check_owned "$bin/guard-fs.sh"
 check_owned "$bin/codex-entry"
 check_owned "$bin/codex-supervisor"
 check_owned "$bin/supervisor-control.mjs"
+check_owned "$bin/codex-rpc.mjs"
+check_owned "$bin/codex-errors.mjs"
+check_owned "$bin/codex-completion.mjs"
+check_owned "$bin/codex-autonomy"
+check_owned "$bin/codex-stop-guard"
 check_owned "$bin/taskandi-client.mjs"
 # Verify the CLI before asking it to attest its own version. Production npm
 # modules must be immutable too; checking only the bin symlink misses imports.
@@ -203,6 +209,11 @@ esac
 # runs with the same hardened env -i form, so it must be just as
 # `node`-unwritable as the guard adapter it sits beside.
 check_owned "$prompt_prefix"
+# The /vsss keep-going guard (the Stop hook) decides whether a run may end
+# its turn, so it is held to the same ownership rule as the other hooks.
+check_owned "$bin/vsss-stop-guard"
+# The capability nudge (a second Stop hook) is held to the same rule.
+check_owned "$bin/vibe-capabilities"
 # jq is a distribution binary, not part of the vibe chain: it is always
 # root-owned even when --owner relocates the chain to a test user, so root is
 # accepted for it in addition to --owner.
@@ -255,13 +266,15 @@ hook_commands=$(jq -r '
 # alternatives stay anchored at both ends; the captured group names
 # whichever program actually matched, so the existence/executable check
 # below resolves the right binary for either one.
-hook_form='^/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /bin/bash /usr/local/bin/(codex-guard-adapter (bash|patch)|codex-prompt-prefix)$'
+hook_form='^/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /bin/bash /usr/local/bin/(codex-guard-adapter (bash|patch)|codex-prompt-prefix|vsss-stop-guard|vibe-capabilities --stop-hook)$'
 while IFS= read -r hook_command; do
   [ -n "$hook_command" ] || continue
-  if [[ $hook_command =~ $hook_form ]]; then
+  if [ "$hook_command" = "/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /usr/local/bin/codex-stop-guard" ]; then
+    hook_program=codex-stop-guard
+  elif [[ $hook_command =~ $hook_form ]]; then
     hook_program=${BASH_REMATCH[1]}
   else
-    fail "hooks-commands — '$hook_command' is not the hardened '/usr/bin/env -i PATH=… /bin/bash $CANONICAL_BIN/(codex-guard-adapter <mode>|codex-prompt-prefix)' form"
+    fail "hooks-commands — '$hook_command' is not the hardened '/usr/bin/env -i PATH=… /bin/bash $CANONICAL_BIN/(codex-guard-adapter <mode>|codex-prompt-prefix|vsss-stop-guard|vibe-capabilities --stop-hook)' form"
   fi
   hook_binary=${hook_program%% *}
   hook_target=$bin/$hook_binary
@@ -269,6 +282,28 @@ while IFS= read -r hook_command; do
   [ -x "$hook_target" ] || fail "hooks-commands — $hook_target (for '$hook_command') is not executable"
   ok "hooks-commands" "$hook_command"
 done <<<"$hook_commands"
+
+# Each program is only meaningful on its own event: the guard adapter on
+# PreToolUse, the prompt prefix on UserPromptSubmit/SessionStart, the /vsss
+# keep-going guard on Stop. A program wired to any other event would pass the
+# form check above while doing nothing where it is needed.
+hook_events=$(jq -r '
+  .hooks
+  | to_entries[]
+  | .key as $event
+  | .value[]?
+  | .hooks[]?
+  | select(.type == "command")
+  | "\($event) \(.command | split("/usr/local/bin/")[-1] | split(" ")[0])"
+' -- "$hooks_file") || fail "hooks-commands — could not parse $hooks_file"
+while read -r hook_event hook_binary; do
+  [ -n "$hook_event" ] || continue
+  case "$hook_binary:$hook_event" in
+    codex-guard-adapter:PreToolUse | codex-prompt-prefix:UserPromptSubmit | \
+      codex-prompt-prefix:SessionStart | vsss-stop-guard:Stop | codex-stop-guard:Stop | vibe-capabilities:Stop) ;;
+    *) fail "hooks-commands — $hook_binary is wired to the $hook_event event, which is not where it belongs" ;;
+  esac
+done <<<"$hook_events"
 
 # ── (d)/(e) real fixtures through the real adapter ───────────────────────────
 tmpdir=$(mktemp -d) || fail "fixture — could not create a temporary directory"

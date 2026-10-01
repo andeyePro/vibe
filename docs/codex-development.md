@@ -15,15 +15,14 @@ vibe --codex-resume .vss/prompts/my-task.md
 
 Both select Codex and use the same root-owned entrypoint and liveness gate. The prompt path must resolve inside the mounted project. Its contents travel as file data, never shell code. Resume requires an existing `.vss/codex-supervisor.json` and the original prompt content; a mismatched prompt is refused. Do not edit that prompt to smuggle new work into an existing run. Supply corrections through the answer channel instead.
 
-Inside the container, inspect the run with `codex-supervisor status --state /workspace/.vss/codex-supervisor.json`. Request a cooperative stop with `codex-supervisor stop --state /workspace/.vss/codex-supervisor.json`. The supervisor's `--help` describes its ceilings and reconciliation controls. Ordinary interactive sessions do not become supervised retroactively when `$vsss` is typed. A completed checkpoint is not automatically restarted.
+Inside the container, inspect the run with `codex-supervisor status --state /workspace/.vss/codex-supervisor.json`. Request a cooperative stop with `codex-supervisor stop --state /workspace/.vss/codex-supervisor.json`. The supervisor's `--help` describes its ceilings and reconciliation controls. An interactive `$vsss` invocation now uses the skill to checkpoint and hand off to `codex-autonomy`; it starts a separate supervised worker rather than converting the TUI thread. The chair yields the checkout after acknowledgement. Use `codex-autonomy status/stop --cwd /workspace` for the outer runner, including restart waits. See [the Codex continuation contract](../devcontainer/codex/vsss.md) for completion evidence and clock rules. A completed checkpoint is not automatically restarted.
 
 The image owns the vendor CLI prefix and shared command tree; global vendor updates require rebuilding, while application dependencies can be installed locally in their projects. Entry/liveness reject mutable managed CLI code and remove Node preload environment variables.
 
 The source changes must be installed by rebuilding/relaunching Vibe before these commands are available. Do that after reviewing the changes and stopping existing work deliberately; never rebuild an active development environment merely to test its replacement. Offline fixture results are not a live-container acceptance claim.
 
 Recovery distinguishes a confirmed turn boundary from an interrupted or
-unconfirmed turn. The latter refuses both resume and `--new-run` until effects
-have been reviewed. `codex-supervisor reconcile --state <file> --evidence-file
+unconfirmed turn. The outer runner can reconcile a known turn with read-only `thread/read` only when that exact last turn is proven completed and its owned process tree has ended. Other uncertain turns refuse resume and `--new-run` until effects have been reviewed. `codex-supervisor reconcile --state <file> --evidence-file
 <private-json>` records the exact checkpoint hash, thread/turn identity,
 observed outcome and explicit `effectsReviewed`/`safeToContinue` statements;
 see `--help` for the schema. It sends no model request and cannot itself verify

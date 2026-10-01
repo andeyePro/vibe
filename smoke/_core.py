@@ -590,6 +590,7 @@ SP_CORE_SKILLS = sorted([
     "finishing-a-development-branch",
     "using-git-worktrees",
     "writing-skills",
+    "diagnosing-superpowers",
 ])
 
 

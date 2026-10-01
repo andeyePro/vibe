@@ -19,7 +19,7 @@ instead; nothing else about the command body changes.
 | a nested `/vs ...` / `/vss ...` step inside `vss.md` / `vsss.md` | read `/usr/local/share/vibe/commands/<that>.md` now and follow it in this same turn — skill output is never rescanned for `$` mentions, so a nested mention loads nothing |
 | `Read` / `Write` / `Edit` | your own file tools |
 | `Bash`, `Grep`, `Glob` | your own shell tool (`rg`, `find`) |
-| `ScheduleWakeup` | not available; end the turn and let the supervisor re-enter |
+| `ScheduleWakeup` | not available; do other queued work instead (in a live `$vsss` run the Stop hook refuses an early turn end, and the supervisor re-enters after a quota wait) |
 | `/learnings` writes | refused; there is no ask in Codex |
 
 ## The `/` form

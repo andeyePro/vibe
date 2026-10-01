@@ -1745,6 +1745,148 @@ Use a disposable folder on the Mac or Linux host with the reviewed Vibe source. 
 
 ---
 
+### Test 57: Docker hygiene — reaping, pruning and `vibe clean` (task_059)
+
+The one thing no host-side fixture can prove: that these commands leave the
+named volumes, and every running container, alone on a real daemon.
+
+```bash
+docker volume ls                       # note vibe-claude-config's presence
+docker system df                       # note the "before" figures
+cd ~/Projects/vibe-test && vibe        # let it come up, then exit
+docker ps -a --filter status=exited    # note this project's stopped container
+touch ~/.vibe-src/devcontainer/Dockerfile
+cd ~/Projects/vibe-test && vibe        # forces a rebuild + recreate
+```
+
+**Expected on the rebuild run:**
+- [ ] "devcontainer/ changed since last build — rebuilding image."
+- [ ] After the build: "reclaimed N GB of superseded image layers and build cache."
+- [ ] "removed N stopped container(s) this project had left behind." (only if this project actually had any)
+- [ ] `docker volume ls` still lists `vibe-claude-config` and `vibe-bash-history`
+- [ ] Claude is still logged in inside the new container — the login volume survived
+
+**Then, with a second project's container running:**
+
+```bash
+# In another terminal, leave a vibe session open in a different project.
+vibe clean --dry-run
+vibe clean
+```
+
+- [ ] `--dry-run` lists stopped containers and removes nothing (`docker ps -a` unchanged)
+- [ ] the confirm prompt appears, and answering `n` removes nothing
+- [ ] answering `y` removes only stopped containers; the other project's RUNNING container is untouched and its session keeps working
+- [ ] `docker volume ls` unchanged after the sweep
+- [ ] `docker system df` shows the reclaim
+- [ ] `vibe clean --all` additionally clears build cache of any age, and `docker volume ls` is STILL unchanged
+
+**Preflight warning:**
+
+```bash
+VIBE_DOCKER_RECLAIM_WARN_GIB=1 rm -f ~/.vibe/.hygiene-checked && vibe
+```
+
+- [ ] a "Docker is holding N GB of reclaimable..." line appears before launch
+- [ ] the launch proceeds normally regardless
+- [ ] a second launch within the day does not repeat it
+- [ ] `VIBE_HYGIENE=0 vibe` shows neither warning
+
+**Docker Desktop disk limit (Docker Desktop hosts only):**
+- [ ] Settings > Resources > Advanced > "Disk usage limit" is set (not the drive default)
+
+---
+
+### Test 58: Terminal colour reaches the container
+
+The one thing no host-side fixture can prove: that the container actually
+renders 24-bit colour, and that a 256-colour-only terminal is not sent
+sequences it cannot draw. `build_color_env`'s output is asserted in
+`smoke/checks_22_codex_agent.py`; what a pixel looks like is not.
+
+**From a truecolor terminal (Ghostty, iTerm2, Kitty, WezTerm):**
+
+```bash
+cd ~/Projects/vibe-test && vibe
+# then, inside the session:
+!echo "$TERM / ${COLORTERM:-<unset>}" && tput colors
+```
+
+- [ ] prints `xterm-256color / truecolor` and `256`
+- [ ] `!echo "$TERM_PROGRAM"` prints your terminal (`ghostty` / `iTerm.app`), and under
+      `vibe --agent codex` a finished turn raises a macOS notification from Ghostty/iTerm2
+      (iTerm2: Profiles > Terminal > "Send escape sequence-generated alerts" must be on)
+- [ ] drag-select some output: the selection is a legible blue, not near-black
+      (fullscreen renderer only — `/tui` says which one is live)
+- [ ] `/config` → Input & controls lists "Copy on select"
+
+**From Apple Terminal (256 colours, sets no COLORTERM):**
+
+```bash
+cd ~/Projects/vibe-test && vibe
+!echo "$TERM / ${COLORTERM:-<unset>}" && tput colors
+```
+
+- [ ] prints `xterm-256color / <unset>` and `256` — TERM is still upgraded, but
+      no COLORTERM is claimed on the terminal's behalf
+- [ ] the UI is legible: no garbled escape text where colours should be
+
+**Codex lead (same check, other runtime):**
+
+```bash
+cd ~/Projects/vibe-test && vibe --agent codex
+```
+
+- [ ] the Codex TUI renders in full colour from a truecolor terminal
+
+### Test 59: The /vsss keep-going guard stops an early exit
+
+The Stop hook's logic is covered offline by `smoke/checks_35_vsss_stop_guard.py`.
+What only a live session can show is that each runtime actually feeds the refusal
+back to the model and the model carries on.
+
+**Claude lead:**
+
+```bash
+cd ~/Projects/vibe-test && vibe
+# inside: start a small run, then ask it to stop and wait for you
+/vsss --hours 0.5 tidy the README; when you reach the licence section, stop and ask me which licence to use
+```
+
+- [ ] when it reaches the question, the turn does not end: a hook message quoting
+      "vibe /vsss keep-going guard" appears and the model posts the question to
+      `vibe-fromClaude.md` (or `.vss/`) and moves on
+- [ ] a normal finish (Final state written, `active=0`) ends the turn without a refusal
+- [ ] if it tries to ask you with a pop-up question (AskUserQuestion) after its first
+      iteration, the question is refused with "vibe /vsss keep-going guard … Do not ask
+      it here", and the question lands in fromClaude instead
+- [ ] in a second, ordinary `vibe` session in the same project while the run is live,
+      a turn ends normally (the run is not that session's)
+
+**Codex lead:** use Test 61 below. Codex now has its own supervised handoff
+and Stop routing. It deliberately does not write the shared `.vss/stop-guard`
+counter: completed turns return to the supervisor for evidence validation.
+The Claude checks above remain unchanged.
+
+### Test 60: Agents know their capabilities and use the Mac account
+
+Offline tests (`smoke/checks_37_capabilities.py`) cover the inventory and the nudge's matching. This checks the live behaviour.
+
+- [ ] In a new session on a Mac with the account set up, `!vibe-capabilities` lists the Mac account first with `port 22 open`, and `!vibe-capabilities --setup mac-account` ends with "declared as <account>".
+- [ ] `!vibe-shot --check` prints "is ready" (after `npm i -g playwright && npx playwright install chromium` on the account); `!vibe-shot https://example.org --viewport 390x844` prints a PNG path under `.vibe/shots/`, and opening it shows the page at phone width. `!vibe-shot site/dist` (any built folder) shows its index page. With Xcode installed: `!vibe-shot --sim` returns a Simulator home screen. With the account logged in on the display: `!vibe-shot --screen --app Calculator` shows Calculator.
+- [ ] Ask: "Build the site and tell me whether the header wraps on a phone-width screen." The agent should render it on the Mac account and look at a screenshot, rather than say it can't see the page. With no `.vibe-allow-ssh` it asks for a one-line OK first.
+- [ ] Get it to end a reply with "I can't see the rendered page" (for example, by asking it to skip the check). The turn should not end. A "vibe capability check" message quoting that sentence appears, and the agent either does the check or names the one-line step.
+- [ ] `vibe --agent codex`: the same prompt; Codex runs `vibe-capabilities` (its session context names it), and the same Stop-hook nudge fires once; `codex-guard-liveness` still passes at launch.
+
+### Test 61: Automatic CLI updates
+
+- [ ] `rm ~/.vibe/.update-check` on the Mac, then `vibe`. If npm has a newer Claude Code or Codex than the image, you see `↑ update available: …`, a rebuild, and afterwards `~/.vibe/.image-versions` names the new versions. The build log shows `codex-compat-check: Codex <version> is compatible`.
+- [ ] A second `vibe` the same day does not check again.
+- [ ] Inside `vibe --agent codex`: no "Update available" prompt appears.
+- [ ] `VIBE_AUTO_UPDATE=0 vibe` never checks.
+
+---
+
 ## Test Summary
 
 After completing all tests, check:
@@ -1759,3 +1901,61 @@ After completing all tests, check:
 - [ ] Can commit and push via GitHub token
 - [ ] SSH outbound works (if configured)
 - [ ] No credentials leaked to host/container boundary
+- [ ] `vibe clean` and the post-rebuild prune left every named volume intact
+
+
+### Test 61: Codex unattended handoff and recovery (2026-09-26)
+
+Run on a rebuilt image. Offline `checks_41` exercises evidence rejection,
+detached ownership, a SIGKILLed supervisor and read-only reconciliation; it
+does not establish live app-server history fidelity or overnight duration.
+
+- [ ] In interactive Codex, invoke `$vsss` on a disposable project with several
+      independent tasks. It hands off once, prints status/log paths, and the
+      chair stops editing. The worker does not recursively hand off.
+- [ ] Close the initiating terminal after acknowledgement. From another
+      terminal inspect `codex-autonomy status --cwd /workspace`; work continues.
+- [ ] Try another start against the same checkout: it refuses without changing
+      the saved private prompt. Check prompt/control paths are ignored by Git.
+- [ ] Ask the worker to report a milestone without completing the queue. The
+      supervisor continues; unsupported `VSSS-EXIT:` text is not success.
+- [ ] Use a short explicit `--budget 1m`; elapsed downtime counts, and the run
+      checkpoints at the cap without claiming perfection. A run without an
+      explicit cap has no five-hour finish line.
+- [ ] Stop during work and during a retry wait. No new thread or restart follows.
+- [ ] On a disposable run, kill only the supervisor process, retaining the
+      outer runner. Its owned descendants are reaped before any restart. A
+      proven last completed turn recovers without replay; incomplete/unknown
+      turns remain checkpointed for effects review. Never remove a live lock.
+- [ ] Leave a multi-task Codex run overnight; inspect audit, completion evidence,
+      quota/compaction counters and final reason. Record actual duration.
+- [ ] Re-run Test 59's Claude steps: its fourth-stop release, marker handling,
+      launcher watchdog and quota auto-resume retain their existing behavior.
+
+### Test 62: Sessions survive edits, weekly limits and a second launch (2026-09-26)
+
+- [ ] Start `vibe` in a disposable project and leave claude open. In another terminal, add a comment line near the end of `vibe` (then revert it). Quit claude: the launcher exits cleanly, no `unbound variable` or stray command errors.
+- [ ] With a claude session open in project X, make any change under `devcontainer/` and launch `vibe` in X from a second terminal. It rebuilds the image, then prints "a newer vibe image is ready, but another vibe session is using this project's container" and joins it; the first session keeps running. Close both and relaunch: now it prints "image moved on … recreating it".
+- [ ] Same setup, but add a domain to X's `.vibe/domains` before the second launch: it refuses with "other vibe session(s) are still running in it" and exits 1; the first session is untouched. `vibe --rebuild` from the second terminal ends it, after an "ending the 1 other vibe session(s)" line.
+- [ ] During a live Claude session, and again during a supervised Codex run (`vibe --codex-run <file>`), run `docker exec <cid> ps -eo pid=,ppid=,args=` on the Mac: the session's process (`claude …`, or `node /usr/local/bin/codex-autonomy watch …`) has PPID 0. That is what the live-session check counts.
+- [ ] During a `/vsss` run that reaches a weekly limit (five-hour window not used up), `.vss/rate-limit` carries `used7=` near 100 and `resets7=`, and after 30+ minutes idle the launcher prints no "assuming the usage-limit picker is stuck" warning and does not kill claude.
+
+### Test 63: Launch log and automatic clean (2026-09-29)
+
+- [ ] Launch `vibe` in any project, exit Claude, then `cat .vibe/last-launch.log`: it holds the launch header and every line printed before Claude started, with no colour-code garbage, and nothing from the Claude session itself. Launch again: the previous log is now `.vibe/prev-launch.log`.
+- [ ] The Claude TUI looks and behaves exactly as before (colours, resizing, mouse, paste). The log is handed back before Claude starts, so nothing should differ.
+- [ ] In a project with no GitHub CLI login (or after `gh auth logout`), launch and accept the sign-in: the `gh auth login` prompts work normally, and its one-time code does not appear in `.vibe/last-launch.log`.
+- [ ] With some other project's vibe container stopped for over an hour (`docker ps -a --filter status=exited`), launch with `VIBE_DOCKER_RECLAIM_WARN_GIB=0 VIBE_HYGIENE_INTERVAL_HOURS=0 vibe`: a `✓ auto-clean:` line appears, that stopped container is gone, `docker volume ls` still lists `vibe-claude-config` and `vibe-bash-history`, and every running container is still running.
+- [ ] Launch with `VIBE_DISK_WARN_GIB=100000 vibe` (pretends the disk is low): the low-disk warning is repeated under "Needs you" as the last lines before Claude starts.
+- [ ] On the Mac, note whether `devcontainer up`'s output is coloured during a launch (it gets `FORCE_COLOR=1`; whether the CLI honours it is unverified), and that Ctrl-C during it still stops the launch.
+- [ ] With one vibe session open in a project, launch a second: "1 other vibe session(s) already open in this project" appears under "Needs you".
+
+### Test 64: Codex's databases stay out of the Mac's ~/.codex (2026-09-30)
+
+- [ ] `vibe --rebuild` in a Codex-enabled project: the build log shows `codex-compat-check: ok   all 7 Codex databases under /home/node/.codex-sqlite (the requirement beats -c and $CODEX_SQLITE_HOME decoys)`.
+- [ ] On the Mac, note the modification times: `ls -la ~/.codex/*.sqlite*`. In vibe, run `codex doctor | grep -A3 "sqlite home"` (it says `/home/node/.codex-sqlite`), then `/ask astra say ok` or one Codex-led turn. On the Mac, `ls -la ~/.codex/*.sqlite*` again: no file there has a newer time from that turn (the Mac's own Codex app may still touch them).
+- [ ] `docker volume ls` lists `vibe-codex-sqlite`; `docker run --rm -v vibe-codex-sqlite:/v alpine ls -la /v` shows the Codex databases owned by uid 1000.
+- [ ] The "couldn't save diagnostic logs" warning no longer appears in a vibe Codex session.
+- [ ] With a Codex session open in an opted-in project from before this change, launch a second session there: it says the container is due to be recreated for Codex's database volume and joins it (not refused).
+- [ ] In a project WITHOUT the Codex opt-in, `ls /home/node/.codex-sqlite` inside vibe is empty or missing (the volume is not mounted there).
+

@@ -140,11 +140,18 @@ def _codex_liveness_fixture(tmp: Path) -> tuple[Path, Path]:
         ("codex-entry", CODEX_ENTRY),
         ("codex-supervisor", REPO / "devcontainer/codex-supervisor.mjs"),
         ("supervisor-control.mjs", REPO / "devcontainer/supervisor-control.mjs"),
+        ("codex-rpc.mjs", REPO / "devcontainer/codex-rpc.mjs"),
+        ("codex-errors.mjs", REPO / "devcontainer/codex-errors.mjs"),
+        ("codex-completion.mjs", REPO / "devcontainer/codex-completion.mjs"),
+        ("codex-autonomy", REPO / "devcontainer/codex-autonomy.mjs"),
+        ("codex-stop-guard", REPO / "devcontainer/codex-stop-guard.mjs"),
         ("taskandi-client.mjs", REPO / "devcontainer/taskandi-client.mjs"),
         # task_053: the UserPromptSubmit prefix hook joined the ownership
         # list codex-guard-liveness checks, so the fixture chain needs a
         # copy too or every liveness check below fails on its absence.
         ("codex-prompt-prefix", PROMPT_PREFIX),
+        ("vsss-stop-guard", REPO / "devcontainer" / "vsss-stop-guard.sh"),
+        ("vibe-capabilities", REPO / "devcontainer" / "vibe-capabilities.sh"),
     ):
         dst = bin_dir / name
         dst.write_text(src.read_text())
@@ -191,8 +198,10 @@ def test_codex_requirements_toml_ac1():
           set(data.keys()) == {
               "allowed_approval_policies", "allowed_sandbox_modes",
               "allowed_web_search_modes", "allow_managed_hooks_only",
-              "features", "mcp_servers", "hooks", "rules",
+              "features", "mcp_servers", "hooks", "rules", "sqlite_home",
           }, str(sorted(data.keys())))
+    check("[codex] sqlite_home pins Codex's databases to the container-only volume",
+          data.get("sqlite_home") == "/home/node/.codex-sqlite", repr(data.get("sqlite_home")))
 
     check("[codex] allowed_approval_policies == ['never']",
           data.get("allowed_approval_policies") == ["never"], str(data.get("allowed_approval_policies")))
@@ -340,7 +349,7 @@ def test_codex_hooks_json_ac3():
 
     hooks = data.get("hooks", {})
     check("[codex] guard, prompt and session-start events",
-          set(hooks.keys()) == {"PreToolUse", "UserPromptSubmit", "SessionStart"}, str(hooks.keys()))
+          set(hooks.keys()) == {"PreToolUse", "UserPromptSubmit", "SessionStart", "Stop"}, str(hooks.keys()))
     entries = hooks.get("PreToolUse", [])
     check("[codex] exactly two matcher groups", len(entries) == 2, str(entries))
 

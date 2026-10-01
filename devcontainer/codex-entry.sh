@@ -189,7 +189,10 @@ fi
 if [ "$supervise" = 1 ]; then
   [ -x "$bin/codex-supervisor" ] || refuse "codex-supervisor is missing or not executable"
   printf 'codex-led session: guard chain proven, starting supervisor\n'
-  exec "$bin/codex-supervisor" "$@"
+  [ -x "$bin/codex-autonomy" ] || refuse "codex-autonomy is missing or not executable"
+  exec "$bin/codex-autonomy" watch -- "$@"
 fi
 printf 'codex-led session: guard chain proven, starting codex\n'
-exec "$codex_bin" "$@"
+# Native sub-agents off, on the command line so no user or project config can
+# turn them back on (see /etc/codex/config.toml [agents]).
+exec "$codex_bin" -c agents.enabled=false "$@"
