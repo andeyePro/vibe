@@ -19,6 +19,8 @@
 #   vibe --codex-run <file>  # run a project-local prompt under the Codex supervisor
 #   vibe --codex-resume <file> # resume that prompt using its saved supervisor state
 #   vibe --codex-run <file> --new-run  # archive any saved supervisor state first
+#   VIBE_CODEX_REMOTE=1 vibe --agent codex  # let the ChatGPT phone app drive Codex
+#                            # (pairs on launch; put it in ~/.vibe/config to keep it on)
 #   vibe --list              # list available projects
 #   vibe --version           # print the vibe version and exit
 #   vibe --help              # show this help
