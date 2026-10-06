@@ -104,7 +104,7 @@ def substitute(obj, turn_id, thread_id):
 def main():
     argv = sys.argv[1:]
     META.write_text(json.dumps({"argv": argv, "env": dict(os.environ)}))
-    if argv != ["app-server"]:
+    if argv != ["app-server", "-c", "agents.enabled=false"]:
         sys.exit(1)
 
     fixture = json.loads((HERE / "fixture.json").read_text())
@@ -413,8 +413,8 @@ def test_codex_supervisor_handshake_argv_env():
         meta = _stub_meta(stub_dir)
         check("[codex-supervisor] stub meta.json was written (spawned)", meta is not None, "")
         if meta is not None:
-            check("[codex-supervisor] argv is exactly ['app-server']",
-                  meta["argv"] == ["app-server"], str(meta["argv"]))
+            check("[codex-supervisor] argv is exactly app-server plus the native-sub-agents-off override",
+                  meta["argv"] == ["app-server", "-c", "agents.enabled=false"], str(meta["argv"]))
             check("[codex-supervisor] child env is the allowlisted base plus unbound Task&I fingerprint",
                   set(meta["env"].keys()) == {"PATH", "HOME", "CODEX_HOME", "LANG", "VIBE_TASK_BINDING"}
                   and meta["env"].get("VIBE_TASK_BINDING") == "unbound",

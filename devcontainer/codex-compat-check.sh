@@ -15,7 +15,9 @@
 #      unified_exec: "false", or gone upstream as "removed");
 #   3. speaks every app-server method codex-supervisor sends;
 #   4. still knows the hook events and Stop-hook fields vibe's hooks use.
-#   5. keeps every SQLite database under the requirements' sqlite_home pin,
+#   5. keeps native sub-agents off against a user config that asks for them
+#      (the -c override codex-entry and codex-supervisor pass);
+#   6. keeps every SQLite database under the requirements' sqlite_home pin,
 #      even against -c and $CODEX_SQLITE_HOME decoys.
 # A failed build makes the launcher fall back to the last Codex version that
 # passed (vibe: build_base_image). Nothing here touches the network; it only
@@ -76,7 +78,7 @@ done
 CODEX_HOME=$home "$codex" app-server generate-json-schema --out "$home/schema" >/dev/null 2>&1 ||
   fail "codex app-server generate-json-schema failed"
 [ -f "$home/schema/ClientRequest.json" ] || fail "the app-server schema has no ClientRequest.json"
-for method in initialize thread/start thread/resume thread/read turn/start turn/interrupt thread/compact/start account/rateLimits/read; do
+for method in initialize thread/start thread/resume thread/read turn/start turn/interrupt thread/compact/start account/rateLimits/read config/read; do
   grep -qF "\"$method\"" "$home/schema/ClientRequest.json" || fail "the app-server no longer accepts $method (codex-supervisor sends it)"
 done
 ok "app-server methods codex-supervisor uses"
@@ -102,6 +104,42 @@ if printf '%s' "$prompt" | grep -qE 'spawn_agent|wait_agent'; then
   fail "the model is offered native sub-agents (spawn_agent) under the managed policy"
 fi
 ok "no native sub-agents offered to the model"
+
+# The system config's [agents] enabled = false loses to a user or project
+# config, so codex-entry (the TUI) and codex-supervisor (`app-server`) both
+# pass `-c agents.enabled=false`. Prove that override still beats a user
+# config asking for sub-agents, through the app-server's own config/read (no
+# login, no network). The decoy must bite without the override, or the check
+# would pass against a Codex that ignored the user config altogether.
+agents_home=$(mktemp -d) || fail "no temp dir"
+printf '[agents]\nenabled = true\n' >"$agents_home/config.toml"
+agents_enabled() {
+  CODEX_HOME=$agents_home timeout 30 node -e '
+    const { spawn } = require("child_process");
+    const [bin, ...args] = process.argv.slice(1);
+    const c = spawn(bin, ["app-server", ...args], { stdio: ["pipe", "pipe", "ignore"] });
+    let buf = "", done = false;
+    const finish = v => { if (done) return; done = true; console.log(v); c.kill(); };
+    c.stdout.on("data", d => { buf += d; let i;
+      while ((i = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, i); buf = buf.slice(i + 1);
+        let m; try { m = JSON.parse(line); } catch { continue; }
+        if (m.id !== 2) continue;
+        const a = m.result && m.result.config && m.result.config.agents;
+        finish(a && typeof a.enabled === "boolean" ? String(a.enabled) : "unreadable");
+      } });
+    c.on("exit", () => finish("unreadable"));
+    const send = o => c.stdin.write(JSON.stringify(o) + "\n");
+    send({ id: 1, method: "initialize", params: { clientInfo: { name: "vibe-compat-check", version: "0" }, capabilities: {} } });
+    send({ method: "initialized" });
+    send({ id: 2, method: "config/read", params: { cwd: process.cwd() } });' "$codex" "$@" 2>/dev/null
+}
+decoy=$(agents_enabled)
+held=$(agents_enabled -c agents.enabled=false)
+rm -rf "$agents_home"
+[ "$decoy" = "true" ] || fail "an [agents] enabled = true user config read back as '$decoy' from app-server config/read; cannot prove the override beats it"
+[ "$held" = "false" ] || fail "-c agents.enabled=false no longer beats a user config asking for native sub-agents (config/read: $held)"
+ok "-c agents.enabled=false beats a user config asking for native sub-agents"
 
 # Codex's SQLite databases must land on the container-only volume the
 # requirements pin (sqlite_home), never in the Mac's shared ~/.codex, where the

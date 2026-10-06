@@ -598,7 +598,9 @@ class Supervisor {
       ...(this.taskRef ? { VIBE_TASK_REF: this.taskRef } : {}),
       VIBE_TASK_BINDING: this.taskBinding,
     };
-    // argv is exactly ['app-server']: no `-c`, so the image's system
+    // argv is SERVER_ARGS: `app-server` plus the one tightening override,
+    // `-c agents.enabled=false` (native sub-agents off, beating any user or
+    // project config). Nothing else is overridden, so the image's system
     // requirements and managed hooks apply unmodified. The server's working
     // directory is deliberately left alone — the workspace travels in
     // `thread/start.cwd`.

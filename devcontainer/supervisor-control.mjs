@@ -134,8 +134,16 @@ while True:
     time.sleep(0.02)
 `;
 
+// Native sub-agents off on the command line, as codex-entry does for the
+// TUI: /etc/codex/config.toml's [agents] enabled = false is only the system
+// layer, and a user config (the Mac's ~/.codex) or a trusted project's
+// .codex/config.toml outranks it. A `-c` is the top layer, so no config file
+// can turn spawn_agent back on in a supervised run. codex-compat-check proves
+// the override still beats an `enabled = true` user config.
+export const SERVER_ARGS = Object.freeze(['app-server', '-c', 'agents.enabled=false']);
+
 export function spawnOwnedServer(binary, env) {
-  return spawnOwnedProcess(binary, ['app-server'], env);
+  return spawnOwnedProcess(binary, [...SERVER_ARGS], env);
 }
 
 export function spawnOwnedProcess(binary, args, env) {
