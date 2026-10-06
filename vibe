@@ -6607,10 +6607,15 @@ launch_codex() {
       /usr/local/bin/codex-entry --supervise -- run --cwd /workspace --prompt-file "/workspace/$CODEX_PROMPT_REL" \
       ${CODEX_SUPERVISE_EXTRA[@]+"${CODEX_SUPERVISE_EXTRA[@]}"}
   fi
+  # VIBE_CODEX_REMOTE=1 (Mac-side, per launch): run the interactive session
+  # on a vibe-owned app-server with Codex remote control on, so the ChatGPT
+  # phone app can drive it. A fixed literal flag, never the variable's value.
+  local CODEX_REMOTE_FLAG=""
+  [ "${VIBE_CODEX_REMOTE:-0}" != 1 ] || CODEX_REMOTE_FLAG=" --remote-control"
   exec devcontainer exec \
     --workspace-folder "$WORKSPACE" \
     --override-config "$OVERRIDE_CONFIG" \
-    ${TASK_BIND_ENV[@]+"${TASK_BIND_ENV[@]}"} /usr/bin/env -u BASH_ENV -u ENV /bin/bash --noprofile --norc -c "exec /usr/bin/env -u BASH_ENV -u ENV PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/share/npm-global/bin SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 $(build_color_env) CODEX_HOME=/home/node/.codex /usr/local/bin/codex-entry"
+    ${TASK_BIND_ENV[@]+"${TASK_BIND_ENV[@]}"} /usr/bin/env -u BASH_ENV -u ENV /bin/bash --noprofile --norc -c "exec /usr/bin/env -u BASH_ENV -u ENV PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/share/npm-global/bin SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 $(build_color_env) CODEX_HOME=/home/node/.codex /usr/local/bin/codex-entry$CODEX_REMOTE_FLAG"
 }
 
 # VIBE_SESSION_REF — a session-start reference file, used solely for its
@@ -6700,6 +6705,7 @@ launch_codex_plain() {
     echo "  codex-led session: supervised run; checkpoint .vss/codex-supervisor.json"
   else
     echo "  codex-led session: interactive; use --codex-run <prompt-file> for supervised work"
+    [ "${VIBE_CODEX_REMOTE:-0}" != 1 ] || echo "  codex remote control: on (VIBE_CODEX_REMOTE=1); the ChatGPT phone app can drive this session"
   fi
   launch_codex <&9 &
   codex_pid=$!

@@ -1959,3 +1959,16 @@ does not establish live app-server history fidelity or overnight duration.
 - [ ] With a Codex session open in an opted-in project from before this change, launch a second session there: it says the container is due to be recreated for Codex's database volume and joins it (not refused).
 - [ ] In a project WITHOUT the Codex opt-in, `ls /home/node/.codex-sqlite` inside vibe is empty or missing (the volume is not mounted there).
 
+
+### Test 65: Codex phone remote control (2026-10-06)
+
+- [ ] `vibe --rebuild` in a Codex-enabled project: the build log shows `codex-compat-check: ok   -c agents.enabled=false beats a user config asking for native sub-agents` and `codex-compat-check: ok   app-server --remote-control on a unix socket answers remoteControl/status/read`.
+- [ ] Plain `vibe --agent codex` (no `VIBE_CODEX_REMOTE`): starts exactly as before. The "Running without the shared background server" warning still appears; that is expected here.
+- [ ] `VIBE_CODEX_REMOTE=1 vibe --agent codex`: the header says `codex remote control: on`, then `starting codex with remote control`, then `remote control: connected as "<container id>"`. With no phone paired, it asks `Pair one now? [y/N]`. Answer `y`; it prints a code that expires in a few minutes.
+- [ ] In the ChatGPT iPhone app, open Codex, connect a computer, and enter the code: the terminal prints `Paired.` and Codex starts. Send a message from the phone: the Codex session in the terminal shows it and answers. The phone shows the reply.
+- [ ] The Mac's own Codex app is still listed on the phone next to the vibe one (vibe's Codex shares the Mac's `~/.codex/installation_id`).
+- [ ] Ask Codex in the session to `spawn_agent` or start a sub-agent: it has no such tool.
+- [ ] Inside the container (a second `docker exec -it <cid> bash`), run `VIBE_CODEX_REMOTE_SOCKET=$(ls -d /tmp/vibe-codex-remote.*)/app-server.sock codex-remote clients`: the phone is listed. `codex-remote revoke <id>` unpairs it, and the phone loses the session.
+- [ ] Quit Codex: `docker exec <cid> ps -eo args | grep app-server` shows no `--remote-control` server, and `/tmp/vibe-codex-remote.*` is gone. Relaunch with `VIBE_CODEX_REMOTE=1`: a phone paired earlier still works without re-pairing (record what you see; persistence across launches is unverified).
+- [ ] Log out of Codex in the container, or block chatgpt.com, and relaunch with `VIBE_CODEX_REMOTE=1`: the launch says `Remote control is not available this session` and Codex still starts.
+- [ ] `grep -r "<the pairing code>" ~/.codex .vibe/last-launch.log` on the Mac finds nothing.

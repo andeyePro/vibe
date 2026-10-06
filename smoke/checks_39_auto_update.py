@@ -239,7 +239,8 @@ def test_codex_compat_gate_is_wired_and_passes_the_installed_codex():
     import shutil
     if shutil.which("codex") and Path("/etc/codex/requirements.toml").exists():
         cfg = str(REPO / "devcontainer/codex/config.toml")
-        repo_req = {**os.environ, "VIBE_CODEX_REQUIREMENTS": str(REPO / "devcontainer/codex/requirements.toml")}
+        repo_req = {**os.environ, "VIBE_CODEX_REQUIREMENTS": str(REPO / "devcontainer/codex/requirements.toml"),
+                    "VIBE_CODEX_REMOTE_HELPER": str(REPO / "devcontainer/codex-remote.mjs")}
         r = subprocess.run(["bash", str(GATE), "--config", cfg], capture_output=True, text=True, timeout=120,
                            stdin=subprocess.DEVNULL, env=repo_req)
         # The sqlite_home proof needs the REQUIREMENT enforced, i.e. the
@@ -248,7 +249,8 @@ def test_codex_compat_gate_is_wired_and_passes_the_installed_codex():
         check("[update] the installed Codex passes the gate under the repo's policy, or (image predating the "
               "sqlite_home pin) fails only on it",
               (r.returncode == 0 and "is compatible" in r.stdout and "no native sub-agents" in r.stdout
-               and "Codex databases under /home/node/.codex-sqlite" in r.stdout)
+               and "Codex databases under /home/node/.codex-sqlite" in r.stdout
+               and "remote-control on a unix socket answers" in r.stdout)
               or (not installed_pin and "no native sub-agents" in r.stdout
                   and "FAIL Codex databases are not pinned to /home/node/.codex-sqlite" in r.stderr
                   and "decoy-cli" in r.stderr),

@@ -181,6 +181,7 @@ check_owned "$bin/guard-fs.sh"
 # the file that consults THIS gate, so a `node`-writable copy of it could
 # simply not call it.
 check_owned "$bin/codex-entry"
+check_owned "$bin/codex-remote"
 check_owned "$bin/codex-supervisor"
 check_owned "$bin/supervisor-control.mjs"
 check_owned "$bin/codex-rpc.mjs"

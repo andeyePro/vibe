@@ -53,6 +53,7 @@ from smoke.checks_40_delegate_connection import *
 from smoke.checks_41_codex_continuation import *
 from smoke.checks_42_session_safety import *
 from smoke.checks_43_op_diagnostics import *
+from smoke.checks_44_codex_remote import *
 
 def main() -> int:
     test_docker_preflight_is_shared_and_mac_start_preserves_target()
@@ -1107,6 +1108,13 @@ def main() -> int:
     test_auto_resume_stops_on_dead_container()
     test_forwarder_logs_unreachable_upstream()
     test_register_names_the_failing_side()
+    test_codex_remote_frames_round_trip()
+    test_codex_remote_status_clients_revoke()
+    test_codex_remote_pair_prints_code_only_to_stdout()
+    test_codex_entry_remote_control_runs_owned_server()
+    test_codex_entry_remote_control_falls_back_and_refuses()
+    test_codex_entry_pairing_offer_on_a_terminal()
+    test_codex_remote_wiring()
     test_statusline_records_the_weekly_window()
     test_weekly_limit_vetoes_the_watchdog()
     test_relaunch_countdown_waits_out_a_used_up_week()

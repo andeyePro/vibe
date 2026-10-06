@@ -656,9 +656,11 @@ def test_codex_entry_no_dangerously_no_dash_c():
     check("[agent] codex-entry.sh contains no 'dangerously'", "dangerously" not in src, "")
     # The one -c codex-entry may pass TIGHTENS the policy (native sub-agents
     # off, beating a user/project config); any other -c is still refused.
+    # Three spellings of it: the ordinary TUI's, and, with remote control
+    # (2026-10-06), the vibe-owned app-server's and its client TUI's.
     check("[agent] codex-entry.sh's only ' -c ' is the sub-agents-off override",
           src.replace(" -c agents.enabled=false ", " ").count(" -c ") == 0
-          and src.count(" -c agents.enabled=false ") == 1, "")
+          and src.count(" -c agents.enabled=false ") == 3, "")
 
 
 # ═══════════════════════════════════════════════════════════════════════════

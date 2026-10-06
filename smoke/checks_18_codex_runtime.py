@@ -138,6 +138,8 @@ def _codex_liveness_fixture(tmp: Path) -> tuple[Path, Path]:
         ("guard-bash.sh", GUARD_BASH),
         ("guard-fs.sh", GUARD_FS),
         ("codex-entry", CODEX_ENTRY),
+        # 2026-10-06: codex-entry's remote-control helper joined the list.
+        ("codex-remote", REPO / "devcontainer/codex-remote.mjs"),
         ("codex-supervisor", REPO / "devcontainer/codex-supervisor.mjs"),
         ("supervisor-control.mjs", REPO / "devcontainer/supervisor-control.mjs"),
         ("codex-rpc.mjs", REPO / "devcontainer/codex-rpc.mjs"),

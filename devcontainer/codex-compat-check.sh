@@ -18,7 +18,9 @@
 #   5. keeps native sub-agents off against a user config that asks for them
 #      (the -c override codex-entry and codex-supervisor pass);
 #   6. keeps every SQLite database under the requirements' sqlite_home pin,
-#      even against -c and $CODEX_SQLITE_HOME decoys.
+#      even against -c and $CODEX_SQLITE_HOME decoys;
+#   7. still offers what remote control uses: `app-server --remote-control`
+#      on a unix socket, and the TUI's `--remote unix://PATH`.
 # A failed build makes the launcher fall back to the last Codex version that
 # passed (vibe: build_base_image). Nothing here touches the network; it only
 # runs the local binary, apart from `codex doctor`'s endpoint probes in the
@@ -180,6 +182,30 @@ case "$verdict" in
   unreadable) fail "codex doctor --json gave no readable state.paths report (timed out, failed, or changed shape); cannot check the sqlite_home pin" ;;
   "ok "*) ok "all ${verdict#ok } Codex databases under $want (the requirement beats -c and \$CODEX_SQLITE_HOME decoys)" ;;
   *) fail "Codex databases are not pinned to $want: $verdict" ;;
+esac
+
+# Remote control (VIBE_CODEX_REMOTE=1): codex-entry starts
+# `app-server --remote-control … --listen unix://…` and runs the TUI with
+# `--remote unix://…`. `--remote-control` is hidden from `app-server --help`,
+# so start one for real (no login: it reports `errored`, which still proves
+# the flag, the unix listener and the remoteControl/* methods) and ask it
+# through codex-remote. A Codex that renamed any of them fails here, at
+# build time, instead of at someone's launch.
+helper=${VIBE_CODEX_REMOTE_HELPER:-/usr/local/bin/codex-remote}
+[ -x "$helper" ] || fail "$helper is missing; cannot check Codex remote control"
+"$codex" --help 2>/dev/null | grep -qF -- 'unix://PATH' ||
+  fail "codex --help no longer offers --remote unix://PATH (codex-entry's remote-control client)"
+rc_dir=$(mktemp -d) || fail "no temp dir"
+CODEX_HOME=$rc_dir "$codex" app-server --remote-control -c agents.enabled=false --listen "unix://$rc_dir/s.sock" \
+  </dev/null >/dev/null 2>&1 &
+rc_pid=$!
+rc_status=$("$helper" --socket "$rc_dir/s.sock" wait --timeout 30 >/dev/null 2>&1 &&
+  "$helper" --socket "$rc_dir/s.sock" status 2>&1)
+kill "$rc_pid" 2>/dev/null; wait "$rc_pid" 2>/dev/null
+rm -rf "$rc_dir"
+case "$rc_status" in
+  "remote control: "*) ok "app-server --remote-control on a unix socket answers remoteControl/status/read" ;;
+  *) fail "app-server --remote-control did not start or answer on a unix socket: ${rc_status:-no answer}" ;;
 esac
 
 echo "codex-compat-check: Codex $version is compatible with vibe's policy"
