@@ -42,7 +42,7 @@ export function discover(cwd, bin = '/usr/local/bin') {
   }
   const describe = p => ({ path: resolve(root, p), exists: existsSync(resolve(root, p)) });
   const defaults = ['AGENTS.md', 'CLAUDE.md', 'TODO.md', 'docs/spec', '.vss/sessions'];
-  const helpers = ['vibe-delegate', 'codex-supervisor', 'codex-guard-liveness', 'codex-entry', 'mac-build', 'taskandi-client'];
+  const helpers = ['vibe-delegate', 'codex-supervisor', 'codex-autonomy', 'codex-guard-liveness', 'codex-entry', 'mac-build', 'taskandi-client'];
   return {
     root,
     configuration: existsSync(configPath) ? configPath : null,

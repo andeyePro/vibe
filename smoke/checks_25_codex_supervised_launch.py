@@ -37,7 +37,9 @@ def test_codex_supervised_entry_requires_gate():
         entry = bins / "codex-entry"
         entry.write_text(CODEX_ENTRY.read_text())
         entry.chmod(0o755)
-        supervisor = bins / "codex-supervisor"
+        (bins / "codex-supervisor").write_text("#!/bin/sh\nexit 0\n")
+        (bins / "codex-supervisor").chmod(0o755)
+        supervisor = bins / "codex-autonomy"
         supervisor_log = tmp / "supervisor-argv.json"
         supervisor.write_text(f"#!{sys.executable}\nimport json,sys\nopen({str(supervisor_log)!r},'w').write(json.dumps(sys.argv[1:]))\n")
         supervisor.chmod(0o755)
@@ -47,7 +49,7 @@ def test_codex_supervised_entry_requires_gate():
         check("[supervised] failed gate starts neither supervisor nor vendor", r.returncode != 0 and not supervisor_log.exists() and not codex_log.exists(), r.stdout + r.stderr)
         _entry_liveness_stub(bins, True, tmp / "gate.log")
         r = run(argv)
-        check("[supervised] successful gate hands argv to supervisor exactly", r.returncode == 0 and json.loads(supervisor_log.read_text()) == argv[argv.index("--") + 1:] and not codex_log.exists(), r.stdout + r.stderr)
+        check("[supervised] successful gate hands argv to supervisor exactly", r.returncode == 0 and json.loads(supervisor_log.read_text()) == ["watch", "--", *argv[argv.index("--") + 1:]] and not codex_log.exists(), r.stdout + r.stderr)
         supervisor_log.unlink()
         supervisor.chmod(0o644)
         r = run(argv)

@@ -1291,5 +1291,8 @@ def test_skipped_marker_writes_canonical() -> None:
               f"rc={r.returncode} err={r.stderr[:200]}")
         skipped_path = home / ".vibe" / "skipped"
         content = skipped_path.read_text().splitlines() if skipped_path.exists() else []
+        # realpath: on macOS the temp dir lives behind the /var -> /private/var
+        # symlink, and the canonical form the launcher writes (pwd -P) is the
+        # resolved one.
         check("[skipped] file contains canonical (no trailing slash) path",
-              str(proj) in content, str(content))
+              os.path.realpath(proj) in content, str(content))

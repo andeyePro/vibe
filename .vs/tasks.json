@@ -461,5 +461,15 @@
     "mode": "rigorous",
     "last_modified": "2026-09-12T11:52:05.578303+00:00",
     "evidence": "Frozen full smoke suite passed (4782 passing assertion/summary lines), code-check clean across 25 shell files; independent reviews and real separate-repo 4-test development fixture. Rebuilt host acceptance remains open in MANUAL-TESTS Test 57 and docs/codex-readiness.md."
+  },
+  {
+    "id": "task_060",
+    "description": "Codex supervised handoff, completion evidence and owned recovery without Claude regressions",
+    "implementation_status": "complete",
+    "test_status": "pass",
+    "assigned_to": "evaluator",
+    "mode": "rigorous",
+    "last_modified": "2026-09-26",
+    "evidence": "Full smoke exit 0, shellcheck clean, independent spec/diff reviews; direct crash and detached-handoff fixtures. Live Test 61 deferred to rebuilt host."
   }
 ]

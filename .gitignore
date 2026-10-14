@@ -22,6 +22,8 @@ site/.astro/
 .vss/last-plan.md
 .vss/auto-resume
 .vss/heartbeat*
+.vss/stop-guard*
+.vss/awaiting-human*
 .vss/rate-limit*
 .vss/runs/
 .vss/current-codex-run.json
@@ -56,3 +58,6 @@ site/.astro/
 # reason: a committed .vibe/agent would let a PR pick the runtime that leads
 # every container cloning this repo, so the launcher refuses a tracked one.
 .vibe/agent
+
+# Codex runner control/evidence files (session audits remain committed)
+.vss/codex-supervisor*

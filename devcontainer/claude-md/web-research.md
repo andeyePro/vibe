@@ -99,10 +99,6 @@ be retrieved. The purpose is retrieval fallback, not policy bypass.
 
 ## In-Session Application
 
-Apply this rule from the very first turn. It is not conditional on the user
-having mentioned it. It is not conditional on the user being a vibe user,
-a developer, or any particular role. It is a baseline research discipline.
-
 If you find yourself about to write a sentence like:
 - "I can't access that URL"
 - "The firewall blocks external HTTP"
@@ -112,13 +108,3 @@ If you find yourself about to write a sentence like:
 
 Stop. Check whether you have already tried WebSearch on the same topic.
 If you have not, try it now before finishing the sentence.
-
-## Relation to the vibe Firewall
-
-The vibe container firewall allowlists GitHub, npm, Anthropic, and VS Code
-marketplace for direct HTTP. Other domains are blocked for direct WebFetch.
-WebSearch routes via Anthropic's infrastructure and is NOT subject to the
-same outbound block - it works regardless of the target domain.
-
-This means the firewall is NOT a reason to give up on research. It is a
-reason to prefer WebSearch as your fallback channel.

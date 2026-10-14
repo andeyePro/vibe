@@ -51,8 +51,19 @@ healthz_url="${scheme}://${host}:${PORT}/healthz"
 # Reachability gate: probe /healthz through the forwarder with the bare Host
 # header. A miss is non-fatal (forwarder not up, creds stale, NAS down) — warn
 # and leave the MCP unregistered rather than wiring a broken endpoint.
-if ! curl -fsS --max-time 6 -H "Host: ${host}" "$healthz_url" >/dev/null 2>&1; then
-  echo "register-op-mcp: OP MCP not reachable at ${host}:${PORT} (forwarder down?)"
+probe_rc=0
+curl -fsS --max-time 6 -H "Host: ${host}" "$healthz_url" >/dev/null 2>&1 || probe_rc=$?
+if [ "$probe_rc" -ne 0 ]; then
+  # curl 7 = nothing accepted the connection (forwarder not running, or the
+  # firewall); 35/52/56 = the forwarder accepted and then dropped it, which is
+  # what it does when it cannot reach OpenProject over the tailnet.
+  case "$probe_rc" in
+    7)        why="nothing answered on the Mac side - forwarder down?" ;;
+    35|52|56) why="the Mac forwarder answered but could not reach OpenProject - Tailscale down on the Mac?" ;;
+    28)       why="timed out" ;;
+    *)        why="curl exit $probe_rc" ;;
+  esac
+  echo "register-op-mcp: OP MCP not reachable at ${host}:${PORT} (${why})"
   echo "                 — leaving /op unregistered this session."
   echo "                 Fix: check ~/.vibe/op-mcp-forwarder.log on the Mac, then relaunch"
   echo "                 vibe — registration only runs at container start, never mid-session."

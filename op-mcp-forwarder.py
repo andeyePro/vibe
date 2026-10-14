@@ -24,6 +24,28 @@ Usage: op-mcp-forwarder.py <listen_port> <target_host> <target_port>
 import socket
 import sys
 import threading
+import time
+
+# Upstream failures used to be silent: the forwarder closed the client and the
+# container only saw "forwarder down?" while the log showed a healthy listener
+# (2026-09-30, after a Mac reboot). Log them, at most once a minute.
+_FAIL_LOG_INTERVAL = 60.0
+_last_fail_log = 0.0
+_fail_lock = threading.Lock()
+
+
+def _log_upstream_failure(target: tuple, err: OSError) -> None:
+    global _last_fail_log
+    with _fail_lock:
+        now = time.monotonic()
+        if _last_fail_log and now - _last_fail_log < _FAIL_LOG_INTERVAL:
+            return
+        _last_fail_log = now
+    sys.stderr.write(
+        "op-mcp-forwarder: %s cannot reach %s:%d (%s) - is Tailscale connected on this Mac?\n"
+        % (time.strftime("%Y-%m-%dT%H:%M:%S"), target[0], target[1], err)
+    )
+    sys.stderr.flush()
 
 
 def _pipe(src: socket.socket, dst: socket.socket) -> None:
@@ -46,7 +68,8 @@ def _pipe(src: socket.socket, dst: socket.socket) -> None:
 def _handle(client: socket.socket, target: tuple) -> None:
     try:
         upstream = socket.create_connection(target, timeout=10)
-    except OSError:
+    except OSError as err:
+        _log_upstream_failure(target, err)
         client.close()
         return
     threading.Thread(target=_pipe, args=(client, upstream), daemon=True).start()

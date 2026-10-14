@@ -17,12 +17,12 @@ export function canonicalPath(path, create = false) {
   return result;
 }
 
-export function readRegular(path) {
+export function readRegular(path, encoding = 'utf8') {
   const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const st = fstatSync(fd);
     if (!st.isFile() || st.nlink !== 1 || st.size > 16 * 1024 * 1024) throw new Error('unsafe control file');
-    return readFileSync(fd, 'utf8');
+    return readFileSync(fd, encoding);
   } finally { closeSync(fd); }
 }
 
@@ -38,9 +38,8 @@ export function atomicWrite(path, value) {
   } finally { try { unlinkSync(tmp); } catch {} }
 }
 
-export function acquire(path) {
+export function acquire(path, token = randomUUID()) {
   const lock = `${path}.lock`;
-  const token = randomUUID();
   let fd;
   try { fd = openSync(lock, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600); }
   catch { throw new Error(`Ownership lock exists or is unsafe: ${lock}. No stale lock is stolen. Confirm the previous owner and its children have ended, then explicitly remove this lock and its token-specific stop file before resuming.`); }
@@ -105,7 +104,7 @@ if root == 0:
     signal.signal(signal.SIGTERM, signal.SIG_DFL)
     signal.signal(signal.SIGINT, signal.SIG_DFL)
     try:
-        os.execvpe(sys.argv[1], [sys.argv[1], 'app-server'], os.environ)
+        os.execvpe(sys.argv[1], sys.argv[1:], os.environ)
     except Exception as error:
         print(str(error), file=sys.stderr)
         os._exit(127)
@@ -135,9 +134,21 @@ while True:
     time.sleep(0.02)
 `;
 
+// Native sub-agents off on the command line, as codex-entry does for the
+// TUI: /etc/codex/config.toml's [agents] enabled = false is only the system
+// layer, and a user config (the Mac's ~/.codex) or a trusted project's
+// .codex/config.toml outranks it. A `-c` is the top layer, so no config file
+// can turn spawn_agent back on in a supervised run. codex-compat-check proves
+// the override still beats an `enabled = true` user config.
+export const SERVER_ARGS = Object.freeze(['app-server', '-c', 'agents.enabled=false']);
+
 export function spawnOwnedServer(binary, env) {
+  return spawnOwnedProcess(binary, [...SERVER_ARGS], env);
+}
+
+export function spawnOwnedProcess(binary, args, env) {
   if (process.platform !== 'linux') throw new Error('Owned process-tree cleanup requires Linux');
-  const child = spawn('/usr/bin/python3', ['-I', '-c', REAPER, binary], {
+  const child = spawn('/usr/bin/python3', ['-I', '-c', REAPER, binary, ...args], {
     env, stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
   });
   child.treeEmpty = false;

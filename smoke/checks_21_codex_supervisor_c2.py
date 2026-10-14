@@ -775,7 +775,7 @@ def read_line():
 def main():
     argv = sys.argv[1:]
     META.write_text(json.dumps({"argv": argv, "env": dict(os.environ)}))
-    if argv != ["app-server"]:
+    if argv != ["app-server", "-c", "agents.enabled=false"]:
         sys.exit(1)
 
     hang_on = (HERE / "hang_on.txt").read_text().strip()

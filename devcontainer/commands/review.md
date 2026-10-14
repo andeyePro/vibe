@@ -10,11 +10,9 @@ Without available outside slots, /review is Claude-only.
 
 Usage: `/review [--solo] [--level low|medium|high|max] [--slot <name>] [--comment] [<target>]`
 
-Default: `high`, the working diff; alternatively a PR, branch, or path.
+Default: `high`, the working diff; if clean, the branch's merge-base diff against the default branch (say so). Only both empty means nothing to review.
 
 ## What it does
-
-Resolve the shared diff snapshot before dispatching either leg.
 
 1. Run `Skill(skill: "code-review", args: "<level> [<target>]")` — Claude's own review, always.
 2. Unless `--solo`, read `node /usr/local/bin/vibe-delegate slots` from the repo root and
@@ -29,7 +27,7 @@ Resolve the shared diff snapshot before dispatching either leg.
 - `--slot <name>` on a slot that is not enabled → refuse with one line naming what it needs.
 - `--comment` is the only way findings reach GitHub: never posts to GitHub unless --comment is passed.
 - --comment is GitHub-outward like push: /vss and /vsss treat it as hard-escalate, never auto-fired.
-- `<target>` — PR number, branch, or path. Default: the working diff.
+- `<target>` — PR number, branch, or path. Default: see above.
 
 With no available outside slots the default fan-out is identical to --solo.
 `--solo --slot` is contradictory: refuse it. Disabled means disabled even with `--slot`.

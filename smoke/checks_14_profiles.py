@@ -641,8 +641,8 @@ def test_profiles_ac12_docs() -> None:
               "VIBE_PROFILE" in readme_text, "")
         check("[profiles] AC12: README mentions '~/.vibe/profiles/'",
               "~/.vibe/profiles/" in readme_text, "")
-        check("[profiles] AC12: README mentions node 20 / Node 20",
-              "node 20" in readme_text or "Node 20" in readme_text, "")
+        check("[profiles] AC12: README mentions node 22 / Node 22",
+              "node 22" in readme_text or "Node 22" in readme_text, "")
     else:
         check("[profiles] AC12: README.md exists", False, str(README_MD))
 

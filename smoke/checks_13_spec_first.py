@@ -632,6 +632,11 @@ def test_review_command_docs() -> None:
         check("[review] AC5: default fan-out matches solo with no available slots",
               "With no available outside slots the default fan-out is identical to --solo." in review_text, "")
 
+        # Martin's T37 report (2026-09-12): /review on a clean tree said
+        # "nothing to review" instead of reviewing the branch.
+        check("[review] clean working tree falls back to the branch's merge-base diff",
+              "if clean, the branch's merge-base diff against the default branch" in review_text, "")
+
         check("[review] AC5: comment is hard-escalate",
               "--comment is GitHub-outward like push: /vss and /vsss treat it as hard-escalate, never auto-fired." in review_text, "")
 
@@ -1113,3 +1118,30 @@ def test_no_silent_skip_conditionals_in_checks_13_and_17():
         check(f"[hygiene] {path.name}: no unguarded silent-skip conditionals",
               not violations,
               f"{path.name}: {violations}")
+
+
+def test_vs_tester_must_show_a_control_can_fail():
+    """2026-09-08: four fail-open test designs (vacuous sweeps, self-matching
+    alternations, an A/B that could not fire, a sticky-routing premise nobody
+    checked) each REPORTED SUCCESS while measuring nothing. The Tester brief
+    now requires the absent-mechanism result, a positive control, and marked
+    unverified assumptions."""
+    print("\n[vs] Tester brief: a control that cannot be observed failing is not a control")
+    vs = (REPO / "devcontainer" / "commands" / "vs.md").read_text()
+    step5a = vs[vs.index("### Step 5a"):vs.index("### Step 5b")]
+    check("[vs] Step 5a names the rule", "A control that cannot be observed failing is not a control" in step5a, "")
+    check("[vs] ... absent-mechanism result must not be a pass", "entirely absent (never a pass)" in step5a, "")
+    check("[vs] ... positive control required", "positive control" in step5a, "")
+    check("[vs] ... unverified assumptions marked", "assumption not checked against an artefact" in step5a, "")
+
+
+def test_vs_model_economy_carries_the_cache_rules():
+    """2026-09-08 measurements: each fresh reviewer call re-writes ~30k cache
+    tokens, so batching and panel size are cost decisions."""
+    print("\n[vs] Model economy: prompt-cache rules")
+    vs = (REPO / "devcontainer" / "commands" / "vs.md").read_text()
+    econ = vs[vs.index("## Model economy"):vs.index("## Flags")]
+    check("[vs] cache rules live under Model economy", "### Prompt-cache rules" in econ, "")
+    for token in ("~30k", "Batch per diff, not per file", "≥3 same-model reviewers", "stagger panellists",
+                  ".vs/review-focus.md"):
+        check(f"[vs] cache rules mention {token!r}", token in econ, "")

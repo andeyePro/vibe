@@ -70,6 +70,8 @@ brew install --cask orbstack
 
 Then open OrbStack once from Applications so it finishes its setup. (Docker Desktop also works if the user already has it; don't install both.)
 
+If the user already has **Docker Desktop** rather than OrbStack, walk them through one setting before going further: **Docker Desktop > Settings > Resources > Advanced > "Disk usage limit"**. It ships set to the whole drive, which means Docker can quietly grow until the Mac is full — and a disk that fills while Docker is mid-write can corrupt Docker's own storage, which is only fixable by deleting everything Docker holds. Ask them to set it to **100 GiB** and click Apply & restart. OrbStack sizes its disk on demand and needs nothing here.
+
 Check: `docker --version` prints a version.
 
 ### 3L. Install the container runtime – Docker Engine — **Linux only**
@@ -154,6 +156,14 @@ Check: they see the Claude Code prompt. Have them type a small request and watch
 - Exit a session: type `/exit` (or ⌃-C twice).
 - Come back to a project: `cd` there and run `vibe` again – it's fast after the first build.
 - Update vibe later: re-run the installer one-liner from step 6, or `git -C ~/.vibe-src pull`.
+
+### 9. Optional, Mac only: give the agents eyes
+
+A vibe container has no browser and can't open the apps it builds, so an agent can write a web page or a Mac app but never *see* it. A separate, ordinary Mac user account for the agents fixes that: agents SSH into it to render pages, run the Simulator, take screenshots and look at them. Your own account and files stay out of reach.
+
+Inside any vibe session, ask: "Show me `vibe-capabilities --setup mac-account` and walk me through it." Stay with the user for the three steps only they can do: create the account, turn on Remote Login for it, and add two lines to their Mac's `~/.ssh/config`. Those two lines are what tell *every* vibe on the Mac the account exists, so this is a one-time job per Mac, not per project.
+
+Check: in a new session, `vibe-capabilities` lists the Mac account first, with port 22 open, and `vibe-shot --check` says which of web pages, the iOS Simulator and the account's screen are ready. Each line that isn't ready gives its fix. From then on, agents are told to use it before ever saying "I can't see that".
 
 ### Second session onward
 
