@@ -222,7 +222,9 @@ export function resolveModel(cls, { env = process.env, policy = { pins: {} }, ca
 }
 
 // Throws unless `cls` is within the lead's tier or currently authorised.
-export function checkCeiling(cls, lead, { env = process.env, policy = { grants: {} }, consent = false } = {}) {
+// `consentFlag` is false for callers with no per-call consent flag (the
+// Agent hook), so the refusal only offers what that caller can do.
+export function checkCeiling(cls, lead, { env = process.env, policy = { grants: {} }, consent = false, consentFlag = true } = {}) {
   const leadClass = classOf(lead);
   if (!leadClass) {
     throw new PolicyError(lead
@@ -234,7 +236,7 @@ export function checkCeiling(cls, lead, { env = process.env, policy = { grants: 
   const grant = policy.grants?.[cls];
   if (grant && Number(grant.until) > nowSeconds(env)) return { leadClass, authorisedBy: 'grant' };
   throw new PolicyError(`${cls} costs more per token than the lead (${lead}, class ${leadClass}); ` +
-    `ask the user for explicit permission first, then pass --consent-model on this call or run \`vibe-models grant ${cls} --for <duration>\``, 'ceiling');
+    `ask the user for explicit permission first, then ${consentFlag ? 'pass --consent-model on this call or ' : ''}run \`vibe-models grant ${cls} --for <duration>\``, 'ceiling');
 }
 
 // --- CLI ----------------------------------------------------------------
@@ -283,7 +285,7 @@ function hook() {
     const cwd = typeof input.cwd === 'string' && isAbsolute(input.cwd) ? input.cwd : process.cwd();
     const policy = readPolicy(policyPath(cwd));
     const lead = detectLead(process.env, { transcriptPath: input.transcript_path });
-    checkCeiling(cls, lead, { policy });
+    checkCeiling(cls, lead, { policy, consentFlag: false });
     const pinned = policy.pins?.[cls];
     if (pinned) {
       const want = resolveModel(cls, { policy });
@@ -343,6 +345,10 @@ function main(argv) {
     case 'confirm':
       needClass();
       if (!policy.pins[cls]) throw new PolicyError(`no older-model instruction is recorded for ${cls}`);
+      if (Number(policy.pins[cls].until) <= now) {
+        throw new PolicyError(`the older-model instruction for ${cls} (${policy.pins[cls].model}) has expired, so ${cls} already uses its newest model; ` +
+          `if the user wants the older model again, ask how long and run \`vibe-models pin ${cls} <model-id> --for <duration>\``);
+      }
       policy.pins[cls].confirmed = now;
       break;
     case 'unpin': needClass(); delete policy.pins[cls]; break;

@@ -147,6 +147,9 @@ def test_model_policy_older_model_pins():
         r, calls = _delegate_call(ws, home, {**env, "VIBE_MODELS_NOW": str(_T0 + 49 * _HOUR)}, args, _ROLE_DONE)
         check("[model-policy] an expired pin falls back to the newest model",
               r.returncode == 0 and calls[-1]["args"][2] == "gpt-6.1-sol", r.stderr)
+        r = _models(["confirm", "sol"], {**env, "VIBE_MODELS_NOW": str(_T0 + 49 * _HOUR)}, ws)
+        check("[model-policy] confirming an expired pin says it expired instead of recording",
+              r.returncode != 0 and "expired" in r.stderr and "recorded" not in r.stdout, r.stdout + r.stderr)
         (ws / ".vibe/model-policy.json").write_text(json.dumps({"pins": {"sol": {"model": "gpt-6-sol", "until": _T0 + 99 * _HOUR}}, "grants": {}}))
         r, calls = _delegate_call(ws, home, {**env, "VIBE_MODELS_NOW": str(_T0)}, args, _ROLE_DONE)
         check("[model-policy] a pin with no confirmation time is due for reconfirmation, not standing for ever",
@@ -171,6 +174,8 @@ def test_model_policy_claude_agent_hook():
 
         r, d = hook("fable")
         check("[model-policy] hook: Fable under an Opus lead is denied", d == "deny" and r.returncode == 0, r.stdout)
+        check("[model-policy] hook: the denial offers a grant, not a --consent-model flag Agent calls can't pass",
+              "vibe-models grant fable" in r.stdout and "--consent-model" not in r.stdout, r.stdout)
         check("[model-policy] hook: no model (inherits the lead) is allowed", hook(None)[1] == "allow", "")
         check("[model-policy] hook: sonnet is allowed", hook("sonnet")[1] == "allow", "")
         check("[model-policy] hook: opus (same tier) is allowed", hook("opus")[1] == "allow", "")

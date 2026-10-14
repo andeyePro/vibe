@@ -230,6 +230,7 @@ USER root
 # Lock the shared ancestor too: a root-owned leaf below a writable parent is
 # still renameable. Vendor updates are installed by rebuilding the image.
 RUN chown -R root:root /usr/local/share/npm-global /usr/local/share/vibe && \
+  chmod -R a+rX /usr/local/share/vibe && \
   chmod -R go-w /usr/local/share/npm-global /usr/local/share/vibe && \
   chown root:root /usr/local/share && chmod go-w /usr/local/share
 # The bare `taskandi-client` name is a symlink to the .mjs beside it. It is
