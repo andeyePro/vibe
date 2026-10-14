@@ -364,7 +364,8 @@ def test_agent_codex_argv_granted():
                 "exec /usr/bin/env -u BASH_ENV -u ENV PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/share/npm-global/bin "
                 "SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 "
                 "TERM=xterm-256color COLORTERM=truecolor CODEX_HOME=/home/node/.codex "
-                "/usr/local/bin/codex-entry",
+                # Remote control is on by default since 2026-10-14 (VIBE_REMOTE=0 drops it).
+                "/usr/local/bin/codex-entry --remote-control",
             ]
             check("[agent] granted --agent codex: devcontainer exec argv equals AC3 exactly",
                   calls[0] == expected, str(calls[0]))
@@ -506,7 +507,9 @@ def test_launch_claude_unchanged_vs_head():
         '    --override-config "$OVERRIDE_CONFIG" \\\n'
         '    /bin/bash --noprofile --norc -c "exec env SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 '
         '$(build_color_env) claude '
-        '${1:+$1 }${CLAUDE_MODEL_ARGS:+$CLAUDE_MODEL_ARGS }--permission-mode bypassPermissions${2:+ \'$2\'}"\n'
+        # 2026-10-14: remote control on by default, a fixed literal before --permission-mode.
+        '${1:+$1 }${CLAUDE_MODEL_ARGS:+$CLAUDE_MODEL_ARGS }${CLAUDE_REMOTE_ARGS:+$CLAUDE_REMOTE_ARGS }'
+        '--permission-mode bypassPermissions${2:+ \'$2\'}"\n'
         '}'
     )
     without_binding = lambda value: value.replace('${TASK_BIND_ENV[@]+"${TASK_BIND_ENV[@]}"} ', '')

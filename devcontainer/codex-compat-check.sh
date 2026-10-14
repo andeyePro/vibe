@@ -184,7 +184,7 @@ case "$verdict" in
   *) fail "Codex databases are not pinned to $want: $verdict" ;;
 esac
 
-# Remote control (VIBE_CODEX_REMOTE=1): codex-entry starts
+# Remote control (on by default since 2026-10-14): codex-entry starts
 # `app-server --remote-control … --listen unix://…` and runs the TUI with
 # `--remote unix://…`. `--remote-control` is hidden from `app-server --help`,
 # so start one for real (no login: it reports `errored`, which still proves

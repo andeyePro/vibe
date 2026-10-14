@@ -287,6 +287,9 @@ def _supervisor_fixture(tmp: Path):
     home.mkdir()
     codex_home = home / ".codex"
     codex_home.mkdir()
+    # The user's Codex default model: what a run leads on when no --model is
+    # passed and no model is recorded (2026-10-14 routing policy).
+    (codex_home / "config.toml").write_text('model = "gpt-6.1-sol"\n')
     workspace = tmp / "ws"
     workspace.mkdir()
     r = run(["git", "init", "-q"], cwd=workspace)

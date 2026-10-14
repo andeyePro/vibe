@@ -131,7 +131,8 @@ def test_codex_context_docker_installs_delegate():
 
 def test_codex_context_openai_roles_route_usage_and_policy():
     print("\n[codex-context] OpenAI role IDs, usage, refusal, and codex=off")
-    expected = {"astra": "gpt-6-astra", "terra": "gpt-5.6-terra", "sol": "gpt-5.6-sol", "luna": "gpt-5.6-luna"}
+    # Latest listed model per class from the fixture catalog, never a fixed table.
+    expected = {"astra": "gpt-6-astra", "terra": "gpt-5.6-terra", "sol": "gpt-6.1-sol", "luna": "gpt-6-luna"}
     with tempfile.TemporaryDirectory() as td:
         root, home, env = _delegate_fixture(Path(td))
         for role, model_id in expected.items():

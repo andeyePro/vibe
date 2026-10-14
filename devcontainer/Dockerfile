@@ -141,6 +141,10 @@ COPY register-op-mcp.sh /usr/local/bin/
 COPY credential-helper.sh /usr/local/bin/vibe-credential-helper
 COPY vibe-copy.sh /usr/local/bin/vibe-copy
 COPY vibe-delegate.mjs /usr/local/bin/vibe-delegate
+# Model routing policy (2026-10-14): latest-in-class, lead cost ceiling,
+# older-model pins. A library for vibe-delegate/codex-autonomy (imported by
+# its .mjs name beside them) and the `vibe-models` CLI/hook via the symlink.
+COPY --chown=root:root vibe-models.mjs /usr/local/bin/vibe-models.mjs
 COPY --chown=root:root codex-context.mjs /usr/local/bin/codex-context
 COPY --chown=root:root codex/context.md /usr/local/share/vibe/codex-context.md
 COPY --chown=root:root host-onboarding.py /usr/local/share/vibe/host-onboarding.py
@@ -244,7 +248,8 @@ RUN ln -sf taskandi-client.mjs /usr/local/bin/taskandi-client
 # to a root script whose whole job is widening the firewall. The script body
 # also never reads its own argv, so this is belt and braces — but the rule is
 # what makes it true for every future version of the script.
-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/refresh-extra-domains.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/guard-bash.sh /usr/local/bin/guard-fs.sh /usr/local/bin/install-claude-extras.sh /usr/local/bin/check-sp-current.sh /usr/local/bin/register-op-mcp.sh /usr/local/bin/vibe-credential-helper /usr/local/bin/vibe-copy /usr/local/bin/vibe-delegate /usr/local/bin/codex-context /usr/local/bin/codex-guard-adapter /usr/local/bin/codex-guard-liveness /usr/local/bin/codex-supervisor /usr/local/bin/codex-autonomy /usr/local/bin/codex-stop-guard /usr/local/bin/mac-build /usr/local/bin/taskandi-client /usr/local/bin/codex-panel /usr/local/bin/codex-entry /usr/local/bin/codex-remote /usr/local/bin/codex-prompt-prefix /usr/local/bin/vsss-stop-guard /usr/local/bin/vibe-capabilities /usr/local/bin/vibe-shot /usr/local/bin/vibe-agent && \
+RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/refresh-extra-domains.sh /usr/local/bin/setup-ssh.sh /usr/local/bin/setup-git.sh /usr/local/bin/write-env-hint.sh /usr/local/bin/guard-bash.sh /usr/local/bin/guard-fs.sh /usr/local/bin/install-claude-extras.sh /usr/local/bin/check-sp-current.sh /usr/local/bin/register-op-mcp.sh /usr/local/bin/vibe-credential-helper /usr/local/bin/vibe-copy /usr/local/bin/vibe-delegate /usr/local/bin/codex-context /usr/local/bin/codex-guard-adapter /usr/local/bin/codex-guard-liveness /usr/local/bin/codex-supervisor /usr/local/bin/codex-autonomy /usr/local/bin/codex-stop-guard /usr/local/bin/mac-build /usr/local/bin/taskandi-client /usr/local/bin/codex-panel /usr/local/bin/codex-entry /usr/local/bin/codex-remote /usr/local/bin/codex-prompt-prefix /usr/local/bin/vsss-stop-guard /usr/local/bin/vibe-capabilities /usr/local/bin/vibe-shot /usr/local/bin/vibe-agent /usr/local/bin/vibe-models.mjs && \
+  ln -sf vibe-models.mjs /usr/local/bin/vibe-models && \
   chmod 0755 /etc/codex /etc/codex/hooks && \
   chmod 0644 /etc/codex/requirements.toml /etc/codex/config.toml /etc/codex/hooks/hooks.json && \
   chmod 0755 /etc/codex/skills /etc/codex/skills/vs /etc/codex/skills/vss /etc/codex/skills/vsss && \

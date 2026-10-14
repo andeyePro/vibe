@@ -378,6 +378,19 @@ export function parseArgs(argv) {
   return options;
 }
 
+// The user's default Codex model: top-level `model = "<id>"` in config.toml.
+// A deliberately narrow reader (one key, top-level only, before any table).
+export function codexDefaultModel(codexHome) {
+  let text;
+  try { text = readFileSync(join(codexHome, 'config.toml'), 'utf8'); } catch { return null; }
+  for (const line of text.split('\n')) {
+    if (/^\s*\[/.test(line)) break;
+    const m = /^\s*model\s*=\s*"([A-Za-z0-9._-]+)"\s*(?:#.*)?$/.exec(line);
+    if (m) return m[1];
+  }
+  return null;
+}
+
 function freshState(threadId, cwd, promptHash, startedAt) {
   return {
     threadId,
@@ -703,6 +716,8 @@ class Supervisor {
       state[key] = Number.isFinite(Number(previous[key])) ? Number(previous[key]) : 0;
     }
     state.unresolvedTurn = previous.unresolvedTurn ?? null;
+    if (previous.model !== undefined && previous.model !== null && (typeof previous.model !== 'string' || !previous.model.trim())) throw usageError('invalid persisted model');
+    state.model = previous.model ?? null;
     if (needsTurnReconciliation(previous) && !state.unresolvedTurn) throw failError('legacy unresolved turn needs explicit reconciliation');
     state.completion = previous.completion ?? null;
     state.completionRejection = previous.completionRejection ?? null;
@@ -748,7 +763,7 @@ class Supervisor {
       sandbox: 'danger-full-access',
       ephemeral: false,
     };
-    if (this.options.model) params.model = this.options.model;
+    params.model = this.model;
     if (this.state.completion) params.developerInstructions = `This is the owned supervised vsss worker. Do not hand off or start a nested runner. Read /usr/local/share/vibe/codex-vsss.md. State path: ${this.statePath}. Use codex-autonomy context --state ${this.statePath} --cwd ${this.options.cwd}; add supervisor_state=${this.statePath} to your owned auto-resume marker.`;
     this.state.recoveryReason = 'thread-start-unconfirmed';
     this.persist();
@@ -777,8 +792,15 @@ class Supervisor {
     this.checkGates(state);
     this.state.resumes += 1;
     this.persist();
-    const result = await this.boundedRequest('thread/resume', { threadId: state.threadId });
+    // Model routing (2026-10-14): a resumed thread otherwise keeps the model
+    // it was STARTED on. On 2026-10-13 that silently ran a night's work on an
+    // old Astra thread while the user had GPT-6.1-Sol selected. Every resume
+    // and every turn names the run's model explicitly.
+    const result = await this.boundedRequest('thread/resume', { threadId: state.threadId, model: this.model });
     if (result?.thread?.id !== state.threadId) throw failError('thread/resume returned a mismatched thread');
+    if (typeof result?.model === 'string' && result.model !== this.model) {
+      throw failError(`thread/resume is running ${result.model}, not the run's model ${this.model}; refusing to continue on the wrong model`);
+    }
     this.log(`thread/resume → ${state.threadId} (resume ${this.state.resumes})`);
   }
 
@@ -990,6 +1012,7 @@ class Supervisor {
     const result = await this.boundedRequest('turn/start', {
       threadId: this.state.threadId,
       input: [{ type: 'text', text }],
+      model: this.model,
     });
     const turnId = typeof result?.turn?.id === 'string' ? result.turn.id : null;
     if (!turnId) throw failError('turn/start returned no turn id; resume requires reconciliation');
@@ -1273,8 +1296,15 @@ class Supervisor {
       process.stdout.write(`already complete: ${resumed.exitReason}\n`);
       return EXIT_OK;
     }
+    // The run's model: --model (codex-autonomy passes the handing-off
+    // conversation's own model), else the model this run already recorded,
+    // else the user's Codex default (config.toml `model`, what the picker
+    // shows). Never the model a resumed thread happened to start on.
+    this.model = options.model || resumed?.model || codexDefaultModel(this.codexHome);
+    if (!this.model) throw usageError('no model for this run: pass --model <id> or set a top-level `model` in Codex\'s config.toml');
     if (resumed) {
       this.state = resumed;
+      this.state.model = this.model;
       this.state.taskRef = this.taskRef;
       this.state.taskBinding = this.taskBinding;
       this.ensureCompletionPolicy(policy);
@@ -1293,6 +1323,7 @@ class Supervisor {
 
     if (!this.state) {
       this.state = freshState(null, options.cwd, promptHash, this.startedAtAnchor);
+      this.state.model = this.model;
       this.state.taskRef = this.taskRef;
       this.state.taskBinding = this.taskBinding;
       this.state.recoveryReason = 'thread-start-unconfirmed';

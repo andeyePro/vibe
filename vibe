@@ -19,8 +19,9 @@
 #   vibe --codex-run <file>  # run a project-local prompt under the Codex supervisor
 #   vibe --codex-resume <file> # resume that prompt using its saved supervisor state
 #   vibe --codex-run <file> --new-run  # archive any saved supervisor state first
-#   VIBE_CODEX_REMOTE=1 vibe --agent codex  # let the ChatGPT phone app drive Codex
-#                            # (pairs on launch; put it in ~/.vibe/config to keep it on)
+#   VIBE_REMOTE=0 vibe       # launch WITHOUT phone/web remote control (on by default:
+#                            # Claude via claude.ai/code + the Claude app, Codex via the
+#                            # ChatGPT app; VIBE_REMOTE=0 in ~/.vibe/config keeps it off)
 #   vibe --list              # list available projects
 #   vibe --version           # print the vibe version and exit
 #   vibe --help              # show this help
@@ -803,6 +804,27 @@ build_claude_model_args() {
   if [ -n "${MODEL_ARG:-}" ]; then
     echo "--model $MODEL_ARG"
   fi
+}
+
+# remote_control_on — phone/web remote control is ON by default for every
+# interactive launch, Claude or Codex (Martin, 2026-10-14: "remote control
+# with both with just the standard vibe prompts"). VIBE_REMOTE=0 (or off/no/
+# false) turns it off for both; the older VIBE_CODEX_REMOTE=0 still turns off
+# Codex's alone. Supervised runs never take it (codex-entry refuses).
+remote_control_on() {
+  case "${VIBE_REMOTE:-1}" in 0|off|no|false) return 1 ;; esac
+  return 0
+}
+codex_remote_on() {
+  remote_control_on || return 1
+  case "${VIBE_CODEX_REMOTE:-1}" in 0|off|no|false) return 1 ;; esac
+  return 0
+}
+
+# build_claude_remote_args echoes "--remote-control" or "". A fixed literal,
+# never a config value, so embedding it in the container command is safe.
+build_claude_remote_args() {
+  if remote_control_on; then echo "--remote-control"; fi
 }
 
 # build_color_env echoes the terminal-colour env that every in-container
@@ -6018,6 +6040,12 @@ cat > "$WORKSPACE/.claude/settings.local.json" << 'EOF'
         ]
       },
       {
+        "matcher": "Agent|Task",
+        "hooks": [
+          { "type": "command", "command": "[ -x /usr/local/bin/vibe-models ] && /usr/local/bin/vibe-models hook || true" }
+        ]
+      },
+      {
         "matcher": "",
         "hooks": [
           { "type": "command", "command": "[ -f /workspace/.vss/auto-resume ] && { date +%s > /workspace/.vss/heartbeat.tmp.$$ && mv /workspace/.vss/heartbeat.tmp.$$ /workspace/.vss/heartbeat; } || true" }
@@ -6556,6 +6584,7 @@ fi
 # to [A-Za-z0-9._-] by is_model_id, so embedding it is injection-safe.
 CLAUDE_RESUME_ARGS=$(build_claude_resume_args)
 CLAUDE_MODEL_ARGS=$(build_claude_model_args)
+CLAUDE_REMOTE_ARGS=$(build_claude_remote_args)
 
 # launch_claude <resume-args> <initial-prompt>
 #   $1 — "" / "--continue" / "--resume" / "--resume <uuid>" (parser-validated)
@@ -6571,7 +6600,7 @@ launch_claude() {
   exec devcontainer exec \
     --workspace-folder "$WORKSPACE" \
     --override-config "$OVERRIDE_CONFIG" \
-    ${TASK_BIND_ENV[@]+"${TASK_BIND_ENV[@]}"} /bin/bash --noprofile --norc -c "exec env SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 $(build_color_env) claude ${1:+$1 }${CLAUDE_MODEL_ARGS:+$CLAUDE_MODEL_ARGS }--permission-mode bypassPermissions${2:+ '$2'}"
+    ${TASK_BIND_ENV[@]+"${TASK_BIND_ENV[@]}"} /bin/bash --noprofile --norc -c "exec env SHELL=/bin/bash LC_ALL=C.UTF-8 LANG=C.UTF-8 $(build_color_env) claude ${1:+$1 }${CLAUDE_MODEL_ARGS:+$CLAUDE_MODEL_ARGS }${CLAUDE_REMOTE_ARGS:+$CLAUDE_REMOTE_ARGS }--permission-mode bypassPermissions${2:+ '$2'}"
 }
 
 # launch_codex — the Codex-led sibling of launch_claude (task_049). Same
@@ -6609,11 +6638,12 @@ launch_codex() {
       /usr/local/bin/codex-entry --supervise -- run --cwd /workspace --prompt-file "/workspace/$CODEX_PROMPT_REL" \
       ${CODEX_SUPERVISE_EXTRA[@]+"${CODEX_SUPERVISE_EXTRA[@]}"}
   fi
-  # VIBE_CODEX_REMOTE=1 (Mac-side, per launch): run the interactive session
-  # on a vibe-owned app-server with Codex remote control on, so the ChatGPT
-  # phone app can drive it. A fixed literal flag, never the variable's value.
+  # Remote control (default on; VIBE_REMOTE=0 or VIBE_CODEX_REMOTE=0 turns
+  # it off): run the interactive session on a vibe-owned app-server with
+  # Codex remote control on, so the ChatGPT phone app can drive it. A fixed
+  # literal flag, never the variable's value.
   local CODEX_REMOTE_FLAG=""
-  [ "${VIBE_CODEX_REMOTE:-0}" != 1 ] || CODEX_REMOTE_FLAG=" --remote-control"
+  ! codex_remote_on || CODEX_REMOTE_FLAG=" --remote-control"
   exec devcontainer exec \
     --workspace-folder "$WORKSPACE" \
     --override-config "$OVERRIDE_CONFIG" \
@@ -6707,7 +6737,7 @@ launch_codex_plain() {
     echo "  codex-led session: supervised run; checkpoint .vss/codex-supervisor.json"
   else
     echo "  codex-led session: interactive; use --codex-run <prompt-file> for supervised work"
-    [ "${VIBE_CODEX_REMOTE:-0}" != 1 ] || echo "  codex remote control: on (VIBE_CODEX_REMOTE=1); the ChatGPT phone app can drive this session"
+    ! codex_remote_on || echo "  codex remote control: on (VIBE_REMOTE=0 turns it off); the ChatGPT phone app can drive this session"
   fi
   launch_codex <&9 &
   codex_pid=$!

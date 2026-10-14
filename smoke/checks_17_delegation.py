@@ -9,10 +9,32 @@ from smoke._core import _isolate_extras_env, _source_vibe_call
 DELEGATE = REPO / "devcontainer/vibe-delegate.mjs"
 
 
-def _delegate_fixture(root):
+# A Codex model catalog with decoys: older versions of each class, and a
+# HIDDEN newer Sol that must never be picked. Latest listed per class is what
+# vibe-models resolves a class name to (2026-10-14 routing policy).
+FIXTURE_CATALOG = {"models": [
+    {"slug": "gpt-6.1-sol", "visibility": "list"},
+    {"slug": "gpt-6-astra", "visibility": "list"},
+    {"slug": "gpt-6-sol", "visibility": "list"},
+    {"slug": "gpt-6-luna", "visibility": "list"},
+    {"slug": "gpt-7-sol", "visibility": "hide"},
+    {"slug": "gpt-5.6-sol", "visibility": "list"},
+    {"slug": "gpt-5.6-terra", "visibility": "list"},
+    {"slug": "gpt-5.6-luna", "visibility": "list"},
+    {"slug": "gpt-5.5", "visibility": "hide"},
+]}
+FIXTURE_LATEST = {"astra": "gpt-6-astra", "sol": "gpt-6.1-sol", "luna": "gpt-6-luna", "terra": "gpt-5.6-terra"}
+
+
+def _write_catalog(home):
+    (home / ".codex" / "models_cache.json").write_text(json.dumps(FIXTURE_CATALOG))
+
+
+def _delegate_fixture(root, lead="gpt-6-astra"):
     home = root / "home"
     home.mkdir()
     (home / ".codex").mkdir()
+    _write_catalog(home)
     bins = root / "bin"
     bins.mkdir()
     workspace = root / "repo"
@@ -20,6 +42,14 @@ def _delegate_fixture(root):
     (workspace / ".vibe").mkdir()
     env = _isolate_extras_env({**os.environ, "HOME": str(home),
         "PATH": str(bins) + os.pathsep + os.environ["PATH"]})
+    # The cost ceiling needs a lead. Default: the top OpenAI tier, so tests
+    # written before the ceiling keep their meaning; ceiling tests pass lower.
+    for k in ("CODEX_THREAD_ID", "CLAUDE_CODE_SESSION_ID", "VIBE_MODELS_NOW"):
+        env.pop(k, None)
+    if lead:
+        env["VIBE_LEAD_MODEL"] = lead
+    else:
+        env.pop("VIBE_LEAD_MODEL", None)
     # Real git sees only this throwaway repo; vendor stubs see no host credentials.
     run(["git", "init", "-q", str(workspace)], env=env)
     stub = r'''
@@ -166,6 +196,7 @@ def test_delegate_failures():
         check("[delegate] unmounted login dir names the per-project opt-in and makes no call",
               r.returncode != 0 and not calls and ".vibe-allow-codex" in r.stderr, r.stderr)
         (home / ".codex").mkdir()
+        _write_catalog(home)
         for args, payload in [(["ask", "unknown"], "task"), (["ask", "astra"], ""),
                               (["ask", "astra", "--bypass"], "task")]:
             r, calls = _delegate_call(workspace, home, env, args, payload=payload)

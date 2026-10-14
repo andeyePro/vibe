@@ -27,26 +27,21 @@ Spec Critic runs **once at task start**, before user approval. It does not re-ru
 
 ### Relation to canonical Architect/Writer/Reviewer
 
-`/vs` splits Claude Code's Architect / Writer / Reviewer pattern for adversarial separation (full audit: [`../../.vs/audits/architect-writer-reviewer.md`](../../.vs/audits/architect-writer-reviewer.md)):
-
-| Canonical role     | `/vs` equivalent                                                |
-| ------------------ | --------------------------------------------------------------- |
-| Software Architect | Planner + Spec Critic                                           |
-| Code Writer        | Generator                                                       |
-| Code Reviewer      | Tester (rigorous) or Reviewer (`--fuzzy`) + Evaluator           |
+Architect = Planner + Spec Critic; Writer = Generator; Reviewer = Tester/Reviewer + Evaluator. Audit: [`../../.vs/audits/architect-writer-reviewer.md`](../../.vs/audits/architect-writer-reviewer.md).
 
 ## Model economy
 
-Two principles (Martin, 2026-07-04):
+Principles (Martin): route by task class, not role prestige (Fable only for long-horizon work). Credit-billed models need explicit per-task consent (`CLAUDE.md § Non-goals`).
 
-- **Route by task class, not role prestige.** Fable 5's edge is long-horizon complex work; on small scoped calls Opus is near-parity and credits buy nothing.
-- **Subscription models by default.** Credit-billed models run only with explicit per-task user consent (`CLAUDE.md § Non-goals`).
+### Lead and cost ceiling (2026-10-14)
+
+Lead = the model the user picked for this chat. A class (`opus`, `sol`…) means its newest model, never a fixed id. Cost: Fable > Opus > Sonnet > Haiku; Astra > Sol > Luna > Terra; tiers match by position. Above the lead's tier: ask first, then `--consent-model`/`vibe-models grant`. Older models only on request (`vibe-models pin`), re-asked each significant task.
 
 ### Role defaults
 
 | Role | Default | Why |
 | --- | --- | --- |
-| Planner + Evaluator | session model (Opus chair; `vibe --fable` only for huge/ambiguous tasks) | judgment interleaved with admin — mid-tier chair, expensive consultants |
+| Planner + Evaluator | the lead (`vibe --fable` only for huge/ambiguous tasks) | judgment interleaved with admin |
 | Spec Critic | sonnet | adversarial reading, scoped |
 | Generator | sonnet, tier per Model plan | bulk tokens — cheapest tier that passes |
 | Tester | haiku | mechanical test-writing |

@@ -224,10 +224,10 @@ def test_codex_remote_status_clients_revoke():
 
         r = run(["node", str(CODEX_REMOTE), "status"])
         check("[codex-remote] no --socket and no VIBE_CODEX_REMOTE_SOCKET -> exit 1, says where it works",
-              r.returncode == 1 and "VIBE_CODEX_REMOTE=1" in r.stderr, r.stderr)
+              r.returncode == 1 and "VIBE_REMOTE=0" in r.stderr, r.stderr)
         r = _remote(tmp / "missing.sock", "status")
         check("[codex-remote] no server -> exit 1 naming VIBE_CODEX_REMOTE=1",
-              r.returncode == 1 and "VIBE_CODEX_REMOTE=1" in r.stderr, r.stderr)
+              r.returncode == 1 and "VIBE_REMOTE=0" in r.stderr, r.stderr)
         r = run(["node", str(CODEX_REMOTE), "frobnicate"])
         check("[codex-remote] unknown subcommand -> usage exit 2", r.returncode == 2, r.stderr)
         r = run(["node", str(CODEX_REMOTE), "revoke"])
@@ -430,8 +430,8 @@ def test_codex_remote_wiring():
     check("[codex-remote] the liveness gate checks codex-remote's ownership",
           'check_owned "$bin/codex-remote"' in LIVENESS_SH.read_text(), "")
     func = _extract_func(VIBE.read_text(), "launch_codex")
-    check("[codex-remote] launcher passes a fixed --remote-control only when VIBE_CODEX_REMOTE=1",
-          '[ "${VIBE_CODEX_REMOTE:-0}" != 1 ] || CODEX_REMOTE_FLAG=" --remote-control"' in func
+    check("[codex-remote] launcher passes a fixed --remote-control unless remote control is switched off",
+          '! codex_remote_on || CODEX_REMOTE_FLAG=" --remote-control"' in func
           and "/usr/local/bin/codex-entry$CODEX_REMOTE_FLAG\"" in func, func)
     check("[codex-remote] the supervised path never gets --remote-control",
           func.index("CODEX_REMOTE_FLAG") > func.index("--supervise"), "")

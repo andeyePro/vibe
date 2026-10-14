@@ -199,7 +199,7 @@ def _installed_runner_fixture(tmp, events):
     _,_,ws,env=s._supervisor_fixture(tmp)
     bins=tmp/'bin'; bins.mkdir()
     for installed, source in [('codex-autonomy','codex-autonomy.mjs'),('codex-supervisor','codex-supervisor.mjs'),
-                              *[(n,n) for n in ['codex-errors.mjs','codex-rpc.mjs','codex-completion.mjs','supervisor-control.mjs','taskandi-client.mjs']]]:
+                              *[(n,n) for n in ['codex-errors.mjs','codex-rpc.mjs','codex-completion.mjs','supervisor-control.mjs','taskandi-client.mjs','vibe-models.mjs']]]:
         path=bins/installed; path.write_text((REPO/'devcontainer'/source).read_text()); path.chmod(0o755)
     stub=s._write_stub(tmp/'stub',{'turns':[{'events':events}]})
     # The gate itself is exercised independently by checks_25; this fixture
@@ -207,6 +207,9 @@ def _installed_runner_fixture(tmp, events):
     entry=bins/'codex-entry'
     entry.write_text(f'#!{sys.executable}\nimport os,sys\nos.execvp("node", ["node", {str(bins/"codex-autonomy")!r}, "watch", "--", *sys.argv[3:], "--codex-bin", {str(stub)!r}])\n')
     entry.chmod(0o755)
+    # The handing-off conversation's own model (2026-10-14 routing policy);
+    # deliberately NOT the fixture's config.toml default, so a test can tell them apart.
+    env={**env,'VIBE_LEAD_MODEL':'gpt-6-luna'}
     return bins,ws,env
 
 
@@ -221,6 +224,11 @@ def test_codex_detached_handoff_context_conflict_and_stop():
         until=time.monotonic()+5
         while time.monotonic()<until and (not state_path.exists() or not s._read_state(ws).get('threadId')): time.sleep(.05)
         state=s._read_state(ws)
+        starts=[m for m in s._in_messages(tmp/'stub') if m.get('method')=='thread/start']
+        claude_led=run(['node',str(helper),'start','--cwd',str(ws),'--prompt-file',str(brief)],env={**env,'VIBE_LEAD_MODEL':'claude-opus-5-5'})
+        check('[continuation] a Codex handoff from a Claude-led conversation is refused',claude_led.returncode!=0 and 'not a Codex model' in claude_led.stderr,claude_led.stderr)
+        check('[continuation] handoff leads on the conversation\'s model, not the config default',
+              state.get('model')=='gpt-6-luna' and bool(starts) and starts[0].get('params',{}).get('model')=='gpt-6-luna',str(state.get('model'))+' '+str(starts[:1]))
         context=run(['node',str(helper),'context','--cwd',str(ws)],env={**env,'CODEX_THREAD_ID':state['threadId']})
         check('[continuation] owned worker detects itself without nesting',json.loads(context.stdout)['supervised'] is True,context.stderr)
         again=run(['node',str(helper),'start','--cwd',str(ws),'--prompt-file',str(brief)],env=env)

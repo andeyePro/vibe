@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // codex-remote — talks to the vibe-owned Codex app-server that codex-entry
 // starts for `vibe --agent codex` when remote control is switched on
-// (VIBE_CODEX_REMOTE=1 on the Mac). Installed root-owned as
+// (on by default; VIBE_REMOTE=0 on the Mac turns it off). Installed root-owned as
 // /usr/local/bin/codex-remote.
 //
 // WHY vibe RUNS ITS OWN APP-SERVER (2026-10-06)
@@ -260,7 +260,7 @@ export async function main(argv, out = process.stdout, err = process.stderr) {
   if (cmd === 'revoke' && args.length !== 1) { err.write('codex-remote: revoke needs exactly one client id (see `codex-remote clients`)\n'); return EXIT_USAGE; }
   if (cmd !== 'revoke' && args.length) { err.write(`codex-remote: ${cmd} takes no arguments\n`); return EXIT_USAGE; }
   if (!socketPath) {
-    err.write('codex-remote: no app-server socket: run this inside a Codex session launched with VIBE_CODEX_REMOTE=1, or pass --socket\n');
+    err.write('codex-remote: no app-server socket: run this inside an interactive Codex session with remote control on (the default; not with VIBE_REMOTE=0 or VIBE_CODEX_REMOTE=0), or pass --socket\n');
     return EXIT_FAIL;
   }
 
@@ -280,7 +280,7 @@ export async function main(argv, out = process.stdout, err = process.stderr) {
     c = await session(socketPath, 5000);
   } catch (e) {
     err.write(`codex-remote: cannot reach the vibe Codex app-server at ${socketPath} (${e.message}). `
-      + 'Remote control runs only in a Codex session launched with VIBE_CODEX_REMOTE=1.\n');
+      + 'Remote control runs only in an interactive Codex session with remote control on (the default; not with VIBE_REMOTE=0 or VIBE_CODEX_REMOTE=0).\n');
     return EXIT_FAIL;
   }
   try {

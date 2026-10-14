@@ -6,6 +6,7 @@ import { existsSync, openSync, closeSync, realpathSync, unlinkSync } from 'node:
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { completionPolicy } from './codex-completion.mjs';
+import { detectLead, classOf, CLASSES } from './vibe-models.mjs';
 import { acquire, atomicWrite, canonicalPath, readRegular, requestStop, ownershipFresh, spawnOwnedProcess, closeServer, appendRegular } from './supervisor-control.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -128,6 +129,11 @@ async function main(args) {
   }
   if (command !== 'start' || !options['--prompt-file']) throw new Error('usage: codex-autonomy start --cwd <repo> --prompt-file <brief> | context | status | stop [--cwd <repo>]');
   if (canonicalPath(statePath, true) !== statePath) throw new Error('symlinked state directory');
+  // The supervised run leads on THIS conversation's model (2026-10-14):
+  // the one the user picked for the chat the $vsss came from.
+  const lead = detectLead(process.env);
+  if (!lead || !/^[A-Za-z0-9._-]+$/.test(lead)) throw new Error('cannot tell which model this conversation is using; refusing to hand off on a guessed model');
+  if (CLASSES[classOf(lead)]?.vendor !== 'openai') throw new Error(`this conversation runs on ${lead}, not a Codex model; a Codex handoff must come from a Codex-led conversation`);
   const git = spawnSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel', '--git-path', 'info/exclude'], { encoding:'utf8', input:'', timeout:10000 });
   if (git.status !== 0) throw new Error('handoff requires a Git checkout');
   const [top, excludeRel] = git.stdout.trim().split('\n');
@@ -151,7 +157,7 @@ async function main(args) {
     const fd = openSync(outPath, 'a');
     try {
       daemon = spawn(join(here, 'codex-entry'), ['--supervise', '--', 'run', '--cwd', cwd, '--prompt-file', promptPath,
-        ...(existsSync(statePath) ? ['--new-run'] : [])], { cwd, detached: true, env: { ...process.env, VIBE_CODEX_HANDOFF_ID: handoff.token }, stdio: ['ignore', fd, fd] });
+        '--model', lead, ...(existsSync(statePath) ? ['--new-run'] : [])], { cwd, detached: true, env: { ...process.env, VIBE_CODEX_HANDOFF_ID: handoff.token }, stdio: ['ignore', fd, fd] });
       await new Promise((res, rej) => { daemon.once('spawn', res); daemon.once('error', rej); });
       spawned = true;
       daemon.unref();

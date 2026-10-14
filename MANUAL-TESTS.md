@@ -1963,12 +1963,25 @@ does not establish live app-server history fidelity or overnight duration.
 ### Test 65: Codex phone remote control (2026-10-06)
 
 - [ ] `vibe --rebuild` in a Codex-enabled project: the build log shows `codex-compat-check: ok   -c agents.enabled=false beats a user config asking for native sub-agents` and `codex-compat-check: ok   app-server --remote-control on a unix socket answers remoteControl/status/read`.
-- [ ] Plain `vibe --agent codex` (no `VIBE_CODEX_REMOTE`): starts exactly as before. The "Running without the shared background server" warning still appears; that is expected here.
-- [ ] `VIBE_CODEX_REMOTE=1 vibe --agent codex`: the header says `codex remote control: on`, then `starting codex with remote control`, then `remote control: connected as "<container id>"`. With no phone paired, it asks `Pair one now? [y/N]`. Answer `y`; it prints a code that expires in a few minutes.
+- [ ] `VIBE_REMOTE=0 vibe --agent codex` (remote control switched off): starts exactly as before. The "Running without the shared background server" warning still appears; that is expected here.
+- [ ] Plain `vibe --agent codex` (remote control is on by default since 2026-10-14): the header says `codex remote control: on`, then `starting codex with remote control`, then `remote control: connected as "<container id>"`. With no phone paired, it asks `Pair one now? [y/N]`. Answer `y`; it prints a code that expires in a few minutes.
 - [ ] In the ChatGPT iPhone app, open Codex, connect a computer, and enter the code: the terminal prints `Paired.` and Codex starts. Send a message from the phone: the Codex session in the terminal shows it and answers. The phone shows the reply.
 - [ ] The Mac's own Codex app is still listed on the phone next to the vibe one (vibe's Codex shares the Mac's `~/.codex/installation_id`).
 - [ ] Ask Codex in the session to `spawn_agent` or start a sub-agent: it has no such tool.
 - [ ] Inside the container (a second `docker exec -it <cid> bash`), run `VIBE_CODEX_REMOTE_SOCKET=$(ls -d /tmp/vibe-codex-remote.*)/app-server.sock codex-remote clients`: the phone is listed. `codex-remote revoke <id>` unpairs it, and the phone loses the session.
-- [ ] Quit Codex: `docker exec <cid> ps -eo args | grep app-server` shows no `--remote-control` server, and `/tmp/vibe-codex-remote.*` is gone. Relaunch with `VIBE_CODEX_REMOTE=1`: a phone paired earlier still works without re-pairing (record what you see; persistence across launches is unverified).
-- [ ] Log out of Codex in the container, or block chatgpt.com, and relaunch with `VIBE_CODEX_REMOTE=1`: the launch says `Remote control is not available this session` and Codex still starts.
+- [ ] Quit Codex: `docker exec <cid> ps -eo args | grep app-server` shows no `--remote-control` server, and `/tmp/vibe-codex-remote.*` is gone. Relaunch with plain `vibe --agent codex`: a phone paired earlier still works without re-pairing (record what you see; persistence across launches is unverified).
+- [ ] Log out of Codex in the container, or block chatgpt.com, and relaunch with plain `vibe --agent codex`: the launch says `Remote control is not available this session` and Codex still starts.
 - [ ] `grep -r "<the pairing code>" ~/.codex .vibe/last-launch.log` on the Mac finds nothing.
+
+### Test 66: Model routing policy and default remote control (2026-10-14)
+
+Needs a `vibe --rebuild` (new `vibe-models` in the image; launcher changes).
+
+- [ ] Plain `vibe` (Claude): Claude starts normally, and the session shows up in the Claude phone app and at claude.ai/code. Send a prompt from the phone; it lands in the terminal session. Then `VIBE_REMOTE=0 vibe`: no remote session appears. Note anything Claude prints about Remote Control at start-up.
+- [ ] From the phone, send `$vs say hello` (or `/vs say hello`) to a Claude-led session: it is handled like a typed prompt. Repeat from the ChatGPT app for a Codex-led session.
+- [ ] In a Claude session: `vibe-models status` shows `lead` = the model under the input box, `latest.sol` = the newest Sol in the Codex picker, and an `allowedWithoutAsking` list without astra/fable for an Opus lead. Switch with `/model sonnet`, send one message, re-run: `lead` follows.
+- [ ] In a Codex-led session (GPT-6.1-Sol selected): `vibe-models status` says `lead: gpt-6.1-sol`. Ask it to run `vibe-delegate role reviewer --model astra --cwd /workspace` with a short brief: refused with "ask the user for explicit permission", and `.vibe/delegate-usage.jsonl` gains no line. With `--model luna`, it runs, and the ledger line names the newest Luna.
+- [ ] In a Claude session, ask for an `Agent` with `model: "fable"`: the hook denies it with the vibe-models message. With `model: "sonnet"`: it runs.
+- [ ] `$vsss` handoff in a Codex session on GPT-6.1-Sol: `.vss/codex-supervisor.json` has `"model": "gpt-6.1-sol"`, and the supervisor log never shows another model. Resume an older checkpoint (no `model` key) with `vibe --codex-resume`: it continues on the `model` from `~/.codex/config.toml`, not on the thread's original model.
+- [ ] Ask the lead to use an older Sol "for today": it asks how long, records `vibe-models pin sol gpt-6-sol --for 8h`, and `vibe-models status` shows the pin. Nine hours later (or set `VIBE_MODELS_NOW` forward), a Sol dispatch is refused until it re-asks you and runs `vibe-models confirm sol`.
+

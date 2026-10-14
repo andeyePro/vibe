@@ -45,7 +45,8 @@
 #   --codex <path>     the codex binary to start   (default: codex on the fixed PATH)
 #   --remote-control   run the session on a vibe-owned app-server with Codex
 #                      remote control on, so the ChatGPT phone app can drive
-#                      it (the launcher passes this when VIBE_CODEX_REMOTE=1)
+#                      it (the launcher passes this by default; VIBE_REMOTE=0 or
+#                      VIBE_CODEX_REMOTE=0 on the Mac turns it off)
 #   --                 everything after this is passed to codex unchanged
 #
 # As in codex-guard-liveness, the flags exist ONLY so the offline tests can
