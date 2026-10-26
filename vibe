@@ -6580,6 +6580,31 @@ elif [ -n "$(vibe_clipboard_cmd)" ]; then
   vibe_exit_hook_add 'kill "$WATCHER_PID" 2>/dev/null || true'
 fi
 
+# Link opener (2026-10-26). Claude Code's fullscreen TUI captures mouse
+# clicks, so Cmd-click on a link never reaches the host terminal; Claude Code
+# opens the link itself via $BROWSER, which inside the container is
+# vibe-open (devcontainer/vibe-open.sh). That queues the link under
+# .vibe/open-requests/ and this host-side watcher opens it with `open` (Mac)
+# or xdg-open (Linux desktop). Separate from the clipboard watcher above,
+# whose block is byte-pinned by smoke checks. Headless Linux: no watcher, and
+# vibe-open's queued request is simply never opened.
+OPEN_WATCHER_PID=""
+VIBE_OPEN_CMD=""
+if [[ "$(uname)" == "Darwin" ]] && command -v open >/dev/null 2>&1; then
+  VIBE_OPEN_CMD="open"
+elif { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; } && command -v xdg-open >/dev/null 2>&1; then
+  VIBE_OPEN_CMD="xdg-open"
+fi
+if [ -n "$VIBE_OPEN_CMD" ] && [ -x "$VIBE_REPO_DIR/vibe-open-watcher.sh" ]; then
+  export VIBE_OPEN_CMD
+  mkdir -p "$WORKSPACE/.vibe"
+  pkill -f "vibe-open-watcher\.sh ${WORKSPACE}\$" 2>/dev/null || true
+  "$VIBE_REPO_DIR/vibe-open-watcher.sh" "$WORKSPACE" &
+  # shellcheck disable=SC2034  # consumed by the exit hook string below
+  OPEN_WATCHER_PID=$!
+  vibe_exit_hook_add 'kill "$OPEN_WATCHER_PID" 2>/dev/null || true'
+fi
+
 # build_claude_model_args echoes "" / "--model <id>". MODEL_ARG is restricted
 # to [A-Za-z0-9._-] by is_model_id, so embedding it is injection-safe.
 CLAUDE_RESUME_ARGS=$(build_claude_resume_args)

@@ -1985,3 +1985,11 @@ Needs a `vibe --rebuild` (new `vibe-models` in the image; launcher changes).
 - [ ] `$vsss` handoff in a Codex session on GPT-6.1-Sol: `.vss/codex-supervisor.json` has `"model": "gpt-6.1-sol"`, and the supervisor log never shows another model. Resume an older checkpoint (no `model` key) with `vibe --codex-resume`: it continues on the `model` from `~/.codex/config.toml`, not on the thread's original model. *(2026-10-14: supervisor records `gpt-6.1-sol`, passes; the host `vibe --codex-resume` half is still to run on the Mac.)*
 - [x] Ask the lead to use an older Sol "for today": it asks how long, records `vibe-models pin sol gpt-6-sol --for <duration>`, and `vibe-models status` shows the pin. With a pin longer than 8h (say `--for 24h`), nine hours later (or set `VIBE_MODELS_NOW` forward) a Sol dispatch is refused until it re-asks you and runs `vibe-models confirm sol`. A pin whose `--for` has run out drops back to the newest Sol silently, by design.
 
+### Test 67: Clicking links opens the host browser (2026-10-26)
+
+Needs a relaunch (the image rebuilds itself for the new `vibe-open`).
+
+- [ ] In a plain `vibe` Claude session, ask Claude to print `https://vibe.andeye.com`. Click it (and try Cmd-click): the page opens in the Mac's default browser within a second.
+- [ ] Inside the session, `echo $BROWSER` prints `/usr/local/bin/vibe-open`, and `vibe-open file:///etc/passwd` is refused with exit 2 and opens nothing.
+- [ ] On the Mac, `pgrep -af vibe-open-watcher.sh` shows one watcher for the project while vibe runs, and none after Claude exits.
+

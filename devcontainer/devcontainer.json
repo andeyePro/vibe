@@ -47,7 +47,8 @@
     "VIBE_SSH_AUTO": "${localEnv:VIBE_SSH_AUTO}",
     "VIBE_EXTRA_DOMAINS": "${localEnv:VIBE_EXTRA_DOMAINS}",
     "GIT_OPTIONAL_LOCKS": "0",
-    "DISABLE_AUTOUPDATER": "1"
+    "DISABLE_AUTOUPDATER": "1",
+    "BROWSER": "/usr/local/bin/vibe-open"
   },
   "remoteEnv": {
     "GITHUB_TOKEN": "${localEnv:GITHUB_TOKEN}",

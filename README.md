@@ -89,6 +89,8 @@ The installer clones vibe to `~/.vibe-src`, symlinks `~/bin/vibe`, and prompts f
 
 `cd` into a project and run `vibe`. First-run teaching happens interactively: GitHub repo detection, fine-grained PAT creation, `git init` for empty folders, the Pro/Max login URL. Nothing to read up on in advance.
 
+**Clicking links opens your Mac's browser.** Claude Code's fullscreen view captures mouse clicks, so a click on a link is handled by Claude Code itself, not by your terminal. Inside the container that used to go nowhere. The container's `BROWSER` is now `vibe-open`, which hands the link to a small watcher the launcher runs on the Mac, and the watcher opens it with `open`. On a Linux desktop host it uses `xdg-open`. Only plain `http`/`https` links are accepted, checked on both sides, and at most three open at once, so nothing in the container can make the host open a file or an app.
+
 `vibe --help` shows the full flag list. Common ones:
 
 - `vibe my-app` — launch a named project from anywhere (uses `VIBE_PROJECTS_DIR`)

@@ -55,6 +55,7 @@ from smoke.checks_42_session_safety import *
 from smoke.checks_43_op_diagnostics import *
 from smoke.checks_44_codex_remote import *
 from smoke.checks_45_model_policy import *
+from smoke.checks_46_link_opener import *
 
 def main() -> int:
     test_docker_preflight_is_shared_and_mac_start_preserves_target()
@@ -1122,6 +1123,9 @@ def main() -> int:
     test_model_policy_older_model_pins()
     test_model_policy_claude_agent_hook()
     test_model_policy_supervisor_pins_run_model()
+    test_link_opener_container_side()
+    test_link_opener_host_watcher()
+    test_link_opener_wiring()
     test_launcher_remote_control_default_on()
     test_statusline_records_the_weekly_window()
     test_weekly_limit_vetoes_the_watchdog()
