@@ -1,6 +1,6 @@
 # Developing with Codex in Vibe
 
-Start with [your first Codex project](codex-quickstart.md). Vibe is project agnostic: ordinary development requires neither Task&I nor a Mac bridge. Codex works inside Vibe's container. Optional native Apple builds run under a dedicated Mac build account through the build bridge. Container isolation and account permissions are distinct boundaries; a build can execute project-controlled code with the build account's privileges.
+Claude Code is the recommended lead: Codex works in vibe, but vibe works better with Claude (see the README's [Claude or Codex](../README.md#claude-or-codex-which-should-lead) section). Start with [your first Codex project](codex-quickstart.md). Vibe is project agnostic: ordinary development requires neither Task&I nor a Mac bridge. Codex works inside Vibe's container. Optional native Apple builds run under a dedicated Mac build account through the build bridge. Container isolation and account permissions are distinct boundaries; a build can execute project-controlled code with the build account's privileges.
 
 Docker builds and rebuilds run on the host for both agents. The launcher checks Docker readiness and can start an identifiable installed Mac backend; it never mounts the unrestricted Docker socket into the coding container. A custom or ambiguous backend requires the host’s normal startup step.
 

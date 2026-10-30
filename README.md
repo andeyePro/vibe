@@ -24,7 +24,7 @@ Vibe&I (the command is still `vibe`) is a single-command containerised Claude Co
 **Use Claude Code unless you have a reason not to.** vibe runs either one as the lead agent, inside the same container, firewall and one-repo token, on the subscription you already pay for. But vibe was built around Claude Code first, and Codex support came later, so vibe works better with Claude than with Codex today. The gaps are in how vibe drives the agent, not in the safety model:
 
 - **Subagents.** Under Claude, `/vs` hands its planner, critic, builder and tester roles to native subagents. Codex's own sub-agents are switched off inside vibe, because vibe's hooks can't see into them. So each role runs as a separate `codex exec` process instead. That works, but it is slower and each role starts cold.
-- **Overnight runs.** A Claude `/vsss` run carries on across five-hour usage windows by itself: the launcher relaunches it, a watchdog kills a session that has hung, and a Stop hook stops it ending early. Codex uses a separate supervisor that you start explicitly (`vibe --codex-run`). An interactive `$vsss` doesn't survive the Codex process exiting.
+- **Overnight runs.** A Claude `/vsss` run carries on across five-hour usage windows by itself: the launcher relaunches it, a watchdog kills a session that has hung, and a Stop hook stops it ending early. Codex uses a separate supervisor instead: an interactive `$vsss` hands its task to a background worker and gives up the terminal, and `vibe --codex-run` starts one directly. It works, but it is newer and has had far fewer real overnight runs.
 - **Commands.** Claude has `/vs`, `/vss`, `/vsss` and the rest as real slash commands. In Codex they are skills spelled `$vs`, `$vss`, `$vsss`. A bare `/vs` can be rejected by Codex's input box.
 - **Mileage.** Most of vibe's hours of real use, and most of its manual tests, ran on Claude. Several Codex paths are proven by offline tests but still waiting on a live Mac run ([readiness](docs/codex-readiness.md)).
 
@@ -354,7 +354,7 @@ A shared repo declared `rw` in `.vibe-repos` (set it with `vibe repos add --rw <
 
 In flight or specced; no firm dates.
 
-- **Language-profile presets** — `vibe --profile python` or auto-detect from `pyproject.toml` / `package.json` / `Cargo.toml`, so the container ships with the toolchain your project needs already in place.
+- **Language-profile auto-detect** — `vibe --profile python` has shipped (see Language profiles); next is picking the profile automatically from `pyproject.toml` / `package.json` / `Cargo.toml`, and more profiles than Python.
 - **`vibe --TDD` session mode** — enforces test-driven discipline across the whole project. Composes with `/vs`. Part of an XP-as-umbrella direction (TDD and spec-first as in-scope subsets).
 - **Per-repo Ghostty window titles** — so several vibe windows don't all read "Claude Code".
 
