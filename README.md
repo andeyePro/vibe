@@ -1,6 +1,6 @@
 # Vibe&I
 
-Vibe&I (the command is still `vibe`) is a single-command containerised Claude Code environment. `cd my-project && vibe` and you're in.
+Vibe&I (the command is still `vibe`) is a single-command containerised Claude Code environment. `cd my-project && vibe` and you're in. OpenAI's Codex can lead instead, though vibe works best with Claude (see [Claude or Codex](#claude-or-codex-which-should-lead)).
 
 ## What you get
 
@@ -18,6 +18,21 @@ Vibe&I (the command is still `vibe`) is a single-command containerised Claude Co
 `/vs <prompt>` runs the request through an adversarial harness so a Pro/Max plan does more per session with less back-and-forth. An Opus director plays Planner and Evaluator, dispatching independent subagents (Sonnet Spec Critic before any code, Sonnet Generator, Haiku Tester writing immutable tests, or a Sonnet Reviewer when you pass `--fuzzy` for non-mechanical criteria). Generator never sees Tester's tests and vice versa — independence is the point.
 
 `/vs` extends Claude Code's canonical Software Architect / Code Writer / Code Reviewer pattern: Architect splits into Planner + Spec Critic, Reviewer splits into Tester (mechanical) or Reviewer (`--fuzzy`) + Evaluator. Full mapping and flag reference in [`devcontainer/commands/vs.md`](devcontainer/commands/vs.md).
+
+## Claude or Codex: which should lead?
+
+**Use Claude Code unless you have a reason not to.** vibe runs either one as the lead agent, inside the same container, firewall and one-repo token, on the subscription you already pay for. But vibe was built around Claude Code first, and Codex support came later, so vibe works better with Claude than with Codex today. The gaps are in how vibe drives the agent, not in the safety model:
+
+- **Subagents.** Under Claude, `/vs` hands its planner, critic, builder and tester roles to native subagents. Codex's own sub-agents are switched off inside vibe, because vibe's hooks can't see into them. So each role runs as a separate `codex exec` process instead. That works, but it is slower and each role starts cold.
+- **Overnight runs.** A Claude `/vsss` run carries on across five-hour usage windows by itself: the launcher relaunches it, a watchdog kills a session that has hung, and a Stop hook stops it ending early. Codex uses a separate supervisor that you start explicitly (`vibe --codex-run`). An interactive `$vsss` doesn't survive the Codex process exiting.
+- **Commands.** Claude has `/vs`, `/vss`, `/vsss` and the rest as real slash commands. In Codex they are skills spelled `$vs`, `$vss`, `$vsss`. A bare `/vs` can be rejected by Codex's input box.
+- **Mileage.** Most of vibe's hours of real use, and most of its manual tests, ran on Claude. Several Codex paths are proven by offline tests but still waiting on a live Mac run ([readiness](docs/codex-readiness.md)).
+
+Pick Codex if you have a ChatGPT subscription and no Claude one, or you want a second vendor's model in the lead for a particular job. Either way, Claude-led sessions can still ask Codex for a second opinion through `/review` and `/ask`.
+
+## How vibe compares
+
+Checked on 2026-10-30: vibe is still the best fit for one developer who wants long, unattended Claude Code runs on their own machine. Nothing else combines local runs with SSH to your LAN, one GitHub token per repo, a default-deny firewall, and an overnight loop that keeps going across usage windows until the job is done. Cloud agents can't reach your LAN. Claude Code's own `/sandbox` and auto mode make bypass-permissions safer on the host, but they don't scope your GitHub access or supervise a multi-hour run. Docker Sandboxes now isolate better than vibe does (a microVM per agent, with the GitHub token kept on the host), and parallel-agent apps like Conductor handle several tasks at once more smoothly. [How vibe compares](docs/alternatives.md) has the full table, the sources and what vibe plans to do about each gap.
 
 ## Prerequisites
 

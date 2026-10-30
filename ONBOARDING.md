@@ -4,7 +4,7 @@ You are probably reading this because a user asked you to take them through vibe
 
 Vibe&I (the command is still `vibe`) is a single command that opens a Claude Code session inside an isolated container on the user's machine: pre-authenticated against their Claude Pro/Max subscription (no API key, no per-token billing), GitHub access scoped to one repo at a time, an outbound firewall and tool-call guards so the session can run without permission prompts and still be safe.
 
-For a user choosing Codex, follow [the Codex quickstart](docs/codex-quickstart.md). Existing Vibe users can go straight there. For a fresh machine, use the shared Docker, Node and Vibe installation steps below, skip Claude login, and return to the Codex guide for subscription login and project opt-in. Claude-specific subscription and login requirements below apply only to the Claude route.
+Recommend Claude unless the user only has a ChatGPT subscription: vibe works with Codex, but it works better with Claude, because it was built around Claude Code first (the README's "Claude or Codex" section says why). For a user choosing Codex, follow [the Codex quickstart](docs/codex-quickstart.md). Existing Vibe users can go straight there. For a fresh machine, use the shared Docker, Node and Vibe installation steps below, skip Claude login, and return to the Codex guide for subscription login and project opt-in. Claude-specific subscription and login requirements below apply only to the Claude route.
 
 ## Ground rules for you
 

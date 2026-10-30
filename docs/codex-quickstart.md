@@ -1,5 +1,7 @@
 # Use Codex in any project
 
+Codex works in vibe, but vibe works better with Claude Code: under Codex, `/vs` roles run as separate processes rather than native subagents, and overnight runs need the separate supervisor. The README's [Claude or Codex](../README.md#claude-or-codex-which-should-lead) section has the details.
+
 Open the project folder in your host terminal and type:
 
 ```bash

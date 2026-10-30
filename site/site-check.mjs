@@ -255,7 +255,7 @@ check('ask chip present with cmd `/ask astra`',
   /id="step-ask"/.test(html) && chipCmd('ask') === '/ask astra');
 const askLines = linesText('ask');
 check('ask chip names the real delegate model and the tools-disabled constraint',
-  inBothIn('gpt-6-astra', askLines, askCmd) && inBothIn('tools disabled', askLines, askCmd));
+  inBothIn('newest model', askLines, askCmd) && inBothIn('tools disabled', askLines, askCmd));
 check('ask chip\'s usage-ledger path matches ask.md (.vibe/delegate-usage.jsonl)',
   inBothIn('delegate-usage.jsonl', askLines, askCmd));
 

@@ -74,6 +74,11 @@ Two vibe-wide behaviour changes shipped and took effect on this rebuild — surf
 
 ## Open
 
+- [ ] **Martin-gated: keep the GitHub token out of the container** (2026-10-30, from `docs/alternatives.md` proposal 1) — Docker Sandboxes now inject credentials from the host so the real token never enters the VM; vibe's per-repo PAT sits in the container as `$GITHUB_TOKEN`. Shape: a host-side git credential/HTTPS proxy reachable via `host.docker.internal`, with the container holding only a per-session nonce. Touches `credential-helper.sh` and the launcher's token paths, so needs Martin's `y` and a security review. fromClaude T89.
+- [ ] **Martin-gated: optional Docker Sandboxes backend** (2026-10-30, proposal 2) — when `sbx` is installed, run vibe's image, firewall, hooks and loop inside a Docker Sandboxes microVM instead of a plain container. First step is a spike: does `sbx` accept a custom image and allow LAN/SSH reach? fromClaude T90.
+- [ ] **Martin-gated: one container per parallel task** (2026-10-30, proposal 3) — `/wide` runs worktrees inside one container; Conductor/Sculptor give each agent its own. Extend `/wide` (or a `vibe --task <slug>`) to a container per worktree, each on its own branch. fromClaude T91.
+- [ ] **Re-check `docs/alternatives.md` quarterly** (next: 2026-01-30) — the comparison goes stale fast; re-run the research and update README's "How vibe compares" and the site.
+
 - [ ] **Mac-account builds: bring the per-project bridge scripts in line, and tidy automatically** (2026-09-30) — the shared-instructions rule (one build tree per project per piece of software, `capabilities.md`) covers agents, but the per-project bridge scripts (`andeye/pro-mac-test.sh` template and its copies in Time&I, Money&I, Pro) live in other repos and need the same check: one fixed tree each, Xcode `-derivedDataPath` inside it. Then consider a vibe-owned tidy on the `claude` account (delete `.build`/DerivedData untouched for N days), which needs the account's layout first (inventory command in fromClaude T80).
 
 - [ ] **Martin-gated: decide what protects the Claude login from a Docker reset** (2026-09-17, task_059 item 5). Recommendation below; do not implement without Martin's `y`.
