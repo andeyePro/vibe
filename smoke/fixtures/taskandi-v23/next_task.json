@@ -1,0 +1,34 @@
+{
+  "contract": "vibe-agent-exchange-v2.5",
+  "notes": "Returns the top eligible task assigned to the agent persona (tag agent:<persona>, or assigned to an agent actor) inside the token's subtree, or {\"task\": null} when nothing is eligible. Eligible: id matches the published id_pattern; open, not archived, not on hold, not done-provisional; no open dependency; no open child task (a question's own subtask counts only through its ask); no unanswered blocking ask, in the thread or as a subtask; spent below the allowance in both units; lease free or held by this session. Ranked by effective_priority (lower first; null means none set) then outline order. Takes a 90-minute lease for session; any call carrying the task with the same session renews it, and next_task re-issues it to that session. action is the task's next action, body its notes. allowance is the task's own, else its nearest ancestor's, else {windows} from the owner's budget tier for the effective priority, else null until the owner's client has posted its Strategy choices. spent: tokens = input + output + cache_write, cache_read apart (never counted against an allowance), windows = the larger of the reported windows and the 5-hour windows in which usage arrived. hardDeadline is the nearest one on the task or above. latest_start (ms) is the latest finish the web core derives from hard deadlines (on the task, above it or on a task it blocks) less the task's planning minutes; absent when no hard deadline reaches the task. defaults_allowed is the owner's Strategy default-on-silence choice for the effective priority's tier, false until posted. See next_task_claim.json for claiming a specific task.",
+  "request": {
+    "action": "next_task",
+    "agent": "codex",
+    "session": "session-a"
+  },
+  "response": {
+    "task": "leaf-b",
+    "title": "Invented leaf-b",
+    "body": "",
+    "action": "Write the exporter",
+    "priority": 2,
+    "effective_priority": 2,
+    "allowance": {
+      "tokens": 200000
+    },
+    "spent": {
+      "windows": 0,
+      "tokens": 0,
+      "cache_read": 0
+    },
+    "hardDeadline": 1761900000000,
+    "latest_start": 1761899700000,
+    "estimate_minutes": 5,
+    "owner": "fixture-account-id",
+    "lease": {
+      "until": 1761804400000,
+      "session": "session-a"
+    },
+    "defaults_allowed": false
+  }
+}

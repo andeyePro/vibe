@@ -1,0 +1,26 @@
+{
+  "contract": "vibe-agent-exchange-v2.5",
+  "notes": "next_task with task claims that task for the session if it is assigned to the agent and eligible, and returns the same body as next_task.json. Otherwise it returns HTTP 200 with {\"task\": null, \"reason\": <code>} and takes no lease. Reasons, checked in this order: unsafe_id (the id fails capabilities.id_pattern), not_assigned, closed (done, abandoned or archived; an addition to the v2.3 list), provisional (done by an agent, waiting for the owner), on_hold, blocked (blocked state or an open dependency), open_children, waiting_on_ask (an unanswered blocking ask), over_budget (spent reached the allowance in either unit; raising the allowance makes it eligible again), leased (another session holds a live lease). A task outside the subtree is refused with HTTP 409 wrong_scope as on every call.",
+  "request": {
+    "action": "next_task",
+    "agent": "codex",
+    "session": "session-a",
+    "task": "leaf-b"
+  },
+  "response": {
+    "task": null,
+    "reason": "over_budget"
+  },
+  "reasons": [
+    "unsafe_id",
+    "not_assigned",
+    "closed",
+    "provisional",
+    "on_hold",
+    "blocked",
+    "open_children",
+    "waiting_on_ask",
+    "over_budget",
+    "leased"
+  ]
+}

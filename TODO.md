@@ -74,7 +74,6 @@ Two vibe-wide behaviour changes shipped and took effect on this rebuild — surf
 
 ## Open
 
-- [ ] **task_066 — Task&I client v2.3** (2026-10-31, /vsss) — speak v2.3 beside v2.2: request_id with frozen bodies so lost responses resend safely, seq answer cursor, `next-task --task` to claim the linked task, server-published limits, `at` on usage rows. Spec: `.vs/spec.md`.
 - [ ] **task_067 — Task&I client v2.4/v2.5: vibe creates tasks for the owner** (queued) — `create_task`/`update_task` (provisional, owner keeps or removes) including `repeat`; a harness step for proposing follow-up tasks. Contract: brain2 brief `### Contract v2.4`/`v2.5`.
 
 

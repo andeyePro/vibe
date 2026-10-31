@@ -1,0 +1,45 @@
+{
+  "contract": "vibe-agent-exchange-v2.5",
+  "transport": "POST /api/browser-agent with Authorization: Bearer <token from the Connect Codex descriptor>; every request also carries \"connection\": <descriptor.connection>. Errors are HTTP 409 {\"error\": code}. Every call runs in one transaction after the revocation check, so any 409 (connection_unavailable included) means nothing was applied.",
+  "request": {
+    "action": "capabilities"
+  },
+  "response": {
+    "protocol": "taskandeye-browser-agent-v1",
+    "contract": "vibe-agent-exchange-v2.5",
+    "grade": "comment",
+    "calls": [
+      "capabilities",
+      "ask",
+      "list_asks",
+      "ask_status",
+      "next_task",
+      "release",
+      "comment",
+      "record_usage",
+      "record_time",
+      "complete",
+      "create_task",
+      "update_task"
+    ],
+    "limits": {
+      "unit": "code_points",
+      "id": 200,
+      "id_unit": "utf16_code_units",
+      "request_bytes": 65536,
+      "question": 8000,
+      "default": 2000,
+      "options": 20,
+      "option": 500,
+      "ask_post": 8000,
+      "comment": 8000,
+      "summary": 7950,
+      "reason": 2000,
+      "title": 500,
+      "next_action": 2000,
+      "notes": 8000
+    },
+    "id_pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$"
+  },
+  "notes": "limits are the effective limits, all checked before anything is written: text in Unicode code points, ids in UTF-16 code units, the whole body in bytes. ask_post bounds \"Question: <question>\\nDefault: <default>\" plus \"\\nOptions: \" and the options joined by \" / \" when options are given, for every ask whatever its placement. summary already allows for the \"Done by <agent>, waiting for the owner to confirm: \" prefix. id_pattern: next_task never offers a task whose id fails it. title, next_action and notes bound create_task and update_task."
+}

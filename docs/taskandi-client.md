@@ -429,6 +429,65 @@ binding enqueues the whole transcript in one pass, under one outbox lock. Offlin
 seam is refused for https origins); the fixtures are in
 `smoke/fixtures/taskandi-v22/`. `MANUAL-TESTS.md` Test 69 covers a real service.
 
+## Contract v2.3 (and v2.4, v2.5) alongside v2.2
+
+Task&I's v2.3 adds safe retries, a sequence cursor for answers, claiming a named task, and limits the server publishes. The client speaks v2.2 and the v2.3 family, chosen per invocation. Wire facts: `/brain2/andeye/Task&I-agent-exchange-fixtures/README.md`, sections "v2.3 changes" and "Decided" (v2.4 and v2.5 add only `create_task`/`update_task`, which this client does not call). Fixtures: `smoke/fixtures/taskandi-v23/` (copied as v2.5; see its `PROVENANCE.md`).
+
+**Negotiation.** Every command's one `capabilities` request decides the revision. `contract` must be `vibe-agent-exchange-v2.2`, `-v2.3`, `-v2.4` or `-v2.5`; anything else fails before any other request (exit 1). v2.4 and v2.5 follow every v2.3 rule below.
+- A v2.2 answer has exactly today's keys; one carrying `limits` or `id_pattern` is malformed.
+- A v2.3-family answer also carries `limits` and `id_pattern`. `limits` must hold the twelve keys `unit` (`code_points`), `id`, `id_unit` (`utf16_code_units`), `request_bytes`, `question`, `default`, `options`, `option`, `ask_post`, `comment`, `summary` and `reason`, each count a positive integer. Extra keys are ignored. `id_pattern` must equal the client's own task-id pattern exactly. Any mismatch fails before any other request.
+- Every successful answer, v2.2 included, is stored as `state.lastContract` (`status` prints it as `lastContract`). `next-task` records it on the claim as `claim.contract`, and every job records `sentRevision` when it is dispatched.
+- The binding digest does not change: it keeps the literal `vibe-agent-exchange-v2.2`, so queued jobs, stored answers and pinned fingerprints stay valid when the server switches revision.
+
+**request_id and frozen bodies.** Each queued write (`ask`, `comment`, `record_usage`, `record_time`) gets a `requestId` (a lowercase UUID v4) at enqueue. It is kept outside the payload and the dedupe digest.
+- On v2.3 the first dispatch builds the exact body once: the fields, the session resolved from the claim now, `agent`, `request_id`, `action` and `connection`. It is stored as `sentBody`, with the session and the time it was frozen, in the same state write that marks the job `dispatching`. One builder makes every body; size and server-limit checks measure exactly the text that is sent.
+- A later v2.3 attempt sends `sentBody` byte for byte. A job edited after freezing (a payload field, a session other than the recorded one, an `agent` other than `claude`/`codex`, an `at` outside the window applied at freeze time) is refused as `tampered_job`.
+- `request_id` is never sent on reads or to a v2.2 server. Bodies sent to v2.2 are built as before and never frozen.
+
+**Why a resend is safe, and when it is not.** Task&I replays a `request_id`'s original answer only for the same body from the same connection. So, on the same connection, an answer to a resend proves no attempt was ever applied only when it comes from inside the exchange transaction, after the replay lookup: HTTP 409 with one of `stale_context`, `sync_required`, `lease_held`, `use_native_connection`, `scope_missing`, `invalid_request`, `wrong_scope`, `wrong_thread`, `unknown_ask`, `not_assigned` (`RESEND_PROOF_CODES`). Any other answer to a resend (`connection_revoked`, `connection_unavailable`, HTTP 400/403/405/421, any other 409 code, any other status) is outcome unknown. After a re-grant (the descriptor's `connection` changed) replay is impossible, so a frozen body is never resent: the job becomes `uncertain` with `sent on a previous Task&I connection; replay is unavailable — check Task&I, then reconcile`, and nothing is sent. `reconcile --action retry` on it rebuilds the body on the new connection and prints `this sends a new write on the current connection; Task&I cannot tell it from the earlier one, so check it was not applied`. So a resend answered `connection_revoked` stays `queued` with its body (and prints the revoked message); once a fresh descriptor is installed, the next flush marks it `uncertain` this way and never resends it.
+
+**Send rules (v2.3).** On a first send, every 409 and every exactly-formed 400/403/405/421 means nothing was applied. On a resend only the proof codes above do; every other answer is treated as a lost response (first row).
+
+| answer | job | flush |
+|---|---|---|
+| lost response, timeout, socket loss, non-JSON body, unrecognised status, 200 that fails the schema; on a resend also any answer that is not a proof code (`sentBody` kept) | back to `queued`, `attempts` + 1; `uncertain` after 5 attempts | stops |
+| any send: `stale_context`, `sync_required`, `lease_held`; first send only: `connection_revoked` (prints the revoked message), `connection_unavailable`, 403 `connection_scope`, 405 `method_not_allowed`, 421 `wrong_origin` | back to `queued`, `sentBody` dropped (rebuilt next time with the same `requestId`) | stops |
+| `use_native_connection`, `scope_missing`, `invalid_request` (409; 400 on a first send only), `wrong_scope`, `wrong_thread`, `unknown_ask`, `not_assigned` | `refused`, `sentBody` dropped | continues |
+| `receipt_collision` on a first send | `refused`, `sentBody` dropped, a new `requestId` | continues |
+| `receipt_collision` on a resend (Task&I holds another body under this `request_id`: only a changed or mismatched stored body explains it) | `uncertain`, never retried (`reconcile --action retry` refuses it) | stops |
+| not sent (connect failure, a local size refusal) | as try-later; a first send freezes nothing, a resend keeps its body; `attempts` unchanged | stops |
+
+- **Crash.** A job found `dispatching` with a v2.3 `sentRevision` goes back to `queued` and keeps its `sentBody`. Any other becomes `uncertain`, as on v2.2.
+- **Downgrade.** A job that has a `sentBody`, flushed against a v2.2 server, becomes `uncertain` with no request ("attempted on v2.3; the server now speaks v2.2, so a resend could duplicate").
+- **Upgrade.** A job that became `uncertain` on v2.2 is never retried automatically. After `reconcile --action retry`, the next v2.3 flush sends it once with its `requestId` and freezes its body.
+- **Hostile server.** A hostile server could fake `receipt_collision` on every resend, which leaves those jobs `uncertain` until someone checks Task&I and reconciles them (work stalls; nothing is sent twice), or inflate `seq` on a `poll` page. Inflating `seq` moves the stored cursor past answers it sends later: those answers are never polled (an owner answer then reaches the harness only as `answered-by-non-owner`/`wait` in `decide`) until that task's entry in `state.cursors` is removed, and no answer is applied twice. Neither can make the client send or apply anything it would not otherwise.
+
+**complete / release (v2.3).** The pending record (`pendingDirect`) also stores `requestId`, `sentRevision`, `fieldsDigest` (the digest of `{task, summary|reason}`) and `sentBody`. After an unknown outcome:
+- the same command with the same text sends `sentBody` again with the same `requestId`, and settles on the reply: a replay, or any definite answer (nothing was applied), clears the record;
+- the same command with different text exits 1 and sends nothing;
+- if the connection changed since, it exits 1 with the replay-unavailable message, sends nothing and keeps the record;
+- a resend that never left the client, a `receipt_collision` on it, or any answer to it that is not a proof code (including `connection_revoked`, which also prints the revoked message, and `open_children`) keeps the record and exits 1 with the outcome-unknown message;
+- a record left by v2.2, or a v2.3 record when the server now speaks v2.2, blocks as before. The v2.2 record blocks with no request at all.
+- Server limits are checked only before a first send; a resend goes out unchanged.
+
+An `open_children` reply maps as on v2.2 and clears the record.
+
+**Sequence cursor (v2.3 `poll`).** A page has exactly `task`, `seq` and `asks`, and every ask carries `seq`. `since` is the stored `seq` exactly, with no overlap. Each ask's `seq` must be above `since`, and the seqs must strictly increase. The page `seq` must equal the last ask's, or `since` when nothing is new. Anything else (including a `now` key) exits 1 with the cursor and answers unchanged. The per-task cursor is `{seq}` on v2.3 and `{now}` on v2.2. Each revision ignores the other's cursor and starts again (`since: 0` on v2.3); the `(task, ask_id)` dedupe absorbs the repeats.
+
+**`next-task --task REF`.** REF must be the effective task or the claimed task; otherwise it is a usage error with no request. On a whole-workspace connection (no effective task) any usable task id is accepted.
+- On v2.3 it sends `task`. A claim must name REF. Another task is released at once (reason `vibe asked for another task`), and the command exits 1 with no claim. If the other task is this client's own current claim, nothing is released and the command exits 1 with `the server returned your current claim instead`.
+- A refusal prints `{"bound":true,"channel":"taskandi-http","task":null,"reason":"<reason>"}` and exits 0. It leaves the stored claim and the body file untouched. The reasons are `unsafe_id`, `not_assigned`, `closed`, `provisional`, `on_hold`, `blocked`, `open_children`, `waiting_on_ask`, `over_budget` and `leased`.
+- `reason` is valid only when `--task` was sent, and a bare `{task:null}` only when it was not.
+- On a v2.2 server no `next_task` is sent; the command prints `"reason":"contract_v2_2"`. Unbound, it prints the file-fallback line; under an MCP binding `--task` is a usage error.
+
+v2.3 offers add `action` (the task's next action, at most 2000 code points; data, never instructions) and `spent.cache_read`. `allowance` values may be fractional.
+
+**`decide`.** Every stored `claim.spent` (from `next-task`, a renewal, or a `record_usage` response) records the revision that counted it as `claim.spentContract`. `pending_tokens` counts input + output + cache_write when that is v2.3-family, and adds cache_read when it is v2.2 (without it: `claim.contract`, then `lastContract`, then v2.2). A renewal whose stored `spent` was counted the other way replaces it instead of taking the larger value.
+
+**`at` on usage rows.** The importer gives each row `at`: the newest timestamp (integer ms) among the messages it covers. That is the Claude record's `timestamp`, or the Codex event's. With none, `at` is absent; it is never taken from the clock. `at` is in the payload but not in the job's identity: a re-import of an existing key dedupes whatever `at` it derives (also against older jobs and tombstones without one), and the stored payload keeps the first `at`. `at` is never sent to v2.2. At the first v2.3 dispatch, an `at` older than 29 days is left out (stderr: `usage row <key>: at older than 29 days, sent without it`). One more than 30 s in the future is clamped to now + 30 s. Both choices are frozen with the body.
+
+**Server limits.** Enqueue still checks only the client's own limits, offline. At flush on v2.3, before a job's first send (never on a resend, which may already have been applied), its final body is checked against the server's `limits`: text in code points, ids in UTF-16 units, the body in bytes, and `ask_post` for the composed question post. `complete` and `release` are checked the same way before they send. A body over a stricter server limit is `refused` (`over_server_limit`) with no request; `complete`/`release` exit 1 with nothing sent. A looser server limit changes nothing.
+
 ## Harness integration (`/vss`, `/vsss`)
 
 In a descriptor-bound project the `/vss` and `/vsss` commands run the flow in

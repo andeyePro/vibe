@@ -66,6 +66,9 @@ from smoke.checks_56_vibe_link_install import *
 from smoke.checks_53_taskandi_decide import *
 from smoke.checks_54_harness_prose import *
 from smoke.checks_57_taskandi_decide_review import *
+from smoke.checks_58_taskandi_v23 import *
+from smoke.checks_59_taskandi_v23_more import *
+from smoke.checks_60_taskandi_v23_review import *
 
 def main() -> int:
     test_docker_preflight_is_shared_and_mac_start_preserves_target()
@@ -1288,6 +1291,34 @@ def main() -> int:
     test_rv_ac38_open_ask_predicate()
     test_rv_ac39_body_file()
     test_rv_ac40_fixture_pins()
+    test_v23_ac1_negotiation()
+    test_v23_ac2_binding_digest()
+    test_v23_ac3_wire_per_fixture()
+    test_v23_ac4_frozen_body_and_resend()
+    test_v23_ac5_crash_downgrade_upgrade()
+    test_v23_ac6_complete_release()
+    test_v23_family_treated_alike()
+    test_v23_ac7_error_table()
+    test_v23_ac8_seq_cursor()
+    test_v23_ac9_offer_schema()
+    test_v23_ac10_next_task_named()
+    test_v23_ac11_at()
+    test_v23_ac12_decide()
+    test_v23_ac13_server_limits()
+    test_v23_ac14_harness()
+    test_v23_ac16_fixtures_docs_limits()
+    test_v23_ac17_v22_negotiation()
+    test_v23_ac18_new_connection()
+    test_v23_ac19_definite_answers()
+    test_v23_ac20_not_sent()
+    test_v23_ac21_limits_after_send()
+    test_v23_ac22_at_not_identity()
+    test_v23_ac23_spent_contract()
+    test_v23_ac24_whole_workspace()
+    test_v23_ac25_action_bound()
+    test_v23_ac26_frozen_integrity()
+    test_v23_ac28_prose()
+    test_v23_ac29_non_proof_answers()
 
     print()
     if FAILURES:

@@ -1,0 +1,34 @@
+{
+  "contract": "vibe-agent-exchange-v2.5",
+  "notes": "Retrying a write with the same request_id from the same connection, for example after a timeout: the first call applied the ask, the retry returns the first response byte for byte and applies nothing (no second subtask, thread post or lease renewal). The same request_id with any other body is refused with HTTP 409 receipt_collision and applies nothing. request_id is optional on ask, comment, record_time, record_usage, release and complete; not accepted on reads.",
+  "request": {
+    "action": "comment",
+    "task": "leaf-b",
+    "text": "Iteration 3: two commits, tests green.",
+    "session": "session-a",
+    "agent": "codex",
+    "request_id": "3c7e8d9f-0a1b-4c2d-8e3f-5a6b7c8d9e0f"
+  },
+  "response": {
+    "task": "leaf-b",
+    "comment_id": "2c3d4e5f-6071-4829-8a1b-c2d3e4f50617"
+  },
+  "retry": {
+    "request": "the same request",
+    "response": "the same response"
+  },
+  "collision": {
+    "request": {
+      "action": "comment",
+      "task": "leaf-b",
+      "text": "A different text",
+      "session": "session-a",
+      "agent": "codex",
+      "request_id": "3c7e8d9f-0a1b-4c2d-8e3f-5a6b7c8d9e0f"
+    },
+    "status": 409,
+    "response": {
+      "error": "receipt_collision"
+    }
+  }
+}

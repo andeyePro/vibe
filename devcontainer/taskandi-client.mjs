@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Narrow, project-opt-in Task&I client: MCP (contracts v1, v2.1) or, under a descriptor binding, the browser-agent HTTP API (contract v2.2). Node built-ins only. */
+/** Narrow, project-opt-in Task&I client: MCP (contracts v1, v2.1) or, under a descriptor binding, the browser-agent HTTP API (contract v2.2, or the v2.3 family: v2.3, v2.4, v2.5). Node built-ins only. */
 import { createHash, randomUUID } from 'node:crypto';
 import http from 'node:http';
 import https from 'node:https';
@@ -286,9 +286,21 @@ function bindAnswers(state, config, bind = true) {
   if (state.cursors !== undefined && !plainObject(state.cursors)) fail('outbox state has an unsupported cursor shape');
   if (bind) state.answerBinding = binding;
 }
+// A job found dispatching was in flight when an invocation ended. One sent to a v2.3-family server carries its frozen
+// sentBody and request_id, so it goes back to queued (an outcome-unknown attempt) and the next v2.3 flush resends it;
+// any other is uncertain.
+const MAX_ATTEMPTS = 5;
 function recoverDispatching(state) {
   let changed = false;
-  for (const job of state.jobs) if (job.state === 'dispatching') { job.state = 'uncertain'; job.lastError = 'previous invocation ended while dispatching'; changed = true; }
+  for (const job of state.jobs) {
+    if (job.state !== 'dispatching') continue;
+    changed = true;
+    if (isV23(job.sentRevision) && typeof job.sentBody === 'string') {
+      job.attempts = (Number.isSafeInteger(job.attempts) ? job.attempts : 0) + 1;
+      job.state = job.attempts >= MAX_ATTEMPTS ? 'uncertain' : 'queued';
+      job.lastError = `previous invocation ended while dispatching${job.state === 'queued' ? '; the next v2.3 flush resends the same body and request_id' : ` (${MAX_ATTEMPTS} attempts)`}`;
+    } else { job.state = 'uncertain'; job.lastError = 'previous invocation ended while dispatching'; }
+  }
   return changed;
 }
 async function withState(cwd, now, fn) {
@@ -513,7 +525,18 @@ function validateRelease(value) {
 // ---- Contract v2.2: Task&I's browser-agent HTTP API, selected by .vibe/taskandi-descriptor.json ----
 // Plain `POST <origin>/api/browser-agent` on node:http(s) (never fetch: it cannot set Host). Wire facts:
 // /brain2/andeye/Task&I-agent-exchange-fixtures/README.md "Wire details"; fixtures in smoke/fixtures/taskandi-v22/.
+// HTTP_CONTRACT_REVISION stays the descriptor binding's protocol pin: it is the literal in the binding digest, so queued
+// jobs, stored answers and pinned fingerprints survive a v2.2<->v2.3 switch. The negotiated revision (capabilities.contract,
+// one of HTTP_CONTRACT_REVISIONS) decides the wire rules per invocation; v2.4 and v2.5 are handled exactly as v2.3 (the
+// "v2.3 family"; they only add calls this client does not make).
 export const HTTP_CONTRACT_REVISION = 'vibe-agent-exchange-v2.2';
+export const HTTP_CONTRACT_V23 = 'vibe-agent-exchange-v2.3';
+export const HTTP_CONTRACT_REVISIONS = Object.freeze([HTTP_CONTRACT_REVISION, HTTP_CONTRACT_V23, 'vibe-agent-exchange-v2.4', 'vibe-agent-exchange-v2.5']);
+const V23_FAMILY = new Set(HTTP_CONTRACT_REVISIONS.slice(1));
+export const isV23 = contract => V23_FAMILY.has(contract);
+// v2.3 capabilities.limits: these twelve keys must be present (unit and id_unit fixed strings, the rest positive integers);
+// a v2.4+ answer may carry more (create_task/update_task limits), which are ignored.
+export const SERVER_LIMIT_KEYS = Object.freeze(['unit', 'id', 'id_unit', 'request_bytes', 'question', 'default', 'options', 'option', 'ask_post', 'comment', 'summary', 'reason']);
 export const HTTP_PROTOCOL = 'taskandeye-browser-agent-v1';
 export const HTTP_LIMITS = Object.freeze({ response: 16 * 1024 * 1024, timeoutMs: 15000, body: 65536, descriptor: 32 * 1024, id: 200, question: 8000, default: 2000, options: 20, option: 500, post: 8000, comment: 8000, summary: 7950, reason: 2000, answer: 8000, seconds: 604800, shortText: 2000 });
 const HTTP_KIND = 'descriptor-http';
@@ -528,7 +551,7 @@ const NO_BOUND_TASK = 'no bound task: the connection covers the whole workspace;
 const NEEDS_CLAIM = 'complete/release needs the session that claimed the task; run next-task first';
 const UNUSABLE_TASK = 'task id not usable by vibe: rename it in Task&I or recreate the task';
 const REVOKED = 'the Task&I connection was revoked or replaced; copy a fresh descriptor (More → Connect Codex) into .vibe/taskandi-descriptor.json';
-const HTTP_USAGE = 'usage (Task&I descriptor binding): taskandi-client.mjs enqueue ask|comment|record_usage|record_time --key ID [--task ID] | flush | poll [--task ID] | ask-status [--task ID] | status | next-task --agent claude|codex --session ID [--body-max-chars N] | decide [--no-other-work] [--remaining-minutes N] [--windows-used N] | decide --resolve KEY --as proceeded | complete [--task ID] --summary TEXT | release [--task ID] --reason TEXT [--parked-asks ID,ID] [--budget-stopped] | usage --transcript FILE --session ID --account ID --cost-estimate N [--task ID] | reconcile --key ID --action done|retry --evidence TEXT | reconcile --direct complete|release --task ID --action done|retry --evidence TEXT';
+const HTTP_USAGE = 'usage (Task&I descriptor binding): taskandi-client.mjs enqueue ask|comment|record_usage|record_time --key ID [--task ID] | flush | poll [--task ID] | ask-status [--task ID] | status | next-task --agent claude|codex --session ID [--task ID] [--body-max-chars N] | decide [--no-other-work] [--remaining-minutes N] [--windows-used N] | decide --resolve KEY --as proceeded | complete [--task ID] --summary TEXT | release [--task ID] --reason TEXT [--parked-asks ID,ID] [--budget-stopped] | usage --transcript FILE --session ID --account ID --cost-estimate N [--task ID] | reconcile --key ID --action done|retry --evidence TEXT | reconcile --direct complete|release --task ID --action done|retry --evidence TEXT';
 // Every error class in one table. Codes not listed here (and every malformed, unexpected or lost response) are outcome unknown.
 // later = not applied, may succeed unchanged later; rejected = not applied, the request itself is refused.
 const HTTP_ERRORS = Object.freeze({
@@ -538,6 +561,15 @@ const HTTP_ERRORS = Object.freeze({
 });
 // Exactly-formed non-200 bodies: status -> the one code that status may carry (409 carries any code).
 const ERROR_STATUS = Object.freeze({ 409: null, 400: 'invalid_request', 421: 'wrong_origin', 403: 'connection_scope' });
+// v2.3 family: every exchange call runs in one transaction after the revocation check, so every 409 (and every
+// exactly-formed 400/403/405/421, answered before the transport) means nothing was applied by that send. On a resend
+// only RESEND_PROOF_CODES prove the same of earlier attempts (AC29). receipt_collision is classified by the caller.
+const HTTP_ERRORS_V23 = Object.freeze({
+  connection_unavailable: 'later', connection_revoked: 'later', stale_context: 'later', sync_required: 'later', lease_held: 'later',
+  wrong_origin: 'later', connection_scope: 'later', method_not_allowed: 'later',
+  use_native_connection: 'rejected', scope_missing: 'rejected', invalid_request: 'rejected', wrong_scope: 'rejected', wrong_thread: 'rejected', unknown_ask: 'rejected', not_assigned: 'rejected', receipt_collision: 'rejected', body_too_large: 'rejected',
+});
+const ERROR_STATUS_V23 = Object.freeze({ ...ERROR_STATUS, 405: 'method_not_allowed' });
 
 const codePoints = value => [...value].length;
 const plainObject = value => !!value && typeof value === 'object' && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
@@ -612,7 +644,8 @@ function httpFailure(httpClass, wire, detail = '') {
 export function httpTransport({ origin, token, body, container = false, connect = null, timeoutMs = HTTP_LIMITS.timeoutMs }) {
   const url = new URL(origin); const secure = url.protocol === 'https:';
   if (connect && (secure || (connect.host !== '127.0.0.1' && connect.host !== '::1'))) fail('the httpConnect test seam takes 127.0.0.1 or ::1, and only for http origins');
-  const payload = Buffer.from(JSON.stringify(body), 'utf8');
+  // A string body is sent byte for byte (a frozen v2.3 body); an object is serialized here.
+  const payload = Buffer.from(typeof body === 'string' ? body : JSON.stringify(body), 'utf8');
   const common = { 'content-type': 'application/json', authorization: `Bearer ${token}`, 'content-length': payload.length, connection: 'close' };
   let options, where;
   if (secure) { options = { host: url.hostname, port: url.port || 443, rejectUnauthorized: true, headers: common }; where = ''; }
@@ -653,21 +686,30 @@ export function httpTransport({ origin, token, body, container = false, connect 
 }
 // A non-200 body is interpreted when it is a JSON object whose `error` is a string (any other key is ignored and never
 // printed, except `children` of open_children, which is validated); 400/403/421 must carry their one code.
-function interpretHttp(action, response) {
+function interpretHttp(action, response, contract = HTTP_CONTRACT_REVISION) {
+  const v23 = isV23(contract); const statuses = v23 ? ERROR_STATUS_V23 : ERROR_STATUS; const classes = v23 ? HTTP_ERRORS_V23 : HTTP_ERRORS;
   let parsed; try { parsed = JSON.parse(response.body); } catch { parsed = undefined; }
   if (response.status === 200) { if (!plainObject(parsed)) throw httpFailure('unknown', 'malformed_response', 'not a JSON object'); return parsed; }
-  if (!Object.hasOwn(ERROR_STATUS, response.status)) throw httpFailure('unknown', 'unexpected_status', `HTTP ${response.status}`);
-  const only = ERROR_STATUS[response.status];
+  if (!Object.hasOwn(statuses, response.status)) throw httpFailure('unknown', 'unexpected_status', `HTTP ${response.status}`);
+  const only = statuses[response.status];
   if (!plainObject(parsed) || typeof parsed.error !== 'string' || (only !== null && parsed.error !== only)) throw httpFailure('unknown', 'unrecognised_response', `HTTP ${response.status}`);
   if (response.status === 409 && action === 'complete' && parsed.error === 'open_children') {
     let value;
     try { value = conform(RESPONSE_SCHEMA.open_children, { children: parsed.children }, 'open_children', {}); }
     catch (error) { if (error.code === 'MALFORMED') throw httpFailure('unknown', 'unrecognised_response', 'HTTP 409'); throw error; }
-    const error = httpFailure('open_children', 'open_children'); error.children = value.children.map(({ task, title }) => ({ task, title })); throw error;
+    const error = httpFailure('open_children', 'open_children'); error.status = 409; error.children = value.children.map(({ task, title }) => ({ task, title })); throw error;
   }
   const printable = PRINTABLE_CODE.test(parsed.error) ? parsed.error : 'unknown_error';
-  throw httpFailure(Object.hasOwn(HTTP_ERRORS, printable) ? HTTP_ERRORS[printable] : 'unknown', printable);
+  // v2.3: a 409 with a code this table does not know still applied nothing, so it is try-later rather than unknown.
+  const error = httpFailure(Object.hasOwn(classes, printable) ? classes[printable] : v23 && response.status === 409 ? 'later' : 'unknown', printable);
+  error.status = response.status; throw error;
 }
+// AC29: on a v2.3 resend only these HTTP 409 codes prove nothing was ever applied. They come from inside the exchange
+// transaction, after the replay lookup; every other answer to a resend (connection_revoked, connection_unavailable,
+// 400/403/405/421, any other 409 code, any other status) is outcome unknown, because it may have been decided before
+// the replay lookup and so says nothing about an earlier attempt.
+const RESEND_PROOF_CODES = Object.freeze(['stale_context', 'sync_required', 'lease_held', 'use_native_connection', 'scope_missing', 'invalid_request', 'wrong_scope', 'wrong_thread', 'unknown_ask', 'not_assigned', 'open_children']);
+const resendProof = error => error?.status === 409 && RESEND_PROOF_CODES.includes(error?.wire);
 
 // Response schemas: every v2.2 response, including all next_task and list_asks rules, lives in this one constant.
 // A string names a scalar check; obj(required, optional, rule) is an exact-key object; [s] an array of s.
@@ -675,8 +717,10 @@ const obj = (k, o = {}, rule = null) => ({ k, o, rule });
 const nullable = schema => ({ nullable: schema });
 const oneOf = (...values) => ({ oneOf: values });
 const SPENT = obj({ windows: 'count', tokens: 'count' });
+const CAPS_V22 = obj({ protocol: 'str', contract: 'str', grade: 'short', calls: ['str'] });
 const RESPONSE_SCHEMA = Object.freeze({
-  capabilities: obj({ protocol: 'str', contract: 'str', grade: 'short', calls: ['str'] }),
+  // A v2.3-family answer adds limits and id_pattern (checked in open()); any other answer has exactly the v2.2 keys.
+  capabilities: { when: value => plainObject(value) && isV23(value.contract), then: obj({ protocol: 'str', contract: 'str', grade: 'short', calls: ['str'], limits: 'object', id_pattern: 'str' }), else: CAPS_V22 },
   next_task: { when: value => plainObject(value) && value.task === null, then: obj({ task: oneOf(null) }), else: obj({
     task: 'str', title: 'short', body: 'str', priority: nullable('int'), effective_priority: nullable('int'),
     allowance: nullable(obj({}, { windows: 'count', tokens: 'count' })), spent: SPENT, owner: 'short',
@@ -698,8 +742,30 @@ const RESPONSE_SCHEMA = Object.freeze({
   release: obj({ task: 'task', released: oneOf(true), comment_id: 'id' }),
   open_children: obj({ children: { list: obj({ task: 'id', title: 'short' }), min: 1, max: 200 } }),
 });
+// v2.3 family: the responses that changed. next_task gains action, cache_read and fractional allowances, and with a
+// requested task (ctx.requested) answers a claim or {task:null, reason}; list_asks is the seq cursor page.
+export const CLAIM_REFUSALS = Object.freeze(['unsafe_id', 'not_assigned', 'closed', 'provisional', 'on_hold', 'blocked', 'open_children', 'waiting_on_ask', 'over_budget', 'leased']);
+const SPENT_V23 = obj({ windows: 'count', tokens: 'count', cache_read: 'count' });
+const ASK_V22 = RESPONSE_SCHEMA.list_asks.k.asks[0];
+const RESPONSE_SCHEMA_V23 = Object.freeze({
+  ...RESPONSE_SCHEMA,
+  next_task: { when: value => plainObject(value) && value.task === null, then: obj({ task: oneOf(null) }, { reason: oneOf(...CLAIM_REFUSALS) }, (value, ctx) => (ctx.requested !== undefined && value.reason === undefined ? 'a claim refusal has no reason' : ctx.requested === undefined && value.reason !== undefined ? 'a reason without a requested task' : null)), else: obj({
+    task: 'str', title: 'short', body: 'str', action: 'short', priority: nullable('int'), effective_priority: nullable('int'),
+    allowance: nullable(obj({}, { windows: 'num', tokens: 'num' })), spent: SPENT_V23, owner: 'short',
+    lease: obj({ until: 'ms', session: 'id' }), defaults_allowed: 'bool',
+  }, { hardDeadline: 'ms', estimate_minutes: 'count', latest_start: 'ms' }) },
+  list_asks: obj({ task: 'task', seq: 'count', asks: [obj({ ...ASK_V22.k, seq: 'pos' }, {}, ASK_V22.rule)] }, {}, (page, ctx) => {
+    let last = ctx.since;
+    for (const ask of page.asks) { if (ask.seq <= last) return ask.seq <= ctx.since ? 'an ask seq is not above since' : 'ask seqs do not strictly increase'; last = ask.seq; }
+    if (page.seq !== last) return page.asks.length ? 'seq is not the last ask seq' : 'seq of an empty page is not since';
+    return new Set(page.asks.map(ask => ask.ask_id)).size !== page.asks.length ? 'an ask_id repeats' : null;
+  }),
+  record_usage: obj({ task: 'task', spent: SPENT_V23 }),
+});
+const schemaFor = (action, contract) => (isV23(contract) ? RESPONSE_SCHEMA_V23 : RESPONSE_SCHEMA)[action];
 const SCALARS = Object.freeze({
   ms: value => Number.isSafeInteger(value) && value >= 0, count: value => Number.isSafeInteger(value) && value >= 0, int: value => Number.isSafeInteger(value),
+  pos: value => Number.isSafeInteger(value) && value > 0, num: value => typeof value === 'number' && Number.isFinite(value) && value >= 0, object: value => plainObject(value),
   bool: value => typeof value === 'boolean', str: value => typeof value === 'string',
   short: value => typeof value === 'string' && codePoints(value) <= HTTP_LIMITS.shortText,
   id: value => typeof value === 'string' && value.length >= 1 && value.length <= HTTP_LIMITS.id && value.isWellFormed(),
@@ -726,7 +792,7 @@ function conform(schema, value, path, ctx) {
 const HTTP_PAYLOAD_KEYS = Object.freeze({
   ask: ['question', 'default', 'options', 'order', 'estimate_minutes', 'remaining_minutes', 'reversible', 'blocking', 'in_reply_to', 'task'],
   comment: ['text', 'task'], record_time: ['seconds', 'started_at', 'task'],
-  record_usage: ['account', 'model', 'input', 'output', 'cache_read', 'cache_write', 'cost_estimate', 'task'],
+  record_usage: ['account', 'model', 'input', 'output', 'cache_read', 'cache_write', 'cost_estimate', 'at', 'task'],
 });
 export function validateHttpPayload(kind, input, key, now = Date.now()) {
   input = ownObject(input, `${kind} payload`);
@@ -752,10 +818,15 @@ export function validateHttpPayload(kind, input, key, now = Date.now()) {
     if (startedAt + input.seconds * 1000 > now) fail('record_time must not end in the future');
     return { seconds: input.seconds, started_at: startedAt };
   }
-  return { model: wireId(input.model, 'model'), input: safeCount(input.input, 'input'), output: safeCount(input.output, 'output'), cache_read: safeCount(input.cache_read, 'cache_read'), cache_write: safeCount(input.cache_write, 'cache_write'), cost_estimate: safeCost(input.cost_estimate), windows: 0, account: wireId(input.account, 'account'), source: 'vibe', source_ref: wireId(stableKey(key), 'source_ref') };
+  // at (ms since epoch, optional): when the usage happened. It is in the payload but not in the job's identity (jobDigest);
+  // it is never sent to v2.2, and the first v2.3 dispatch drops it when over 29 days old or clamps it when in the future.
+  const at = input.at === undefined ? {} : { at: safeCount(input.at, 'at') };
+  return { model: wireId(input.model, 'model'), input: safeCount(input.input, 'input'), output: safeCount(input.output, 'output'), cache_read: safeCount(input.cache_read, 'cache_read'), cache_write: safeCount(input.cache_write, 'cache_write'), cost_estimate: safeCost(input.cost_estimate), windows: 0, account: wireId(input.account, 'account'), ...at, source: 'vibe', source_ref: wireId(stableKey(key), 'source_ref') };
 }
 const WORST = 'x'.repeat(HTTP_LIMITS.id);
-const bodyBytes = body => Buffer.byteLength(JSON.stringify(body), 'utf8');
+const textBytes = value => Buffer.byteLength(value, 'utf8');
+// A request_id placeholder of the real length, for size checks made before one is chosen.
+const SOME_REQUEST_ID = '00000000-0000-4000-8000-000000000000';
 // The one claimed-task accessor (both binding kinds).
 const claimOf = state => (plainObject(state.claimed) && typeof state.claimed.task === 'string' ? state.claimed : null);
 // Target resolution: --task, else the claimed task, else the effective task.
@@ -772,27 +843,120 @@ const JOB_SHAPES = Object.freeze({
   ask: [['task', 'question', 'default', 'order', 'estimate_minutes', 'remaining_minutes', 'reversible', 'blocking'], ['options', 'in_reply_to']],
   comment: [['task', 'text'], []],
   record_time: [['task', 'seconds', 'started_at'], []],
-  record_usage: [['task', 'model', 'input', 'output', 'cache_read', 'cache_write', 'cost_estimate', 'windows', 'account', 'source', 'source_ref'], []],
+  record_usage: [['task', 'model', 'input', 'output', 'cache_read', 'cache_write', 'cost_estimate', 'windows', 'account', 'source', 'source_ref'], ['at']],
 });
+// A job's identity (the dedupe digest) under a descriptor binding. A usage row's `at` is not part of it: a re-import that
+// derives `at` for a key queued without one (or with another) deduplicates, and the stored payload keeps the first `at`.
+function jobDigest(kind, payload) {
+  if (kind !== 'record_usage' || !Object.hasOwn(payload, 'at')) return digest({ kind, payload });
+  const { at: _at, ...rest } = payload; return digest({ kind, payload: rest });
+}
 function jobIntact(job) {
   if (typeof job.kind !== 'string' || !Object.hasOwn(JOB_SHAPES, job.kind) || !plainObject(job.payload)) return false;
   const [required, optional] = JOB_SHAPES[job.kind];
   if (Object.keys(job.payload).some(key => !required.includes(key) && !optional.includes(key)) || required.some(key => !Object.hasOwn(job.payload, key))) return false;
-  return digest({ kind: job.kind, payload: job.payload }) === job.digest;
+  if (job.payload.at !== undefined && !Number.isSafeInteger(job.payload.at)) return false;
+  return jobDigest(job.kind, job.payload) === job.digest;
 }
 // The wire fields of a queued job at dispatch: agent was resolved at enqueue, session comes from the current claim.
-function jobFields(job, claim) {
+// `at` (record_usage) is never sent to v2.2.
+function jobFields(job, claim, contract = HTTP_CONTRACT_REVISION) {
   const fields = { ...job.payload };
+  if (!isV23(contract)) delete fields.at;
   if (job.kind === 'ask' || job.kind === 'comment') fields.agent = job.agent === 'codex' ? 'codex' : 'claude';
   if (claim && claim.task === job.payload.task && typeof claim.session === 'string') fields.session = claim.session;
   return fields;
 }
+// ---- v2.3 family: frozen wire bodies, request_id and server limits ----
+const AT_MAX_AGE = 29 * 24 * 60 * 60 * 1000, AT_MAX_AHEAD = 30 * 1000;
+const DOWNGRADED = 'attempted on v2.3; the server now speaks v2.2, so a resend could duplicate';
+const COLLIDED = 'receipt_collision on a resend: Task&I holds another body under this request_id, so the stored body was changed or mismatched; check Task&I, then reconcile --action done (never retried)';
+// Task&I replays a request_id's original answer only for the same body from the same connection: a body frozen on a
+// connection that has since been replaced (a re-grant) can never be resent safely.
+const REPLAY_LOST = 'sent on a previous Task&I connection; replay is unavailable — check Task&I, then reconcile';
+const RETRY_LOST = 'this sends a new write on the current connection; Task&I cannot tell it from the earlier one, so check it was not applied';
+// The one wire-body builder (AC27): first sends, size checks and server-limit checks all use its {object, text}; a resend
+// sends a stored text unchanged. request_id is added only on a v2.3-family write.
+function wireBody(action, fields, connection, requestId) {
+  const object = { ...fields, ...(requestId === undefined ? {} : { request_id: requestId }), action, connection };
+  return { object, text: JSON.stringify(object) };
+}
+// A queued job's body for `contract`: fields, session resolved now, agent, request_id (v2.3), action and connection. On v2.3
+// `at` older than 29 days is left out (with a notice when `notices` is given), more than 30 s ahead is clamped to now + 30 s.
+function jobBody(job, claim, config, contract, at, notices = null) {
+  const fields = jobFields(job, claim, contract);
+  if (fields.at !== undefined) {
+    if (fields.at < at - AT_MAX_AGE) { delete fields.at; notices?.push(`usage row ${job.key}: at older than 29 days, sent without it`); }
+    else if (fields.at > at + AT_MAX_AHEAD) fields.at = at + AT_MAX_AHEAD;
+  }
+  return wireBody(job.kind, fields, config.connection, isV23(contract) ? job.requestId : undefined);
+}
+// The frozen-body fields of a job; cleared whenever an answer proves no attempt was applied (or the send never left).
+const FROZEN = ['sentBody', 'sentSession', 'frozenAt'];
+const unfreeze = job => { for (const name of FROZEN) delete job[name]; };
+function frozenConnection(text) { try { const body = JSON.parse(text); return plainObject(body) && typeof body.connection === 'string' ? body.connection : null; } catch { return null; } }
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+// A stored sentBody must still be the job's payload plus the permitted extras, with the session recorded at freeze time,
+// a known agent and an `at` inside the window applied at freeze time, so an edited state.json cannot send.
+function sentBodyIntact(job) {
+  if (job.sentBody === undefined) return true;
+  if (typeof job.sentBody !== 'string' || !isV23(job.sentRevision) || typeof job.requestId !== 'string' || !UUID_V4.test(job.requestId)) return false;
+  let body; try { body = JSON.parse(job.sentBody); } catch { return false; }
+  if (!plainObject(body) || body.action !== job.kind || body.request_id !== job.requestId || typeof body.connection !== 'string') return false;
+  const extras = ['action', 'connection', 'request_id', 'agent', 'session'];
+  if (Object.keys(body).some(key => !extras.includes(key) && !Object.hasOwn(job.payload, key))) return false;
+  if (Object.hasOwn(body, 'session') && (typeof job.sentSession !== 'string' || body.session !== job.sentSession)) return false;
+  if (Object.hasOwn(body, 'agent') && body.agent !== 'claude' && body.agent !== 'codex') return false;
+  for (const [key, value] of Object.entries(job.payload)) {
+    if (key === 'at') {
+      // Exactly what the window applied at freeze time gives: left out when too old, else the payload's at, clamped.
+      if (!Number.isSafeInteger(job.frozenAt) || !Number.isSafeInteger(value)) return false;
+      const expected = value < job.frozenAt - AT_MAX_AGE ? undefined : Math.min(value, job.frozenAt + AT_MAX_AHEAD);
+      if (body.at !== expected) return false;
+      continue;
+    }
+    if (canonical(body[key]) !== canonical(value)) return false;
+  }
+  return true;
+}
+// The server's published limits against a final body (code points for text, UTF-16 units for ids, bytes for the body).
+// Returns the name of the first limit exceeded, or null. Enqueue already applied the client's own limits.
+function overServerLimit(limits, action, body, bodyText) {
+  if (!limits) return null;
+  const cp = value => (typeof value === 'string' ? codePoints(value) : 0);
+  if (Buffer.byteLength(bodyText, 'utf8') > limits.request_bytes) return 'request_bytes';
+  for (const name of ['task', 'in_reply_to']) if (typeof body[name] === 'string' && body[name].length > limits.id) return 'id';
+  if (action === 'ask') {
+    if (cp(body.question) > limits.question) return 'question';
+    if (cp(body.default) > limits.default) return 'default';
+    const options = Array.isArray(body.options) ? body.options : [];
+    if (options.length > limits.options) return 'options';
+    if (options.some(option => cp(option) > limits.option)) return 'option';
+    if (cp(`Question: ${body.question}\nDefault: ${body.default}${options.length ? `\nOptions: ${options.join(' / ')}` : ''}`) > limits.ask_post) return 'ask_post';
+  }
+  if (action === 'comment' && cp(body.text) > limits.comment) return 'comment';
+  if (action === 'complete' && cp(body.summary) > limits.summary) return 'summary';
+  if (action === 'release' && cp(body.reason) > limits.reason) return 'reason';
+  return null;
+}
+function checkServerLimits(limits) {
+  if (!plainObject(limits)) return 'limits is not an object';
+  for (const key of SERVER_LIMIT_KEYS) if (!Object.hasOwn(limits, key)) return `limits is missing ${key}`;
+  if (limits.unit !== 'code_points') return 'limits.unit is not code_points';
+  if (limits.id_unit !== 'utf16_code_units') return 'limits.id_unit is not utf16_code_units';
+  for (const key of SERVER_LIMIT_KEYS) if (key !== 'unit' && key !== 'id_unit' && !(Number.isSafeInteger(limits[key]) && limits[key] > 0)) return `limits.${key} is not a positive integer`;
+  return null;
+}
+// The revision a claim was made under (decide's token count follows it): claim.contract, else the last negotiated, else v2.2.
+const claimContract = (state, claim) => (HTTP_CONTRACT_REVISIONS.includes(claim?.contract) ? claim.contract : HTTP_CONTRACT_REVISIONS.includes(state.lastContract) ? state.lastContract : HTTP_CONTRACT_REVISION);
+// The revision whose counting rule produced claim.spent (next-task, a renewal, or a record_usage response), else as above.
+const spentContractOf = (state, claim) => (HTTP_CONTRACT_REVISIONS.includes(claim?.spentContract) ? claim.spentContract : claimContract(state, claim));
 const httpClassOf = error => (error?.code === 'TRY_LATER' || error?.code === 'NOT_SENT' ? 'later' : error?.code === 'REFUSED' ? 'rejected' : 'unknown');
 function withNotices(result, notices) { Object.defineProperty(result, 'notices', { value: notices, enumerable: false }); return result; }
 // complete/release: after the request may have been sent, an unknown outcome keeps the claim and says so.
-function sentWriteFailure(error) {
-  if (httpClassOf(error) !== 'unknown') return error;
-  const wrapped = new Error(`outcome unknown; check the task in Task&I: ${error?.wire ?? 'unknown_error'}`); wrapped.code = 'OUTCOME_UNKNOWN'; wrapped.preface = error?.preface; return wrapped;
+function sentWriteFailure(error, v23 = false, force = false) {
+  if (!force && httpClassOf(error) !== 'unknown') return error;
+  const wrapped = new Error(`outcome unknown; ${v23 ? 'repeat the same command to resend it safely, or ' : ''}check the task in Task&I: ${error?.wire ?? 'unknown_error'}`); wrapped.code = 'OUTCOME_UNKNOWN'; wrapped.preface = error?.preface; return wrapped;
 }
 const DIRECT_CALLS = ['complete', 'release'];
 // A complete/release whose outcome is unknown stays recorded in state.pendingDirect ({call, task, at: ms}) until
@@ -803,6 +967,14 @@ const samePending = (item, call, task) => plainObject(item) && item.call === cal
 function refusePendingDirect(state, call, task) {
   if (!pendingList(state).some(item => samePending(item, call, task))) return;
   fail(`an earlier ${call} for ${task} has an unknown outcome; check Task&I, then run reconcile --direct ${call} --task ${task} --action done|retry --evidence TEXT`, 'PENDING');
+}
+// A v2.3 record also carries {requestId, sentRevision, fieldsDigest, sentBody}: the same command (same task and text)
+// resends sentBody byte for byte with that request_id instead of being blocked.
+const isV23Pending = item => plainObject(item) && isV23(item.sentRevision) && typeof item.sentBody === 'string' && typeof item.requestId === 'string';
+const directText = call => (call === 'complete' ? 'summary' : 'reason');
+function samePendingText(item, call, task, value) {
+  let body; try { body = JSON.parse(item.sentBody); } catch { return false; }
+  return plainObject(body) && body.action === call && body.request_id === item.requestId && body.task === task && body[directText(call)] === value && item.fieldsDigest === digest({ task, [directText(call)]: value });
 }
 function addPendingDirect(state, call, task, extra = {}) {
   const record = { call, task, at: Date.now(), ...extra };
@@ -855,7 +1027,8 @@ function budgetThreshold() {
 const openAskJobs = (state, task) => state.jobs.filter(job => job.key !== `budget-${task}` && isOpenAsk(state, job, task));
 // The ask ids a park records: every open blocking ask on the task, whatever decide's action for it at park time.
 const openBlockingAskIds = (state, task) => openAskJobs(state, task).filter(job => job.payload?.blocking !== false).map(job => job.result.ask_id);
-const usageTokens = payload => payload.input + payload.output + payload.cache_read + payload.cache_write;
+// v2.2 counts cache_read against an allowance; the v2.3 family does not (tokens = input + output + cache_write).
+const usageTokens = (payload, v23 = false) => payload.input + payload.output + (v23 ? 0 : payload.cache_read) + payload.cache_write;
 const capOf = (allowance, key) => (!plainObject(allowance) || allowance[key] === undefined ? Infinity : allowance[key]);
 
 function createHttpClient(cwd, httpConnect, now = Date.now) {
@@ -863,33 +1036,75 @@ function createHttpClient(cwd, httpConnect, now = Date.now) {
   // Opens a session: exactly one capabilities request, gated on protocol, contract and the calls about to be made.
   async function open(config, calls) {
     if (httpConnect && new URL(config.origin).protocol !== 'http:') fail('the httpConnect test seam is refused for https origins');
-    const send = async (action, fields, ctx) => {
-      const body = { ...fields, action, connection: config.connection };
-      if (bodyBytes(body) > HTTP_LIMITS.body) { const error = httpFailure('rejected', 'body_too_large', `request body over ${HTTP_LIMITS.body} bytes`); error.notSent = true; throw error; }
-      const response = await httpTransport({ origin: config.origin, token: config.token, body, container: containerMode(), connect: httpConnect ? { host: httpConnect.host, port: httpConnect.port } : null, timeoutMs: httpConnect?.timeoutMs ?? HTTP_LIMITS.timeoutMs });
-      const value = interpretHttp(action, response);
-      try { return conform(RESPONSE_SCHEMA[action], value, action, ctx); } catch (error) { if (error.code === 'MALFORMED') throw httpFailure('unknown', 'malformed_response', error.message); throw error; }
+    // Until capabilities answers, the v2.2 rules apply (the capabilities request itself is the same in every revision).
+    let contract = HTTP_CONTRACT_REVISION;
+    // transmit sends a body string byte for byte (a body from wireBody, or a frozen one); send builds one with no request_id
+    // (reads, and the capabilities request itself).
+    const transmit = async (action, bodyText, ctx) => {
+      if (textBytes(bodyText) > HTTP_LIMITS.body) { const error = httpFailure('rejected', 'body_too_large', `request body over ${HTTP_LIMITS.body} bytes`); error.notSent = true; throw error; }
+      const response = await httpTransport({ origin: config.origin, token: config.token, body: bodyText, container: containerMode(), connect: httpConnect ? { host: httpConnect.host, port: httpConnect.port } : null, timeoutMs: httpConnect?.timeoutMs ?? HTTP_LIMITS.timeoutMs });
+      const value = interpretHttp(action, response, contract);
+      try { return conform(schemaFor(action, contract), value, action, ctx); } catch (error) { if (error.code === 'MALFORMED') throw httpFailure('unknown', 'malformed_response', error.message); throw error; }
     };
+    const send = (action, fields, ctx) => transmit(action, wireBody(action, fields, config.connection).text, ctx);
+    send.raw = transmit;
     const caps = await send('capabilities', {}, {});
     if (caps.protocol !== config.protocol) fail('Task&I capabilities: protocol does not match the descriptor', 'PREDISPATCH');
-    if (caps.contract !== HTTP_CONTRACT_REVISION) fail(`Task&I capabilities: contract is not ${HTTP_CONTRACT_REVISION}`, 'PREDISPATCH');
+    if (!HTTP_CONTRACT_REVISIONS.includes(caps.contract)) fail(`Task&I capabilities: contract is not one of ${HTTP_CONTRACT_REVISIONS.join(', ')}`, 'PREDISPATCH');
+    if (isV23(caps.contract)) {
+      const broken = checkServerLimits(caps.limits);
+      if (broken) fail(`Task&I capabilities: ${broken}`, 'PREDISPATCH');
+      if (caps.id_pattern !== USABLE_ID.source) fail('Task&I capabilities: id_pattern differs from the task ids this client accepts', 'PREDISPATCH');
+    }
     for (const call of calls) if (!caps.calls.includes(call)) fail(`Task&I capabilities do not offer ${call}`, 'PREDISPATCH');
-    await withState(cwd, now, async (state, statePath) => { state.lastGrade = caps.grade; atomicJson(statePath, state); });
-    send.calls = caps.calls;
+    contract = caps.contract;
+    // lastContract: every successful answer records the negotiated revision (absent only before the first call).
+    await withState(cwd, now, async (state, statePath) => { state.lastGrade = caps.grade; state.lastContract = caps.contract; atomicJson(statePath, state); });
+    send.calls = caps.calls; send.contract = caps.contract; send.v23 = isV23(caps.contract);
+    send.limits = send.v23 ? Object.fromEntries(SERVER_LIMIT_KEYS.map(key => [key, caps.limits[key]])) : null;
     return send;
   }
   const parseTask = task => (task === undefined ? undefined : descriptorTaskRef(task, '--task'));
   // Shared by complete/release: only the claiming session may send them; success clears the claim. pendingDirect is
   // written before the request and cleared on a definite answer, so an unknown outcome survives the process.
   // `park` ({parkedAsks, budgetStopped}, release only) also writes a `parked` entry with the claim's current allowance.
+  // v2.3: a pending record from a v2.3 send is resent (same text, same connection) or refused (other text, or a body
+  // frozen on a replaced connection, which Task&I cannot replay) instead of blocking; the order is: resolve the target and
+  // check the pending record (each refusal sends nothing), then capabilities, then send.
   async function finish(action, task, extra, shape, park = null) {
-    const config = descriptorConfig(); const explicit = parseTask(task);
-    const target = await withState(cwd, now, async state => { const resolved = targetFrom(state, config, explicit, { claimOnly: true }); refusePendingDirect(state, action, resolved.task); return resolved; });
-    if (park) park = { ...park, allowance: target.claim?.allowance ?? null };
+    const config = descriptorConfig(); const explicit = parseTask(task); const value0 = extra[directText(action)];
+    const target = await withState(cwd, now, async state => {
+      const resolved = targetFrom(state, config, explicit, { claimOnly: true });
+      const pending = pendingList(state).find(item => samePending(item, action, resolved.task));
+      if (pending && !isV23Pending(pending)) refusePendingDirect(state, action, resolved.task);
+      if (pending && !samePendingText(pending, action, resolved.task, value0)) fail(`an earlier ${action} for ${resolved.task} with different text has an unknown outcome; repeat it with the same text to resend it safely, or check Task&I and run reconcile --direct ${action} --task ${resolved.task} --action done|retry --evidence TEXT`, 'PENDING');
+      return { ...resolved, pending: pending ? structuredClone(pending) : null };
+    });
+    const resend = target.pending !== null;
+    if (resend && frozenConnection(target.pending.sentBody) !== config.connection) fail(`the earlier ${action} for ${target.task} was ${REPLAY_LOST} --direct ${action} --task ${target.task} --action done|retry --evidence TEXT`, 'PENDING');
+    // A resend reuses the record's parking data rather than recomputing it.
+    if (resend) park = Array.isArray(target.pending.parkedAsks) || target.pending.budgetStopped === true ? { parkedAsks: Array.isArray(target.pending.parkedAsks) ? target.pending.parkedAsks : [], budgetStopped: target.pending.budgetStopped === true, allowance: target.pending.allowance ?? null } : null;
+    else if (park) park = { ...park, allowance: target.claim?.allowance ?? null };
     const fields = { task: target.task, ...extra, session: target.session };
-    if (bodyBytes({ ...fields, action, connection: config.connection }) > HTTP_LIMITS.body) fail(`${action} would exceed the ${HTTP_LIMITS.body}-byte request body limit`);
+    const tooBig = text => textBytes(text) > HTTP_LIMITS.body && fail(`${action} would exceed the ${HTTP_LIMITS.body}-byte request body limit`);
+    if (!resend) tooBig(wireBody(action, fields, config.connection).text);
     const send = await open(config, [action]);
-    await withState(cwd, now, async (state, statePath) => { refusePendingDirect(state, action, target.task); addPendingDirect(state, action, target.task, parkFields(park)); atomicJson(statePath, state); });
+    if (resend && !send.v23) fail(`an earlier ${action} for ${target.task} was ${DOWNGRADED}; check Task&I, then run reconcile --direct ${action} --task ${target.task} --action done|retry --evidence TEXT`, 'PENDING');
+    // A resend sends the stored body unchanged (the server decides; no limit is re-checked). A first send is built once,
+    // with its request_id on v2.3, and checked for size and against the server's limits before anything is recorded.
+    const body = resend ? { object: null, text: target.pending.sentBody } : wireBody(action, fields, config.connection, send.v23 ? randomUUID() : undefined);
+    if (!resend) {
+      tooBig(body.text);
+      const over = send.v23 ? overServerLimit(send.limits, action, body.object, body.text) : null;
+      if (over) fail(`${action} is over the Task&I server's ${over} limit (over_server_limit); nothing was sent`);
+    }
+    await withState(cwd, now, async (state, statePath) => {
+      const current = pendingList(state).find(item => samePending(item, action, target.task));
+      if (resend) { if (!current || current.requestId !== target.pending.requestId) fail(`the pending ${action} for ${target.task} changed while this ran; run it again`, 'PENDING'); return; }
+      refusePendingDirect(state, action, target.task);
+      const sent = send.v23 ? { requestId: body.object.request_id, sentRevision: send.contract, fieldsDigest: digest({ task: target.task, [directText(action)]: value0 }), sentBody: body.text } : {};
+      addPendingDirect(state, action, target.task, { ...sent, ...parkFields(park) }); atomicJson(statePath, state);
+    });
     const settle = clearClaim => withState(cwd, now, async (state, statePath) => {
       clearPendingDirect(state, action, target.task);
       if (clearClaim && claimOf(state)?.task === target.task) delete state.claimed;
@@ -898,11 +1113,19 @@ function createHttpClient(cwd, httpConnect, now = Date.now) {
       atomicJson(statePath, state);
     });
     let value;
-    try { value = await send(action, fields, { task: target.task }); }
+    try { value = await send.raw(action, body.text, { task: target.task }); }
     catch (error) {
+      const notSent = error?.code === 'NOT_SENT' || error?.notSent === true;
+      // AC29: on a v2.3 resend only an in-transaction 409 proof code settles the record (open_children is one: it is
+      // decided after the replay lookup); any other answer (receipt_collision has its own message below) is outcome unknown.
+      if (send.v23 && resend && !notSent && error?.wire !== 'receipt_collision' && !resendProof(error)) throw sentWriteFailure(error, true, true);
       if (error?.code === 'OPEN_CHILDREN') { await settle(false); return { bound: true, completed: false, open_children: error.children }; }
-      if (httpClassOf(error) !== 'unknown') await settle(false);
-      throw sentWriteFailure(error);
+      // On a resend, receipt_collision means Task&I holds another body under this request_id: the pending record is kept.
+      if (send.v23 && resend && error?.wire === 'receipt_collision') { const kept = new Error(`the earlier ${action} for ${target.task} may have been applied (receipt_collision on the resend: Task&I holds another body under its request_id); the pending record is kept: check Task&I, then run reconcile --direct ${action} --task ${target.task} --action done|retry --evidence TEXT`); kept.code = 'REFUSED'; throw kept; }
+      // A definite answer (a proof code, on a resend) to the same connection proves nothing was applied (an applied first send would have been
+      // replayed), so it settles the record; a resend that never left the client proves nothing, so the record stays.
+      if (httpClassOf(error) !== 'unknown' && !(resend && notSent)) await settle(false);
+      throw sentWriteFailure(error, send.v23);
     }
     await settle(true);
     return { bound: true, ...shape(value) };
@@ -922,13 +1145,14 @@ function createHttpClient(cwd, httpConnect, now = Date.now) {
       for (const { key, explicit, fields } of prepared) {
         const { task, claim } = targetFrom(state, config, explicit);
         const payload = { task, ...fields };
-        if (bodyBytes({ ...payload, action: kind, connection: WORST, agent: WORST, session: WORST }) > HTTP_LIMITS.body) fail(`${kind} would exceed the ${HTTP_LIMITS.body}-byte request body limit`);
-        const hash = digest({ kind, payload });
+        if (textBytes(wireBody(kind, { ...payload, agent: WORST, session: WORST }, WORST, SOME_REQUEST_ID).text) > HTTP_LIMITS.body) fail(`${kind} would exceed the ${HTTP_LIMITS.body}-byte request body limit`);
+        const hash = jobDigest(kind, payload);
         const found = state.jobs.find(job => job.key === key) ?? tombstoneOf(state, key);
         if (found) { if (found.digest !== hash) fail('same key was already used with a different payload (KEY_CONFLICT)', 'KEY_CONFLICT'); results.push({ enqueued: false, deduplicated: true, key, state: found.state ?? 'done', bound: true }); continue; }
         // agent: the claim's when this is the claimed task, else VIBE_AGENT, else claude. Kept outside payload and digest.
         const agent = kind === 'ask' || kind === 'comment' ? (claim && claim.task === task && (claim.agent === 'claude' || claim.agent === 'codex') ? claim.agent : process.env.VIBE_AGENT === 'codex' || process.env.VIBE_AGENT === 'claude' ? process.env.VIBE_AGENT : 'claude') : undefined;
-        state.jobs.push({ key, kind, digest: hash, payload, ...(agent ? { agent } : {}), binding: bindingDigest(config), channel: 'taskandi-http', state: 'queued', createdAt: new Date().toISOString() });
+        // requestId: the v2.3 request_id, generated once per intended write; outside payload and digest.
+        state.jobs.push({ key, kind, digest: hash, payload, ...(agent ? { agent } : {}), requestId: randomUUID(), binding: bindingDigest(config), channel: 'taskandi-http', state: 'queued', createdAt: new Date().toISOString() });
         changed = true; results.push({ enqueued: true, deduplicated: false, key, state: 'queued', bound: true });
       }
       // `mark` (the usage importer's ledger update) lands in the same state write as the jobs it accounts for.
@@ -949,73 +1173,145 @@ function createHttpClient(cwd, httpConnect, now = Date.now) {
       const out = { bound: true, dispatched: 0, done: 0, uncertain: 0, refused: 0, requeued: 0 };
       const isQueued = job => job.state === 'queued' && job.channel !== 'file-fallback';
       const refuse = (job, code) => { job.state = 'refused'; job.refusedCode = code; job.lastError = `Task&I refused: ${code}`; out.refused++; notices.push(`${job.key}: Task&I refused: ${code}`); };
+      const intact = job => jobIntact(job) && sentBodyIntact(job);
+      // Before the revision is known the v2.2 body (the smaller) is measured; the exact body is measured again below.
+      const sizeOf = (job, claim) => textBytes(typeof job.sentBody === 'string' ? job.sentBody : jobBody(job, claim, config, HTTP_CONTRACT_REVISION, now()).text);
+      // A body frozen on a connection that has since been replaced cannot be replayed: uncertain, nothing sent (AC18).
+      const replayLost = job => typeof job.sentBody === 'string' && frozenConnection(job.sentBody) !== config.connection;
+      const loseReplay = job => { job.state = 'uncertain'; job.replayLost = true; job.lastError = REPLAY_LOST; out.uncertain++; notices.push(`${job.key}: ${REPLAY_LOST}`); };
       // Binding, job integrity and final body size are checked before any request, so a flush with nothing sendable sends nothing.
       const kinds = await withState(cwd, now, async (state, statePath) => {
         const queued = state.jobs.filter(isQueued);
         for (const job of queued) if (job.binding !== bindingDigest(config)) fail(`queued job binding changed; reconcile explicitly before delivery (${job.key})`, 'BINDING_CHANGED');
         let changed = false;
         for (const job of queued) {
-          if (!jobIntact(job)) { refuse(job, 'tampered_job'); changed = true; }
-          else if (bodyBytes({ ...jobFields(job, claimOf(state)), action: job.kind, connection: config.connection }) > HTTP_LIMITS.body) { refuse(job, 'body_too_large'); changed = true; }
+          if (!intact(job)) { refuse(job, 'tampered_job'); changed = true; }
+          else if (replayLost(job)) { loseReplay(job); changed = true; }
+          else if (sizeOf(job, claimOf(state)) > HTTP_LIMITS.body) { refuse(job, 'body_too_large'); changed = true; }
         }
         if (changed) atomicJson(statePath, state);
         return [...new Set(state.jobs.filter(isQueued).map(job => job.kind))];
       });
       if (!kinds.length) return withNotices(out, notices);
-      const send = await open(config, kinds);
+      const send = await open(config, kinds); const { contract, v23 } = send;
       return withState(cwd, now, async (state, statePath) => {
         for (const job of state.jobs.filter(isQueued)) {
           if (job.binding !== bindingDigest(config)) fail(`queued job binding changed; reconcile explicitly before delivery (${job.key})`, 'BINDING_CHANGED');
-          if (!jobIntact(job)) { refuse(job, 'tampered_job'); atomicJson(statePath, state); continue; }
-          const claim = claimOf(state);
+          if (!intact(job)) { refuse(job, 'tampered_job'); atomicJson(statePath, state); continue; }
+          if (replayLost(job)) { loseReplay(job); atomicJson(statePath, state); continue; }
+          // Downgrade: a job attempted on v2.3 may have been applied; a v2.2 server cannot deduplicate a resend.
+          if (!v23 && job.sentBody !== undefined) { job.state = 'uncertain'; job.lastError = DOWNGRADED; out.uncertain++; notices.push(`${job.key}: ${DOWNGRADED}`); atomicJson(statePath, state); continue; }
+          const claim = claimOf(state); const resend = job.sentBody !== undefined;
+          let bodyText;
+          // A resend sends sentBody byte for byte; it may have been applied, so no limit is re-checked: the server decides.
+          if (resend) bodyText = job.sentBody;
+          else {
+            // Jobs queued before request_id existed get one now, frozen with the body.
+            if (v23 && !(typeof job.requestId === 'string' && UUID_V4.test(job.requestId))) job.requestId = randomUUID();
+            const frozenAt = now(); const atNotices = [];
+            const body = jobBody(job, claim, config, contract, frozenAt, atNotices);
+            // The exact body, request_id and at included, is measured here; an oversized or over-limit body is never frozen.
+            if (textBytes(body.text) > HTTP_LIMITS.body) { refuse(job, 'body_too_large'); atomicJson(statePath, state); continue; }
+            const over = v23 ? overServerLimit(send.limits, job.kind, body.object, body.text) : null;
+            if (over) { refuse(job, 'over_server_limit'); job.lastError += ` (server limit ${over})`; atomicJson(statePath, state); continue; }
+            notices.push(...atNotices);
+            if (v23) Object.assign(job, { sentBody: body.text, sentSession: typeof body.object.session === 'string' ? body.object.session : null, frozenAt });
+            job.sentRevision = contract; bodyText = body.text;
+          }
           job.state = 'dispatching'; job.dispatchedAt = new Date().toISOString(); atomicJson(statePath, state); out.dispatched++;
           try {
-            job.result = await send(job.kind, jobFields(job, claim), { task: job.payload.task });
+            job.result = await send.raw(job.kind, bodyText, { task: job.payload.task });
             const at = now(); job.state = 'done'; job.doneAt = new Date(at).toISOString(); job.doneAtMs = at; delete job.lastError; out.done++;
-            // The latest spent on the claimed task: every record_usage response carries the server's roll-up.
+            // The latest spent on the claimed task: every record_usage response carries the server's roll-up, counted the
+            // way this revision counts it (spentContract).
             const current = claimOf(state);
-            if (job.kind === 'record_usage' && current && job.result.task === current.task) { current.spent = { ...job.result.spent }; current.spentAt = at; }
+            if (job.kind === 'record_usage' && current && job.result.task === current.task) { current.spent = { ...job.result.spent }; current.spentContract = contract; current.spentAt = at; }
             atomicJson(statePath, state);
           } catch (error) {
-            const httpClass = httpClassOf(error);
-            if (error?.code === 'NOT_SENT' || error?.notSent) out.dispatched--;
+            const notSent = error?.code === 'NOT_SENT' || error?.notSent === true;
+            // AC29: an answer to a resend proves nothing unless it is an in-transaction 409 proof code.
+            const unknownResend = v23 && resend && !notSent && error?.wire !== 'receipt_collision' && !resendProof(error);
+            const httpClass = unknownResend ? 'unknown' : httpClassOf(error);
+            if (notSent) out.dispatched--;
+            if (v23 && !notSent && error?.wire === 'receipt_collision') {
+              // First send: the request_id is already taken and nothing was applied; a fresh one is issued. Resend: Task&I
+              // holds another body under it, which only a changed or mismatched stored body explains.
+              if (!resend) { unfreeze(job); job.requestId = randomUUID(); refuse(job, 'receipt_collision'); atomicJson(statePath, state); continue; }
+              job.state = 'uncertain'; job.noRetry = true; job.lastError = COLLIDED; out.uncertain++;
+              notices.push(`${job.key}: ${COLLIDED}`); atomicJson(statePath, state); break;
+            }
+            // A definite answer (on a resend, only a proof code) from the same connection proves no attempt was applied (an
+            // applied one would have been replayed), so the frozen body is dropped and the next attempt is rebuilt with the same request_id. A send
+            // that never left the client freezes nothing, but a resend's earlier attempts may still apply: keep its body.
+            if (v23 && httpClass !== 'unknown' && !(notSent && resend)) unfreeze(job);
             if (httpClass === 'rejected') { refuse(job, error.wire); atomicJson(statePath, state); continue; }
-            if (httpClass === 'later') { job.state = 'queued'; job.lastError = error.message; out.requeued++; notices.push(`${job.key}: ${error.message}`); atomicJson(statePath, state); break; }
+            if (httpClass === 'later') { job.state = 'queued'; job.lastError = error.message; out.requeued++; notices.push(...(error?.preface ?? []), `${job.key}: ${error.message}`); atomicJson(statePath, state); break; }
+            const detail = !error?.wire ? 'unexpected client error' : unknownResend && error.httpClass !== 'unknown' ? `Task&I outcome unknown on a resend: ${error.wire}${error.status ? ` (HTTP ${error.status})` : ''}` : error.message;
+            if (v23) {
+              // Safe to resend: the next v2.3 flush sends sentBody again with the same request_id, up to MAX_ATTEMPTS.
+              job.attempts = (Number.isSafeInteger(job.attempts) ? job.attempts : 0) + 1;
+              if (job.attempts >= MAX_ATTEMPTS) { job.state = 'uncertain'; job.lastError = `outcome unknown after ${MAX_ATTEMPTS} attempts; reconcile explicitly: ${detail}`; out.uncertain++; }
+              else { job.state = 'queued'; job.lastError = `outcome unknown; the next flush resends the same body and request_id: ${detail}`; out.requeued++; }
+              notices.push(...(error?.preface ?? []), `${job.key}: ${job.lastError}`); atomicJson(statePath, state); break;
+            }
             // No v2.2 write is idempotent: an uncertain job is never retried automatically.
-            job.state = 'uncertain'; job.lastError = `outcome unknown; reconcile explicitly: ${error?.wire ? error.message : 'unexpected client error'}`; out.uncertain++;
+            job.state = 'uncertain'; job.lastError = `outcome unknown; reconcile explicitly: ${detail}`; out.uncertain++;
             notices.push(...(error?.preface ?? []), `${job.key}: ${job.lastError}`); atomicJson(statePath, state); break;
           }
         }
         return withNotices(out, notices);
       });
     },
-    async nextTask({ agent, session, bodyMaxChars = 20000 }) {
+    // next-task --task REF (v2.3 family): claim that task or print the server's refusal reason. REF must be the
+    // effective or the claimed task, or, on a whole-workspace connection (no effective task), any usable id (usage error,
+    // no request, otherwise). A v2.2 server cannot claim a named task.
+    async nextTask({ agent, session, bodyMaxChars = 20000, task: requested }) {
       const config = descriptorConfig();
       if (!Number.isSafeInteger(bodyMaxChars) || bodyMaxChars < 0) fail('--body-max-chars must be a nonnegative integer');
+      let claimedBefore = null;
+      if (requested !== undefined) {
+        requested = parseTask(requested);
+        claimedBefore = await withState(cwd, now, async state => {
+          const claimed = claimOf(state)?.task ?? null;
+          if (config.task !== null && requested !== config.task && requested !== claimed) fail('--task is neither the effective task nor the claimed task', 'USAGE');
+          return claimed;
+        });
+      }
       const send = await open(config, ['next_task']);
-      const task = await send('next_task', { agent, session }, {});
-      if (task.task !== null && !USABLE_ID.test(task.task)) {
-        // The server leased a task vibe cannot work on: hand it straight back rather than hold the lease for 90 minutes.
-        const error = new Error(UNUSABLE_TASK); error.code = 'INVALID';
+      if (requested !== undefined && !send.v23) return { bound: true, channel: 'taskandi-http', task: null, reason: 'contract_v2_2' };
+      // A lease the client will not keep goes straight back rather than being held for 90 minutes.
+      const handBack = async (id, reason, message) => {
+        const error = new Error(message); error.code = 'INVALID';
         try {
           if (!send.calls.includes('release')) throw httpFailure('not_sent', 'release_not_offered');
-          await send('release', { task: task.task, reason: 'Task id not usable by vibe; rename it in Task&I.', session }, { task: task.task });
+          const fields = { task: id, reason, session };
+          await send.raw('release', wireBody('release', fields, config.connection, send.v23 ? randomUUID() : undefined).text, { task: id });
         } catch (failure) {
-          error.preface = [`could not release the lease on the unusable task (${failure?.wire ?? 'unexpected client error'}); it lapses on its own`];
+          error.preface = [`could not release the lease on the ${message === UNUSABLE_TASK ? 'unusable' : 'returned'} task (${failure?.wire ?? 'unexpected client error'}); it lapses on its own`];
         }
         throw error;
-      }
+      };
+      const task = await send('next_task', { agent, session, ...(requested !== undefined ? { task: requested } : {}) }, requested !== undefined ? { requested } : {});
+      // A refusal of the requested task: the claim (on any task) and the body file stay exactly as they were.
+      if (task.task === null && task.reason !== undefined) return { bound: true, channel: 'taskandi-http', task: null, reason: task.reason };
+      // The server answered with this client's own current claim: that lease is ours, so it is not handed back.
+      if (requested !== undefined && task.task !== null && task.task !== requested && task.task === claimedBefore) fail('the server returned your current claim instead');
+      if (requested !== undefined && task.task !== null && task.task !== requested) await handBack(task.task, 'vibe asked for another task', 'Task&I answered with another task than the one requested; it was released and nothing was claimed');
+      if (task.task !== null && !USABLE_ID.test(task.task)) await handBack(task.task, 'Task id not usable by vibe; rename it in Task&I.', UNUSABLE_TASK);
       // The claim is stored before the body file is written (AC39): a body-file failure never loses the lease.
       await withState(cwd, now, async (state, statePath) => {
         if (task.task === null) { delete state.claimed; atomicJson(statePath, state); return; }
         // A renewal of the same task keeps the first claim's time; spent takes, per dimension, the larger of the stored
         // and the returned value (spent only grows, so the larger is the newer), and spentAt becomes the renewal time.
+        // spentContract records the revision whose counting rule produced spent (v2.2 and v2.3 count tokens differently):
+        // the merge only compares like with like, and a stored spent counted the other way is replaced.
         const prior = claimOf(state); const at = now();
         const renewal = prior && prior.task === task.task && Number.isSafeInteger(prior.claimedAtMs) ? prior : null;
         const claimedAtMs = renewal ? renewal.claimedAtMs : at;
         const spent = { ...task.spent };
-        if (renewal && plainObject(renewal.spent)) for (const [name, value] of Object.entries(renewal.spent)) if (Number.isSafeInteger(value) && !(value <= spent[name])) spent[name] = value;
-        state.claimed = { task: task.task, agent, session, lease: { ...task.lease }, claimedAt: new Date(at).toISOString(), claimedAtMs, allowance: task.allowance === null ? null : { ...task.allowance }, spent, spentAt: at, defaults_allowed: task.defaults_allowed };
+        const sameCount = renewal && isV23(spentContractOf(state, renewal)) === send.v23;
+        if (sameCount && plainObject(renewal.spent)) for (const [name, value] of Object.entries(renewal.spent)) if (Number.isSafeInteger(value) && !(value <= spent[name])) spent[name] = value;
+        state.claimed = { task: task.task, agent, session, contract: send.contract, lease: { ...task.lease }, claimedAt: new Date(at).toISOString(), claimedAtMs, allowance: task.allowance === null ? null : { ...task.allowance }, spent, spentContract: send.contract, spentAt: at, defaults_allowed: task.defaults_allowed };
         for (const name of ['hardDeadline', 'latest_start', 'estimate_minutes']) if (task[name] !== undefined) state.claimed[name] = task[name];
         atomicJson(statePath, state);
       });
@@ -1054,18 +1350,22 @@ function createHttpClient(cwd, httpConnect, now = Date.now) {
     },
     async poll({ task } = {}) {
       const config = descriptorConfig(); const explicit = parseTask(task);
+      // The stored per-task cursor is {now} (v2.2) or {seq} (v2.3 family); each revision ignores the other's and starts over
+      // (since 0 on v2.3), and the (task, ask_id) dedupe absorbs the repeats.
       const target = await withState(cwd, now, async state => {
         const resolved = targetFrom(state, config, explicit); bindAnswers(state, config, false);
-        return { ...resolved, prior: state.cursors?.[resolved.task]?.now ?? null };
+        return { ...resolved, stored: canonical(state.cursors?.[resolved.task] ?? null), priorNow: state.cursors?.[resolved.task]?.now ?? null, priorSeq: state.cursors?.[resolved.task]?.seq ?? null };
       });
-      // `now` is wall-clock and the server filters answered_at > since, so re-read a 2 s overlap.
-      const since = target.prior === null ? 0 : Math.max(0, target.prior - 2000);
       const send = await open(config, ['list_asks']);
+      // v2.2: `now` is wall-clock and the server filters answered_at > since, so re-read a 2 s overlap. v2.3: since is the
+      // stored seq exactly.
+      const since = send.v23 ? (Number.isSafeInteger(target.priorSeq) && target.priorSeq >= 0 ? target.priorSeq : 0) : target.priorNow === null ? 0 : Math.max(0, target.priorNow - 2000);
       const page = await send('list_asks', { task: target.task, since, ...(target.session ? { session: target.session } : {}) }, { task: target.task, since });
+      const cursor = send.v23 ? { seq: page.seq } : { now: page.now };
       return withState(cwd, now, async (state, statePath) => {
         bindAnswers(state, config);
         state.cursors ??= {};
-        if ((state.cursors[target.task]?.now ?? null) !== target.prior) fail('poll cursor changed concurrently; response was not applied');
+        if (canonical(state.cursors[target.task] ?? null) !== target.stored) fail('poll cursor changed concurrently; response was not applied');
         const added = [], changed = []; let ignored = 0;
         for (const ask of page.asks) {
           const existing = state.answers.find(item => item.task === target.task && item.id === ask.ask_id);
@@ -1078,11 +1378,11 @@ function createHttpClient(cwd, httpConnect, now = Date.now) {
           }
         }
         atomicJson(statePath, state); // answers are durable before the cursor advances
-        state.cursors[target.task] = { now: page.now };
+        state.cursors[target.task] = cursor;
         // Polls per task, so decide can tell "answered, not yet polled" from "polled since, still no owner answer".
         state.polls = { ...(state.polls ?? {}), [target.task]: (Number.isSafeInteger(state.polls?.[target.task]) ? state.polls[target.task] : 0) + 1 };
         atomicJson(statePath, state);
-        return { bound: true, channel: 'taskandi-http', task: target.task, newAnswers: added.length, answers: added, ignored, conflicts: changed, cursor: { now: page.now } };
+        return { bound: true, channel: 'taskandi-http', task: target.task, newAnswers: added.length, answers: added, ignored, conflicts: changed, cursor };
       });
     },
     async askStatus({ task } = {}) {
@@ -1151,7 +1451,8 @@ function createHttpClient(cwd, httpConnect, now = Date.now) {
         // Budget: Task&I's spent (claim, or the latest record_usage response) plus this task's undelivered usage.
         const allowance = plainObject(claim.allowance) ? claim.allowance : null;
         const spent = plainObject(claim.spent) ? claim.spent : { windows: 0, tokens: 0 };
-        const pending = state.jobs.filter(job => job.kind === 'record_usage' && job.payload?.task === task && (job.state === 'queued' || job.state === 'uncertain')).reduce((sum, job) => sum + usageTokens(job.payload), 0);
+        const v23Count = isV23(spentContractOf(state, claim));
+        const pending = state.jobs.filter(job => job.kind === 'record_usage' && job.payload?.task === task && (job.state === 'queued' || job.state === 'uncertain')).reduce((sum, job) => sum + usageTokens(job.payload, v23Count), 0);
         const budget = { allowance, spent, pending_tokens: pending, ratio: null, unmetered: [], action: 'continue', why: 'no-allowance' };
         if (allowance !== null) {
           const ratios = []; let zero = false;
@@ -1208,7 +1509,7 @@ function createHttpClient(cwd, httpConnect, now = Date.now) {
       return withState(cwd, now, async state => {
         const counts = { queued: 0, dispatching: 0, done: 0, uncertain: 0, refused: 0 }; for (const job of state.jobs) if (Object.hasOwn(counts, job.state)) counts[job.state]++;
         const staleBindingKeys = state.jobs.filter(job => job.state === 'queued' && job.channel !== 'file-fallback' && job.binding !== bindingDigest(config)).map(job => job.key);
-        return { bound: true, channel: 'taskandi-http', counts, uncertaintyIds: state.jobs.filter(job => job.state === 'uncertain').map(job => job.key), staleBindingKeys, refusedKeys: state.jobs.filter(job => job.state === 'refused').map(job => ({ key: job.key, code: job.refusedCode ?? 'unknown_error' })), claimedTask: claimOf(state)?.task ?? null, answerCount: state.answers.length, conflictIds: [...new Set(state.conflicts.map(item => item.id))], cursorSequence: state.cursor?.sequence ?? 0, lastGrade: typeof state.lastGrade === 'string' ? state.lastGrade : null };
+        return { bound: true, channel: 'taskandi-http', counts, uncertaintyIds: state.jobs.filter(job => job.state === 'uncertain').map(job => job.key), staleBindingKeys, refusedKeys: state.jobs.filter(job => job.state === 'refused').map(job => ({ key: job.key, code: job.refusedCode ?? 'unknown_error' })), claimedTask: claimOf(state)?.task ?? null, answerCount: state.answers.length, conflictIds: [...new Set(state.conflicts.map(item => item.id))], cursorSequence: state.cursor?.sequence ?? 0, lastGrade: typeof state.lastGrade === 'string' ? state.lastGrade : null, lastContract: typeof state.lastContract === 'string' ? state.lastContract : typeof state.lastGrade === 'string' ? HTTP_CONTRACT_REVISION : null };
       });
     },
   };
@@ -1385,17 +1686,24 @@ export function createClient({ cwd = process.cwd(), transport = fetchTransport, 
         // refused (v2.2 only): the server did not apply it, so it can be requeued but never marked done.
         if (job.state === 'refused' && job.channel === 'taskandi-http') { if (action === 'done') fail('a refused job was not applied; only --action retry can requeue it'); delete job.refusedCode; }
         else if (job.state !== 'uncertain') fail('only uncertain jobs can be reconciled');
-        job.state = action === 'done' ? 'done' : 'queued'; delete job.lastError;
+        // A receipt_collision on a v2.3 resend proves the first send was applied: it is never retried.
+        if (action === 'retry' && job.noRetry === true) fail('this job was applied by its first send (receipt_collision on a resend); only --action done can reconcile it');
+        // retry: a job with a frozen sentBody resends it (same request_id) on the next v2.3 flush, with a fresh attempt count;
+        // one frozen on a replaced connection (replay unavailable) is rebuilt and sent afresh instead.
+        const notices = [];
+        if (action === 'retry' && job.replayLost === true) { unfreeze(job); notices.push(`${key}: ${RETRY_LOST}`); }
+        job.state = action === 'done' ? 'done' : 'queued'; delete job.lastError; delete job.attempts; delete job.replayLost;
         if (action === 'done') job.doneAtMs = now();
         state.reconciliationLog.push({ key, action, evidence, at: new Date().toISOString() }); atomicJson(statePath, state);
-        return { key, state: job.state, reconciled: true };
+        return withNotices({ key, state: job.state, reconciled: true }, notices);
       });
     },
-    async nextTask({ agent, session, bodyMaxChars }) {
+    async nextTask({ agent, session, bodyMaxChars, task: requested }) {
       if (agent !== 'claude' && agent !== 'codex') fail('--agent must be claude or codex');
       session = stableKey(session);
-      if (viaHttp()) return h.nextTask({ agent, session, ...(bodyMaxChars === undefined ? {} : { bodyMaxChars }) });
+      if (viaHttp()) return h.nextTask({ agent, session, ...(bodyMaxChars === undefined ? {} : { bodyMaxChars }), ...(requested === undefined ? {} : { task: requested }) });
       const config = loadConfig(cwd); if (!config.bound) return { ...FALLBACK };
+      if (requested !== undefined) fail(USAGE, 'USAGE');
       requireV2(config, 'next-task');
       const mcp = await toolMcp(config, 'next_task');
       const task = await sentCall(mcp, 'next_task', { task: config.task, agent, session }, validateNextTask, false);
@@ -1516,9 +1824,9 @@ function parseDescriptorArgv(argv) {
   if (command === 'flush' || command === 'status') { if (argv.length !== 1) fail(HTTP_USAGE); return { command }; }
   if (command === 'poll' || command === 'ask-status') return { command, task: taskFlag(flags(argv.slice(1), [], ['--task'])) };
   if (command === 'next-task') {
-    const parsed = flags(argv.slice(1), ['--agent', '--session'], ['--body-max-chars']);
+    const parsed = flags(argv.slice(1), ['--agent', '--session'], ['--body-max-chars', '--task']);
     if (parsed['--agent'] !== 'claude' && parsed['--agent'] !== 'codex') fail(HTTP_USAGE);
-    return { command, agent: parsed['--agent'], session: stableKey(parsed['--session']), bodyMaxChars: parsed['--body-max-chars'] === undefined ? undefined : wholeNumber(parsed['--body-max-chars'], '--body-max-chars') };
+    return { command, agent: parsed['--agent'], session: stableKey(parsed['--session']), bodyMaxChars: parsed['--body-max-chars'] === undefined ? undefined : wholeNumber(parsed['--body-max-chars'], '--body-max-chars'), task: taskFlag(parsed) };
   }
   if (command === 'decide') {
     if (argv.includes('--resolve')) {
@@ -1571,7 +1879,7 @@ async function descriptorMain(client, argv) {
     case 'status': return client.status();
     case 'poll': return client.poll({ task: plan.task });
     case 'ask-status': return client.askStatus({ task: plan.task });
-    case 'next-task': return client.nextTask({ agent: plan.agent, session: plan.session, bodyMaxChars: plan.bodyMaxChars });
+    case 'next-task': return client.nextTask({ agent: plan.agent, session: plan.session, bodyMaxChars: plan.bodyMaxChars, task: plan.task });
     case 'decide': return plan.resolve !== undefined ? client.resolveAsk(plan.resolve, plan.as) : client.decide({ noOtherWork: plan.noOtherWork, remainingMinutes: plan.remainingMinutes, windowsUsed: plan.windowsUsed });
     case 'complete': return client.complete(plan.task, plan.summary);
     case 'release': return client.release(plan.task, plan.reason, plan.park);
@@ -1602,10 +1910,11 @@ export async function main(argv = process.argv.slice(2), clientOptions = {}) {
   else if (command === 'poll') result = await client.poll();
   else if (command === 'status') result = await client.status();
   else if (command === 'next-task') {
-    const flags = strictFlags(argv.slice(1), ['--agent', '--session']);
+    // --task (claim a named task) exists only under a descriptor binding: unbound it reports file-fallback, MCP refuses it.
+    const flags = strictFlags(argv.slice(1), ['--agent', '--session'], ['--task']);
     if (flags['--agent'] !== 'claude' && flags['--agent'] !== 'codex') fail(USAGE);
     stableKey(flags['--session']);
-    result = await client.nextTask({ agent: flags['--agent'], session: flags['--session'] });
+    result = await client.nextTask({ agent: flags['--agent'], session: flags['--session'], ...(flags['--task'] === undefined ? {} : { task: flags['--task'] }) });
   }
   else if (command === 'complete') { const flags = strictFlags(argv.slice(1), ['--task', '--summary']); taskRef(flags['--task'], '--task'); text(flags['--summary'], '--summary'); result = await client.complete(flags['--task'], flags['--summary']); }
   else if (command === 'release') { const flags = strictFlags(argv.slice(1), ['--task', '--reason']); taskRef(flags['--task'], '--task'); text(flags['--reason'], '--reason'); result = await client.release(flags['--task'], flags['--reason']); }

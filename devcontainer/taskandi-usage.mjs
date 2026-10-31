@@ -5,6 +5,18 @@ import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 
 const fields = ['input_tokens', 'cached_input_tokens', 'cache_write_input_tokens', 'output_tokens'];
+// When the usage happened (task_066): a record's `timestamp` (ISO string, or integer ms) as integer ms, else undefined.
+// Never synthesised from the clock, so a re-import of the same rows keeps the same `at` and deduplicates cleanly.
+export function recordTime(record) {
+  const value = record?.timestamp;
+  if (Number.isSafeInteger(value) && value >= 0) return value;
+  if (typeof value !== 'string') return undefined;
+  const ms = Date.parse(value);
+  return Number.isSafeInteger(ms) && ms >= 0 ? ms : undefined;
+}
+const newest = (a, b) => (a === undefined ? b : b === undefined ? a : Math.max(a, b));
+// A record's `at` travels beside its payload; only the descriptor (HTTP) path puts it in the enqueued payload.
+const withAt = (payload, at) => (at === undefined ? payload : { ...payload, at });
 export function usageRecords(lines, { session, account, costEstimate }) {
   if (typeof session !== 'string' || !session || typeof account !== 'string' || !account || !Number.isFinite(costEstimate) || costEstimate < 0) throw new Error('session, account and explicit nonnegative per-record cost estimate are required');
   let model = null, totals = Object.fromEntries(fields.map(key => [key, 0]));
@@ -35,7 +47,8 @@ export function usageRecords(lines, { session, account, costEstimate }) {
     if (!fields.some(key => delta[key])) continue;
     if (delta.cached_input_tokens > delta.input_tokens) throw new Error('cached input exceeds input usage');
     const key = 'usage-' + createHash('sha256').update(JSON.stringify([session, model, fields.map(name => usage[name])])).digest('hex');
-    records.push({ key, payload: { account, model, input: delta.input_tokens, output: delta.output_tokens, cache_read: delta.cached_input_tokens, cache_write: delta.cache_write_input_tokens, cost_estimate: costEstimate } });
+    const at = recordTime(event);
+    records.push({ key, payload: { account, model, input: delta.input_tokens, output: delta.output_tokens, cache_read: delta.cached_input_tokens, cache_write: delta.cache_write_input_tokens, cost_estimate: costEstimate }, ...(at === undefined ? {} : { at }) });
     totals = Object.fromEntries(fields.map(key => [key, usage[key]]));
   }
   return records;
@@ -59,7 +72,9 @@ export function claudeMessages(records) {
     }
     if (!counts.input && !counts.output && !counts.cache_read && !counts.cache_write) { byId.delete(id); continue; }
     if (typeof id !== 'string' || !id || id.length > 200 || typeof model !== 'string' || !model || model.length > 200) throw new Error('Claude usage has no message id or model');
-    byId.set(id, { id, model, ...counts });
+    // A message's time is the newest timestamp among its records.
+    const at = newest(byId.get(id)?.at, recordTime(record));
+    byId.set(id, { id, model, ...counts, ...(at === undefined ? {} : { at }) });
   }
   return [...byId.values()];
 }
@@ -72,14 +87,15 @@ export function claudeUsageRecords(sources, { session, account, costEstimate }) 
   for (const { messages } of sources) {
     for (const message of messages) {
       if (seen.has(message.id)) continue; seen.add(message.id); count++;
-      const total = byModel.get(message.model) ?? { input: 0, output: 0, cache_read: 0, cache_write: 0, last: null };
+      const total = byModel.get(message.model) ?? { input: 0, output: 0, cache_read: 0, cache_write: 0, last: null, at: undefined };
       for (const [name] of CLAUDE_FIELDS) total[name] += message[name];
-      total.last = message.id; byModel.set(message.model, total);
+      total.last = message.id; total.at = newest(total.at, message.at); byModel.set(message.model, total);
     }
   }
   const records = [...byModel].map(([model, total]) => ({
     key: claudeUsageKey(session, model, total.last),
     payload: { account, model, input: total.input, output: total.output, cache_read: total.cache_read, cache_write: total.cache_write, cost_estimate: costEstimate },
+    ...(total.at === undefined ? {} : { at: total.at }),
   }));
   return { records, messages: count };
 }
@@ -176,7 +192,7 @@ export async function enqueueTranscriptUsage(client, file, options) {
   if (batch) {
     // With nothing to enqueue, --task is still checked (one config load, one lock either way).
     if (!records.length && options.task !== undefined) await client.resolveTask(options.task);
-    const results = records.length ? await client.enqueueBatch('record_usage', records.map(record => ({ key: record.key, input: record.payload })), { task: options.task }) : [];
+    const results = records.length ? await client.enqueueBatch('record_usage', records.map(record => ({ key: record.key, input: withAt(record.payload, record.at) })), { task: options.task }) : [];
     for (const result of results) { if (result.enqueued) enqueued++; else deduplicated++; }
     return { enqueued, deduplicated, source: 'explicit-session-transcript', usageAvailable: records.length > 0 };
   }
@@ -204,7 +220,7 @@ async function enqueueClaudeUsage(client, file, main, options, batch) {
     return { enqueued: 0, deduplicated: 0, source: 'explicit-session-transcript', usageAvailable: false, messages: 0 };
   }
   const entries = Object.fromEntries(sources.map(source => [source.file, { before: imported[source.file], after: source.entry }]));
-  const items = records.map(record => ({ key: record.key, input: !batch && options.task !== undefined ? { ...record.payload, task: options.task } : record.payload }));
+  const items = records.map(record => ({ key: record.key, input: batch ? withAt(record.payload, record.at) : options.task !== undefined ? { ...record.payload, task: options.task } : record.payload }));
   const markOption = typeof client.importMarker === 'function' ? { mark: client.importMarker(options.session, entries) } : {};
   const results = await client.enqueueBatch('record_usage', items, { ...(batch ? { task: options.task } : {}), ...markOption });
   let enqueued = 0, deduplicated = 0;

@@ -276,7 +276,7 @@ class _Hx:
 
     def core(self) -> dict:
         s = self.state() or {}
-        return {k: v for k, v in s.items() if k not in ("jobs", "reconciliationLog", "lastGrade", "pendingDirect")}   # pendingDirect: rev 6 AC27
+        return {k: v for k, v in s.items() if k not in ("jobs", "reconciliationLog", "lastGrade", "pendingDirect", "lastContract")}   # pendingDirect: rev 6 AC27; lastContract: task_066 AC17
 
     def jobs(self) -> list:
         return (self.state() or {}).get("jobs", [])

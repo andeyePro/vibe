@@ -221,3 +221,67 @@ Step 2 of `taskandi-harness.md`:
 - **M1.** `pendingDirect` for a v2.3 `complete`/`release` stores the frozen `sentBody` (session included), as jobs do. A resend with the same command sends `sentBody` byte for byte. "Same text" means the new `{task, summary|reason}` equals the one inside `sentBody`. `pendingDirectMore` records carry the same fields. The `open_children` 409 on v2.3 maps exactly as on v2.2 (exit 0 output, claim kept), and it clears the pending record because nothing was applied.
 - **M2.** `decide` reads `claim.contract`. If that is absent it uses `state.lastContract`, and if that is absent too, v2.2. A renewal whose negotiated revision differs from `claim.contract` replaces `spent` instead of taking the per-dimension maximum, because the two revisions count tokens differently.
 - **M3.** The fake v2.3 server lives in a helper module `smoke/taskandi_v23_server.mjs` so `checks_58` stays at 1,500 lines or fewer. `status` gains `lastContract`. One test asserts every client limit constant is ≤ the matching value in the v2.3 `capabilities.json` fixture.
+
+## Rev 3 addendum — the fixtures moved on to v2.5 (2026-10-31, before any cycle completed)
+
+Task&I recopied every fixture in brain2 as `vibe-agent-exchange-v2.5` (v2.4 added `create_task`/`update_task`; v2.5 added `repeat` to them). Both are additive over v2.3 for every call this task covers. So:
+
+- **Negotiation** accepts `vibe-agent-exchange-v2.2`, `-v2.3`, `-v2.4` and `-v2.5`. v2.4 and v2.5 are handled exactly as v2.3 by every rule in this spec (the "v2.3 family"); `claim.contract`, `lastContract` and `sentRevision` record the exact string. A v2.4+ `capabilities.calls` may include `create_task`/`update_task`; the client ignores calls it does not use (it still requires the calls it is about to make). The v2.4+ `limits` object may carry extra keys for the new calls (`title`, `next_action`, `notes`, …): for the v2.3 family the exact-keys rule becomes "the twelve listed keys must be present with the stated types; extra keys are allowed and ignored". `id_pattern` equality still applies.
+- **Fixtures.** Copy into `smoke/fixtures/taskandi-v23/` the brain2 files for the calls this task covers — `capabilities`, `ask`, `ask_status`, `comment`, `complete`, `list_asks`, `next_task`, `next_task_claim`, `over_budget`, `record_time`, `record_usage`, `release`, `retry` — byte for byte as they are now (they say v2.5), with `PROVENANCE.md` naming the brain2 path, the date, the README sections "v2.3 changes", "Decided", "v2.4 changes", "v2.5 changes", and each file's sha256. The `create_task*`/`update_task*` files are task_067's.
+- **Tests** run the fake server answering v2.5 by default, plus at least one case each answering v2.3 and v2.4 to prove the family is treated alike.
+- Every other rule stands.
+
+## Rev 4 addendum (cycle 2) — Tester defects, security review, `/code-review high` (2026-10-31)
+
+Cycle 1 failed 5 checks on one defect. Both reviews then found resend-safety gaps. The governing fact, from the README, is that Task&I replays the original response for the same `request_id` and the same body **from the same connection**. Two rules follow:
+
+- **Same connection.** Any non-replay answer to a resend (try-later, rejected) proves no attempt was applied, because a first send that had been applied would have been replayed.
+- **New connection** (re-grant). Replay is impossible, so a frozen body must never be resent.
+
+Where this addendum contradicts an earlier section, the addendum wins. The Tester adds tests for AC17–AC28. The Tester may change checks_50's whole-state comparisons to ignore `lastContract`, and may change checks asserting behaviour named here.
+
+- **AC17 (defect).**
+  - A successful v2.2 `capabilities` answer also sets `state.lastContract`.
+  - A v2.2 answer carrying `limits` or `id_pattern` is malformed: pre-dispatch failure, exit 1, nothing else sent.
+- **AC18 New connection means no resend.**
+  - A frozen `sentBody` records the `connection` it was sent on. Before any resend the client compares it with the current descriptor's `connection`.
+  - **Jobs:** if they differ, the job becomes `uncertain` with `lastError: "sent on a previous Task&I connection; replay is unavailable — check Task&I, then reconcile"`, and nothing is sent.
+  - **pendingDirect:** if they differ, the command exits 1 with the same message, nothing is sent, and the record is kept.
+- **AC19 What a definite answer to a resend means (same connection).**
+  - **Try-later:** nothing was ever applied, so `sentBody` is cleared and the job goes back to `queued`. The next attempt rebuilds the body with the current session, keeping the same `requestId` (a refused call stores nothing server-side).
+  - **Rejected:** `refused`, as on a first send.
+  - **`receipt_collision` on a resend:** can only mean a tampered or mismatched body. The job becomes `uncertain`, as now.
+  - **pendingDirect:** a definite non-replay answer settles it, because nothing was applied. Only a connection change (AC18) keeps it.
+  - **First send:** a definite refusal also clears `sentBody`; a `receipt_collision` on a first send additionally issues a new `requestId`.
+- **AC20 Not-sent attempts never freeze.**
+  - If the request did not leave the client (`notSent`: connect failure, a local size refusal), `sentBody` is cleared and `attempts` is not incremented.
+  - The pre-dispatch size check measures the exact v2.3 body that will be sent, `request_id` and `at` included, using the single body builder (AC27).
+- **AC21 Server limits never refuse a possibly-applied job.** The server-limit check runs only before a job's first send. A job holding `sentBody` is resent unchanged, and the server decides.
+- **AC22 `at` is not part of identity.**
+  - `at` is excluded from the dedup digest. A re-import that derives `at` for an existing key deduplicates against it, including legacy jobs and tombstones without `at`. The stored payload keeps the first `at` seen.
+  - At first dispatch, `at` older than 29 days is omitted, and `at` more than 30 s in the future is clamped to now + 30 s.
+- **AC23 Spent carries its counting rule.** Every stored `claim.spent` records the revision that produced it, as `claim.spentContract`. This applies to the `next-task` claim, a renewal and a `record_usage` response alike. `decide`'s `pending_tokens` uses `spentContract`, and the renewal merge compares like with like.
+- **AC24 `next-task --task` on a whole-workspace connection.** When the effective task is null, any usable id is accepted, the same rule as target resolution. When the server returns a different task that is this client's own claimed task, there is no hand-back release; it exits 1 with `the server returned your current claim instead`.
+- **AC25 `action` is bounded data.** `next_task.action` is at most 2000 code points, as for `create_task.next_action`; longer is malformed. The harness's safety rule lists `action` with `title` and `body` as data, never instructions.
+- **AC26 Frozen-body integrity.** `sentBodyIntact` also checks:
+  - `session` is either absent or the session recorded when the body was frozen;
+  - `agent` is either absent, `claude` or `codex`;
+  - `at` is within the window applied at freeze time.
+  
+  Otherwise the job is `tampered_job`.
+- **AC27 One body builder.** First sends, resends, size checks and server-limit checks all use one function that returns `{object, text}`. Nothing parses back text it has just serialized.
+- **AC28 Harness and docs agree.**
+  - The harness failure row for a `complete`/`release` outcome-unknown says: on v2.3 with the same connection, repeat the same command once to resend safely; otherwise do not retry, and note it.
+  - The docs gain a sentence that a hostile server could fake `receipt_collision` or inflate `seq`, and what each would cause.
+
+## Rev 5 addendum (cycle 3) — security re-review (2026-10-31)
+
+Cycle 2 passed all gates. A security re-review then found one HIGH and one MEDIUM gap in the resend rule.
+
+- **AC29 Only in-transaction answers prove anything on a resend.**
+  - **Proof codes.** A resend counts as proof that nothing was ever applied (try-later or rejected, as in AC19) only when the server answers HTTP 409 with one of these codes: `stale_context`, `sync_required`, `lease_held`, `use_native_connection`, `scope_missing`, `invalid_request`, `wrong_scope`, `wrong_thread`, `unknown_ask`, `not_assigned`. These come from inside the exchange transaction, after the replay lookup. The list is one constant, `RESEND_PROOF_CODES`. (Chair, cycle 3: `open_children` on a `complete` resend is also proof — it is decided after the replay lookup — and settles with the exit-0 output.)
+  - **Everything else is outcome unknown.** This covers `connection_revoked`, `connection_unavailable`, HTTP 400/403/405/421, any 409 code not in the list, and any non-409 status. A job keeps `sentBody` and is left `queued`, which counts as one attempt. On the 5th attempt it becomes `uncertain`. A pending `complete`/`release` keeps its record and exits 1 with the outcome-unknown message.
+  - **Revoked connection on a resend.** The client also prints the revoked-connection preface. After the user installs a fresh descriptor, AC18's rule then marks the job `uncertain` (`replayLost`), so it is never resent on the new connection.
+  - First sends keep the AC19 rules unchanged.
+- **AC30 Clearer message on retrying a lost replay.** `reconcile --action retry` on a `replayLost` job prints: `this sends a new write on the current connection; Task&I cannot tell it from the earlier one, so check it was not applied`.
+- The Tester adds tests: one case per non-proof answer on a resend, for both jobs and pending `complete`/`release`; one case per proof code; and the full sequence (lost response, connection revoked, fresh descriptor) ending `uncertain` with no second write on the fake server.

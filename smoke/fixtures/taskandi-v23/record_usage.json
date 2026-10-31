@@ -1,0 +1,29 @@
+{
+  "contract": "vibe-agent-exchange-v2.5",
+  "notes": "vibe's usage row plus task. input and output are required token counts; cache_read, cache_write and windows default to 0; cost_estimate, account and at are optional. at is when the usage happened (ms since epoch, at most one minute in the future and at most 30 days old); without it the service uses its receipt time. One row per (source, source_ref) per workspace, whichever connection sends it (a re-grant included), so source_ref must name the usage row itself, not the session: a repeat with the same figures (at included) applies nothing and returns the current roll-up; with different figures it is refused with receipt_collision. spent is the roll-up on the task across sessions: tokens = input + output + cache_write; cache_read is reported apart and never counts against an allowance; windows is the larger of the reported windows and the number of 5-hour windows with usage, by at or else receipt time (a window opens at the first usage after the previous one closed). request_id (optional, a UUID the client generates once per intended write) makes a retry safe: the same request_id with the same body from the same connection returns the original response and applies nothing; the same request_id with a different body is refused with receipt_collision.",
+  "request": {
+    "action": "record_usage",
+    "task": "leaf-b",
+    "model": "invented-model",
+    "input": 1000,
+    "output": 200,
+    "cache_read": 50,
+    "cache_write": 10,
+    "cost_estimate": 0.12,
+    "windows": 0,
+    "account": "invented-account",
+    "at": 1761799940000,
+    "source": "vibe",
+    "source_ref": "session-a:0001",
+    "session": "session-a",
+    "request_id": "1a5c6b7d-8e9f-4a0b-8c1d-3e4f5a6b7c8d"
+  },
+  "response": {
+    "task": "leaf-b",
+    "spent": {
+      "windows": 1,
+      "tokens": 1210,
+      "cache_read": 50
+    }
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "contract": "vibe-agent-exchange-v2.5",
+  "notes": "A task whose spent has reached its allowance in either unit is skipped by next_task, so the agent never re-claims a task it parked for budget; claiming it names the reason. Here the allowance is 200000 tokens and 200000 have been spent (input + output + cache_write; cache_read is not counted). The owner raising the allowance makes the task eligible again.",
+  "request": {
+    "action": "next_task",
+    "agent": "codex",
+    "session": "session-a",
+    "task": "leaf-b"
+  },
+  "state": {
+    "allowance": {
+      "tokens": 200000
+    },
+    "spent": {
+      "windows": 1,
+      "tokens": 200000,
+      "cache_read": 900000
+    }
+  },
+  "response": {
+    "task": null,
+    "reason": "over_budget"
+  },
+  "without_task": {
+    "request": {
+      "action": "next_task",
+      "agent": "codex",
+      "session": "session-a"
+    },
+    "response": {
+      "task": null
+    }
+  }
+}
