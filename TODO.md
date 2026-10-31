@@ -74,6 +74,8 @@ Two vibe-wide behaviour changes shipped and took effect on this rebuild — surf
 
 ## Open
 
+- [ ] **task_065 — `/vss` and `/vsss` with Task&I** (2026-10-31, /vsss slice 4) — `taskandi-client decide` (the agreed default-on-silence rule, budget ask at 80% and stop at the cap, reclaim guard), Claude transcripts in the usage importer, outbox pruning, and one delimited Task&I block in `vss.md`/`vsss.md`/Codex `context.md`. Spec: `.vs/spec.md`.
+
 
 
 - [ ] **Harden `~/.vibe/codex-allow` like the link registry** (2026-10-31, from `/code-review high` on task_062) — `codex_registry_usable` checks only mode and symlink; the link registry also refuses a foreign owner, a group/other-writable `~/.vibe`, an owner-unreadable file and >1000 lines. One shared `_vibe_consent_registry_usable <file>` for both would close the gap and stop the copies drifting.
