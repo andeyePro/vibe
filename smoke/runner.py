@@ -63,6 +63,9 @@ from smoke.checks_50_taskandi_http import *
 from smoke.checks_52_taskandi_http_more import *
 from smoke.checks_55_taskandi_http_review import *
 from smoke.checks_56_vibe_link_install import *
+from smoke.checks_53_taskandi_decide import *
+from smoke.checks_54_harness_prose import *
+from smoke.checks_57_taskandi_decide_review import *
 
 def main() -> int:
     test_docker_preflight_is_shared_and_mac_start_preserves_target()
@@ -1260,6 +1263,31 @@ def main() -> int:
     test_vli_ac17_linux_failure_cleanup()
     test_vli_ac18_docs_wording()
     test_vli_ac19_20_shared_helpers()
+    test_td_ac1_conditions_per_ask()
+    test_td_ac1_task_level_conditions()
+    test_td_ac2_answered_and_unjudged()
+    test_td_ac3_resolve()
+    test_td_ac4_budget()
+    test_td_ac5_failure_and_idle()
+    test_td_ac6_reclaim_guard()
+    test_td_a4_release_flags_and_windows_used()
+    test_td_ac7_storage()
+    test_td_ac7b_claude_usage()
+    test_td_ac7c_pruning()
+    test_td_ac8_body_cap()
+    test_td_a6_check_argv()
+    test_hp_ac9_structure()
+    test_hp_ac10_commands()
+    test_hp_ac11_docs_and_gates()
+    test_rv_ac32_tombstones()
+    test_rv_ac33_usage_offset()
+    test_rv_ac34_unbound_never_touched()
+    test_rv_ac35_renewal_max()
+    test_rv_ac36_reclaim_set()
+    test_rv_ac37_as_parked()
+    test_rv_ac38_open_ask_predicate()
+    test_rv_ac39_body_file()
+    test_rv_ac40_fixture_pins()
 
     print()
     if FAILURES:

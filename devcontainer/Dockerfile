@@ -148,6 +148,7 @@ COPY vibe-delegate.mjs /usr/local/bin/vibe-delegate
 COPY --chown=root:root vibe-models.mjs /usr/local/bin/vibe-models.mjs
 COPY --chown=root:root codex-context.mjs /usr/local/bin/codex-context
 COPY --chown=root:root codex/context.md /usr/local/share/vibe/codex-context.md
+COPY --chown=root:root taskandi-harness.md /usr/local/share/vibe/taskandi-harness.md
 COPY --chown=root:root host-onboarding.py /usr/local/share/vibe/host-onboarding.py
 COPY --chown=root:root vibe-agent.sh /usr/local/bin/vibe-agent
 # Codex system policy layer (task_046). /etc/codex is Codex's system config

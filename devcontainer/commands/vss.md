@@ -184,6 +184,14 @@ Default is no push. Always.
 
 `/vss` is the autonomous wrapper: pick the right tool, run it, decide in-flow the way Martin would. Use `/vss` to step away; use `/vs` or `/sp` directly to drive.
 
+## Optional task tracker
+
+<!-- taskandi-bound:start -->
+Skip this section unless `.vibe/taskandi-descriptor.json` or `.vibe/taskandi.json` exists in the project; if one does, run `taskandi-client status`: continue only if it prints `"bound":true` with `"channel":"taskandi-http"`, and if it exits 1, use the file channel for this run and post one question saying the Task&I binding is broken, quoting its message.
+
+Otherwise read `/usr/local/share/vibe/taskandi-harness.md` now, in full, and follow it for this run; it overrides the fromClaude steps below wherever they conflict.
+<!-- taskandi-bound:end -->
+
 ## Running under Codex
 
 `$vss` (`/etc/codex/skills/vss/SKILL.md`) wraps this file for a Codex-led

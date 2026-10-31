@@ -297,3 +297,42 @@ All `decide` tests run against the loopback `httpConnect` seam with an injected 
 
 - v2.2 today: `spent.tokens` = input + output + cache_read + cache_write. Only an unanswered **subtask-placed** ask holds its task; thread asks never do, and being over budget does not skip a task. So under v2.2 the reclaim guard (A2, AC6) is needed and stays.
 - v2.3 (announced, not built): allowance compared against input + output + cache_write with `cache_read` reported separately; `spent.windows` = max(vibe's reported windows, distinct 5-hour windows with usage); any unanswered blocking ask holds its task; tasks at/over allowance are skipped; unsafe ids never offered (pattern in capabilities); `next_task {agent, session, task}` with `{task:null, reason}`. None of this is built here; `decide` keeps working unchanged under v2.3 because it only reads `spent` and the claim.
+
+## Rev 6 addendum (cycle 2) — chair rulings after cycle 1 (2026-10-31)
+
+Cycle 1 built Parts A and B. Two rulings change the shape of Part B; the rest are test fixes. Where this contradicts earlier sections, this wins.
+
+- **AC31 One shared procedure file (word budget).** The repo caps `vs.md` + `vss.md` + `vsss.md` at 14,300 words because those commands load on every run (`smoke/checks_05_numbering_hook.py`); the tree was at 14,297 before this task. Putting the full flow in both commands (≈ 3,150 words) breaks it, and raising the cap would make every unbound run pay for text only bound projects use. So:
+  - The full procedure (everything Part B puts inside the block: modes, numbered procedure, failure table, safety rules, act-on-next, fromClaude mappings) moves to a new file `devcontainer/taskandi-harness.md`, shipped by one new Dockerfile line `COPY --chown=root:root taskandi-harness.md /usr/local/share/vibe/taskandi-harness.md` placed next to the existing `codex/context.md` COPY. That file starts with the exact skip string as its first non-blank line.
+  - The blocks in `vss.md` and `vsss.md` keep the markers and the exact skip string, followed by exactly one more sentence: ``Otherwise read `/usr/local/share/vibe/taskandi-harness.md` now, in full, and follow it for this run; it overrides the fromClaude steps below wherever they conflict.`` (≤ 60 words per block, both blocks identical apart from nothing). The combined word count of the three commands must be ≤ 14,300 (the existing check, unchanged).
+  - `context.md`'s block points at the same file for `$vss`/`$vsss`, as now.
+  - AC9 and AC10 apply to `taskandi-harness.md` for everything about the procedure (commands, order, phrases, `--check-argv`), and to the two command blocks for grammar, the skip string, the pointer sentence and the zero-Task&I-text-outside rule.
+  - The Dockerfile change means the image rebuilds on next launch; MANUAL-TESTS Test 70 says so.
+- **Test fixes (Tester):** `checks_53`'s `record_usage` fixture must strip `windows`, `source`, `source_ref` before enqueue (as checks_50/52 do); the AC3 queued-ask case must enqueue its comment without flushing the ask (use a separate key flushed before the ask is enqueued, or test resolve-refusal on an `uncertain` job); the fingerprint comparison must exclude the harness's timing field; `checks_54`'s SKILL.md check must accept each skill's own unchanged delegation sentence (assert only that it names `/usr/local/share/vibe/commands/<name>.md` and that the skill file contains no Task&I text).
+- **Accepted Generator calls:** renewal keeps the first claim's `spent` time so a newer `record_usage` value survives; body truncation keys live inside `task`; `answered-not-yet-polled` always waits; `--check-argv` accepted first or after the command.
+
+## Rev 7 addendum (cycle 3) — `/code-review high` findings (2026-10-31)
+
+Cycle 2 passed (full suite 0). The review found the following. Cycle 3 fixes them, and where this contradicts earlier sections, this wins. The Tester adds tests for AC32–AC40. It may change only checks that assert behaviour named here: the skip string, `--as parked`, and the fixture check.
+
+- **AC32 Pruning never breaks deduplication.**
+  - A pruned `done` job leaves a tombstone `{key, kind, digest, doneAtMs}` in `state.tombstones`. Enqueue checks tombstones exactly like live jobs: the same key with the same digest deduplicates, and a different digest is a `KEY_CONFLICT`.
+  - Tombstones older than 90 days are dropped.
+  - Jobs keyed `budget-<task>` are never pruned.
+  - The `record_usage` keys of the Codex delta path are covered by tombstones like any other.
+- **AC33 The usage ledger stays small.**
+  - Per session and transcript file, the importer stores a byte offset (transcripts only ever grow) and the message ids seen in the last 64 KiB before that offset. These ids cover a message whose records straddle the offset.
+  - It no longer stores every id ever imported.
+  - A file that shrank, or whose first 4 KiB changed (detected by a stored sha256 of that prefix), is re-read from 0 with all ids deduplicated against tombstones and live jobs.
+  - On the MCP/file path, `enqueueBatch` writes the jobs and the ledger in the same locked write, as on the HTTP path.
+- **AC34 Projects without a binding are never touched.** The skip string becomes, exactly:
+
+  ``Skip this section unless `.vibe/taskandi-descriptor.json` or `.vibe/taskandi.json` exists in the project; if one does, run `taskandi-client status`: continue only if it prints `"bound":true` with `"channel":"taskandi-http"`, and if it exits 1, use the file channel for this run and post one question saying the Task&I binding is broken, quoting its message.``
+
+  It applies to the `vss.md`/`vsss.md` blocks, the first line of `taskandi-harness.md`, and the `context.md` block. A project with neither file never runs `taskandi-client`.
+- **AC35 Renewal keeps the larger spend.** On a `next-task` that renews the claim on the same task, `claim.spent` takes, for each dimension, the larger of the stored and the returned value. `spentAt` becomes the time of the renewal. `spent` only grows, so the larger is always the newer.
+- **AC36 The reclaim guard uses every open blocking ask.** A park records in `openAskIds` every open blocking ask, whatever its action at park time. The guard compares sets.
+- **AC37 `--as parked` is removed.** `decide --resolve` takes only `--as proceeded`. Other values are a usage error. A park is recorded by `release --parked-asks` alone.
+- **AC38 One open-ask predicate.** Pruning, `decide` and the reclaim guard all use one function to decide whether an ask job is open: a `done` ask job on the task, with a `result.ask_id`, no stored owner answer with the same task and ask_id, and not resolved.
+- **AC39 The claim is stored before the body file is written.** `next-task` writes the claim to state first, then the body file. If the body file fails, the claim is kept, stdout carries `"body_file": null` and `"body_file_error": "<reason>"`, and the exit code is 0. A `next-task` that returns no task deletes any stale `.vibe/taskandi-body.txt`.
+- **AC40 The fixture copies are pinned by hash.** `smoke/fixtures/taskandi-v22/PROVENANCE.md` lists the sha256 of each of the ten files. checks_52 AC15 verifies every listed file exists and matches its hash, which replaces the "names v2.2" check.

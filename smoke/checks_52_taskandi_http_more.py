@@ -394,11 +394,19 @@ def test_taskandi_http_ac15_docs_and_gates() -> None:
     ptxt = prov.read_text() if prov.exists() else ""
     _check("[taskandi-http] AC15: PROVENANCE.md gives the source path, taskandeye commit 62e50fa5 and a date",
            "Task&I-agent-exchange-fixtures" in ptxt and "62e50fa5" in ptxt and re.search(r"20\d\d-\d\d-\d\d", ptxt) is not None, ptxt[:200])
-    if _FIX_BRAIN.is_dir():
-        same = all((_FIX_REPO / f"{n}.json").exists() and (_FIX_REPO / f"{n}.json").read_bytes() == (_FIX_BRAIN / f"{n}.json").read_bytes() for n in _NAMES)
-        _check("[taskandi-http] AC15: the fixture copy is byte-identical to /brain2", same, "")
-    else:
-        print("  (skip) /brain2 not mounted: byte-identity check not run")
+    # The copy is pinned to taskandeye 62e50fa5 (PROVENANCE.md). The brain2
+    # originals move on as Task&I's contract does (v2.3 replaced them on
+    # 2026-10-31), so a permanent byte comparison would fail for reasons that
+    # have nothing to do with this client; the copy was verified identical when
+    # task_064 landed.
+    import hashlib
+    _pins = []
+    for _n in _NAMES:
+        _f = _FIX_REPO / f"{_n}.json"
+        _ln = next((x for x in ptxt.splitlines() if f"{_n}.json" in x and re.search(r"\b[0-9a-f]{64}\b", x)), None)
+        if _ln is None or not _f.exists() or hashlib.sha256(_f.read_bytes()).hexdigest() not in _ln:
+            _pins.append(_n)
+    _check("[taskandi-http] AC15: PROVENANCE.md lists a sha256 for each of the ten fixture files and every file matches (rev 7 AC40)", _pins == [], repr(_pins))
     docs = _DOCS.read_text() if _DOCS.exists() else ""
     for needle in ("taskandi-descriptor.json", "chmod 600", "host.docker.internal", "Host: 127.0.0.1:<port>", "wrong_origin",
                    "connection_scope", "connection_revoked", "refused", "ask-status"):

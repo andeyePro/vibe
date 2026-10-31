@@ -3,7 +3,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import http from 'node:http';
 import https from 'node:https';
-import { closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, existsSync, fchmodSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -201,6 +201,7 @@ function ensureBaseDir(path) {
 }
 function atomicJson(path, value) {
   ensurePrivateDir(dirname(path));
+  if (Array.isArray(value?.jobs)) pruneJobs(value);
   const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
   const encoded = `${JSON.stringify(value, null, 2)}\n`;
   if (Buffer.byteLength(encoded) > 4 * 1024 * 1024) fail('outbox capacity exceeded; archive completed records before adding data');
@@ -208,6 +209,44 @@ function atomicJson(path, value) {
   try { writeFileSync(fd, encoded); fsyncSync(fd); } finally { closeSync(fd); }
   renameSync(tmp, path);
   const dfd = openSync(dirname(path), constants.O_RDONLY); try { fsyncSync(dfd); } finally { closeSync(dfd); }
+}
+// Outbox pruning: on every state write, done jobs beyond the KEEP_DONE most recent (by doneAtMs) are dropped. queued,
+// dispatching, uncertain and refused jobs are never pruned, nor a `budget-<task>` job, nor an ask job behind an open ask.
+// A pruned job leaves a tombstone {key, kind, digest, doneAtMs}, so enqueue still deduplicates (or refuses) its key;
+// tombstones older than TOMBSTONE_MS are dropped. The clock is the client's (state[NOW], set by withState).
+const KEEP_DONE = 2000;
+const TOMBSTONE_MS = 90 * 24 * 60 * 60 * 1000;
+const NOW = Symbol('now');
+const doneMs = job => (Number.isSafeInteger(job.doneAtMs) ? job.doneAtMs : Number.isFinite(Date.parse(job.doneAt)) ? Date.parse(job.doneAt) : null);
+const ledger = (state, name) => (Array.isArray(state[name]) ? state[name] : []);
+// A `resolved` entry from before task_065 cycle 3 may say `as: parked`; that never closed an ask, so it is ignored.
+const isResolved = (state, task, askId) => ledger(state, 'resolved').some(item => item.task === task && item.ask_id === askId && item.as !== 'parked');
+// The one open-ask predicate (pruning, decide, the reclaim guard): a done ask job on the task with a result.ask_id, no
+// stored owner answer with the same task and ask_id, and not resolved. An answer stored without a task, or without
+// ownerAnswer: true, never closes an ask (an open ask is never hidden by a record that cannot prove it answers it).
+function isOpenAsk(state, job, task = job.payload?.task) {
+  if (job.kind !== 'ask' || job.state !== 'done' || job.payload?.task !== task || typeof job.result?.ask_id !== 'string') return false;
+  const askId = job.result.ask_id;
+  return !state.answers.some(item => item.id === askId && item.task === task && item.ownerAnswer === true) && !isResolved(state, task, askId);
+}
+const isBudgetJob = job => typeof job.payload?.task === 'string' && job.key === `budget-${job.payload.task}`;
+const tombstoneOf = (state, key) => ledger(state, 'tombstones').find(item => item.key === key);
+function pruneJobs(state) {
+  const at = typeof state[NOW] === 'function' ? state[NOW]() : Date.now();
+  const before = ledger(state, 'tombstones');
+  const tombstones = before.filter(item => Number.isSafeInteger(item?.doneAtMs) && at - item.doneAtMs <= TOMBSTONE_MS);
+  let changed = tombstones.length !== before.length;
+  const done = state.jobs.filter(job => job.state === 'done');
+  if (done.length > KEEP_DONE) {
+    const keep = new Set(done.sort((a, b) => (doneMs(b) ?? at) - (doneMs(a) ?? at)).slice(0, KEEP_DONE));
+    state.jobs = state.jobs.filter(job => {
+      if (job.state !== 'done' || keep.has(job) || isBudgetJob(job) || isOpenAsk(state, job)) return true;
+      const doneAtMs = doneMs(job) ?? at;
+      if (at - doneAtMs <= TOMBSTONE_MS) tombstones.push({ key: job.key, kind: job.kind, digest: job.digest, doneAtMs });
+      changed = true; return false;
+    });
+  }
+  if (changed) state.tombstones = tombstones;
 }
 function initialState() { return { version: 1, jobs: [], reconciliationLog: [], cursor: null, answers: [], conflicts: [] }; }
 function paths(cwd) { const dir = join(resolve(cwd), '.vibe/taskandi-outbox'); return { dir, state: join(dir, 'state.json'), lock: join(dir, '.lock') }; }
@@ -234,6 +273,9 @@ function readState(path) {
   if (!existsSync(path)) return initialState();
   let state; try { state = ownObject(JSON.parse(readBounded(path, 4 * 1024 * 1024, 'outbox state', { ownerOnly: true })), 'outbox state'); } catch (error) { if (error instanceof SyntaxError) fail('outbox state is corrupt'); throw error; }
   if (state.version !== 1 || !Array.isArray(state.jobs) || !Array.isArray(state.answers) || !Array.isArray(state.conflicts) || !Array.isArray(state.reconciliationLog)) fail('outbox state has an unsupported shape');
+  // Ledgers added by task_065: absent in older files (read as empty), and written only when used.
+  for (const name of ['resolved', 'parked', 'repolls', 'tombstones']) if (state[name] !== undefined && !Array.isArray(state[name])) fail('outbox state has an unsupported shape');
+  for (const name of ['windowsUsed', 'polls', 'usageImports']) if (state[name] !== undefined && !plainObject(state[name])) fail('outbox state has an unsupported shape');
   return state;
 }
 // The one answer-binding check; `bind` also records the binding (callers persist it).
@@ -249,9 +291,12 @@ function recoverDispatching(state) {
   for (const job of state.jobs) if (job.state === 'dispatching') { job.state = 'uncertain'; job.lastError = 'previous invocation ended while dispatching'; changed = true; }
   return changed;
 }
-async function withState(cwd, fn) {
+async function withState(cwd, now, fn) {
   const locked = lockOutbox(cwd);
-  try { const state = readState(locked.state); if (recoverDispatching(state)) atomicJson(locked.state, state); return await fn(state, locked.state); } finally { locked.release(); }
+  try {
+    const state = readState(locked.state); Object.defineProperty(state, NOW, { value: now, enumerable: false }); if (recoverDispatching(state)) atomicJson(locked.state, state);
+    return await fn(state, locked.state);
+  } finally { locked.release(); }
 }
 
 export function validatePayload(kind, input, config, key) {
@@ -483,7 +528,7 @@ const NO_BOUND_TASK = 'no bound task: the connection covers the whole workspace;
 const NEEDS_CLAIM = 'complete/release needs the session that claimed the task; run next-task first';
 const UNUSABLE_TASK = 'task id not usable by vibe: rename it in Task&I or recreate the task';
 const REVOKED = 'the Task&I connection was revoked or replaced; copy a fresh descriptor (More → Connect Codex) into .vibe/taskandi-descriptor.json';
-const HTTP_USAGE = 'usage (Task&I descriptor binding): taskandi-client.mjs enqueue ask|comment|record_usage|record_time --key ID [--task ID] | flush | poll [--task ID] | ask-status [--task ID] | status | next-task --agent claude|codex --session ID | complete [--task ID] --summary TEXT | release [--task ID] --reason TEXT | usage --transcript FILE --session ID --account ID --cost-estimate N [--task ID] | reconcile --key ID --action done|retry --evidence TEXT | reconcile --direct complete|release --task ID --action done|retry --evidence TEXT';
+const HTTP_USAGE = 'usage (Task&I descriptor binding): taskandi-client.mjs enqueue ask|comment|record_usage|record_time --key ID [--task ID] | flush | poll [--task ID] | ask-status [--task ID] | status | next-task --agent claude|codex --session ID [--body-max-chars N] | decide [--no-other-work] [--remaining-minutes N] [--windows-used N] | decide --resolve KEY --as proceeded | complete [--task ID] --summary TEXT | release [--task ID] --reason TEXT [--parked-asks ID,ID] [--budget-stopped] | usage --transcript FILE --session ID --account ID --cost-estimate N [--task ID] | reconcile --key ID --action done|retry --evidence TEXT | reconcile --direct complete|release --task ID --action done|retry --evidence TEXT';
 // Every error class in one table. Codes not listed here (and every malformed, unexpected or lost response) are outcome unknown.
 // later = not applied, may succeed unchanged later; rejected = not applied, the request itself is refused.
 const HTTP_ERRORS = Object.freeze({
@@ -759,8 +804,8 @@ function refusePendingDirect(state, call, task) {
   if (!pendingList(state).some(item => samePending(item, call, task))) return;
   fail(`an earlier ${call} for ${task} has an unknown outcome; check Task&I, then run reconcile --direct ${call} --task ${task} --action done|retry --evidence TEXT`, 'PENDING');
 }
-function addPendingDirect(state, call, task) {
-  const record = { call, task, at: Date.now() };
+function addPendingDirect(state, call, task, extra = {}) {
+  const record = { call, task, at: Date.now(), ...extra };
   if (state.pendingDirect === undefined) state.pendingDirect = record;
   else state.pendingDirectMore = [...(Array.isArray(state.pendingDirectMore) ? state.pendingDirectMore : []), record];
 }
@@ -771,7 +816,49 @@ function clearPendingDirect(state, call, task) {
   if (rest.length > 1) state.pendingDirectMore = rest.slice(1);
 }
 
-function createHttpClient(cwd, httpConnect) {
+// Parking ledger (task_065): one `parked` entry per task, written by a release that names --parked-asks/--budget-stopped
+// in the same state write that drops the claim; cleared when the task completes or an ask on it is proceeded on.
+// openAskIds is every open blocking ask on the task at that write (AC36), not the --parked-asks list itself.
+function recordParked(state, task, park, at) {
+  state.parked = [...ledger(state, 'parked').filter(item => item.task !== task), { task, openAskIds: openBlockingAskIds(state, task), budgetStopped: park.budgetStopped === true, allowance: park.allowance ?? null, at }];
+}
+function clearParked(state, task) { if (ledger(state, 'parked').some(item => item.task === task)) state.parked = state.parked.filter(item => item.task !== task); }
+const parkFields = park => (park ? { parkedAsks: [...park.parkedAsks], budgetStopped: park.budgetStopped === true, allowance: park.allowance ?? null } : {});
+const BODY_FILE = '.vibe/taskandi-body.txt';
+// The full task body, owner-only and untracked, replaced on each claim (never through a symlink).
+function writeBodyFile(cwd, body) {
+  ensureBaseDir(join(cwd, '.vibe'));
+  const path = join(cwd, BODY_FILE);
+  if (trackedCaseInsensitive(cwd, path)) fail(`${BODY_FILE} must be untracked`);
+  const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
+  const fd = openSync(tmp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+  try { fchmodSync(fd, 0o600); writeFileSync(fd, body); fsyncSync(fd); } finally { closeSync(fd); }
+  renameSync(tmp, path);
+  return path;
+}
+// A next-task with no task removes a stale body file (the link itself if it is one; never what it points at). Only
+// inside a real .vibe directory; a failure to remove it is ignored (the claim is already gone).
+function removeBodyFile(cwd) {
+  try { const dir = lstatSync(join(cwd, '.vibe')); if (!dir.isDirectory() || dir.isSymbolicLink()) return; unlinkSync(join(cwd, BODY_FILE)); } catch { /* nothing to remove */ }
+}
+const DECIDE_NEEDS_CLAIM = 'decide needs the claimed task; run next-task first';
+const DECIDE_NEEDS_DESCRIPTOR = 'decide needs a Task&I descriptor binding';
+const BUDGET_KNOB = 'VIBE_TASKANDI_BUDGET_ASK';
+function budgetThreshold() {
+  const raw = process.env[BUDGET_KNOB];
+  if (raw === undefined) return 0.8;
+  const value = Number(raw);
+  if (!/^(?:\d+\.?\d*|\.\d+)$/.test(raw) || !(value > 0 && value < 1)) fail(`${BUDGET_KNOB} must be a decimal strictly between 0 and 1 (default 0.8)`);
+  return value;
+}
+// Open asks on a task, as decide judges them: the open-ask predicate, minus the task's budget ask (judged by budget).
+const openAskJobs = (state, task) => state.jobs.filter(job => job.key !== `budget-${task}` && isOpenAsk(state, job, task));
+// The ask ids a park records: every open blocking ask on the task, whatever decide's action for it at park time.
+const openBlockingAskIds = (state, task) => openAskJobs(state, task).filter(job => job.payload?.blocking !== false).map(job => job.result.ask_id);
+const usageTokens = payload => payload.input + payload.output + payload.cache_read + payload.cache_write;
+const capOf = (allowance, key) => (!plainObject(allowance) || allowance[key] === undefined ? Infinity : allowance[key]);
+
+function createHttpClient(cwd, httpConnect, now = Date.now) {
   const descriptorConfig = () => { const config = loadConfig(cwd); if (config.kind !== HTTP_KIND) fail('not a Task&I descriptor binding'); return config; };
   // Opens a session: exactly one capabilities request, gated on protocol, contract and the calls about to be made.
   async function open(config, calls) {
@@ -787,23 +874,27 @@ function createHttpClient(cwd, httpConnect) {
     if (caps.protocol !== config.protocol) fail('Task&I capabilities: protocol does not match the descriptor', 'PREDISPATCH');
     if (caps.contract !== HTTP_CONTRACT_REVISION) fail(`Task&I capabilities: contract is not ${HTTP_CONTRACT_REVISION}`, 'PREDISPATCH');
     for (const call of calls) if (!caps.calls.includes(call)) fail(`Task&I capabilities do not offer ${call}`, 'PREDISPATCH');
-    await withState(cwd, async (state, statePath) => { state.lastGrade = caps.grade; atomicJson(statePath, state); });
+    await withState(cwd, now, async (state, statePath) => { state.lastGrade = caps.grade; atomicJson(statePath, state); });
     send.calls = caps.calls;
     return send;
   }
   const parseTask = task => (task === undefined ? undefined : descriptorTaskRef(task, '--task'));
   // Shared by complete/release: only the claiming session may send them; success clears the claim. pendingDirect is
   // written before the request and cleared on a definite answer, so an unknown outcome survives the process.
-  async function finish(action, task, extra, shape) {
+  // `park` ({parkedAsks, budgetStopped}, release only) also writes a `parked` entry with the claim's current allowance.
+  async function finish(action, task, extra, shape, park = null) {
     const config = descriptorConfig(); const explicit = parseTask(task);
-    const target = await withState(cwd, async state => { const resolved = targetFrom(state, config, explicit, { claimOnly: true }); refusePendingDirect(state, action, resolved.task); return resolved; });
+    const target = await withState(cwd, now, async state => { const resolved = targetFrom(state, config, explicit, { claimOnly: true }); refusePendingDirect(state, action, resolved.task); return resolved; });
+    if (park) park = { ...park, allowance: target.claim?.allowance ?? null };
     const fields = { task: target.task, ...extra, session: target.session };
     if (bodyBytes({ ...fields, action, connection: config.connection }) > HTTP_LIMITS.body) fail(`${action} would exceed the ${HTTP_LIMITS.body}-byte request body limit`);
     const send = await open(config, [action]);
-    await withState(cwd, async (state, statePath) => { refusePendingDirect(state, action, target.task); addPendingDirect(state, action, target.task); atomicJson(statePath, state); });
-    const settle = clearClaim => withState(cwd, async (state, statePath) => {
+    await withState(cwd, now, async (state, statePath) => { refusePendingDirect(state, action, target.task); addPendingDirect(state, action, target.task, parkFields(park)); atomicJson(statePath, state); });
+    const settle = clearClaim => withState(cwd, now, async (state, statePath) => {
       clearPendingDirect(state, action, target.task);
       if (clearClaim && claimOf(state)?.task === target.task) delete state.claimed;
+      if (clearClaim && park) recordParked(state, target.task, park, now());
+      if (clearClaim && action === 'complete') clearParked(state, target.task);
       atomicJson(statePath, state);
     });
     let value;
@@ -826,20 +917,22 @@ function createHttpClient(cwd, httpConnect) {
       const explicit = optionTask ?? (input.task !== undefined ? descriptorTaskRef(input.task, 'task') : undefined);
       return { key, explicit, fields: validateHttpPayload(kind, Object.fromEntries(Object.entries(input).filter(([name]) => name !== 'task')), key) };
     });
-    return withState(cwd, async (state, statePath) => {
+    return withState(cwd, now, async (state, statePath) => {
       const results = []; let changed = false;
       for (const { key, explicit, fields } of prepared) {
         const { task, claim } = targetFrom(state, config, explicit);
         const payload = { task, ...fields };
         if (bodyBytes({ ...payload, action: kind, connection: WORST, agent: WORST, session: WORST }) > HTTP_LIMITS.body) fail(`${kind} would exceed the ${HTTP_LIMITS.body}-byte request body limit`);
         const hash = digest({ kind, payload });
-        const found = state.jobs.find(job => job.key === key);
-        if (found) { if (found.digest !== hash) fail('same key was already used with a different payload', 'KEY_CONFLICT'); results.push({ enqueued: false, deduplicated: true, key, state: found.state, bound: true }); continue; }
+        const found = state.jobs.find(job => job.key === key) ?? tombstoneOf(state, key);
+        if (found) { if (found.digest !== hash) fail('same key was already used with a different payload (KEY_CONFLICT)', 'KEY_CONFLICT'); results.push({ enqueued: false, deduplicated: true, key, state: found.state ?? 'done', bound: true }); continue; }
         // agent: the claim's when this is the claimed task, else VIBE_AGENT, else claude. Kept outside payload and digest.
         const agent = kind === 'ask' || kind === 'comment' ? (claim && claim.task === task && (claim.agent === 'claude' || claim.agent === 'codex') ? claim.agent : process.env.VIBE_AGENT === 'codex' || process.env.VIBE_AGENT === 'claude' ? process.env.VIBE_AGENT : 'claude') : undefined;
         state.jobs.push({ key, kind, digest: hash, payload, ...(agent ? { agent } : {}), binding: bindingDigest(config), channel: 'taskandi-http', state: 'queued', createdAt: new Date().toISOString() });
         changed = true; results.push({ enqueued: true, deduplicated: false, key, state: 'queued', bound: true });
       }
+      // `mark` (the usage importer's ledger update) lands in the same state write as the jobs it accounts for.
+      if (options.mark) { options.mark(state); changed = true; }
       if (changed) atomicJson(statePath, state);
       return results;
     });
@@ -847,7 +940,7 @@ function createHttpClient(cwd, httpConnect) {
   return {
     async resolveTask(task) {
       const config = descriptorConfig(); const explicit = parseTask(task);
-      return withState(cwd, async state => targetFrom(state, config, explicit).task);
+      return withState(cwd, now, async state => targetFrom(state, config, explicit).task);
     },
     async enqueue(kind, key, input, options = {}) { return (await enqueueAll(kind, [{ key, input }], options))[0]; },
     enqueueAll,
@@ -857,7 +950,7 @@ function createHttpClient(cwd, httpConnect) {
       const isQueued = job => job.state === 'queued' && job.channel !== 'file-fallback';
       const refuse = (job, code) => { job.state = 'refused'; job.refusedCode = code; job.lastError = `Task&I refused: ${code}`; out.refused++; notices.push(`${job.key}: Task&I refused: ${code}`); };
       // Binding, job integrity and final body size are checked before any request, so a flush with nothing sendable sends nothing.
-      const kinds = await withState(cwd, async (state, statePath) => {
+      const kinds = await withState(cwd, now, async (state, statePath) => {
         const queued = state.jobs.filter(isQueued);
         for (const job of queued) if (job.binding !== bindingDigest(config)) fail(`queued job binding changed; reconcile explicitly before delivery (${job.key})`, 'BINDING_CHANGED');
         let changed = false;
@@ -870,7 +963,7 @@ function createHttpClient(cwd, httpConnect) {
       });
       if (!kinds.length) return withNotices(out, notices);
       const send = await open(config, kinds);
-      return withState(cwd, async (state, statePath) => {
+      return withState(cwd, now, async (state, statePath) => {
         for (const job of state.jobs.filter(isQueued)) {
           if (job.binding !== bindingDigest(config)) fail(`queued job binding changed; reconcile explicitly before delivery (${job.key})`, 'BINDING_CHANGED');
           if (!jobIntact(job)) { refuse(job, 'tampered_job'); atomicJson(statePath, state); continue; }
@@ -878,7 +971,11 @@ function createHttpClient(cwd, httpConnect) {
           job.state = 'dispatching'; job.dispatchedAt = new Date().toISOString(); atomicJson(statePath, state); out.dispatched++;
           try {
             job.result = await send(job.kind, jobFields(job, claim), { task: job.payload.task });
-            job.state = 'done'; job.doneAt = new Date().toISOString(); delete job.lastError; out.done++; atomicJson(statePath, state);
+            const at = now(); job.state = 'done'; job.doneAt = new Date(at).toISOString(); job.doneAtMs = at; delete job.lastError; out.done++;
+            // The latest spent on the claimed task: every record_usage response carries the server's roll-up.
+            const current = claimOf(state);
+            if (job.kind === 'record_usage' && current && job.result.task === current.task) { current.spent = { ...job.result.spent }; current.spentAt = at; }
+            atomicJson(statePath, state);
           } catch (error) {
             const httpClass = httpClassOf(error);
             if (error?.code === 'NOT_SENT' || error?.notSent) out.dispatched--;
@@ -892,8 +989,9 @@ function createHttpClient(cwd, httpConnect) {
         return withNotices(out, notices);
       });
     },
-    async nextTask({ agent, session }) {
+    async nextTask({ agent, session, bodyMaxChars = 20000 }) {
       const config = descriptorConfig();
+      if (!Number.isSafeInteger(bodyMaxChars) || bodyMaxChars < 0) fail('--body-max-chars must be a nonnegative integer');
       const send = await open(config, ['next_task']);
       const task = await send('next_task', { agent, session }, {});
       if (task.task !== null && !USABLE_ID.test(task.task)) {
@@ -907,37 +1005,56 @@ function createHttpClient(cwd, httpConnect) {
         }
         throw error;
       }
-      await withState(cwd, async (state, statePath) => {
-        if (task.task === null) delete state.claimed;
-        else state.claimed = { task: task.task, agent, session, lease: { ...task.lease }, claimedAt: new Date().toISOString() };
+      // The claim is stored before the body file is written (AC39): a body-file failure never loses the lease.
+      await withState(cwd, now, async (state, statePath) => {
+        if (task.task === null) { delete state.claimed; atomicJson(statePath, state); return; }
+        // A renewal of the same task keeps the first claim's time; spent takes, per dimension, the larger of the stored
+        // and the returned value (spent only grows, so the larger is the newer), and spentAt becomes the renewal time.
+        const prior = claimOf(state); const at = now();
+        const renewal = prior && prior.task === task.task && Number.isSafeInteger(prior.claimedAtMs) ? prior : null;
+        const claimedAtMs = renewal ? renewal.claimedAtMs : at;
+        const spent = { ...task.spent };
+        if (renewal && plainObject(renewal.spent)) for (const [name, value] of Object.entries(renewal.spent)) if (Number.isSafeInteger(value) && !(value <= spent[name])) spent[name] = value;
+        state.claimed = { task: task.task, agent, session, lease: { ...task.lease }, claimedAt: new Date(at).toISOString(), claimedAtMs, allowance: task.allowance === null ? null : { ...task.allowance }, spent, spentAt: at, defaults_allowed: task.defaults_allowed };
+        for (const name of ['hardDeadline', 'latest_start', 'estimate_minutes']) if (task[name] !== undefined) state.claimed[name] = task[name];
         atomicJson(statePath, state);
       });
-      return { bound: true, channel: 'taskandi-http', task: task.task === null ? null : task };
+      if (task.task === null) { removeBodyFile(cwd); return { bound: true, channel: 'taskandi-http', task: null }; }
+      let bodyFile = null, bodyFileError = null;
+      try { bodyFile = writeBodyFile(cwd, task.body); } catch (error) { bodyFileError = String(error?.message ?? error); }
+      const failed = bodyFileError === null ? {} : { body_file: null, body_file_error: bodyFileError };
+      const chars = codePoints(task.body);
+      if (chars <= bodyMaxChars) return { bound: true, channel: 'taskandi-http', task: { ...task, ...failed } };
+      return { bound: true, channel: 'taskandi-http', task: { ...task, body: [...task.body].slice(0, bodyMaxChars).join(''), body_truncated: true, body_chars: chars, body_file: bodyFile, ...failed } };
     },
     async complete(task, summary) {
       wireText(summary, 'summary', HTTP_LIMITS.summary);
       return finish('complete', task, { summary }, value => ({ completed: true, state: 'provisional', completion_id: value.completion_id }));
     },
-    async release(task, reason) {
+    async release(task, reason, { parkedAsks, budgetStopped = false } = {}) {
       wireText(reason, 'reason', HTTP_LIMITS.reason);
-      return finish('release', task, { reason }, value => ({ released: true, comment_id: value.comment_id }));
+      const park = parkedAsks !== undefined || budgetStopped ? { parkedAsks: parkedAsks ?? [], budgetStopped } : null;
+      return finish('release', task, { reason }, value => ({ released: true, comment_id: value.comment_id }), park);
     },
     async reconcileDirect(call, task, action, evidence) {
       if (!DIRECT_CALLS.includes(call)) fail('reconcile --direct takes complete or release');
       task = descriptorTaskRef(task, '--task');
       if (!['done', 'retry'].includes(action)) fail('reconcile action must be done or retry'); text(evidence, 'evidence', LIMITS.text);
-      return withState(cwd, async (state, statePath) => {
-        if (!pendingList(state).some(item => samePending(item, call, task))) fail(`no earlier ${call} for ${task} has an unknown outcome`);
+      return withState(cwd, now, async (state, statePath) => {
+        const record = pendingList(state).find(item => samePending(item, call, task));
+        if (!record) fail(`no earlier ${call} for ${task} has an unknown outcome`);
         // done: the call was applied, so its claim is spent; retry: one more send is allowed.
         clearPendingDirect(state, call, task);
         if (action === 'done' && claimOf(state)?.task === task) delete state.claimed;
+        if (action === 'done' && call === 'release' && (Array.isArray(record.parkedAsks) || record.budgetStopped === true)) recordParked(state, task, { parkedAsks: Array.isArray(record.parkedAsks) ? record.parkedAsks : [], budgetStopped: record.budgetStopped === true, allowance: record.allowance ?? null }, now());
+        if (action === 'done' && call === 'complete') clearParked(state, task);
         state.reconciliationLog.push({ direct: call, task, action, evidence, at: new Date().toISOString() }); atomicJson(statePath, state);
         return { direct: call, task, action, reconciled: true };
       });
     },
     async poll({ task } = {}) {
       const config = descriptorConfig(); const explicit = parseTask(task);
-      const target = await withState(cwd, async state => {
+      const target = await withState(cwd, now, async state => {
         const resolved = targetFrom(state, config, explicit); bindAnswers(state, config, false);
         return { ...resolved, prior: state.cursors?.[resolved.task]?.now ?? null };
       });
@@ -945,7 +1062,7 @@ function createHttpClient(cwd, httpConnect) {
       const since = target.prior === null ? 0 : Math.max(0, target.prior - 2000);
       const send = await open(config, ['list_asks']);
       const page = await send('list_asks', { task: target.task, since, ...(target.session ? { session: target.session } : {}) }, { task: target.task, since });
-      return withState(cwd, async (state, statePath) => {
+      return withState(cwd, now, async (state, statePath) => {
         bindAnswers(state, config);
         state.cursors ??= {};
         if ((state.cursors[target.task]?.now ?? null) !== target.prior) fail('poll cursor changed concurrently; response was not applied');
@@ -961,21 +1078,134 @@ function createHttpClient(cwd, httpConnect) {
           }
         }
         atomicJson(statePath, state); // answers are durable before the cursor advances
-        state.cursors[target.task] = { now: page.now }; atomicJson(statePath, state);
+        state.cursors[target.task] = { now: page.now };
+        // Polls per task, so decide can tell "answered, not yet polled" from "polled since, still no owner answer".
+        state.polls = { ...(state.polls ?? {}), [target.task]: (Number.isSafeInteger(state.polls?.[target.task]) ? state.polls[target.task] : 0) + 1 };
+        atomicJson(statePath, state);
         return { bound: true, channel: 'taskandi-http', task: target.task, newAnswers: added.length, answers: added, ignored, conflicts: changed, cursor: { now: page.now } };
       });
     },
     async askStatus({ task } = {}) {
       const config = descriptorConfig(); const explicit = parseTask(task);
-      const target = await withState(cwd, async state => targetFrom(state, config, explicit));
+      const target = await withState(cwd, now, async state => targetFrom(state, config, explicit));
       const send = await open(config, ['ask_status']);
       const value = await send('ask_status', { task: target.task, ...(target.session ? { session: target.session } : {}) }, { task: target.task });
       return { bound: true, channel: 'taskandi-http', task: target.task, asks: value.asks };
     },
+    // decide (task_065): judges the claimed task's open asks and budget. No request unless an ask is open; then exactly
+    // one capabilities and one ask_status (which renews the lease). Rules: docs/taskandi-client.md "Harness integration".
+    async decide({ noOtherWork = false, remainingMinutes, windowsUsed } = {}) {
+      const config = descriptorConfig(); const threshold = budgetThreshold();
+      const first = await withState(cwd, now, async (state, statePath) => {
+        const claim = claimOf(state); if (!claim) fail(DECIDE_NEEDS_CLAIM, 'USAGE');
+        if (windowsUsed !== undefined) {
+          const stored = Number.isSafeInteger(state.windowsUsed?.[claim.task]) ? state.windowsUsed[claim.task] : 0;
+          if (state.windowsUsed?.[claim.task] !== Math.max(stored, windowsUsed)) { state.windowsUsed = { ...(state.windowsUsed ?? {}), [claim.task]: Math.max(stored, windowsUsed) }; atomicJson(statePath, state); }
+        }
+        return { task: claim.task, session: claim.session, open: openAskJobs(state, claim.task).length };
+      });
+      let status = null, degraded = false;
+      if (first.open) {
+        const send = await open(config, ['ask_status']); // a capabilities failure is exit 1
+        try { status = (await send('ask_status', { task: first.task, ...(typeof first.session === 'string' ? { session: first.session } : {}) }, { task: first.task })).asks; }
+        catch { degraded = true; }
+      }
+      return withState(cwd, now, async (state, statePath) => {
+        const claim = claimOf(state);
+        if (!claim || claim.task !== first.task) fail('the claim changed while decide ran; run decide again');
+        const task = claim.task; const at = now(); const budgetKey = `budget-${task}`;
+        const polls = Number.isSafeInteger(state.polls?.[task]) ? state.polls[task] : 0;
+        let repoll = false, wroteRepoll = false;
+        const asks = openAskJobs(state, task).map(job => {
+          const { payload } = job; const askId = job.result.ask_id;
+          const candidates = [];
+          if (Number.isSafeInteger(claim.latest_start)) candidates.push(claim.latest_start);
+          if (Number.isSafeInteger(claim.hardDeadline) && Number.isSafeInteger(payload.remaining_minutes)) candidates.push(claim.hardDeadline - payload.remaining_minutes * 60000);
+          const latest = candidates.length ? Math.max(...candidates) : null;
+          const out = { ask_id: askId, key: job.key, question: payload.question, default: payload.default, blocking: payload.blocking !== false, reversible: payload.reversible === true, action: 'wait', why: null, latest_start_used: latest };
+          if (payload.blocking === false) return { ...out, action: 'continue', why: 'non-blocking' };
+          const seen = degraded ? null : status.find(item => item.ask_id === askId);
+          let why = null;
+          if (degraded) why = 'status-unavailable';
+          else if (!seen) why = 'unknown-ask';
+          else if (seen.answered === true) {
+            const prior = ledger(state, 'repolls').find(item => item.task === task && item.ask_id === askId);
+            if (prior && polls > prior.pollSeq) why = 'answered-by-non-owner';
+            else {
+              why = 'answered-not-yet-polled'; repoll = true;
+              if (!prior) { state.repolls = [...ledger(state, 'repolls'), { task, ask_id: askId, at, pollSeq: polls }]; wroteRepoll = true; }
+            }
+          }
+          else if (seen.seen_at === null && seen.deferred !== true) why = 'unseen';
+          else if (latest === null) why = 'no-deadline';
+          else if (at < latest) why = 'before-latest-start';
+          else if (claim.defaults_allowed !== true) why = 'defaults-off';
+          else if (payload.reversible !== true) why = 'irreversible';
+          if (why === null) return { ...out, action: 'proceed', why: 'default-allowed' };
+          // A missing or not-yet-polled status never parks: it may clear by itself.
+          const action = why === 'status-unavailable' || why === 'answered-not-yet-polled' ? 'wait' : noOtherWork ? 'park' : 'wait';
+          return { ...out, action, why };
+        });
+        if (wroteRepoll) atomicJson(statePath, state);
+        const unjudged = state.jobs.filter(job => job.kind === 'ask' && job.payload?.task === task && ['queued', 'uncertain', 'refused'].includes(job.state)).map(job => ({ key: job.key, state: job.state }));
+        // Budget: Task&I's spent (claim, or the latest record_usage response) plus this task's undelivered usage.
+        const allowance = plainObject(claim.allowance) ? claim.allowance : null;
+        const spent = plainObject(claim.spent) ? claim.spent : { windows: 0, tokens: 0 };
+        const pending = state.jobs.filter(job => job.kind === 'record_usage' && job.payload?.task === task && (job.state === 'queued' || job.state === 'uncertain')).reduce((sum, job) => sum + usageTokens(job.payload), 0);
+        const budget = { allowance, spent, pending_tokens: pending, ratio: null, unmetered: [], action: 'continue', why: 'no-allowance' };
+        if (allowance !== null) {
+          const ratios = []; let zero = false;
+          if (allowance.tokens !== undefined) { if (allowance.tokens === 0) zero = true; else ratios.push(((spent.tokens ?? 0) + pending) / allowance.tokens); }
+          if (allowance.windows !== undefined) {
+            if (windowsUsed === undefined) budget.unmetered.push('windows');
+            const used = Math.max(spent.windows ?? 0, windowsUsed === undefined ? 0 : Math.max(windowsUsed, state.windowsUsed?.[task] ?? 0));
+            if (allowance.windows === 0) zero = true; else ratios.push(used / allowance.windows);
+          }
+          const raw = zero ? Math.max(1, ...ratios) : ratios.length ? Math.max(...ratios) : null;
+          budget.ratio = raw === null ? null : Math.min(1, Math.max(0, raw));
+          const asked = state.jobs.some(job => job.key === budgetKey);
+          if (allowance.tokens === undefined && allowance.windows === undefined) budget.why = 'no-limits';
+          else if (zero) Object.assign(budget, { action: 'stop', why: 'zero-allowance' });
+          else if (raw >= 1) Object.assign(budget, { action: 'stop', why: 'cap' });
+          else if (raw >= threshold && remainingMinutes > 0 && !asked) Object.assign(budget, { action: 'ask', why: 'most-spent', key: budgetKey });
+          else budget.why = remainingMinutes === 0 ? 'nothing-outstanding' : 'under-threshold';
+        }
+        // Reclaim guard: Task&I handed back a task vibe parked, and nothing it was parked on has changed.
+        const parked = ledger(state, 'parked').filter(item => item.task === task).at(-1);
+        let reclaimed = false;
+        if (parked) {
+          // "Unchanged": the open blocking asks are exactly the ones it was parked on (an answer or a new ask changes it).
+          const openIds = new Set(asks.filter(item => item.blocking).map(item => item.ask_id));
+          const ids = new Set(Array.isArray(parked.openAskIds) ? parked.openAskIds : []);
+          if (ids.size && ids.size === openIds.size && [...ids].every(id => openIds.has(id))) reclaimed = true;
+          if (parked.budgetStopped === true && !['windows', 'tokens'].some(key => capOf(allowance, key) > capOf(parked.allowance, key))) reclaimed = true;
+        }
+        const next = (budget.why === 'cap' || budget.why === 'zero-allowance') && !reclaimed ? 'stop'
+          : asks.some(item => item.action === 'proceed') ? 'proceed' : reclaimed ? 'release-again' : asks.some(item => item.action === 'park') ? 'park-task' : 'work';
+        return { bound: true, task, now: at, next, asks, unjudged, budget, reclaimed_parked: reclaimed, repoll, ...(degraded ? { degraded: 'ask_status' } : {}) };
+      });
+    },
+    // decide --resolve: offline; records that the harness proceeded on an ask's default. A park is recorded by
+    // release --parked-asks alone.
+    async resolve(key, as) {
+      descriptorConfig(); key = stableKey(key);
+      if (as !== 'proceeded') fail(HTTP_USAGE, 'USAGE');
+      return withState(cwd, now, async (state, statePath) => {
+        const claim = claimOf(state); if (!claim) fail(DECIDE_NEEDS_CLAIM, 'USAGE');
+        const job = state.jobs.find(item => item.key === key);
+        if (!job || job.kind !== 'ask' || job.state !== 'done' || job.payload?.task !== claim.task || typeof job.result?.ask_id !== 'string') fail(`decide --resolve takes the key of a done ask job on the claimed task (${key} is not one)`);
+        const askId = job.result.ask_id; const existing = ledger(state, 'resolved').find(item => item.task === claim.task && item.ask_id === askId);
+        if (existing && existing.as !== as) fail(`ask ${key} is already resolved as ${existing.as}`);
+        if (!existing) state.resolved = [...ledger(state, 'resolved'), { task: claim.task, ask_id: askId, as, at: now() }];
+        clearParked(state, claim.task);
+        atomicJson(statePath, state);
+        return { bound: true, channel: 'taskandi-http', task: claim.task, resolved: { key, ask_id: askId, as } };
+      });
+    },
     // A present but invalid descriptor is an error (exit 1), never a file-fallback report.
     async status() {
       const config = descriptorConfig();
-      return withState(cwd, async state => {
+      return withState(cwd, now, async state => {
         const counts = { queued: 0, dispatching: 0, done: 0, uncertain: 0, refused: 0 }; for (const job of state.jobs) if (Object.hasOwn(counts, job.state)) counts[job.state]++;
         const staleBindingKeys = state.jobs.filter(job => job.state === 'queued' && job.channel !== 'file-fallback' && job.binding !== bindingDigest(config)).map(job => job.key);
         return { bound: true, channel: 'taskandi-http', counts, uncertaintyIds: state.jobs.filter(job => job.state === 'uncertain').map(job => job.key), staleBindingKeys, refusedKeys: state.jobs.filter(job => job.state === 'refused').map(job => ({ key: job.key, code: job.refusedCode ?? 'unknown_error' })), claimedTask: claimOf(state)?.task ?? null, answerCount: state.answers.length, conflictIds: [...new Set(state.conflicts.map(item => item.id))], cursorSequence: state.cursor?.sequence ?? 0, lastGrade: typeof state.lastGrade === 'string' ? state.lastGrade : null };
@@ -984,12 +1214,27 @@ function createHttpClient(cwd, httpConnect) {
   };
 }
 
-export function createClient({ cwd = process.cwd(), transport = fetchTransport, httpConnect } = {}) {
+// The usage importer's ledger (AC33): per session and transcript file, {offset, prefixLen, prefixSha, tailIds} (see
+// taskandi-usage.mjs). `entries` maps each file to the entry the import read (`before`) and its new one (`after`); an
+// entry that changed since the import read it means another import raced this one.
+function markImported(state, session, entries) {
+  const sessions = { ...(state.usageImports ?? {}) }; const bySession = { ...(plainObject(sessions[session]) ? sessions[session] : {}) };
+  for (const [file, { before, after }] of Object.entries(entries)) {
+    if (canonical(bySession[file] ?? null) !== canonical(before ?? null)) fail('usage import raced another import; run usage again');
+    bySession[file] = after;
+  }
+  sessions[session] = bySession; state.usageImports = sessions;
+}
+
+export function createClient({ cwd = process.cwd(), transport = fetchTransport, httpConnect, clock } = {}) {
   cwd = projectRoot(cwd);
+  // clock () => ms is the decide test seam (task_065); never read from env or argv.
+  if (clock !== undefined && typeof clock !== 'function') fail('clock must be a function returning milliseconds');
+  const now = clock ? () => { const value = clock(); if (!Number.isSafeInteger(value) || value < 0) fail('clock must return nonnegative integer milliseconds'); return value; } : Date.now;
   // httpConnect {host, port, timeoutMs?} is the v2.2 test seam: tests point the transport at a loopback listener with it
   // (127.0.0.1 or ::1 only; refused for https origins).
   if (httpConnect !== undefined && (!plainObject(httpConnect) || (httpConnect.host !== '127.0.0.1' && httpConnect.host !== '::1') || !Number.isInteger(httpConnect.port) || httpConnect.port < 1 || httpConnect.port > 65535 || (httpConnect.timeoutMs !== undefined && !(Number.isInteger(httpConnect.timeoutMs) && httpConnect.timeoutMs > 0)))) fail('httpConnect must be {host: 127.0.0.1 or ::1, port, timeoutMs?}');
-  const h = createHttpClient(cwd, httpConnect);
+  const h = createHttpClient(cwd, httpConnect, now);
   const viaHttp = () => lexists(join(cwd, DESCRIPTOR));
   function guardedMcp(config) {
     const tokenPath = join(cwd, '.vibe/taskandi-token');
@@ -1018,7 +1263,7 @@ export function createClient({ cwd = process.cwd(), transport = fetchTransport, 
   const claimedTask = state => claimOf(state)?.task ?? null;
   async function checkTarget(config, task) {
     if (task === config.task) return;
-    if (task !== await withState(cwd, async state => claimedTask(state))) fail('task is neither the bound task nor the claimed task');
+    if (task !== await withState(cwd, now, async state => claimedTask(state))) fail('task is neither the bound task nor the claimed task');
   }
   // Shared by complete/release: argv, config, revision gate, targeting, discovery, call, result, claim update.
   async function targeted(name, tool, task, extra, parse, apply) {
@@ -1028,8 +1273,36 @@ export function createClient({ cwd = process.cwd(), transport = fetchTransport, 
     await checkTarget(config, task);
     const mcp = await toolMcp(config, tool);
     const value = await sentCall(mcp, tool, { task, ...extra }, parse, true);
-    await withState(cwd, async (state, statePath) => { if (apply(state, value)) atomicJson(statePath, state); });
+    await withState(cwd, now, async (state, statePath) => { if (apply(state, value)) atomicJson(statePath, state); });
     return { bound: true, ...value };
+  }
+  // MCP / file-fallback enqueue: every item is validated first, then one lock and one state write for all of them.
+  async function fileEnqueueAll(kind, items, options = {}) {
+    const config = loadConfig(cwd);
+    const binding = config.bound ? config : { task: `file:${digest(cwd).slice(0, 32)}` };
+    const prepared = items.map(({ key, input }) => {
+      key = stableKey(key); input = ownObject(input, `${kind} payload`);
+      if (options.task !== undefined) {
+        if (config.bound) requireV2(config, 'enqueue --task');
+        if (input.task !== undefined) fail('task given both in the payload and as --task');
+        input = { ...input, task: options.task };
+      }
+      const payload = validatePayload(kind, input, binding, key);
+      return { key, payload, hash: digest({ kind, payload }) };
+    });
+    return withState(cwd, now, async (state, statePath) => {
+      const results = []; let changed = false;
+      for (const { key, payload, hash } of prepared) {
+        if (config.bound && payload.task !== undefined && payload.task !== config.task && payload.task !== claimedTask(state)) fail('task is neither the bound task nor the claimed task');
+        const found = state.jobs.find(job => job.key === key) ?? tombstoneOf(state, key);
+        if (found) { if (found.digest !== hash) fail('same key was already used with a different payload (KEY_CONFLICT)', 'KEY_CONFLICT'); results.push({ enqueued: false, deduplicated: true, key, state: found.state ?? 'done', bound: config.bound }); continue; }
+        state.jobs.push({ key, kind, digest: hash, payload, binding: config.bound ? bindingDigest(config) : null, channel: config.bound ? 'taskandi-mcp' : 'file-fallback', state: 'queued', createdAt: new Date().toISOString() });
+        changed = true; results.push({ enqueued: true, deduplicated: false, key, state: 'queued', bound: config.bound });
+      }
+      if (options.mark) { options.mark(state); changed = true; }
+      if (changed) atomicJson(statePath, state);
+      return results;
+    });
   }
   return {
     config() { return loadConfig(cwd); },
@@ -1041,30 +1314,28 @@ export function createClient({ cwd = process.cwd(), transport = fetchTransport, 
     },
     async enqueue(kind, key, input, options = {}) {
       if (viaHttp()) return h.enqueue(kind, key, input, options);
-      key = stableKey(key);
-      const config = loadConfig(cwd);
-      const binding = config.bound ? config : { task: `file:${digest(cwd).slice(0, 32)}` };
-      input = ownObject(input, `${kind} payload`);
-      if (options.task !== undefined) {
-        if (config.bound) requireV2(config, 'enqueue --task');
-        if (input.task !== undefined) fail('task given both in the payload and as --task');
-        input = { ...input, task: options.task };
-      }
-      const payload = validatePayload(kind, input, binding, key); const hash = digest({ kind, payload });
-      return withState(cwd, async (state, statePath) => {
-        if (config.bound && payload.task !== undefined && payload.task !== config.task && payload.task !== claimedTask(state)) fail('task is neither the bound task nor the claimed task');
-        const found = state.jobs.find(job => job.key === key);
-        if (found) { if (found.digest !== hash) fail('same key was already used with a different payload', 'KEY_CONFLICT'); return { enqueued: false, deduplicated: true, key, state: found.state, bound: config.bound }; }
-        state.jobs.push({ key, kind, digest: hash, payload, binding: config.bound ? bindingDigest(config) : null, channel: config.bound ? 'taskandi-mcp' : 'file-fallback', state: 'queued', createdAt: new Date().toISOString() }); atomicJson(statePath, state);
-        return { enqueued: true, deduplicated: false, key, state: 'queued', bound: config.bound };
-      });
+      return (await fileEnqueueAll(kind, [{ key, input }], options))[0];
     },
-    // Many jobs of one kind: under a descriptor binding, one config load and one outbox lock for all of them.
+    // Many jobs of one kind under one config load and one outbox lock; `mark` (the usage importer's ledger update) lands
+    // in the same state write as the jobs, on either path.
     async enqueueBatch(kind, items, options = {}) {
       if (viaHttp()) return h.enqueueAll(kind, items, options);
-      const results = [];
-      for (const { key, input } of items) results.push(await this.enqueue(kind, key, input, options));
-      return results;
+      return fileEnqueueAll(kind, items, options);
+    },
+    // The imported-message ledger of one session (read-only snapshot) and its update, for the usage importer.
+    async usageImported(session) { return withState(cwd, now, async state => structuredClone(plainObject(state.usageImports?.[session]) ? state.usageImports[session] : {})); },
+    importMarker(session, entries) { return state => markImported(state, session, entries); },
+    // Every record_usage key the outbox still knows (live jobs and tombstones), for a usage import that re-reads a file.
+    async usageKeys() { return withState(cwd, now, async state => [...state.jobs, ...ledger(state, 'tombstones')].filter(item => item.kind === 'record_usage').map(item => item.key)); },
+    async decide(options = {}) {
+      if (viaHttp()) return h.decide(options);
+      const config = loadConfig(cwd); if (!config.bound) return { ...FALLBACK };
+      fail(DECIDE_NEEDS_DESCRIPTOR);
+    },
+    async resolveAsk(key, as) {
+      if (viaHttp()) return h.resolve(key, as);
+      const config = loadConfig(cwd); if (!config.bound) return { ...FALLBACK };
+      fail(DECIDE_NEEDS_DESCRIPTOR);
     },
     async flush() {
       if (viaHttp()) return h.flush();
@@ -1072,9 +1343,9 @@ export function createClient({ cwd = process.cwd(), transport = fetchTransport, 
       const mcp = guardedMcp(config); const tools = await mcp.discover();
       const byName = new Map(tools.map(tool => [tool?.name, tool]));
       const revision = revisionOf(config);
-      const queuedKinds = await withState(cwd, async state => [...new Set(state.jobs.filter(job => job.state === 'queued' && job.channel !== 'file-fallback').map(job => job.kind))]);
+      const queuedKinds = await withState(cwd, now, async state => [...new Set(state.jobs.filter(job => job.state === 'queued' && job.channel !== 'file-fallback').map(job => job.kind))]);
       for (const kind of queuedKinds) validateTool(byName.get(kind), kind, revision);
-      return withState(cwd, async (state, statePath) => {
+      return withState(cwd, now, async (state, statePath) => {
         let dispatched = 0, done = 0, uncertain = 0;
         const queued = state.jobs.filter(item => item.state === 'queued' && item.channel !== 'file-fallback');
         for (const job of queued) if (job.binding !== bindingDigest(config)) fail(`queued job binding changed; reconcile explicitly before delivery (${job.key})`, 'BINDING_CHANGED');
@@ -1109,25 +1380,26 @@ export function createClient({ cwd = process.cwd(), transport = fetchTransport, 
     },
     async reconcile(key, action, evidence) {
       key = stableKey(key); if (!['done', 'retry'].includes(action)) fail('reconcile action must be done or retry'); text(evidence, 'evidence', LIMITS.text);
-      return withState(cwd, async (state, statePath) => {
+      return withState(cwd, now, async (state, statePath) => {
         const job = state.jobs.find(item => item.key === key); if (!job) fail('reconcile key was not found');
         // refused (v2.2 only): the server did not apply it, so it can be requeued but never marked done.
         if (job.state === 'refused' && job.channel === 'taskandi-http') { if (action === 'done') fail('a refused job was not applied; only --action retry can requeue it'); delete job.refusedCode; }
         else if (job.state !== 'uncertain') fail('only uncertain jobs can be reconciled');
         job.state = action === 'done' ? 'done' : 'queued'; delete job.lastError;
+        if (action === 'done') job.doneAtMs = now();
         state.reconciliationLog.push({ key, action, evidence, at: new Date().toISOString() }); atomicJson(statePath, state);
         return { key, state: job.state, reconciled: true };
       });
     },
-    async nextTask({ agent, session }) {
+    async nextTask({ agent, session, bodyMaxChars }) {
       if (agent !== 'claude' && agent !== 'codex') fail('--agent must be claude or codex');
       session = stableKey(session);
-      if (viaHttp()) return h.nextTask({ agent, session });
+      if (viaHttp()) return h.nextTask({ agent, session, ...(bodyMaxChars === undefined ? {} : { bodyMaxChars }) });
       const config = loadConfig(cwd); if (!config.bound) return { ...FALLBACK };
       requireV2(config, 'next-task');
       const mcp = await toolMcp(config, 'next_task');
       const task = await sentCall(mcp, 'next_task', { task: config.task, agent, session }, validateNextTask, false);
-      await withState(cwd, async (state, statePath) => {
+      await withState(cwd, now, async (state, statePath) => {
         if (task.task === null) delete state.claimed;
         else state.claimed = { task: task.task, agent, session, lease: { ...task.lease }, claimedAt: new Date().toISOString() };
         atomicJson(statePath, state);
@@ -1139,8 +1411,8 @@ export function createClient({ cwd = process.cwd(), transport = fetchTransport, 
       text(summary, 'summary');
       return targeted('complete', 'complete', task, { summary }, validateComplete, (state, value) => { if (!value.completed || claimedTask(state) !== task) return false; delete state.claimed; return true; });
     },
-    release(task, reason) {
-      if (viaHttp()) return h.release(task, reason);
+    release(task, reason, park) {
+      if (viaHttp()) return h.release(task, reason, park);
       text(reason, 'reason');
       return targeted('release', 'release', task, { reason }, validateRelease, state => { if (claimedTask(state) !== task) return false; delete state.claimed; return true; });
     },
@@ -1149,9 +1421,9 @@ export function createClient({ cwd = process.cwd(), transport = fetchTransport, 
       const config = loadConfig(cwd); if (!config.bound) return { bound: false, channel: 'file-fallback', newAnswers: 0, conflicts: [] };
       const revision = revisionOf(config); const legacy = revision === LEGACY_CONTRACT_REVISION;
       const mcp = await toolMcp(config, 'list_asks');
-      const prior = await withState(cwd, async (state, statePath) => { bindAnswers(state, config); atomicJson(statePath, state); return state.cursor ?? { sequence: 0, value: '' }; });
+      const prior = await withState(cwd, now, async (state, statePath) => { bindAnswers(state, config); atomicJson(statePath, state); return state.cursor ?? { sequence: 0, value: '' }; });
       const result = await mcp.call('list_asks', legacy ? { task: config.task, answered: true, since: prior } : { task: config.task, since: prior }); const page = validatePollResult(result, prior, revision);
-      return withState(cwd, async (state, statePath) => {
+      return withState(cwd, now, async (state, statePath) => {
         bindAnswers(state, config);
         const current = state.cursor ?? { sequence: 0, value: '' };
         if (current.sequence !== prior.sequence || current.value !== prior.value) fail('poll cursor changed concurrently; response was not applied');
@@ -1186,7 +1458,7 @@ export function createClient({ cwd = process.cwd(), transport = fetchTransport, 
     async status() {
       if (viaHttp()) return h.status();
       let config; try { config = loadConfig(cwd); } catch (error) { config = { bound: false, reason: 'invalid-config', error: error.message }; }
-      return withState(cwd, async state => {
+      return withState(cwd, now, async state => {
         const counts = { queued: 0, dispatching: 0, done: 0, uncertain: 0 }; for (const job of state.jobs) if (Object.hasOwn(counts, job.state)) counts[job.state]++;
         const staleBindingKeys = config.bound ? state.jobs.filter(job => job.state === 'queued' && job.channel !== 'file-fallback' && job.binding !== bindingDigest(config)).map(job => job.key) : [];
         return { bound: config.bound, channel: config.bound ? 'taskandi-mcp' : 'file-fallback', reason: config.reason, configError: config.error, counts, uncertaintyIds: state.jobs.filter(job => job.state === 'uncertain').map(job => job.key), staleBindingKeys, claimedTask: claimedTask(state), answerCount: state.answers.length, conflictIds: [...new Set(state.conflicts.map(item => item.id))], cursorSequence: state.cursor?.sequence ?? 0 };
@@ -1195,10 +1467,14 @@ export function createClient({ cwd = process.cwd(), transport = fetchTransport, 
   };
 }
 
-async function readStdinJson() {
+async function readStdinBytes() {
   const chunks = []; let size = 0; const buffer = Buffer.alloc(64 * 1024);
   for (;;) { const count = readSync(0, buffer, 0, buffer.length, null); if (count === 0) break; size += count; if (size > LIMITS.stdin) fail(`stdin exceeds ${LIMITS.stdin} bytes`); chunks.push(Buffer.from(buffer.subarray(0, count))); }
-  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { fail('stdin is not valid JSON'); }
+  return Buffer.concat(chunks);
+}
+async function readStdinJson() {
+  const raw = await readStdinBytes();
+  try { return JSON.parse(raw.toString('utf8')); } catch { fail('stdin is not valid JSON'); }
 }
 function argValue(args, name) { const index = args.indexOf(name); if (index < 0 || index + 1 >= args.length) fail(`${name} is required`); return args[index + 1]; }
 // Item 26: `Number('')` and `Number('  ')` are both 0, so an empty or
@@ -1208,50 +1484,111 @@ function costEstimateValue(raw) {
   if (typeof raw !== 'string' || !/^\d+(\.\d+)?$/.test(raw)) fail(`--cost-estimate must be a non-negative decimal number (e.g. 0.125), got ${JSON.stringify(raw)}`);
   return Number(raw);
 }
-// Strict flag parsing for the v2.1 commands: exact set, no repeats, every flag has a value.
-function strictFlags(args, required, optional = []) {
+// Strict flag parsing for the v2.1 commands: exact set, no repeats, every flag has a value, except `booleans`: valueless
+// flags (true when present), refused if repeated; a value after one is read as an unknown flag and refused.
+function strictFlags(args, required, optional = [], booleans = []) {
   const out = {};
-  for (let i = 0; i < args.length; i += 2) {
+  for (let i = 0; i < args.length;) {
     const flag = args[i];
+    if (booleans.includes(flag)) { if (Object.hasOwn(out, flag)) fail(USAGE); out[flag] = true; i += 1; continue; }
     if (!(required.includes(flag) || optional.includes(flag)) || Object.hasOwn(out, flag) || i + 1 >= args.length) fail(USAGE);
-    out[flag] = args[i + 1];
+    out[flag] = args[i + 1]; i += 2;
   }
   if (required.some(flag => !Object.hasOwn(out, flag))) fail(USAGE);
   return out;
 }
-// Descriptor-binding CLI: --task is optional (target resolution) and takes Task&I task ids.
-async function descriptorMain(client, argv) {
+const wholeNumber = (raw, name, max = Number.MAX_SAFE_INTEGER) => { if (typeof raw !== 'string' || !/^\d{1,16}$/.test(raw) || Number(raw) > max) fail(`${name} must be a nonnegative integer`); return Number(raw); };
+function parkedAskIds(raw) {
+  const ids = raw.split(',');
+  if (!raw || ids.length > 200 || ids.some(id => !USABLE_ID.test(id)) || new Set(ids).size !== ids.length) fail('--parked-asks must be a comma-separated list of 1-200 distinct ask ids');
+  return ids;
+}
+// Descriptor-binding argv, parsed with no binding, claim or state access: shared by the CLI and --check-argv, so the
+// check validates exactly what a real run parses. --task is optional (target resolution) and takes Task&I task ids.
+function parseDescriptorArgv(argv) {
   const command = argv[0]; const taskFlag = flags => (flags['--task'] === undefined ? undefined : descriptorTaskRef(flags['--task'], '--task'));
-  const flags = (args, required, optional = []) => { try { return strictFlags(args, required, optional); } catch { fail(HTTP_USAGE); } };
+  const flags = (args, required, optional = [], booleans = []) => { try { return strictFlags(args, required, optional, booleans); } catch { fail(HTTP_USAGE); } };
   if (command === 'enqueue') {
     if (!['ask', 'comment', 'record_usage', 'record_time'].includes(argv[1])) fail(HTTP_USAGE);
-    const parsed = flags(argv.slice(2), ['--key'], ['--task']); const task = taskFlag(parsed);
-    return client.enqueue(argv[1], parsed['--key'], await readStdinJson(), { task });
+    const parsed = flags(argv.slice(2), ['--key'], ['--task']);
+    return { command, kind: argv[1], key: stableKey(parsed['--key']), task: taskFlag(parsed), stdin: true };
   }
-  if (command === 'flush' || command === 'status') { if (argv.length !== 1) fail(HTTP_USAGE); return command === 'flush' ? client.flush() : client.status(); }
-  if (command === 'poll') return client.poll({ task: taskFlag(flags(argv.slice(1), [], ['--task'])) });
-  if (command === 'ask-status') return client.askStatus({ task: taskFlag(flags(argv.slice(1), [], ['--task'])) });
+  if (command === 'flush' || command === 'status') { if (argv.length !== 1) fail(HTTP_USAGE); return { command }; }
+  if (command === 'poll' || command === 'ask-status') return { command, task: taskFlag(flags(argv.slice(1), [], ['--task'])) };
   if (command === 'next-task') {
-    const parsed = flags(argv.slice(1), ['--agent', '--session']);
+    const parsed = flags(argv.slice(1), ['--agent', '--session'], ['--body-max-chars']);
     if (parsed['--agent'] !== 'claude' && parsed['--agent'] !== 'codex') fail(HTTP_USAGE);
-    return client.nextTask({ agent: parsed['--agent'], session: stableKey(parsed['--session']) });
+    return { command, agent: parsed['--agent'], session: stableKey(parsed['--session']), bodyMaxChars: parsed['--body-max-chars'] === undefined ? undefined : wholeNumber(parsed['--body-max-chars'], '--body-max-chars') };
   }
-  if (command === 'complete') { const parsed = flags(argv.slice(1), ['--summary'], ['--task']); return client.complete(taskFlag(parsed), parsed['--summary']); }
-  if (command === 'release') { const parsed = flags(argv.slice(1), ['--reason'], ['--task']); return client.release(taskFlag(parsed), parsed['--reason']); }
+  if (command === 'decide') {
+    if (argv.includes('--resolve')) {
+      const parsed = flags(argv.slice(1), ['--resolve', '--as']);
+      if (parsed['--as'] !== 'proceeded') fail(HTTP_USAGE);
+      return { command, resolve: stableKey(parsed['--resolve']), as: parsed['--as'] };
+    }
+    const parsed = flags(argv.slice(1), [], ['--remaining-minutes', '--windows-used'], ['--no-other-work']);
+    return { command, noOtherWork: parsed['--no-other-work'] === true, remainingMinutes: parsed['--remaining-minutes'] === undefined ? undefined : wholeNumber(parsed['--remaining-minutes'], '--remaining-minutes'), windowsUsed: parsed['--windows-used'] === undefined ? undefined : wholeNumber(parsed['--windows-used'], '--windows-used') };
+  }
+  if (command === 'complete') { const parsed = flags(argv.slice(1), ['--summary'], ['--task']); return { command, task: taskFlag(parsed), summary: wireText(parsed['--summary'], 'summary', HTTP_LIMITS.summary) }; }
+  if (command === 'release') {
+    const parsed = flags(argv.slice(1), ['--reason'], ['--task', '--parked-asks'], ['--budget-stopped']);
+    return { command, task: taskFlag(parsed), reason: wireText(parsed['--reason'], 'reason', HTTP_LIMITS.reason), park: { ...(parsed['--parked-asks'] === undefined ? {} : { parkedAsks: parkedAskIds(parsed['--parked-asks']) }), budgetStopped: parsed['--budget-stopped'] === true } };
+  }
   if (command === 'usage') {
-    const { enqueueTranscriptUsage } = await import('./taskandi-usage.mjs');
     const parsed = flags(argv.slice(1), ['--transcript', '--session', '--account', '--cost-estimate'], ['--task']);
-    return enqueueTranscriptUsage(client, parsed['--transcript'], { session: parsed['--session'], account: parsed['--account'], costEstimate: costEstimateValue(parsed['--cost-estimate']), task: taskFlag(parsed) });
+    text(parsed['--transcript'], '--transcript', 4096); text(parsed['--account'], '--account', LIMITS.id);
+    return { command, transcript: parsed['--transcript'], session: text(parsed['--session'], '--session', LIMITS.id), account: parsed['--account'], costEstimate: costEstimateValue(parsed['--cost-estimate']), task: taskFlag(parsed) };
   }
-  if (command === 'reconcile' && argv.includes('--direct')) { const parsed = flags(argv.slice(1), ['--direct', '--task', '--action', '--evidence']); return client.reconcileDirect(parsed['--direct'], parsed['--task'], parsed['--action'], parsed['--evidence']); }
-  if (command === 'reconcile') { const parsed = flags(argv.slice(1), ['--key', '--action', '--evidence']); return client.reconcile(parsed['--key'], parsed['--action'], parsed['--evidence']); }
+  if (command === 'reconcile' && argv.includes('--direct')) {
+    // Values are checked by the client, which names each one.
+    const parsed = flags(argv.slice(1), ['--direct', '--task', '--action', '--evidence']);
+    return { command, direct: parsed['--direct'], task: parsed['--task'], action: parsed['--action'], evidence: parsed['--evidence'] };
+  }
+  if (command === 'reconcile') {
+    const parsed = flags(argv.slice(1), ['--key', '--action', '--evidence']);
+    return { command, key: parsed['--key'], action: parsed['--action'], evidence: parsed['--evidence'] };
+  }
   fail(HTTP_USAGE);
+}
+// --check-argv: syntax only (argv, and an enqueue's stdin payload when one is piped). No config, binding, claim, state or network.
+async function checkArgv(argv) {
+  const plan = parseDescriptorArgv(argv);
+  // An empty stdin (or a terminal) checks the argv alone; a piped payload is checked as enqueue would check it.
+  const raw = plan.stdin && !process.stdin.isTTY ? await readStdinBytes() : Buffer.alloc(0);
+  if (raw.length) {
+    let input; try { input = JSON.parse(raw.toString('utf8')); } catch { fail('stdin is not valid JSON'); }
+    input = ownObject(input, `${plan.kind} payload`);
+    if (input.task !== undefined) { if (plan.task !== undefined) fail('task given both in the payload and as --task'); descriptorTaskRef(input.task, 'task'); }
+    validateHttpPayload(plan.kind, Object.fromEntries(Object.entries(input).filter(([name]) => name !== 'task')), plan.key);
+  }
+  return { ok: true };
+}
+async function descriptorMain(client, argv) {
+  const plan = parseDescriptorArgv(argv);
+  switch (plan.command) {
+    case 'enqueue': return client.enqueue(plan.kind, plan.key, await readStdinJson(), { task: plan.task });
+    case 'flush': return client.flush();
+    case 'status': return client.status();
+    case 'poll': return client.poll({ task: plan.task });
+    case 'ask-status': return client.askStatus({ task: plan.task });
+    case 'next-task': return client.nextTask({ agent: plan.agent, session: plan.session, bodyMaxChars: plan.bodyMaxChars });
+    case 'decide': return plan.resolve !== undefined ? client.resolveAsk(plan.resolve, plan.as) : client.decide({ noOtherWork: plan.noOtherWork, remainingMinutes: plan.remainingMinutes, windowsUsed: plan.windowsUsed });
+    case 'complete': return client.complete(plan.task, plan.summary);
+    case 'release': return client.release(plan.task, plan.reason, plan.park);
+    case 'usage': { const { enqueueTranscriptUsage } = await import('./taskandi-usage.mjs'); return enqueueTranscriptUsage(client, plan.transcript, { session: plan.session, account: plan.account, costEstimate: plan.costEstimate, task: plan.task }); }
+    default: return plan.direct ? client.reconcileDirect(plan.direct, plan.task, plan.action, plan.evidence) : client.reconcile(plan.key, plan.action, plan.evidence);
+  }
 }
 // Server strings reach stdout as JSON; C1 and bidi controls are escaped as \uXXXX so they cannot steer a terminal.
 const TERMINAL_UNSAFE = /[\u0080-\u009f\u202a-\u202e\u2066-\u2069]/g;
 export function terminalSafeJson(value) { return JSON.stringify(value).replace(TERMINAL_UNSAFE, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`); }
 // clientOptions reach createClient (tests pass the httpConnect seam); the CLI itself never sets them.
 export async function main(argv = process.argv.slice(2), clientOptions = {}) {
+  // --check-argv (first argument, or first after the command name) runs before any config, stdin config or state read.
+  if (argv[0] === '--check-argv' || argv[1] === '--check-argv') {
+    const rest = argv[0] === '--check-argv' ? argv.slice(1) : [argv[0], ...argv.slice(2)];
+    process.stdout.write(`${JSON.stringify(await checkArgv(rest))}\n`); return;
+  }
   const client = createClient(clientOptions); const command = argv[0]; let result;
   const descriptor = client.descriptor();
   if (descriptor) result = await descriptorMain(client, argv);
@@ -1282,6 +1619,11 @@ export async function main(argv = process.argv.slice(2), clientOptions = {}) {
     });
   }
   else if (command === 'reconcile') result = await client.reconcile(argValue(argv, '--key'), argValue(argv, '--action'), argValue(argv, '--evidence'));
+  else if (command === 'decide') {
+    // Same argv rules as under a descriptor binding; an unbound project then reports file-fallback, an MCP binding is refused.
+    const plan = parseDescriptorArgv(argv);
+    result = plan.resolve !== undefined ? await client.resolveAsk(plan.resolve, plan.as) : await client.decide(plan);
+  }
   else fail(USAGE);
   process.stdout.write(`${descriptor ? terminalSafeJson(result) : JSON.stringify(result)}\n`);
   for (const notice of result?.notices ?? []) process.stderr.write(`taskandi-client: ${notice}\n`);

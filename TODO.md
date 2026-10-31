@@ -74,7 +74,6 @@ Two vibe-wide behaviour changes shipped and took effect on this rebuild — surf
 
 ## Open
 
-- [ ] **task_065 — `/vss` and `/vsss` with Task&I** (2026-10-31, /vsss slice 4) — `taskandi-client decide` (the agreed default-on-silence rule, budget ask at 80% and stop at the cap, reclaim guard), Claude transcripts in the usage importer, outbox pruning, and one delimited Task&I block in `vss.md`/`vsss.md`/Codex `context.md`. Spec: `.vs/spec.md`.
 
 
 

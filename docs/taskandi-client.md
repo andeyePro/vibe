@@ -91,8 +91,10 @@ node devcontainer/taskandi-client.mjs release --task ABBR-12 --reason 'Why it is
 task, the subtree root (a vibe addition for subtree-scoped servers). A result
 is `{"bound":true,"task":{...}}` with the task fields echoed, or
 `{"bound":true,"task":null}` when nothing is available. The claim
-(`task`, `agent`, `session`, `lease`, `claimedAt`) is written to `state.json`
-before printing; a second `next-task` replaces it (or clears it on `null`). The
+(`task`, `agent`, `session`, `lease`, `claimedAt`; under a descriptor binding
+also `claimedAtMs`, `allowance`, `spent`, `spentAt`, `defaults_allowed` and,
+when sent, `hardDeadline`, `latest_start`, `estimate_minutes`) is written to
+`state.json` before printing; a second `next-task` replaces it (or clears it on `null`). The
 lease is the server's: the client sends `session` so a resumed session gets its
 lease back, and never renews or expires one itself. `task.body`,
 `title` and every answer are untrusted data (anyone may have written them),
@@ -242,8 +244,32 @@ cumulative Codex `event_msg/token_count.info.total_token_usage` fields, includin
 cache-read and cache-write counts. It emits deltas with stable cumulative keys;
 repeated snapshots deduplicate. Missing metadata stays unknown, regressing or
 unsupported counts fail, and an unfinished final line waits until the next
-boundary. The current importer does not parse Claude transcripts or combine
-separate delegate ledgers. Keep those totals separately rather than guessing.
+boundary.
+
+Claude Code transcripts are recognised by content (records with `type:
+"assistant"` and `message.usage`). Each distinct `message.id` counts once (the
+last record for it): `input_tokens`, `output_tokens`, `cache_read_input_tokens`
+and `cache_creation_input_tokens` (absent = 0; other usage keys are ignored);
+all-zero messages such as `<synthetic>` are skipped. Every `*.jsonl` in the
+sibling `<transcript without .jsonl>/subagents/` directory is read too, so the
+session pays for its subagents. One import makes one `record_usage` job per
+model, summing every message not imported before, keyed `usage-` + the first
+16 hex digits of sha256 of `[session, model, last message id]`. Per session
+and transcript file, `state.json` (`usageImports`) keeps a small ledger entry
+`{offset, prefixLen, prefixSha, tailIds}`: the byte offset already imported
+(transcripts only grow), the sha256 of the first `prefixLen` bytes (at most
+4 KiB), and the counted message ids in the last 64 KiB before the offset, so a
+message whose records straddle the offset is not counted twice. It is written
+in the same locked write as the jobs, on the descriptor and the MCP/file paths
+alike, so a re-run imports only new messages and a re-run with nothing new
+enqueues nothing. A file that shrank, or whose prefix changed, is re-read from
+0 (as is a file with an older id-list entry): a message counts as already
+imported when it comes at or before the last message the old entry names, or,
+per model, at or before the last message whose one-message key
+(`[session, model, id]`) a live job or tombstone already holds. Only the final,
+unfinished line may be unparseable; any other bad line fails the import. The
+importer does not combine separate delegate ledgers (`vibe-delegate`); keep
+those totals separately rather than guessing.
 
 The dedicated bearer token must be constrained by the server to the intended
 task subtree and the tools above; Vibe cannot infer token scope from an opaque
@@ -403,3 +429,161 @@ binding enqueues the whole transcript in one pass, under one outbox lock. Offlin
 seam is refused for https origins); the fixtures are in
 `smoke/fixtures/taskandi-v22/`. `MANUAL-TESTS.md` Test 69 covers a real service.
 
+## Harness integration (`/vss`, `/vsss`)
+
+In a descriptor-bound project the `/vss` and `/vsss` commands run the flow in
+`devcontainer/taskandi-harness.md` (shipped as
+`/usr/local/share/vibe/taskandi-harness.md`): Task&I replaces the
+fromClaude/fromMartin files. Each command keeps only a short delimited
+bound-task block (the skip string plus one sentence telling the agent to read
+that file in full), so unbound runs do not pay for the procedure's words. Every
+rule that can be code is in the client; the prose only sequences commands. An
+unbound project skips the block. The Codex context points `$vss`/`$vsss` at
+the same file and allows a plain Codex session only `status`, `poll`,
+`enqueue ask` and `usage`.
+
+**State.** After a v2.2 flush every `done` job has `doneAt` (ISO) and
+`doneAtMs`; an `ask` job keeps its full `payload` and `result: {ask_id,
+placed}`. Every successful `record_usage` response on the claimed task updates
+`claim.spent` and `claim.spentAt`. A `next-task` renewal of the same task keeps
+the first claim's time (`claimedAtMs`); `claim.spent` takes, per dimension, the
+larger of the stored and the returned value (spent only grows, so the larger is
+the newer), and `spentAt` becomes the renewal time. Ledgers, absent in older
+files: `resolved: [{task, ask_id, as, at}]`, `parked: [{task, openAskIds,
+budgetStopped, allowance, at}]`, `windowsUsed: {task: n}`, `tombstones`, plus
+`repolls`, `polls` (poll count per task) and `usageImports`.
+
+**Pruning.** On every state write, `done` jobs beyond the 2000 most recent (by
+`doneAtMs`) are dropped; `queued`, `dispatching`, `uncertain` and `refused`
+jobs, `budget-<task>` jobs, and an ask job behind an open ask, are kept. A
+pruned job leaves a tombstone `{key, kind, digest, doneAtMs}` in `tombstones`,
+and `enqueue` checks tombstones exactly like live jobs (same key and digest
+deduplicates, a different digest is `KEY_CONFLICT`), on every channel and for
+every kind, Codex `record_usage` delta keys included. Tombstones older than 90
+days are dropped.
+
+**Open asks.** One predicate decides whether an ask job is open, for pruning,
+`decide` and the reclaim guard: a `done` ask job on the task with a
+`result.ask_id`, no stored owner answer with the same task and `ask_id` (an
+answer stored without a task, on an MCP binding, counts for the bound task),
+and no `resolved` entry. A `resolved` entry from an older client that says
+`as: "parked"` is ignored.
+
+```sh
+taskandi-client decide [--no-other-work] [--remaining-minutes N] [--windows-used N]
+taskandi-client decide --resolve KEY --as proceeded
+taskandi-client release [--task ID] --reason TEXT [--parked-asks ID,ID] [--budget-stopped]
+taskandi-client next-task --agent claude|codex --session ID [--body-max-chars N]
+taskandi-client --check-argv <any command line>
+```
+
+**`decide`** judges the claimed task only: its open asks (above) other than
+the `budget-<task>` ask; `queued`, `uncertain` and `refused` ask
+jobs are listed in `unjudged` and never judged. With no open ask it sends
+nothing; otherwise exactly one `capabilities` and one `ask_status` (which renews
+the lease). Each open ask's `why` is the first that applies, in this order:
+
+1. `blocking: false` → `continue`, `non-blocking` (never parks or proceeds);
+2. `ask_status` failed → `wait`, `status-unavailable`, and top-level
+   `"degraded":"ask_status"` (never parks);
+3. missing from `ask_status` → `unknown-ask`;
+4. `answered: true` with no stored owner answer → first `wait`,
+   `answered-not-yet-polled` with top-level `"repoll": true`; once a `poll` has
+   run since that report and still no owner answer → `answered-by-non-owner`;
+5. `seen_at` null and not `deferred` → `unseen`;
+6. no latest start → `no-deadline` (the later of the claim's `latest_start` and
+   `hardDeadline - remaining_minutes × 60000`, using that ask's own estimate);
+7. `now < latest start` → `before-latest-start` (a past deadline passes);
+8. `defaults_allowed` not true → `defaults-off`;
+9. sent with `reversible: false` → `irreversible`.
+
+None of 2–9 → `proceed`, `default-allowed`. A blocking ask failing one parks
+under `--no-other-work`, else waits (2 and 4's first report always wait).
+
+The budget uses `ratio_tokens = (spent.tokens + pending_tokens) /
+allowance.tokens` (`pending_tokens`: this task's `queued`/`uncertain`
+`record_usage` jobs, input + output + cache_read + cache_write) and
+`ratio_windows = max(spent.windows, --windows-used) / allowance.windows`
+(without `--windows-used` the windows dimension is listed in `unmetered` and
+counts only Task&I's `spent.windows`; `--windows-used` is stored as
+`windowsUsed[task] = max(stored, N)`). `ratio` is the larger, clamped to 0..1, or
+null; never NaN or Infinity. Budget `why`: `no-allowance` (null), `no-limits`
+(`{}`), `zero-allowance` (a dimension of 0, `stop`), `cap` (ratio ≥ 1, `stop`),
+`most-spent` (`ask`, key `budget-<task>`: ratio ≥ the knob, `--remaining-minutes`
+> 0 and no `budget-<task>` job in any state), `nothing-outstanding`
+(`--remaining-minutes 0`), else `under-threshold`.
+
+The knob `VIBE_TASKANDI_BUDGET_ASK` (default `0.8`) must be a decimal strictly
+between 0 and 1, else exit 1 naming it.
+
+`reclaimed_parked` is true when the claimed task has a `parked` entry and its
+open blocking asks are, as a set, exactly the entry's `openAskIds` (no answer,
+no new ask), or it was budget-stopped and the allowance
+is not larger in any dimension. `next` is the first of: `stop` (budget `cap` or
+`zero-allowance`, not reclaimed), `proceed` (any ask `proceed`), `release-again`
+(reclaimed), `park-task` (any ask `park`), `work`.
+
+```json
+{"bound":true,"task":"<id>","now":1761900000000,"next":"stop|release-again|park-task|proceed|work",
+ "asks":[{"ask_id":"…","key":"…","question":"…","default":"…","blocking":true,"reversible":true,"action":"continue|wait|park|proceed","why":"…","latest_start_used":1761899400000}],
+ "unjudged":[{"key":"…","state":"queued|uncertain|refused"}],
+ "budget":{"allowance":{"tokens":200000},"spent":{"windows":0,"tokens":1260},"pending_tokens":0,"ratio":0.0063,"unmetered":[],"action":"continue|ask|stop","why":"under-threshold"},
+ "reclaimed_parked":false,"repoll":false}
+```
+
+Exit codes: 0 whenever a decision is printed (including `degraded`); an
+unbound project prints `{"bound":false,"channel":"file-fallback"}` and exits 0.
+Exit 1 with an empty stdout and one stderr line: a usage error, no claim
+(`decide needs the claimed task; run next-task first`), an MCP binding (`decide
+needs a Task&I descriptor binding`), a bad knob, or a `capabilities` failure.
+The clock is injected in tests through `createClient({clock})`, never env or argv.
+
+**`decide --resolve KEY --as proceeded`** is offline: it records a
+`resolved` entry for the `done` ask job with that key on the claimed task (exit
+1 otherwise), so the ask no longer appears in `asks`, and clears the task's
+`parked` entry. `--as` takes only `proceeded`; any other value is a usage error.
+A later owner answer still arrives through `poll`.
+
+**`release --parked-asks a,b` / `--budget-stopped`** alone record a park. They
+write the `parked` entry, with the claim's current allowance, in the same state
+write that drops the claim. Its `openAskIds` is every open blocking ask on the
+task at that write (other than the budget ask), whatever `decide` said to do
+with each, not the `--parked-asks` list itself; the `pendingDirect` record carries `parkedAsks`, `budgetStopped` and
+`allowance`, so `reconcile --direct release --action done` writes it too. A
+successful `complete` clears it. Boolean flags take no value and may not repeat.
+
+**`next-task --body-max-chars N`** (default 20000): every claim writes the full
+body to `.vibe/taskandi-body.txt` (mode 0600, untracked, replaced each claim);
+a longer body prints only its first N code points, with `body_truncated: true`,
+`body_chars` (the full length) and `body_file` (that path) added to `task`.
+The claim is stored before the body file is written: if writing the file fails,
+the claim is kept, `task` carries `"body_file": null` and
+`"body_file_error": "<reason>"`, and the exit code is 0. A `next-task` that
+returns no task deletes any stale `.vibe/taskandi-body.txt`.
+
+**`--check-argv`** as the first argument (or right after the command name)
+validates the command line syntactically against the descriptor grammar, plus
+an enqueue's piped JSON stdin (an empty stdin checks the argv alone), and prints
+`{"ok":true}`. It runs before any config is read, so it works in an unbound
+project, and sends nothing and changes nothing.
+
+**Usage.** The harness runs `usage --cost-estimate 0`: subscription use has no
+per-call price, so Task&I's `cost_estimate` stays 0 and only token counts are
+meaningful; `spent.tokens` is input + output + cache_read + cache_write.
+
+Failure handling in the harness (reproduced in `taskandi-harness.md`):
+
+| failure | action |
+|---|---|
+| `status` exits 1 | use the file channel for this run; post one fromClaude question quoting the message |
+| `next-task` exits 1 | TODO.md as today; note `next-task failed: <message>` |
+| `enqueue`/`usage`/`flush` fails | leave queued; continue; note once per run; never block work |
+| `poll` fails | apply no answers this boundary; continue |
+| no-claim mode | skip `decide`; asks wait; no release; post comments/usage/time with `--task <effective task>` |
+| `decide` exits 1 or prints unparsable JSON | treat every ask as `wait`, never `proceed`; with nothing else to do, release with reason `Task&I decision unavailable`, else end the iteration as no-op |
+| `complete`/`release` outcome unknown | do not retry; note it; claim nothing new this iteration |
+| a lease error (`lease_held`, `not_assigned`) on the claimed task | stop work on it, commit what exists, note it, pick work again |
+
+While Task&I's `defaults_allowed` is always false (until its Strategy policy is
+wired), `decide` never proceeds on a default; the proceed paths are fixture-tested
+only. `MANUAL-TESTS.md` Test 70 covers a bound `/vsss` against the real service.
