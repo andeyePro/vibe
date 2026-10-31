@@ -570,8 +570,8 @@ days are dropped.
 **Open asks.** One predicate decides whether an ask job is open, for pruning,
 `decide` and the reclaim guard: a `done` ask job on the task with a
 `result.ask_id`, no stored owner answer with the same task and `ask_id` (an
-answer stored without a task, on an MCP binding, counts for the bound task),
-and no `resolved` entry. A `resolved` entry from an older client that says
+answer stored without a task, or without `ownerAnswer: true`, never closes an
+ask), and no `resolved` entry. A `resolved` entry from an older client that says
 `as: "parked"` is ignored.
 
 ```sh

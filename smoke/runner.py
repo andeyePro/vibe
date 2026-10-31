@@ -72,6 +72,7 @@ from smoke.checks_60_taskandi_v23_review import *
 from smoke.checks_61_taskandi_propose import *
 from smoke.checks_62_taskandi_propose_more import *
 from smoke.checks_63_taskandi_propose_cycle2 import *
+from smoke.checks_64_readme_taskandi import *
 
 def main() -> int:
     test_docker_preflight_is_shared_and_mac_start_preserves_target()
@@ -1347,6 +1348,7 @@ def main() -> int:
     test_c2_ac25_secrets()
     test_c2_ac26_terminal_safe()
     test_c2_ac27_prose()
+    test_readme_taskandi_section()
 
     print()
     if FAILURES:

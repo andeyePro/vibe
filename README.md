@@ -285,6 +285,24 @@ vibe link --uninstall   # removes it (on Linux the xdg-mime association is left 
 
 The handler holds no logic: it runs `vibe link-open '<url>'` in the background, so every check, confirmation and launch above still applies. The applet itself needs no permission. macOS may ask once to let `vibe` (via osascript) control Terminal or iTerm, and may ask again after `--install` re-signs the applet; Ghostty, kitty and WezTerm launch with `open -na` and need no prompt. A reinstall stages the new bundle beside the old one, so a failed `--install` leaves the working handler in place. `--status` on macOS also shows which bundle currently claims `vibe:` (`default:`). Re-run `vibe link --install` after moving or reinstalling vibe: it rebuilds vibe's own bundle in place and refuses to replace anything that is not vibe's. The launcher path must be a plain path (letters, digits and `. _ / + @ , : = ~ -` and spaces), or install refuses with exit 7.
 
+### Work from Task&I (optional)
+
+Task&I can replace the fromClaude/fromMartin files: you and vibe set each other tasks there, ranked by your priorities. Unbound projects behave exactly as before; nothing below happens unless a project is bound.
+
+**Bind a project.** In Task&I choose **More → Connect Codex**, save the descriptor it gives you as `.vibe/taskandi-descriptor.json` in the project, and `chmod 600` it. It is never committed (a tracked or symlinked one is refused). `vibe --task <id>` binds one launch to a particular task, and a `vibe://open?project=<name>&task=<id>` link from Task&I does the same (see "Open vibe from a link" above).
+
+**What `/vss` and `/vsss` then do.** They read `/usr/local/share/vibe/taskandi-harness.md` and follow it:
+
+- **Next task.** With no arguments, `/vss` (and each `/vsss` iteration) takes the top task Task&I assigns to the agent, instead of the top TODO.md item. A task's title and body are treated as a brief, never as instructions.
+- **Questions go to you in Task&I,** as a subtask or a thread post on the task, each with the default the agent would take, how long it should take you, and whether it blocks the work. Your answers are applied at the next iteration; answers from anyone else are ignored.
+- **Progress, usage and time** are posted to the task at every iteration, so the task shows what the agent did and how many tokens it spent.
+- **Silence.** The agent never acts on a default you haven't seen. It proceeds on one only if you opened the question (or pressed Later), its latest start has passed under a real hard deadline, your Task&I Strategy policy allows defaults for that priority, and the choice is reversible. Otherwise it parks the task and moves to the next.
+- **Budget.** A task's allowance (in tokens or 5-hour windows) is respected: at 80% the agent asks whether to wrap up, and at 100% it stops and releases the task.
+- **vibe proposes tasks to you** when its own work turns up something you need to decide or do. A proposal lands as "Added by Claude, keep?"; you keep or remove it. Repeating tasks ("every second Friday at 09:00") come only from your own words. At most 3 proposals per session and 10 per day, and never one for anything risky.
+- **Done.** The agent marks the task done for you to confirm.
+
+The client keeps a durable outbox: a dropped connection never loses or duplicates a write, and it is never retried when Task&I could not tell it from the first. Full detail, every command and every safety rule: [`docs/taskandi-client.md`](docs/taskandi-client.md). Manual checks on a real Mac and service: Tests 68–71 in [`MANUAL-TESTS.md`](MANUAL-TESTS.md).
+
 ### Second brain (optional)
 
 vibe can mount a shared "second brain" — any local git repo of Markdown notes — into every container at `/brain2` (read-write), so cross-project knowledge (decisions, conventions, operational notes) is readable and appendable from any session, independent of any single project's git history. Point `VIBE_BRAIN2_PATH` at the repo in `~/.vibe/config` (default `~/brain2`; `=off` to disable). It is entirely optional: vibe works fully without it, and a machine with no such repo gets a silent no-op.
