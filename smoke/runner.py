@@ -73,6 +73,7 @@ from smoke.checks_61_taskandi_propose import *
 from smoke.checks_62_taskandi_propose_more import *
 from smoke.checks_63_taskandi_propose_cycle2 import *
 from smoke.checks_64_readme_taskandi import *
+from smoke.checks_65_codex_allow_hardening import *
 
 def main() -> int:
     test_docker_preflight_is_shared_and_mac_start_preserves_target()
@@ -1349,6 +1350,17 @@ def main() -> int:
     test_c2_ac26_terminal_safe()
     test_c2_ac27_prose()
     test_readme_taskandi_section()
+    test_cx_ac1_foreign_owner()
+    test_cx_ac2_unreadable_dir_cap()
+    test_cx_helper_reason_codes()
+    test_cx_ac3_writers_refuse()
+    test_cx_ac4_umask_dir()
+    test_cx_ac5_existing_messages_literal()
+    test_cx_ac7_shared_helper_static()
+    test_cx_ac9_allow_refuses_writable_dir_without_file()
+    test_cx_ac10_not_regular()
+    test_cx_ac11_unknown_code_fails_closed()
+    test_cx_ac11_source_level()
 
     print()
     if FAILURES:

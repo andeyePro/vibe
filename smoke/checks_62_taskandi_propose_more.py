@@ -362,9 +362,7 @@ def test_prop_ac14_docs_fixtures() -> None:
         if p.exists():
             sha = hashlib.sha256(p.read_bytes()).hexdigest()
             _check(f"{_T} AC14: PROVENANCE.md lists the sha256 of {n}.json", sha in prov_text, sha)
-            src = _FIX_BRAIN / f"{n}.json"
-            if src.exists():
-                _check(f"{_T} AC14: {n}.json is byte-identical to the brain2 fixture", src.read_bytes() == p.read_bytes(), "")
+            # No live-brain2 comparison (it drifts as Task&I recopies); the sha256 pin fixes the bytes.
     doc = (_REPO / "docs" / "taskandi-client.md").read_text()
     sec = re.search(r"^#+ .*Proposing tasks.*$", doc, re.M)
     body = doc[sec.end():sec.end() + 12000].lower() if sec else ""

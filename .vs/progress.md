@@ -673,3 +673,9 @@ Codex-only continuation delivered: default supervised handoff, run/turn-bound co
 - Generator: opus. Tester: sonnet. Tests: `checks_61_taskandi_propose.py`, `checks_62_taskandi_propose_more.py`, `checks_63_taskandi_propose_cycle2.py`; the fake service gained create/update with its own independent repeat validator.
 - Cycle 1: green after the Tester fixed three fake-server bugs. Security review (1 HIGH: update_task added repeats past repeat_cap; 4 MEDIUM) + `/code-review high` (10) → cycle 2 (AC15–AC27), green after four chair rulings on tests.
 - Known limit (documented): the caps and `self_created` are client-side; Task&I has been asked whether it can enforce them.
+
+## task_068 — Harden `~/.vibe/codex-allow` like the link registry — PASS after 2 cycles (2026-10-31)
+- Spec critic: pass after 2 iterations (4 blocking: per-registry pinned messages, cap outside the link path, deny keeps refusing 644, writer order and umask 002).
+- Generator: sonnet. Tester: sonnet (`smoke/checks_65_codex_allow_hardening.py`).
+- `/code-review high`: 2 reproduced bugs (a grant reported but refused on read when `~/.vibe` pre-existed 775; a non-regular registry crashed or hung reads) plus fail-open default branches and a `set -e` capture → cycle 2, green.
+- Chair fix: checks_59/62 compared fixtures with the live brain2 copies (Task&I recopied them again); removed, sha256 pins remain.

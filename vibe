@@ -1917,39 +1917,64 @@ _codex_source() {
 # gating exists to prevent.
 CODEX_ALLOW_FILE="$HOME/.vibe/codex-allow"
 
-# codex_registry_usable — true when ~/.vibe/codex-allow is safe to trust.
-# Fails CLOSED, with one ⚠ line, in two cases:
-#   1. the registry is a SYMLINK — a symlink could aim the consent record (or
-#      a `deny` rewrite, or the chmod) at a file the user never meant to
-#      grant, including one a container can reach through another mount; a
-#      consent record must be a real file on this machine;
-#   2. its mode grants group or others ANY bit — a consent record the rest of
-#      the machine can edit is not consent.
-# A MISSING file is usable and simply contains nothing: absence is the
-# default-off state, not an error (a first-ever launch must not warn). The
-# mode is read with the same portable stat -c/-f fallback as
-# _codex_dir_mode_warning (Linux vs. Darwin stat take different flags), and
-# only the LAST THREE octal digits are judged, so a leading setuid/setgid/
-# sticky digit never changes the verdict. An unreadable mode is treated as
-# unusable rather than assumed fine — same fail-closed direction.
+# codex_registry_usable [writer] — true when ~/.vibe/codex-allow is safe to
+# trust, via the shared _vibe_consent_registry_check. Fails CLOSED, with one
+# ⚠ line, for: a symlink; anything that is not a regular file (directory,
+# FIFO, socket, device); an unreadable or group/other-accessible mode; a file
+# not owned by you or not readable; a ~/.vibe that group or others can write;
+# any reason code it does not recognise; and a file over 1000 lines. A
+# MISSING file is usable and empty (default off, no warning). `writer` skips
+# only the two mode checks, because a writer repairs the mode. The 1000-line
+# cap is read only for a regular file that passed every check.
 codex_registry_usable() {
-  local f="$CODEX_ALLOW_FILE" mode last3 group_other
-  if [ -L "$f" ]; then
-    echo "  ⚠ ${f} is a symlink — ignored, so no project counts as allowed (the Codex opt-in registry must be a real file on this machine; delete the symlink and re-run 'vibe codex allow')." >&2
-    return 1
-  fi
-  [ -e "$f" ] || return 0
-  mode="$(stat -L -c %a "$f" 2>/dev/null || stat -L -f %Lp "$f" 2>/dev/null)" || mode=""
-  if [ -z "$mode" ]; then
-    echo "  ⚠ ${f} permissions could not be read — ignored, so no project counts as allowed (fail closed)." >&2
-    return 1
-  fi
-  last3="${mode: -3}"
-  group_other="${last3:1:2}"
-  if [ "$group_other" != "00" ]; then
-    echo "  ⚠ ${f} is readable or writable by group or others (mode ${mode}) — ignored, so no project counts as allowed; run 'chmod 600 ${f}' on the Mac." >&2
-    return 1
-  fi
+  local f="$CODEX_ALLOW_FILE" writer="${1:-}" reason mode dmode line n=0
+  reason="$(_vibe_consent_registry_check "$f" "$writer")" || true
+  case "$reason" in
+    missing) return 0 ;;
+    ok) ;;
+    symlink)
+      echo "  ⚠ ${f} is a symlink — ignored, so no project counts as allowed (the Codex opt-in registry must be a real file on this machine; delete the symlink and re-run 'vibe codex allow')." >&2
+      return 1
+      ;;
+    not_regular)
+      echo "  ⚠ ${f} is not a regular file — ignored, so no project counts as allowed; remove it and re-run 'vibe codex allow'." >&2
+      return 1
+      ;;
+    mode_unreadable)
+      echo "  ⚠ ${f} permissions could not be read — ignored, so no project counts as allowed (fail closed)." >&2
+      return 1
+      ;;
+    loose_mode)
+      mode="$(_link_mode "$f")" || mode=""
+      echo "  ⚠ ${f} is readable or writable by group or others (mode ${mode}) — ignored, so no project counts as allowed; run 'chmod 600 ${f}' on the Mac." >&2
+      return 1
+      ;;
+    foreign_owner)
+      echo "  ⚠ ${f} is not owned by you (or its owner could not be read) — ignored, so no project counts as allowed (fail closed)." >&2
+      return 1
+      ;;
+    unreadable)
+      echo "  ⚠ ${f} cannot be read — ignored, so no project counts as allowed; run 'chmod 600 ${f}' on the Mac." >&2
+      return 1
+      ;;
+    dir_writable)
+      dmode="$(_link_mode "$(dirname "$f")")" || dmode=""
+      echo "  ⚠ $(dirname "$f") is writable by group or others (mode ${dmode:-unknown}) — ignored, so no project counts as allowed; run 'chmod go-w $(dirname "$f")' on the Mac." >&2
+      return 1
+      ;;
+    *)
+      echo "  ⚠ ${f} could not be checked — ignored (fail closed)." >&2
+      return 1
+      ;;
+  esac
+  # A consent file this long is not one `vibe codex allow` wrote.
+  while IFS= read -r line || [ -n "$line" ]; do
+    n=$((n + 1))
+    if [ "$n" -gt 1000 ]; then
+      echo "  ⚠ ${f} has more than 1000 lines — ignored, so no project counts as allowed." >&2
+      return 1
+    fi
+  done < "$f"
   return 0
 }
 
@@ -1983,10 +2008,12 @@ _codex_path_is_single_line() {
 
 # codex_allow_record <workspace> — records the path (idempotent). Refuses a
 # symlinked registry outright: `touch` and `chmod` both FOLLOW symlinks, so
-# recording through one would mutate whatever it points at. A real file with
-# a loose mode is repaired here (chmod 600) rather than refused — the user is
-# standing at the keyboard asking for exactly this grant, and leaving them
-# with a file only codex_registry_usable can explain would be a dead end.
+# recording through one would mutate whatever it points at. It also refuses
+# when an existing ~/.vibe is group/other-writable (even with no registry
+# yet), since reads would ignore the grant it just wrote; a ~/.vibe this call
+# creates gets chmod go-w. A real file with a loose mode is repaired here
+# (chmod 600) rather than refused — the user is standing at the keyboard
+# asking for exactly this grant.
 codex_allow_record() {
   local ws="$1"
   if ! _codex_path_is_single_line "$ws"; then
@@ -1997,7 +2024,28 @@ codex_allow_record() {
     echo "  ⚠ ${CODEX_ALLOW_FILE} is a symlink — refusing to write through it." >&2
     return 1
   fi
-  mkdir -p "$(dirname "$CODEX_ALLOW_FILE")"
+  codex_registry_usable writer || return 1
+  local cdir dmode dlast3
+  cdir="$(dirname "$CODEX_ALLOW_FILE")"
+  if [ -d "$cdir" ]; then
+    dmode="$(_link_mode "$cdir")" || dmode=""
+    dlast3="${dmode: -3}"
+    case "$dmode" in
+      ''|*[!0-7]*) dlast3="777" ;;
+    esac
+    case "${dlast3:1:1}${dlast3:2:1}" in
+      [0145][0145]) ;;
+      *)
+        echo "  ⚠ ${cdir} is writable by group or others (mode ${dmode:-unknown}) — ignored, so no project counts as allowed; run 'chmod go-w ${cdir}' on the Mac." >&2
+        return 1
+        ;;
+    esac
+  else
+    mkdir -p "$cdir"
+    # A just-created ~/.vibe must not be group-writable (umask 002 hosts), or
+    # the next read would refuse it.
+    chmod go-w "$cdir"
+  fi
   touch "$CODEX_ALLOW_FILE"
   chmod 600 "$CODEX_ALLOW_FILE"
   grep -qxF -e "$ws" "$CODEX_ALLOW_FILE" && return 0
@@ -2006,11 +2054,13 @@ codex_allow_record() {
 
 # codex_allow_remove <workspace> — drops the exact line (idempotent). Rewrites
 # through a temp file and restores mode 600, mirroring _vibe_repos_decl_remove.
-# Callers gate on codex_registry_usable first, so a symlinked registry is
+# A missing registry is a no-op; otherwise it gates on codex_registry_usable
+# (writer), so a symlinked, non-regular or otherwise untrusted registry is
 # never rewritten.
 codex_allow_remove() {
   local ws="$1" tmp
   [ -f "$CODEX_ALLOW_FILE" ] || return 0
+  codex_registry_usable writer || return 1
   # A newline in the pattern would remove two unrelated entries (grep -v
   # treats it as two alternatives); such a path was never recorded anyway.
   _codex_path_is_single_line "$ws" || return 1
@@ -2404,48 +2454,49 @@ _link_mtime() {
   stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null
 }
 
-# _link_registry_usable [writer] — codex_registry_usable's rules for this
-# registry: a symlink, any group/other bit, or an unreadable mode → unusable
-# (one ⚠); also a file not owned by this user, one this user cannot read, or
-# a ~/.vibe group/other can write. A missing file is usable and empty. The
-# 1000-line cap is enforced by the one pass that reads the file
-# (_link_registry_load, _link_registry_rewrite). `writer` (allow, deny and
-# "Always") skips only the loose-mode check: a writer repairs that mode, with
-# the `now trusted` note; every other failure refuses writers too.
-_link_registry_usable() {
-  local f="$LINK_PROJECTS_FILE" writer="${1:-}" mode last3 owner me dmode dlast3
+# _vibe_consent_registry_check <file> [writer] — the one trust check behind
+# both consent registries (link-projects, codex-allow). Prints nothing on
+# stderr; echoes ONE reason code and returns 0 for ok/missing, 1 otherwise:
+# symlink, not_regular (directory/FIFO/socket/device; checked right after
+# missing), mode_unreadable, loose_mode, foreign_owner, unreadable,
+# dir_writable. `writer` skips only the two mode codes (a writer repairs the
+# mode). Callers own the messages.
+_vibe_consent_registry_check() {
+  local f="$1" writer="${2:-}" mode last3 owner me dmode dlast3
   if [ -L "$f" ]; then
-    printf '%s\n' "  ⚠ ~/.vibe/link-projects is a symlink — ignored, so no project can be opened from a link (it must be a real file; delete it and re-run 'vibe link allow')." >&2
+    echo symlink
     return 1
   fi
-  [ -e "$f" ] || return 0
+  if [ ! -e "$f" ]; then
+    echo missing
+    return 0
+  fi
+  if [ ! -f "$f" ]; then
+    echo not_regular
+    return 1
+  fi
   if [ -z "$writer" ]; then
     mode="$(_link_mode "$f")" || mode=""
     if [ -z "$mode" ]; then
-      printf '%s\n' "  ⚠ ~/.vibe/link-projects permissions could not be read — ignored (fail closed)." >&2
+      echo mode_unreadable
       return 1
     fi
     last3="${mode: -3}"
     if [ "${last3:1:2}" != "00" ]; then
-      printf '%s\n' "  ⚠ ~/.vibe/link-projects is readable or writable by group or others (mode ${mode}) — ignored; run 'chmod 600 ~/.vibe/link-projects' or 'vibe link allow' again." >&2
+      echo loose_mode
       return 1
     fi
   fi
-  # Owned by someone else (a file another account planted or can replace) →
-  # not this user's consent. An unreadable owner fails closed.
   owner="$(_link_owner "$f")" || owner=""
   me="$(id -u 2>/dev/null)" || me=""
   if [ -z "$owner" ] || [ -z "$me" ] || [ "$owner" != "$me" ]; then
-    printf '%s\n' "  ⚠ ~/.vibe/link-projects is not owned by you (or its owner could not be read) — ignored (fail closed)." >&2
+    echo foreign_owner
     return 1
   fi
-  # Owned but not readable (e.g. mode 200): fail closed with a ⚠, never a raw
-  # bash redirection error further on.
   if [ ! -r "$f" ]; then
-    printf '%s\n' "  ⚠ ~/.vibe/link-projects cannot be read — ignored (fail closed); run 'chmod 600 ~/.vibe/link-projects'." >&2
+    echo unreadable
     return 1
   fi
-  # A ~/.vibe that group or others can write lets them swap the file.
   dmode="$(_link_mode "$(dirname "$f")")" || dmode=""
   dlast3="${dmode: -3}"
   case "$dmode" in
@@ -2454,7 +2505,59 @@ _link_registry_usable() {
   case "${dlast3:1:1}${dlast3:2:1}" in
     [0145][0145]) ;;
     *)
+      echo dir_writable
+      return 1
+      ;;
+  esac
+  echo ok
+  return 0
+}
+
+# _link_registry_usable [writer] — true when ~/.vibe/link-projects is safe to
+# trust, via the shared _vibe_consent_registry_check, with one ⚠ per refusal.
+# Missing is usable and empty. Anything else fails closed: a symlink, a
+# non-regular file, a bad or unreadable mode, a foreign owner, an unreadable
+# file, a ~/.vibe group/other can write, or an unknown reason code. `writer`
+# (allow, deny and "Always") skips only the loose-mode checks, since a writer
+# repairs the mode. The 1000-line cap is enforced by the one pass that reads
+# the file (_link_registry_load, _link_registry_rewrite).
+_link_registry_usable() {
+  local f="$LINK_PROJECTS_FILE" writer="${1:-}" reason mode dmode
+  reason="$(_vibe_consent_registry_check "$f" "$writer")" || true
+  case "$reason" in
+    missing|ok) return 0 ;;
+    not_regular)
+      printf '%s\n' "  ⚠ ~/.vibe/link-projects is not a regular file — ignored (fail closed); remove it and re-run 'vibe link allow'." >&2
+      return 1
+      ;;
+    symlink)
+      printf '%s\n' "  ⚠ ~/.vibe/link-projects is a symlink — ignored, so no project can be opened from a link (it must be a real file; delete it and re-run 'vibe link allow')." >&2
+      return 1
+      ;;
+    mode_unreadable)
+      printf '%s\n' "  ⚠ ~/.vibe/link-projects permissions could not be read — ignored (fail closed)." >&2
+      return 1
+      ;;
+    loose_mode)
+      mode="$(_link_mode "$f")" || mode=""
+      printf '%s\n' "  ⚠ ~/.vibe/link-projects is readable or writable by group or others (mode ${mode}) — ignored; run 'chmod 600 ~/.vibe/link-projects' or 'vibe link allow' again." >&2
+      return 1
+      ;;
+    foreign_owner)
+      printf '%s\n' "  ⚠ ~/.vibe/link-projects is not owned by you (or its owner could not be read) — ignored (fail closed)." >&2
+      return 1
+      ;;
+    unreadable)
+      printf '%s\n' "  ⚠ ~/.vibe/link-projects cannot be read — ignored (fail closed); run 'chmod 600 ~/.vibe/link-projects'." >&2
+      return 1
+      ;;
+    dir_writable)
+      dmode="$(_link_mode "$(dirname "$f")")" || dmode=""
       printf '%s\n' "  ⚠ ~/.vibe is writable by group or others (mode ${dmode:-unknown}) — ~/.vibe/link-projects ignored; run 'chmod go-w ~/.vibe'." >&2
+      return 1
+      ;;
+    *)
+      printf '%s\n' "  ⚠ ~/.vibe/link-projects could not be checked — ignored (fail closed)." >&2
       return 1
       ;;
   esac

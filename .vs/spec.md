@@ -74,3 +74,21 @@ The tests use a temp HOME. Ownership is faked with a `stat` PATH shim that answe
 - The wrappers re-read the mode with `_link_mode` for their `(mode NNN)` text (allowed: `_link_mode` is not `stat` in the wrapper body). AC5 asserts the `mode NNN` text.
 - AC7's `stat` check uses a word boundary (`\bstat\b`) on non-comment lines.
 - checks_17 pins `deny` on a symlinked registry; the 644 `deny` refusal is pinned by AC3 here.
+
+## Rev 3 addendum (cycle 2): `/code-review high` findings (2026-10-31)
+
+- **AC9: allow never reports a grant that reads will refuse.** If `~/.vibe` already exists and group or others can write to it, `codex_allow_record` refuses before writing, even when the registry is missing. It prints the `dir_writable` line and exits 1. The `chmod go-w` repair still applies only to a `~/.vibe` that this call created.
+- **AC10: only regular files.** The shared helper gains reason `not_regular`, checked right after `missing`, for anything that is not a regular file (directory, FIFO, socket, device). Both wrappers refuse it:
+  - codex prints `  ⚠ ${f} is not a regular file — ignored, so no project counts as allowed; remove it and re-run 'vibe codex allow'.`;
+  - link prints `  ⚠ ~/.vibe/link-projects is not a regular file — ignored (fail closed); remove it and re-run 'vibe link allow'.`
+  
+  The cap loop never runs on a non-regular file, so a directory can't crash a read and a FIFO can't hang one.
+- **AC11: fail closed on unknown codes.**
+  - In both wrappers, only `missing` and `ok` return 0. Any other code, including an empty one, prints `  ⚠ <file> could not be checked — ignored (fail closed).` and returns 1.
+  - Each wrapper captures the reason with `reason=$(…) || true`, so a bare call can never abort under `set -e` before its ⚠ prints.
+- **AC12: mode in the codex dir message.** The codex `dir_writable` line becomes `  ⚠ $(dirname "$f") is writable by group or others (mode <mode or unknown>) — ignored, so no project counts as allowed; run 'chmod go-w $(dirname "$f")' on the Mac.`
+- **AC13: comments match behaviour.** The headers of `codex_registry_usable`, `codex_allow_remove` and `_link_registry_usable` describe what each now does. Each comment sits directly above its own function.
+- **Not adopted:**
+  - The single-pass awk rewrite. The cost is one bounded read per launch, and an awk rewrite of the grant check is a larger change than this task.
+  - The shared message table. Two short case tables with pinned literals are easier to audit than an indirection layer.
+- Tests for AC9–AC12. AC9 is tested with an existing 775 `~/.vibe` and no file; AC10 with a directory, a FIFO (opened non-blocking by the test only) and a socket where possible; AC11 with an injected unknown code via a shim of the helper's output, or directly by calling the wrapper's case through a test seam the Generator adds as an environment-free function `_vibe_consent_reason_message <registry> <code>`.

@@ -78,7 +78,6 @@ Two vibe-wide behaviour changes shipped and took effect on this rebuild — surf
 
 
 
-- [ ] **Harden `~/.vibe/codex-allow` like the link registry** (2026-10-31, from `/code-review high` on task_062) — `codex_registry_usable` checks only mode and symlink; the link registry also refuses a foreign owner, a group/other-writable `~/.vibe`, an owner-unreadable file and >1000 lines. One shared `_vibe_consent_registry_usable <file>` for both would close the gap and stop the copies drifting.
 
 
 

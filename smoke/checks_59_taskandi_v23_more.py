@@ -602,8 +602,8 @@ def test_v23_ac16_fixtures_docs_limits() -> None:
             continue
         h = hashlib.sha256(f.read_bytes()).hexdigest()
         _check(f"{_T} AC16: {n}.json sha256 matches PROVENANCE.md", h in ptext, h)
-        if (_FIX_BRAIN / f"{n}.json").exists():
-            _check(f"{_T} AC16: {n}.json is byte-identical to the brain2 copy (dev check; skipped when brain2 is absent)", f.read_bytes() == (_FIX_BRAIN / f"{n}.json").read_bytes(), "")
+        # No live-brain2 comparison: Task&I recopies its fixtures as its contract
+        # moves on, and the sha256 pin above already fixes these bytes.
         _check(f"{_T} AC16: {n}.json has the family contract string", json.loads(f.read_text()).get("contract") == R25, "")
     docs = (_REPO / "docs" / "taskandi-client.md").read_text()
     sect = docs.split("v2.3", 1)[1] if "v2.3" in docs else ""
