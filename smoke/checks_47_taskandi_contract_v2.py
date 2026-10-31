@@ -1047,8 +1047,11 @@ def test_taskandi_v2_ac10_v1_regression_and_diff() -> None:
     bad_plus = [line for line, kind in zip(plus, kinds_plus) if kind is None]
     _check("[taskandi-v2] AC10: every removed line is kind (a) or kind (b)", not bad_minus, repr(bad_minus))
     _check("[taskandi-v2] AC10: every added line is kind (a) or kind (b)", not bad_plus, repr(bad_plus))
-    _check("[taskandi-v2] AC10 control: the diff contains both allowed kinds",
-           "a" in kinds_minus and "b" in kinds_minus and "a" in kinds_plus and "b" in kinds_plus,
+    # The diff rule guards the one uncommitted task_061 edit; once committed the
+    # diff against HEAD is empty, so "both kinds present" only applies while a
+    # diff exists (a permanent test must not depend on an uncommitted tree).
+    _check("[taskandi-v2] AC10 control: any uncommitted diff contains both allowed kinds",
+           not diff.strip() or ("a" in kinds_minus and "b" in kinds_minus and "a" in kinds_plus and "b" in kinds_plus),
            repr((kinds_minus, kinds_plus)))
     _check("[taskandi-v2] AC10 control: classifier refuses an arbitrary removed assertion",
            _allowed_minus("-  assert.equal(x, 1)", []) is None and _allowed_minus("check('x', True)", []) is None)
