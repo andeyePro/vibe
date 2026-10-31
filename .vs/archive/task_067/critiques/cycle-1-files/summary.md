@@ -1,0 +1,3 @@
+Cycle 1 PASS: checks_61 (AC1-6, ~330 checks) and checks_62 (AC7-10, 12, 14) pass, with the 12 regression modules, code-check.py (0) and smoke-test.py (0); full log in test-output.log.
+All 17 earlier failures were test bugs, now fixed: createIds by running count (now keyed by title), errors.times shared counter, AC8 log clear; the fake server's repeat validator is independent and agrees with the client on every row.
+Weakly testable: "not created yet" (simulated by re-queuing a ledger entry's create job), update_task binding message wording (only "needs a Task&I descriptor binding" required), checks_54 allowed-subcommand change not needed (passed unchanged).
