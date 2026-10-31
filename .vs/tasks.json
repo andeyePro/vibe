@@ -490,5 +490,6 @@
   "mode": "rigorous",
   "last_modified": "2026-10-31T00:04:53.796481+00:00"
  },
- {"id": "task_064", "description": "Task&I client: contract v2.2 over the built service's HTTP transport (descriptor binding, node:http Host rule, error classes, per-task cursors, limits)", "implementation_status": "complete", "test_status": "passing", "assigned_to": "evaluator", "mode": "rigorous", "last_modified": "2026-10-31T01:36:31.063632+00:00"}
+ {"id": "task_064", "description": "Task&I client: contract v2.2 over the built service's HTTP transport (descriptor binding, node:http Host rule, error classes, per-task cursors, limits)", "implementation_status": "complete", "test_status": "passing", "assigned_to": "evaluator", "mode": "rigorous", "last_modified": "2026-10-31T01:36:31.063632+00:00"},
+ {"id": "task_063", "description": "vibe link --install/--uninstall/--status: register vibe:// with macOS (local ad-hoc-signed applet) and Linux (.desktop)", "implementation_status": "in_progress", "test_status": "pending", "assigned_to": "generator", "mode": "rigorous", "last_modified": "2026-10-31T03:01:51.409808+00:00"}
 ]

@@ -1,0 +1,3 @@
+Tester cycle 1 (task_064): smoke/checks_50_taskandi_http.py (AC1-8, 5b; 284 checks) + smoke/checks_52_taskandi_http_more.py (AC9-18; 182 checks), registered in runner.py; real loopback Node http server, CLI driven with VIBE_CONTAINER=0, seam via createClient httpConnect for AC3 container mode and AC5b.
+Exit codes: checks_50 0, checks_52 0, checks_28 0, checks_29 0, checks_47 0, code-check.py 0, smoke-test.py 0 (all passing on first full run against the Generator's code).
+Spec notes: AC16 "question 8000 accepted" is unreachable (composed-post rule caps it at ~7979); flush exit code for uncertain/try-later is unspecified so only job state and request counts are asserted.
