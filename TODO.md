@@ -74,7 +74,6 @@ Two vibe-wide behaviour changes shipped and took effect on this rebuild — surf
 
 ## Open
 
-- [ ] **task_067 — Task&I client v2.4/v2.5: vibe creates tasks for the owner** (in progress; spec `.vs/spec.md`) — `create_task`/`update_task` (provisional, owner keeps or removes) including `repeat`; a harness step for proposing follow-up tasks. Contract: brain2 brief `### Contract v2.4`/`v2.5`.
 
 
 

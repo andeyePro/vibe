@@ -69,6 +69,9 @@ from smoke.checks_57_taskandi_decide_review import *
 from smoke.checks_58_taskandi_v23 import *
 from smoke.checks_59_taskandi_v23_more import *
 from smoke.checks_60_taskandi_v23_review import *
+from smoke.checks_61_taskandi_propose import *
+from smoke.checks_62_taskandi_propose_more import *
+from smoke.checks_63_taskandi_propose_cycle2 import *
 
 def main() -> int:
     test_docker_preflight_is_shared_and_mac_start_preserves_target()
@@ -1319,6 +1322,31 @@ def main() -> int:
     test_v23_ac26_frozen_integrity()
     test_v23_ac28_prose()
     test_v23_ac29_non_proof_answers()
+    test_prop_ac1_wire()
+    test_prop_ac2_payload()
+    test_prop_ac3_repeat()
+    test_prop_ac4_gating()
+    test_prop_ac5_resend_reconcile()
+    test_prop_ac6_results()
+    test_prop_ac7_ledger()
+    test_prop_ac8_duplicates_caps()
+    test_prop_ac9_self_dispatch()
+    test_prop_ac10_update_targets()
+    test_prop_ac12_harness()
+    test_prop_ac14_docs_fixtures()
+    test_c2_ac15_updates_ledger()
+    test_c2_ac16_claimed_limits()
+    test_c2_ac17_order()
+    test_c2_ac18_ids()
+    test_c2_ac19_stampless()
+    test_c2_ac20_retry()
+    test_c2_ac21_reconciled()
+    test_c2_ac22_session_agent()
+    test_c2_ac23_limits_when_needed()
+    test_c2_ac24_hostile()
+    test_c2_ac25_secrets()
+    test_c2_ac26_terminal_safe()
+    test_c2_ac27_prose()
 
     print()
     if FAILURES:

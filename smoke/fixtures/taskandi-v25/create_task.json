@@ -1,0 +1,44 @@
+{
+  "contract": "vibe-agent-exchange-v2.5",
+  "notes": "Adds a task for the owner (assign \"owner\": assigned to them and ranked in My next task by the normal rules) or for the agent's own queue (assign \"agent\": tagged agent:<persona>, see create_task_agent.json). parent is optional and must be inside the token's subtree (default: the connection root; a whole-workspace connection without parent adds a top-level task); it may also be a task this agent created that the owner has not removed, even before the owner's client has added it. The task lands provisional: the owner sees \"Added by <agent>, keep?\" and keeps or removes it; until then it is visible and rankable but marked. title is at most limits.title (500), next_action limits.next_action (2000), notes limits.notes (8000) code points, none blank; estimate_minutes 1..1000000; priority \"now\", \"next\" (default) or \"later\"; hardDeadline and due are ms since epoch (0..253402300799999). The field is next_action, not action, because action names the call. An optional repeat makes it a repeating task (see create_task_repeat.json). Any other field (softTarget, tags, ...) is invalid_request. request_id makes a retry safe, as in v2.3.",
+  "request": {
+    "action": "create_task",
+    "parent": "project",
+    "title": "Check the meeting agenda",
+    "next_action": "Open the shared agenda and add two points.",
+    "notes": "Invented example: the agent noticed the agenda is due before Friday.",
+    "estimate_minutes": 10,
+    "priority": "next",
+    "assign": "owner",
+    "due": 1762000000000,
+    "agent": "claude",
+    "request_id": "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d"
+  },
+  "response": {
+    "task_id": "7b8c9d0e-1f2a-4b3c-8d4e-5f6a7b8c9d0e",
+    "provisional": true
+  },
+  "retry": {
+    "request": "the same request",
+    "response": "the same response; no second task"
+  },
+  "collision": {
+    "request": {
+      "action": "create_task",
+      "parent": "project",
+      "title": "A different title",
+      "next_action": "Open the shared agenda and add two points.",
+      "notes": "Invented example: the agent noticed the agenda is due before Friday.",
+      "estimate_minutes": 10,
+      "priority": "next",
+      "assign": "owner",
+      "due": 1762000000000,
+      "agent": "claude",
+      "request_id": "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d"
+    },
+    "status": 409,
+    "response": {
+      "error": "receipt_collision"
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "contract": "vibe-agent-exchange-v2.5",
+  "notes": "update_task may set, replace or clear repeat on a task it may update (same rules as update_task.json): an object as in create_task_repeat.json sets or replaces it (normalised the same way; a bad one is invalid_request naming the field), null stops repeating. Occurrences already completed keep their history. The owner's client applies it on its next poll; only an open task carries a repeat.",
+  "request": {
+    "action": "update_task",
+    "task": "2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e",
+    "repeat": null,
+    "agent": "claude",
+    "request_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f"
+  },
+  "response": {
+    "task": "2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e",
+    "update_id": "4d5e6f7a-8b9c-4d0e-8f1a-2b3c4d5e6f7a"
+  }
+}

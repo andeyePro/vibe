@@ -1,0 +1,44 @@
+{
+  "contract": "vibe-agent-exchange-v2.5",
+  "notes": "create_task with repeat: \"remind me every 2nd Friday to check the meeting agenda\". repeat is {every?, unit, weekdays?, monthDay?, nthWeekday?, time, endTime?, timeZone, starts?, ends?}: every 1..1000 (default 1); unit \"day\"|\"week\"|\"month\"; weekdays (week only) a list of \"mon\"..\"sun\" (default the weekday of starts); for month exactly one of monthDay (1..31, or -1 for the last day; a month without that day is skipped) or nthWeekday {n: 1..5 or -1 for last, weekday} (default monthDay = the day of starts); time and endTime \"HH:MM\" local wall time (an endTime at or before time is the next day); timeZone an IANA id such as \"Europe/London\"; starts \"YYYY-MM-DD\" local date (default today in timeZone); ends {\"on\": \"YYYY-MM-DD\"} or {\"after\": 1..1000}. The service fills the defaults at the call's time. The task becomes the current occurrence (the first one at or after now): it is due then and waits until that local day; completing or skipping it adds the next one, abandoning it ends the repeat. Clock changes keep the wall time. The owner's journal (and so the task) carries the normalised rule.",
+  "request": {
+    "action": "create_task",
+    "title": "Check the meeting agenda",
+    "estimate_minutes": 10,
+    "assign": "owner",
+    "repeat": {
+      "every": 2,
+      "unit": "week",
+      "weekdays": [
+        "fri"
+      ],
+      "time": "09:00",
+      "timeZone": "Europe/London",
+      "starts": "2026-11-06",
+      "ends": {
+        "after": 10
+      }
+    },
+    "agent": "claude",
+    "request_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+  },
+  "response": {
+    "task_id": "2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e",
+    "provisional": true
+  },
+  "journal": {
+    "repeat": {
+      "every": 2,
+      "unit": "week",
+      "weekdays": [
+        "fri"
+      ],
+      "time": "09:00",
+      "timeZone": "Europe/London",
+      "starts": "2026-11-06",
+      "ends": {
+        "after": 10
+      }
+    }
+  }
+}

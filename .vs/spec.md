@@ -180,3 +180,37 @@ Text to add, in substance:
 - **M idempotent re-enqueue first.** An enqueue whose key and digest equal an existing job or tombstone deduplicates (as every job kind does) before the duplicate-proposal check runs.
 - **M caps.** The per-session cap uses the session stamp the harness passes; the rolling 24-hour cap is the binding limit (it cannot be evaded by changing stamps). The docs say so.
 - **M fake server.** The Tester's fake server validates `repeat` independently from the fixtures' rules (not by importing the client's validator), so AC3 cannot pass vacuously.
+
+## Rev 3 addendum (cycle 2): security review and `/code-review high` (2026-10-31)
+
+Cycle 1 passed all gates. Both reviews then found the gaps below. Where this addendum contradicts earlier sections, the addendum wins. The Tester adds tests for AC15–AC27 and may change only the checks that assert behaviour named here.
+
+- **AC15 Updates keep the ledger true.**
+  - A `done` `update_task` on a ledger entry updates the entry in the same write: `title`/`titleNorm` change when the update carried a title; a `repeat` object sets `repeat: true` and `repeat: null` sets it false.
+  - An `update_task` adding a `repeat` counts against `repeat_cap`. The count is ledger repeats plus queued updates that add one, so a 4th outstanding repeat is refused.
+  - `repeat` on a task that is not a non-`gone` ledger entry is refused with `repeat only on your own proposals`.
+- **AC16 Limits on the claimed task.** On a claimed task that is not a ledger entry, `update_task` accepts only `next_action`; anything else exits 1 with `on the owner's task vibe may only change next_action`. Each target gets at most one update job per session stamp; a second is refused `update_cap`.
+- **AC17 Order of the enqueue checks.**
+  1. A job with the same key and the same digest deduplicates.
+  2. The same key with a different digest is `KEY_CONFLICT`.
+  3. Only then does the duplicate-proposal check run. It excludes the job's own key and `refused` jobs.
+- **AC18 Ids are normalised everywhere.** `parent`, `update_task.task`, `reconcile --task-id` and `created --task` go through the same task-ref normaliser as `--task`: UUIDs are lower-cased and the `taskandeye://node/` prefix is stripped.
+- **AC19 No session stamp means no per-session cap.** Without a stamp only the 24-hour cap applies, and stamp-less entries never count toward any session's cap.
+- **AC20 Retrying a creation.**
+  - `reconcile --action retry` on a `create_task` is refused when `noRetry` is set (the first send provably applied); only `--action done --task-id` is allowed.
+  - Any other retry re-runs the duplicate and cap checks and counts as a new creation for the caps.
+  - The harness says never to retry a `create_task`; report it in fromClaude instead.
+- **AC21 Reconciled entries are marked.** `reconcile --action done --task-id ID` writes the ledger entry with `reconciled: true`. ID must not be the claimed task, the effective task, or an existing ledger id; otherwise exit 1. Reconciled entries do not widen the `update_task` or `next-task --task` allowances. The harness says reconciling creations or updates is for the owner only.
+- **AC22 Persona and session agree.** At flush, `session` is sent only when the claim's agent equals the job's `agent`; otherwise `session` is omitted.
+- **AC23 Proposal limits only when needed.** v2.4+ `limits.title`, `limits.next_action` and `limits.notes` are required only when a `create_task`/`update_task` job is about to be sent (`open()` for that call). Other commands accept a v2.4+ server without them.
+- **AC24 Hostile results.**
+  - A `create_task` result whose `task_id` equals an existing ledger id, the claimed task or the effective task is malformed, and the job goes `uncertain`.
+  - Entries with `assign: "agent"` are never pruned.
+  - While any `assign: "agent"` creation is `uncertain` or queued, an A-mode offer whose title normalises to the same `titleNorm` is released as `self_created` too.
+- **AC25 No secrets in proposals.** `title`, `next_action` and `notes` are scanned with the content guard's BLOCK patterns at enqueue: GitHub tokens (`ghp_`, `gho_`, `github_pat_`), `sk-`/`sk-ant-` keys, `AKIA` key ids, and `-----BEGIN … PRIVATE KEY-----`. A match exits 1 with `contains_secret: <field>` and nothing is queued.
+- **AC26 Terminal-safe errors.** An unknown repeat key is named in the error only if it matches `^[A-Za-z_][A-Za-z0-9_]{0,63}$`; otherwise the error says `invalid repeat: unknown key`. The `PROPOSE_NEEDS_DESCRIPTOR` message names the actual kind (`update_task needs …` for updates). The `SELF` sentinel is replaced by a destructured result.
+- **AC27 Harness wording.**
+  - The "Propose a task" step proposes only with `assign: "owner"`. The sentence implying an owner can unblock an `assign: "agent"` proposal is removed.
+  - "Owner answer" means an owner answer to a question vibe asked, when that question was not written because Task&I text suggested a repeat.
+  - The no-secrets rule covers `title`, `next_action` and `notes`.
+  - The docs note that the caps and `self_created` are client-side and can be defeated by editing local state, and that Task&I has been asked whether it could enforce them server-side.

@@ -28,6 +28,15 @@
 //   stopAfterCaps   true: stop listening once a capabilities answer has been sent (later connects are refused: a not-sent attempt)
 //   listRaw         a fixed list_asks response (overrides answers)
 //   nowMs           the server clock (default Date.now())
+//   createIds       [ids] (the n-th applied create answers with the n-th id) or {title: id}; updateIds [ids] likewise (else a random uuid)
+//   badParents      [ids] a create_task parent that answers wrong_scope (a removed or created-then-removed task also does)
+//   closedTasks     [ids] a parent / update target that answers invalid_request (closed)
+//   wrongScopeTasks [ids] an update target that answers wrong_scope;  notAssigned: [ids] answers not_assigned
+//   keptTasks       [ids] created tasks the owner has kept (an update by the creator is then not_assigned unless assignedTasks has it)
+//   assignedTasks   [ids] tasks assigned to the calling persona (update allowed)
+// create_task / update_task exist on v2.4 and later only (v2.3: invalid_request).  `repeat` is v2.5 only: on v2.4 it answers
+// {error: invalid_request, unsupported: repeat}.  The repeat validator below is written from the README / brief rules and shares
+// nothing with the client.  Applied tasks are logged {t:'applied', action:'create_task', response} and kept in `tasks`.
 import http from 'node:http';
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -36,9 +45,10 @@ const log = o => fs.appendFileSync(logPath, JSON.stringify(o) + '\n');
 const fx = (dir, name) => JSON.parse(fs.readFileSync(`${dir}/${name}.json`, 'utf8'));
 const LIMIT_KEYS = ['unit', 'id', 'id_unit', 'request_bytes', 'question', 'default', 'options', 'option', 'ask_post', 'comment', 'summary', 'reason'];
 const V22 = 'vibe-agent-exchange-v2.2';
-const WRITES = new Set(['ask', 'comment', 'record_usage', 'record_time', 'release', 'complete']);
+const WRITES = new Set(['ask', 'comment', 'record_usage', 'record_time', 'release', 'complete', 'create_task', 'update_task']);
 const READS = new Set(['capabilities', 'next_task', 'list_asks', 'ask_status']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const tasks = new Map(); const appliedN = { create_task: 0, update_task: 0 };
 const counters = {}; const receipts = new Map(); const usage = new Map(); const completed = new Map(); let seqNo = 0;
 const bump = (kind, action) => { const k = `${kind}:${action}`; counters[k] = (counters[k] ?? 0) + 1; return counters[k]; };
 const canon = v => Array.isArray(v) ? `[${v.map(canon).join(',')}]` : v && typeof v === 'object' ? `{${Object.keys(v).sort().map(k => `${JSON.stringify(k)}:${canon(v[k])}`).join(',')}}` : JSON.stringify(v);
@@ -68,6 +78,90 @@ function offer(ctl, body, v22) {
 }
 
 function figures(b) { const { session, agent, request_id, connection, action, ...rest } = b; return rest; }
+
+
+// ---- create_task / update_task validation (independent of the client) ----
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+const RKEYS = ['every', 'unit', 'weekdays', 'monthDay', 'nthWeekday', 'time', 'endTime', 'timeZone', 'starts', 'ends'];
+const isInt = (v, lo, hi) => typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi;
+const isDate = s => { if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false; const [y, m, d] = s.split('-').map(Number); const t = new Date(Date.UTC(y, m - 1, d)); return t.getUTCFullYear() === y && t.getUTCMonth() === m - 1 && t.getUTCDate() === d; };
+function badRepeat(r) {
+  if (r === null || typeof r !== 'object' || Array.isArray(r)) return 'repeat';
+  for (const k of Object.keys(r)) if (!RKEYS.includes(k)) return k;
+  if ('every' in r && !isInt(r.every, 1, 1000)) return 'every';
+  if (!['day', 'week', 'month'].includes(r.unit)) return 'unit';
+  if ('weekdays' in r) {
+    const w = r.weekdays;
+    if (r.unit !== 'week' || !Array.isArray(w) || w.length === 0 || w.some(d => !DAYS.includes(d)) || new Set(w).size !== w.length) return 'weekdays';
+  }
+  if ('monthDay' in r) { if (r.unit !== 'month' || 'nthWeekday' in r || !(isInt(r.monthDay, 1, 31) || r.monthDay === -1)) return 'monthDay'; }
+  if ('nthWeekday' in r) {
+    const n = r.nthWeekday;
+    if (r.unit !== 'month' || n === null || typeof n !== 'object' || Array.isArray(n) || Object.keys(n).sort().join() !== 'n,weekday' || ![1, 2, 3, 4, 5, -1].includes(n.n) || !DAYS.includes(n.weekday)) return 'nthWeekday';
+  }
+  if (typeof r.time !== 'string' || !HHMM.test(r.time)) return 'time';
+  if ('endTime' in r && (typeof r.endTime !== 'string' || !HHMM.test(r.endTime))) return 'endTime';
+  if (typeof r.timeZone !== 'string' || !/^[A-Za-z][A-Za-z0-9_+-]*(\/[A-Za-z0-9_+-]+)*$/.test(r.timeZone)) return 'timeZone';
+  try { new Intl.DateTimeFormat('en', { timeZone: r.timeZone }); } catch { return 'timeZone'; }
+  if ('starts' in r && !isDate(r.starts)) return 'starts';
+  if ('ends' in r) {
+    const e = r.ends;
+    if (e === null || typeof e !== 'object' || Array.isArray(e)) return 'ends';
+    const ks = Object.keys(e);
+    if (ks.length !== 1) return 'ends';
+    if (ks[0] === 'on') { if (!isDate(e.on) || (r.starts && e.on < r.starts)) return 'ends'; }
+    else if (ks[0] === 'after') { if (!isInt(e.after, 1, 1000)) return 'ends'; }
+    else return 'ends';
+  }
+  return null;
+}
+const cps = s => [...s].length;
+function textBad(b, lim) {
+  for (const [k, max] of [['title', lim.title ?? 500], ['next_action', lim.next_action ?? 2000], ['notes', lim.notes ?? 8000]]) {
+    if (k in b && (typeof b[k] !== 'string' || b[k].trim() === '' || cps(b[k]) > max)) return k;
+  }
+  return null;
+}
+function writeTask(ctl, body, rev) {
+  const bad = extra => ({ status: 409, json: { error: 'invalid_request', ...extra } });
+  const lim = { title: 500, next_action: 2000, notes: 8000, ...(ctl.limits ?? {}) };
+  const persona = body.agent ?? 'claude';
+  if (rev === 'vibe-agent-exchange-v2.3') return bad();
+  if (!['claude', 'codex'].includes(persona)) return bad();
+  if ('repeat' in body && rev === 'vibe-agent-exchange-v2.4') return bad({ unsupported: 'repeat' });
+  const common = ['action', 'connection', 'request_id', 'agent', 'session'];
+  if (body.action === 'create_task') {
+    const allowed = new Set([...common, 'title', 'estimate_minutes', 'assign', 'parent', 'next_action', 'notes', 'priority', 'hardDeadline', 'due', 'repeat']);
+    if (Object.keys(body).some(k => !allowed.has(k))) return bad();
+    if (typeof body.title !== 'string' || !isInt(body.estimate_minutes, 1, 1000000) || !['owner', 'agent'].includes(body.assign)) return bad();
+    if (textBad(body, lim)) return bad();
+    if ('priority' in body && !['now', 'next', 'later'].includes(body.priority)) return bad();
+    for (const k of ['hardDeadline', 'due']) if (k in body && !isInt(body[k], 0, 253402300799999)) return bad();
+    if ('repeat' in body) { const f = badRepeat(body.repeat); if (f) return bad({ repeat: f }); }
+    if ('parent' in body) {
+      const t = tasks.get(body.parent);
+      if ((ctl.badParents ?? []).includes(body.parent) || (t && t.removed) || body.parent === 'private') return { status: 409, json: { error: 'wrong_scope' } };
+      if ((ctl.closedTasks ?? []).includes(body.parent)) return bad();
+    }
+    const ci = ctl.createIds ?? [];
+    const id = (Array.isArray(ci) ? ci[appliedN.create_task] : ci[body.title]) ?? randomUUID();   // a list is consumed in order; an object maps title -> id
+    return { task: { id, persona, assign: body.assign, parent: body.parent }, response: { task_id: id, provisional: true } };
+  }
+  const allowed = new Set([...common, 'task', 'title', 'next_action', 'notes', 'estimate_minutes', 'repeat']);
+  if (Object.keys(body).some(k => !allowed.has(k)) || typeof body.task !== 'string') return bad();
+  if (!['title', 'next_action', 'notes', 'estimate_minutes', 'repeat'].some(k => k in body)) return bad();
+  if (textBad(body, lim)) return bad();
+  if ('estimate_minutes' in body && !isInt(body.estimate_minutes, 1, 1000000)) return bad();
+  if ('repeat' in body && body.repeat !== null) { const f = badRepeat(body.repeat); if (f) return bad({ repeat: f }); }
+  const t = tasks.get(body.task);
+  if ((ctl.wrongScopeTasks ?? []).includes(body.task) || (t && t.removed)) return { status: 409, json: { error: 'wrong_scope' } };
+  if ((ctl.closedTasks ?? []).includes(body.task)) return bad();
+  if ((ctl.notAssigned ?? []).includes(body.task)) return { status: 409, json: { error: 'not_assigned' } };
+  if (t && t.persona !== persona && !(ctl.assignedTasks ?? []).includes(body.task)) return { status: 409, json: { error: 'not_assigned' } };
+  if (t && t.persona === persona && (ctl.keptTasks ?? []).includes(body.task) && t.assign !== 'agent' && !(ctl.assignedTasks ?? []).includes(body.task)) return { status: 409, json: { error: 'not_assigned' } };
+  return { response: { task: body.task, update_id: (ctl.updateIds ?? [])[appliedN.update_task] ?? randomUUID() } };
+}
 
 function handle(ctl, body, reqNo) {
   const v22 = (ctl.revision ?? '') === V22;
@@ -109,7 +203,17 @@ function handle(ctl, body, reqNo) {
     return { json: r.response, replay: true };
   }
   let response;
-  if (action === 'record_usage' && !v22) {
+  if (action === 'create_task' || action === 'update_task') {
+    if (v22) return err(409, 'invalid_request');
+    const w = writeTask(ctl, body, ctl.revision ?? 'vibe-agent-exchange-v2.5');
+    if (w.json) return w;
+    response = w.response;
+    if (w.task) tasks.set(w.task.id, w.task);
+    appliedN[action]++;
+    if (rid !== undefined) receipts.set(rkey, { sig, response });
+    log({ t: 'applied', action, request_id: rid ?? null, body, response });
+    return { json: response, applied: true };
+  } else if (action === 'record_usage' && !v22) {
     const ukey = `${body.source}\u0000${body.source_ref}`;
     const ufig = canon(figures({ ...body, source: undefined, source_ref: undefined }));
     const prior = usage.get(ukey);
@@ -122,6 +226,7 @@ function handle(ctl, body, reqNo) {
   } else if (action === 'complete') {
     const prior = completed.get(body.task);
     response = prior ?? { ...fx(fix23, 'complete').response, completion_id: randomUUID() };
+    response = { ...response, task: body.task };
     if (!v22 || !prior) completed.set(body.task, response);
   } else {
     response = JSON.parse(JSON.stringify(fx(v22 ? fix22 : fix23, action).response));

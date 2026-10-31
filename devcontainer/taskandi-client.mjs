@@ -236,6 +236,12 @@ function pruneJobs(state) {
   const before = ledger(state, 'tombstones');
   const tombstones = before.filter(item => Number.isSafeInteger(item?.doneAtMs) && at - item.doneAtMs <= TOMBSTONE_MS);
   let changed = tombstones.length !== before.length;
+  // The created ledger (task_067) is never pruned with the jobs; only its entries older than 180 days are dropped, and
+  // never an `assign: "agent"` entry (it is what keeps vibe from working its own proposal, AC24).
+  if (Array.isArray(state.created)) {
+    const kept = state.created.filter(item => item?.assign === 'agent' || !(Number.isSafeInteger(item?.at) && at - item.at > CREATED_MS));
+    if (kept.length !== state.created.length) state.created = kept;
+  }
   const done = state.jobs.filter(job => job.state === 'done');
   if (done.length > KEEP_DONE) {
     const keep = new Set(done.sort((a, b) => (doneMs(b) ?? at) - (doneMs(a) ?? at)).slice(0, KEEP_DONE));
@@ -274,7 +280,7 @@ function readState(path) {
   let state; try { state = ownObject(JSON.parse(readBounded(path, 4 * 1024 * 1024, 'outbox state', { ownerOnly: true })), 'outbox state'); } catch (error) { if (error instanceof SyntaxError) fail('outbox state is corrupt'); throw error; }
   if (state.version !== 1 || !Array.isArray(state.jobs) || !Array.isArray(state.answers) || !Array.isArray(state.conflicts) || !Array.isArray(state.reconciliationLog)) fail('outbox state has an unsupported shape');
   // Ledgers added by task_065: absent in older files (read as empty), and written only when used.
-  for (const name of ['resolved', 'parked', 'repolls', 'tombstones']) if (state[name] !== undefined && !Array.isArray(state[name])) fail('outbox state has an unsupported shape');
+  for (const name of ['resolved', 'parked', 'repolls', 'tombstones', 'created']) if (state[name] !== undefined && !Array.isArray(state[name])) fail('outbox state has an unsupported shape');
   for (const name of ['windowsUsed', 'polls', 'usageImports']) if (state[name] !== undefined && !plainObject(state[name])) fail('outbox state has an unsupported shape');
   return state;
 }
@@ -527,15 +533,15 @@ function validateRelease(value) {
 // /brain2/andeye/Task&I-agent-exchange-fixtures/README.md "Wire details"; fixtures in smoke/fixtures/taskandi-v22/.
 // HTTP_CONTRACT_REVISION stays the descriptor binding's protocol pin: it is the literal in the binding digest, so queued
 // jobs, stored answers and pinned fingerprints survive a v2.2<->v2.3 switch. The negotiated revision (capabilities.contract,
-// one of HTTP_CONTRACT_REVISIONS) decides the wire rules per invocation; v2.4 and v2.5 are handled exactly as v2.3 (the
-// "v2.3 family"; they only add calls this client does not make).
+// one of HTTP_CONTRACT_REVISIONS) decides the wire rules per invocation; v2.4 and v2.5 follow every v2.3 rule (the
+// "v2.3 family") and add create_task/update_task (v2.4) and repeat (v2.5), which are gated per job (task_067).
 export const HTTP_CONTRACT_REVISION = 'vibe-agent-exchange-v2.2';
 export const HTTP_CONTRACT_V23 = 'vibe-agent-exchange-v2.3';
 export const HTTP_CONTRACT_REVISIONS = Object.freeze([HTTP_CONTRACT_REVISION, HTTP_CONTRACT_V23, 'vibe-agent-exchange-v2.4', 'vibe-agent-exchange-v2.5']);
 const V23_FAMILY = new Set(HTTP_CONTRACT_REVISIONS.slice(1));
 export const isV23 = contract => V23_FAMILY.has(contract);
 // v2.3 capabilities.limits: these twelve keys must be present (unit and id_unit fixed strings, the rest positive integers);
-// a v2.4+ answer may carry more (create_task/update_task limits), which are ignored.
+// from v2.4 on title, next_action and notes are required too (SERVER_LIMIT_KEYS_V24). Other extra keys are ignored.
 export const SERVER_LIMIT_KEYS = Object.freeze(['unit', 'id', 'id_unit', 'request_bytes', 'question', 'default', 'options', 'option', 'ask_post', 'comment', 'summary', 'reason']);
 export const HTTP_PROTOCOL = 'taskandeye-browser-agent-v1';
 export const HTTP_LIMITS = Object.freeze({ response: 16 * 1024 * 1024, timeoutMs: 15000, body: 65536, descriptor: 32 * 1024, id: 200, question: 8000, default: 2000, options: 20, option: 500, post: 8000, comment: 8000, summary: 7950, reason: 2000, answer: 8000, seconds: 604800, shortText: 2000 });
@@ -551,7 +557,7 @@ const NO_BOUND_TASK = 'no bound task: the connection covers the whole workspace;
 const NEEDS_CLAIM = 'complete/release needs the session that claimed the task; run next-task first';
 const UNUSABLE_TASK = 'task id not usable by vibe: rename it in Task&I or recreate the task';
 const REVOKED = 'the Task&I connection was revoked or replaced; copy a fresh descriptor (More → Connect Codex) into .vibe/taskandi-descriptor.json';
-const HTTP_USAGE = 'usage (Task&I descriptor binding): taskandi-client.mjs enqueue ask|comment|record_usage|record_time --key ID [--task ID] | flush | poll [--task ID] | ask-status [--task ID] | status | next-task --agent claude|codex --session ID [--task ID] [--body-max-chars N] | decide [--no-other-work] [--remaining-minutes N] [--windows-used N] | decide --resolve KEY --as proceeded | complete [--task ID] --summary TEXT | release [--task ID] --reason TEXT [--parked-asks ID,ID] [--budget-stopped] | usage --transcript FILE --session ID --account ID --cost-estimate N [--task ID] | reconcile --key ID --action done|retry --evidence TEXT | reconcile --direct complete|release --task ID --action done|retry --evidence TEXT';
+const HTTP_USAGE = 'usage (Task&I descriptor binding): taskandi-client.mjs enqueue ask|comment|record_usage|record_time --key ID [--task ID] | enqueue create_task --key ID [--session STAMP] | enqueue update_task --key ID [--session STAMP] | created [--task ID] [--all] | flush | poll [--task ID] | ask-status [--task ID] | status | next-task --agent claude|codex --session ID [--task ID] [--body-max-chars N] | decide [--no-other-work] [--remaining-minutes N] [--windows-used N] | decide --resolve KEY --as proceeded | complete [--task ID] --summary TEXT | release [--task ID] --reason TEXT [--parked-asks ID,ID] [--budget-stopped] | usage --transcript FILE --session ID --account ID --cost-estimate N [--task ID] | reconcile --key ID --action done|retry --evidence TEXT [--task-id ID] | reconcile --direct complete|release --task ID --action done|retry --evidence TEXT';
 // Every error class in one table. Codes not listed here (and every malformed, unexpected or lost response) are outcome unknown.
 // later = not applied, may succeed unchanged later; rejected = not applied, the request itself is refused.
 const HTTP_ERRORS = Object.freeze({
@@ -585,6 +591,13 @@ function wireId(value, name) {
 export function descriptorTaskRef(value, name = 'task') {
   if (typeof value !== 'string') fail(`${name} must be a Task&I task id`);
   if (ABBR_REF.test(value)) fail('Task&I descriptor bindings take task ids, not ABBR-N references');
+  return normaliseTaskId(value, name);
+}
+// The one task-id normaliser (--task, parent, update_task.task, reconcile --task-id, created --task): the
+// taskandeye://node/ prefix is stripped, the rest must be a usable id, and a UUID-shaped id is lower-cased. Ids that
+// Task&I itself returned (a created ledger's ids) may look like ABBR-N, so only --task refuses that shape.
+export function normaliseTaskId(value, name = 'task') {
+  if (typeof value !== 'string') fail(`${name} must be a Task&I task id`);
   const id = value.startsWith('taskandeye://node/') ? value.slice('taskandeye://node/'.length) : value;
   if (!USABLE_ID.test(id)) fail(`${name} must be a Task&I task id: 1-200 characters of A-Z a-z 0-9 . _ : - starting with a letter or digit`);
   return UUID_SHAPE.test(id) ? id.toLowerCase() : id;
@@ -702,7 +715,13 @@ function interpretHttp(action, response, contract = HTTP_CONTRACT_REVISION) {
   const printable = PRINTABLE_CODE.test(parsed.error) ? parsed.error : 'unknown_error';
   // v2.3: a 409 with a code this table does not know still applied nothing, so it is try-later rather than unknown.
   const error = httpFailure(Object.hasOwn(classes, printable) ? classes[printable] : v23 && response.status === 409 ? 'later' : 'unknown', printable);
-  error.status = response.status; throw error;
+  error.status = response.status;
+  // create_task/update_task: an invalid_request may name the field at fault (`repeat`) or an unsupported one (v2.4's
+  // `unsupported: "repeat"`); a printable field name is kept for lastError, anything else is dropped.
+  if (printable === 'invalid_request' && isProposeKind(action)) {
+    for (const name of ['repeat', 'unsupported']) if (typeof parsed[name] === 'string' && /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(parsed[name])) { error.detail = `${name}: ${parsed[name]}`; break; }
+  }
+  throw error;
 }
 // AC29: on a v2.3 resend only these HTTP 409 codes prove nothing was ever applied. They come from inside the exchange
 // transaction, after the replay lookup; every other answer to a resend (connection_revoked, connection_unavailable,
@@ -761,6 +780,9 @@ const RESPONSE_SCHEMA_V23 = Object.freeze({
     return new Set(page.asks.map(ask => ask.ask_id)).size !== page.asks.length ? 'an ask_id repeats' : null;
   }),
   record_usage: obj({ task: 'task', spent: SPENT_V23 }),
+  // v2.4+: exactly these keys; ids must be usable (a replay returns the original answer, so provisional is history).
+  create_task: obj({ task_id: 'id', provisional: oneOf(true) }, {}, value => (USABLE_ID.test(value.task_id) ? null : 'task_id is not a usable id')),
+  update_task: obj({ task: 'task', update_id: 'id' }, {}, value => (USABLE_ID.test(value.update_id) ? null : 'update_id is not a usable id')),
 });
 const schemaFor = (action, contract) => (isV23(contract) ? RESPONSE_SCHEMA_V23 : RESPONSE_SCHEMA)[action];
 const SCALARS = Object.freeze({
@@ -823,6 +845,233 @@ export function validateHttpPayload(kind, input, key, now = Date.now()) {
   const at = input.at === undefined ? {} : { at: safeCount(input.at, 'at') };
   return { model: wireId(input.model, 'model'), input: safeCount(input.input, 'input'), output: safeCount(input.output, 'output'), cache_read: safeCount(input.cache_read, 'cache_read'), cache_write: safeCount(input.cache_write, 'cache_write'), cost_estimate: safeCost(input.cost_estimate), windows: 0, account: wireId(input.account, 'account'), ...at, source: 'vibe', source_ref: wireId(stableKey(key), 'source_ref') };
 }
+// ---- v2.4/v2.5: create_task and update_task (task_067). Wire: the fixtures README "v2.4 changes", "v2.5 changes". ----
+export const PROPOSE_KINDS = Object.freeze(['create_task', 'update_task']);
+const isProposeKind = kind => PROPOSE_KINDS.includes(kind);
+export const TASK_TEXT_LIMITS = Object.freeze({ title: 500, next_action: 2000, notes: 8000 });
+const ESTIMATE_MAX = 1000000, MS_MAX = 253402300799999;
+const CREATE_KEYS = ['title', 'estimate_minutes', 'assign', 'parent', 'next_action', 'notes', 'priority', 'hardDeadline', 'due', 'repeat'];
+const UPDATE_FIELDS = ['title', 'next_action', 'notes', 'estimate_minutes', 'repeat'];
+const RESERVED_KEYS = ['action', 'connection', 'agent', 'session', 'request_id'];
+// The rank of a negotiated revision (v2.2 -> 2 ... v2.5 -> 5), and the rank a job needs: create/update need v2.4, repeat v2.5.
+const contractRank = contract => { const at = HTTP_CONTRACT_REVISIONS.indexOf(contract); return at < 0 ? 0 : at + 2; };
+const neededRank = job => (!isProposeKind(job.kind) ? 2 : plainObject(job.payload) && Object.hasOwn(job.payload, 'repeat') ? 5 : 4);
+const NEEDS = rank => `needs_contract_v2.${rank}`;
+function estimateMinutes(value) {
+  if (!Number.isSafeInteger(value) || value < 1 || value > ESTIMATE_MAX) fail(`estimate_minutes must be an integer from 1 to ${ESTIMATE_MAX}`);
+  return value;
+}
+function msField(value, name) {
+  if (!Number.isSafeInteger(value) || value < 0 || value > MS_MAX) fail(`${name} must be an integer number of ms since the epoch, from 0 to ${MS_MAX}`);
+  return value;
+}
+// The v2.5 repeat object, checked exactly and never filled in (the server fills every, starts, weekdays and monthDay at
+// call time). Faults are named in contract field order, after any unknown key; the message is `invalid repeat: <field>`.
+const REPEAT_KEYS = ['every', 'unit', 'weekdays', 'monthDay', 'nthWeekday', 'time', 'endTime', 'timeZone', 'starts', 'ends'];
+const WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+const PRINTABLE_KEY = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
+const TZ_NAME = /^[A-Za-z][A-Za-z0-9_+-]*(\/[A-Za-z0-9_+-]+)*$/;
+const intIn = (value, lo, hi) => typeof value === 'number' && Number.isInteger(value) && value >= lo && value <= hi;
+function realDate(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [y, m, d] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(2000, 0, 1)); date.setUTCFullYear(y, m - 1, d);
+  return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
+}
+const badRepeat = (field, why = '') => fail(`invalid repeat: ${field}${why ? ` (${why})` : ''}`, 'INVALID_REPEAT');
+function timeZoneFault(value) {
+  if (typeof value !== 'string') return 'not a string';
+  if (value === 'UTC') return null;
+  if (!TZ_NAME.test(value)) return 'an IANA time-zone name such as Europe/London; numeric offsets are refused';
+  let resolved;
+  try { resolved = new Intl.DateTimeFormat('en', { timeZone: value }).resolvedOptions().timeZone; }
+  catch { return "unknown to this host's tzdata, which may be older than the server's"; }
+  if (resolved !== value && resolved.toLowerCase() === value.toLowerCase()) return `write it exactly as ${resolved}`;
+  return null;
+}
+export function validateRepeat(value) {
+  if (!plainObject(value)) badRepeat('repeat', 'must be a JSON object');
+  // An unknown key is named only when it is a plain identifier (terminal-safe); anything else is just `unknown key`.
+  for (const key of Object.keys(value)) if (!REPEAT_KEYS.includes(key)) { if (PRINTABLE_KEY.test(key)) badRepeat(key, 'not a repeat field'); badRepeat('unknown key'); }
+  const has = key => Object.hasOwn(value, key);
+  if (has('every') && !intIn(value.every, 1, 1000)) badRepeat('every', 'an integer from 1 to 1000');
+  if (!['day', 'week', 'month'].includes(value.unit)) badRepeat('unit', 'day, week or month');
+  if (has('weekdays')) {
+    const days = value.weekdays;
+    if (value.unit !== 'week') badRepeat('weekdays', 'only with unit week');
+    if (!Array.isArray(days) || days.length === 0 || days.some(day => !WEEKDAYS.includes(day)) || new Set(days).size !== days.length) badRepeat('weekdays', 'a non-empty list of distinct mon..sun');
+  }
+  if (has('monthDay')) {
+    if (value.unit !== 'month') badRepeat('monthDay', 'only with unit month');
+    if (has('nthWeekday')) badRepeat('monthDay', 'not together with nthWeekday');
+    if (!(intIn(value.monthDay, 1, 31) || value.monthDay === -1)) badRepeat('monthDay', 'an integer from 1 to 31, or -1');
+  }
+  if (has('nthWeekday')) {
+    const nth = value.nthWeekday;
+    if (value.unit !== 'month') badRepeat('nthWeekday', 'only with unit month');
+    if (!plainObject(nth) || Object.keys(nth).length !== 2 || !Object.hasOwn(nth, 'n') || !Object.hasOwn(nth, 'weekday') || ![1, 2, 3, 4, 5, -1].includes(nth.n) || !WEEKDAYS.includes(nth.weekday)) badRepeat('nthWeekday', 'exactly {n: 1..5 or -1, weekday: mon..sun}');
+  }
+  if (typeof value.time !== 'string' || !HHMM.test(value.time)) badRepeat('time', 'HH:MM, 24-hour');
+  if (has('endTime') && (typeof value.endTime !== 'string' || !HHMM.test(value.endTime))) badRepeat('endTime', 'HH:MM, 24-hour');
+  const zone = timeZoneFault(value.timeZone); if (zone) badRepeat('timeZone', zone);
+  if (has('starts') && !realDate(value.starts)) badRepeat('starts', 'a real YYYY-MM-DD date');
+  if (has('ends')) {
+    const ends = value.ends;
+    if (!plainObject(ends) || Object.keys(ends).length !== 1) badRepeat('ends', 'exactly one of {on} or {after}');
+    if (Object.hasOwn(ends, 'on')) { if (!realDate(ends.on)) badRepeat('ends', 'on must be a real YYYY-MM-DD date'); if (has('starts') && ends.on < value.starts) badRepeat('ends', 'on is before starts'); }
+    else if (Object.hasOwn(ends, 'after')) { if (!intIn(ends.after, 1, 1000)) badRepeat('ends', 'after must be an integer from 1 to 1000'); }
+    else badRepeat('ends', 'exactly one of {on} or {after}');
+  }
+  return value;
+}
+// AC25: the content guard's BLOCK-tier secret patterns (devcontainer/git-hooks/vibe-content-scan.sh: github-pat,
+// openai-key, aws-access-key, private-key), copied rather than shelled out to, plus gho_ OAuth tokens. A proposal's title,
+// next_action or notes carrying one is refused at enqueue and nothing is queued.
+export const SECRET_PATTERNS = Object.freeze([
+  /ghp_[A-Za-z0-9]{36}|gho_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,}/,
+  /sk-[A-Za-z0-9-]{20,}/,
+  /AKIA[0-9A-Z]{16}/,
+  /-----BEGIN ([A-Z ]+ )?PRIVATE KEY-----/,
+]);
+function noSecret(value, name) {
+  if (SECRET_PATTERNS.some(pattern => pattern.test(value))) fail(`contains_secret: ${name}`, 'SECRET');
+  return value;
+}
+// The offline payload checks for create_task / update_task (no state): text is checked and sent untrimmed.
+export function validateProposal(kind, input) {
+  input = ownObject(input, `${kind} payload`);
+  for (const name of RESERVED_KEYS) if (Object.hasOwn(input, name)) fail(`${kind} payload must not set ${name}; the client supplies it`);
+  const textField = name => noSecret(wireText(input[name], name, TASK_TEXT_LIMITS[name]), name);
+  if (kind === 'create_task') {
+    exactKeys(input, new Set(CREATE_KEYS), 'create_task payload');
+    for (const name of ['title', 'estimate_minutes', 'assign']) if (!Object.hasOwn(input, name)) fail(`create_task payload needs ${name}`);
+    const out = {};
+    for (const key of Object.keys(input)) {
+      if (key === 'title' || key === 'next_action' || key === 'notes') out[key] = textField(key);
+      else if (key === 'estimate_minutes') out[key] = estimateMinutes(input[key]);
+      else if (key === 'assign') { if (input.assign !== 'owner' && input.assign !== 'agent') fail('assign must be exactly "owner" or "agent"'); out[key] = input.assign; }
+      else if (key === 'priority') { if (!['now', 'next', 'later'].includes(input.priority)) fail('priority must be "now", "next" or "later" (words, not numbers)'); out[key] = input.priority; }
+      else if (key === 'hardDeadline' || key === 'due') out[key] = msField(input[key], key);
+      else if (key === 'parent') out[key] = normaliseTaskId(input.parent, 'parent');
+      else if (key === 'repeat') out[key] = validateRepeat(input.repeat);
+    }
+    return out;
+  }
+  if (kind === 'update_task') {
+    exactKeys(input, new Set(['task', ...UPDATE_FIELDS]), 'update_task payload');
+    if (!Object.hasOwn(input, 'task')) fail('update_task payload needs task');
+    if (!UPDATE_FIELDS.some(name => Object.hasOwn(input, name))) fail(`update_task payload needs at least one of ${UPDATE_FIELDS.join(', ')}`);
+    const out = { task: normaliseTaskId(input.task, 'task') };
+    for (const key of Object.keys(input)) {
+      if (key === 'title' || key === 'next_action' || key === 'notes') out[key] = textField(key);
+      else if (key === 'estimate_minutes') out[key] = estimateMinutes(input[key]);
+      else if (key === 'repeat') out[key] = input.repeat === null ? null : validateRepeat(input.repeat);
+    }
+    return out;
+  }
+  fail(`unsupported enqueue kind ${kind}`);
+}
+// The created ledger's title key: lower-cased, whitespace collapsed, leading and trailing punctuation removed.
+export function titleNorm(title) { return title.toLowerCase().replace(/\s+/gu, ' ').replace(/^[\p{P}\s]+|[\p{P}\s]+$/gu, ''); }
+const DAY_MS = 24 * 60 * 60 * 1000;
+const CREATED_MS = 180 * DAY_MS;
+const CAPS = Object.freeze({ session: 3, day: 10, repeat: 3 });
+const SELF_CREATED = 'vibe does not work tasks it proposed until the owner assigns it';
+const RETRY_CREATE = 'retry sends this create_task again under a fresh request_id; if the first attempt was applied, the owner may now see two proposals';
+// Both kinds exist only on the browser-agent API; the message names the kind asked for.
+const PROPOSE_NEEDS_DESCRIPTOR = kind => `${kind} needs a Task&I descriptor binding`;
+// A ledger entry with assign "agent" blocks next-task (an "owner" entry the owner reassigned to the agent does not).
+const selfCreated = (state, task) => ledger(state, 'created').some(item => item.task_id === task && item.assign === 'agent');
+// AC24: an offer whose title normalises to that of an `assign: "agent"` creation still in flight (queued, dispatching or
+// uncertain, so its task id is not known yet) may be that very task, so it is treated as self-created too.
+const selfCreatedTitle = (state, title) => typeof title === 'string' && createJobs(state).some(job => job.payload.assign === 'agent' && liveJob(job) && titleNorm(job.payload.title) === titleNorm(title));
+const hasRepeat = payload => plainObject(payload) && plainObject(payload.repeat);
+// The created ledger entry for a done create_task job (written in the same state write as `done`).
+function createdEntry(job, taskId, at) {
+  return { key: job.key, task_id: taskId, title: job.payload.title, titleNorm: titleNorm(job.payload.title), assign: job.payload.assign, parent: job.payload.parent ?? null, agent: job.agent === 'codex' ? 'codex' : 'claude', repeat: hasRepeat(job.payload), session: typeof job.sessionStamp === 'string' ? job.sessionStamp : null, at, gone: false };
+}
+function recordCreated(state, job, taskId, at, extra = {}) {
+  state.created = [...ledger(state, 'created').filter(item => item.key !== job.key), { ...createdEntry(job, taskId, at), ...extra }];
+}
+function markGone(state, taskId) {
+  let changed = false;
+  for (const item of ledger(state, 'created')) if (item.task_id === taskId && item.gone !== true) { item.gone = true; changed = true; }
+  return changed;
+}
+// ---- task_067 cycle 2: the local proposal rules (AC15-AC21, AC24) ----
+// A ledger entry vibe may act on as its own proposal: present, not gone, and not written by reconcile (a reconciled
+// entry never widens the update_task or next-task --task allowances, AC21).
+const ownEntry = (state, task) => ledger(state, 'created').find(item => item.task_id === task && item.gone !== true && item.reconciled !== true);
+const liveJob = job => job.state === 'queued' || job.state === 'dispatching' || job.state === 'uncertain';
+const createJobs = state => state.jobs.filter(job => job.kind === 'create_task' && plainObject(job.payload) && typeof job.payload.title === 'string');
+// Outstanding repeats (repeat_cap): ledger entries that repeat and are not gone, create jobs not yet in the ledger and not
+// refused that carry one, and live update jobs that add a repeat to a task that has none (one per task). `key` is left out.
+function outstandingRepeats(state, key) {
+  const created = ledger(state, 'created'); const inLedger = new Set(created.map(item => item.key));
+  const repeating = new Set(created.filter(item => item.repeat === true && item.gone !== true).map(item => item.task_id));
+  const creates = createJobs(state).filter(job => job.key !== key && !inLedger.has(job.key) && job.state !== 'refused' && hasRepeat(job.payload)).length;
+  const added = new Set(state.jobs.filter(job => job.kind === 'update_task' && job.key !== key && liveJob(job) && hasRepeat(job.payload) && typeof job.payload.task === 'string' && !repeating.has(job.payload.task)).map(job => job.payload.task));
+  return created.filter(item => item.repeat === true && item.gone !== true).length + creates + added.size;
+}
+// The creations the caps count: every ledger entry, every create job not yet in the ledger and not refused, and every
+// earlier attempt of a retried creation (AC20: a retry counts as a new creation). No stamp counts toward no session.
+function countedCreations(state) {
+  const created = ledger(state, 'created'); const inLedger = new Set(created.map(item => item.key));
+  const stampOf = job => (typeof job.sessionStamp === 'string' ? job.sessionStamp : null);
+  const out = created.map(item => ({ at: item.at, session: typeof item.session === 'string' ? item.session : null }));
+  for (const job of createJobs(state)) {
+    if (!inLedger.has(job.key) && job.state !== 'refused') out.push({ at: Number.isSafeInteger(job.createdAtMs) ? job.createdAtMs : Date.parse(job.createdAt), session: stampOf(job) });
+    if (Array.isArray(job.priorAttempts)) for (const at of job.priorAttempts) if (Number.isSafeInteger(at)) out.push({ at, session: stampOf(job) });
+  }
+  return out;
+}
+// The create_task checks after dedupe and KEY_CONFLICT (also re-run by reconcile --action retry): duplicate_proposal
+// (the ledger, gone entries included, and create jobs not in the ledger; never the job's own key or a refused job), then
+// the per-session cap (only with a stamp), the rolling 24-hour cap and repeat_cap.
+function creationChecks(state, { key, payload, stamp, at }) {
+  const norm = titleNorm(payload.title); const parent = payload.parent ?? null;
+  const created = ledger(state, 'created'); const inLedger = new Set(created.map(item => item.key));
+  const same = created.find(item => item.key !== key && item.titleNorm === norm && (item.parent ?? null) === parent)
+    ?? createJobs(state).find(job => job.key !== key && !inLedger.has(job.key) && job.state !== 'refused' && titleNorm(job.payload.title) === norm && (job.payload.parent ?? null) === parent);
+  if (same) fail(`duplicate_proposal: ${same.task_id ? `task ${same.task_id} (key ${same.key})` : `key ${same.key}`} already proposes this title${parent ? ` under ${parent}` : ''}${same.gone === true ? '; the owner removed it' : ''}`, 'DUPLICATE');
+  const counted = countedCreations(state);
+  const oldest = list => new Date(Math.min(...list.map(item => item.at))).toISOString();
+  if (stamp !== null) {
+    const inSession = counted.filter(item => item.session === stamp);
+    if (inSession.length >= CAPS.session) fail(`proposal_cap: at most ${CAPS.session} proposals per session (${stamp}); the oldest counted was at ${oldest(inSession)}`, 'CAP');
+  }
+  const inDay = counted.filter(item => Number.isSafeInteger(item.at) && at - item.at < DAY_MS);
+  if (inDay.length >= CAPS.day) fail(`proposal_cap: at most ${CAPS.day} proposals in any 24 hours; the oldest counted was at ${oldest(inDay)}`, 'CAP');
+  if (hasRepeat(payload) && outstandingRepeats(state, key) >= CAPS.repeat) fail(`repeat_cap: at most ${CAPS.repeat} outstanding repeating proposals`, 'CAP');
+}
+const OWNER_TASK_ONLY = "on the owner's task vibe may only change next_action";
+// The update_task target rules (all local, zero requests), in order: not created yet; repeat only on vibe's own
+// proposal; the target must be the claimed task or this persona's own entry; on the claimed task that is not vibe's own
+// proposal only next_action; repeat_cap for an update that adds a repeat; one update job per target per session stamp.
+function updateChecks(state, { key, payload, stamp, agent, claim }) {
+  const target = payload.task; const created = ledger(state, 'created');
+  const createJob = state.jobs.find(job => job.kind === 'create_task' && job.key === target);
+  const entry = created.find(item => item.task_id === target);
+  const entryJob = entry ? state.jobs.find(job => job.kind === 'create_task' && job.key === entry.key) : undefined;
+  if ((createJob && createJob.state !== 'done' && !entry) || (entryJob && entryJob.state !== 'done')) fail('update_task: not created yet; flush, then read the task id from created', 'USAGE');
+  const own = ownEntry(state, target);
+  if (Object.hasOwn(payload, 'repeat') && !own) fail('update_task: repeat only on your own proposals', 'USAGE');
+  const claimed = !!claim && claim.task === target;
+  if (!claimed && !(own && own.agent === agent)) fail('update_task: not your task (only a task this persona proposed, or the claimed task)', 'USAGE');
+  if (claimed && !own && Object.keys(payload).some(name => name !== 'task' && name !== 'next_action')) fail(`update_task: ${OWNER_TASK_ONLY}`, 'USAGE');
+  if (hasRepeat(payload) && own.repeat !== true && outstandingRepeats(state, key) >= CAPS.repeat) fail(`repeat_cap: at most ${CAPS.repeat} outstanding repeating proposals`, 'CAP');
+  if (stamp !== null && state.jobs.some(job => job.kind === 'update_task' && job.key !== key && job.state !== 'refused' && job.payload?.task === target && job.sessionStamp === stamp)) fail(`update_cap: at most one update per task per session (${target}, ${stamp})`, 'CAP');
+}
+// AC15: a done update_task on a ledger entry keeps the entry true, in the same state write as `done`.
+function applyUpdate(state, job) {
+  if (job.kind !== 'update_task' || !plainObject(job.payload)) return;
+  for (const item of ledger(state, 'created')) {
+    if (item.task_id !== job.payload.task) continue;
+    if (typeof job.payload.title === 'string') { item.title = job.payload.title; item.titleNorm = titleNorm(job.payload.title); }
+    if (Object.hasOwn(job.payload, 'repeat')) item.repeat = job.payload.repeat !== null;
+  }
+}
 const WORST = 'x'.repeat(HTTP_LIMITS.id);
 const textBytes = value => Buffer.byteLength(value, 'utf8');
 // A request_id placeholder of the real length, for size checks made before one is chosen.
@@ -844,6 +1093,8 @@ const JOB_SHAPES = Object.freeze({
   comment: [['task', 'text'], []],
   record_time: [['task', 'seconds', 'started_at'], []],
   record_usage: [['task', 'model', 'input', 'output', 'cache_read', 'cache_write', 'cost_estimate', 'windows', 'account', 'source', 'source_ref'], ['at']],
+  create_task: [['title', 'estimate_minutes', 'assign'], ['parent', 'next_action', 'notes', 'priority', 'hardDeadline', 'due', 'repeat']],
+  update_task: [['task'], ['title', 'next_action', 'notes', 'estimate_minutes', 'repeat']],
 });
 // A job's identity (the dedupe digest) under a descriptor binding. A usage row's `at` is not part of it: a re-import that
 // derives `at` for a key queued without one (or with another) deduplicates, and the stored payload keeps the first `at`.
@@ -863,8 +1114,11 @@ function jobIntact(job) {
 function jobFields(job, claim, contract = HTTP_CONTRACT_REVISION) {
   const fields = { ...job.payload };
   if (!isV23(contract)) delete fields.at;
-  if (job.kind === 'ask' || job.kind === 'comment') fields.agent = job.agent === 'codex' ? 'codex' : 'claude';
-  if (claim && claim.task === job.payload.task && typeof claim.session === 'string') fields.session = claim.session;
+  if (job.kind === 'ask' || job.kind === 'comment' || isProposeKind(job.kind)) fields.agent = job.agent === 'codex' ? 'codex' : 'claude';
+  // create_task carries the session whenever a claim exists (whatever its parent); every other kind only for the claimed task.
+  // A create/update carries it only when the claim's agent is the job's persona (AC22): a session never vouches for another.
+  const sameAgent = !isProposeKind(job.kind) || claim?.agent === (job.agent === 'codex' ? 'codex' : 'claude');
+  if (claim && typeof claim.session === 'string' && sameAgent && (job.kind === 'create_task' || claim.task === job.payload.task)) fields.session = claim.session;
   return fields;
 }
 // ---- v2.3 family: frozen wire bodies, request_id and server limits ----
@@ -925,7 +1179,8 @@ function overServerLimit(limits, action, body, bodyText) {
   if (!limits) return null;
   const cp = value => (typeof value === 'string' ? codePoints(value) : 0);
   if (Buffer.byteLength(bodyText, 'utf8') > limits.request_bytes) return 'request_bytes';
-  for (const name of ['task', 'in_reply_to']) if (typeof body[name] === 'string' && body[name].length > limits.id) return 'id';
+  for (const name of ['task', 'in_reply_to', 'parent']) if (typeof body[name] === 'string' && body[name].length > limits.id) return 'id';
+  if (isProposeKind(action)) for (const name of ['title', 'next_action', 'notes']) if (Number.isSafeInteger(limits[name]) && cp(body[name]) > limits[name]) return name;
   if (action === 'ask') {
     if (cp(body.question) > limits.question) return 'question';
     if (cp(body.default) > limits.default) return 'default';
@@ -939,12 +1194,16 @@ function overServerLimit(limits, action, body, bodyText) {
   if (action === 'release' && cp(body.reason) > limits.reason) return 'reason';
   return null;
 }
-function checkServerLimits(limits) {
+// The limit keys a revision must publish: the twelve v2.3 keys, plus title, next_action and notes from v2.4 on.
+export const SERVER_LIMIT_KEYS_V24 = Object.freeze([...SERVER_LIMIT_KEYS, 'title', 'next_action', 'notes']);
+const limitKeysFor = contract => (contractRank(contract) >= 4 ? SERVER_LIMIT_KEYS_V24 : SERVER_LIMIT_KEYS);
+function checkServerLimits(limits, contract = HTTP_CONTRACT_V23) {
+  const keys = limitKeysFor(contract);
   if (!plainObject(limits)) return 'limits is not an object';
-  for (const key of SERVER_LIMIT_KEYS) if (!Object.hasOwn(limits, key)) return `limits is missing ${key}`;
+  for (const key of keys) if (!Object.hasOwn(limits, key)) return `limits is missing ${key}`;
   if (limits.unit !== 'code_points') return 'limits.unit is not code_points';
   if (limits.id_unit !== 'utf16_code_units') return 'limits.id_unit is not utf16_code_units';
-  for (const key of SERVER_LIMIT_KEYS) if (key !== 'unit' && key !== 'id_unit' && !(Number.isSafeInteger(limits[key]) && limits[key] > 0)) return `limits.${key} is not a positive integer`;
+  for (const key of keys) if (key !== 'unit' && key !== 'id_unit' && !(Number.isSafeInteger(limits[key]) && limits[key] > 0)) return `limits.${key} is not a positive integer`;
   return null;
 }
 // The revision a claim was made under (decide's token count follows it): claim.contract, else the last negotiated, else v2.2.
@@ -1034,6 +1293,9 @@ const capOf = (allowance, key) => (!plainObject(allowance) || allowance[key] ===
 function createHttpClient(cwd, httpConnect, now = Date.now) {
   const descriptorConfig = () => { const config = loadConfig(cwd); if (config.kind !== HTTP_KIND) fail('not a Task&I descriptor binding'); return config; };
   // Opens a session: exactly one capabilities request, gated on protocol, contract and the calls about to be made.
+  // v2.4+ limits.title/next_action/notes are required only when a create_task/update_task job is about to be sent (AC23):
+  // open() records a missing one as send.proposeLimitsFault, flush keeps such a job queued, and every other command
+  // accepts a v2.4+ server without them.
   async function open(config, calls) {
     if (httpConnect && new URL(config.origin).protocol !== 'http:') fail('the httpConnect test seam is refused for https origins');
     // Until capabilities answers, the v2.2 rules apply (the capabilities request itself is the same in every revision).
@@ -1052,8 +1314,9 @@ function createHttpClient(cwd, httpConnect, now = Date.now) {
     if (caps.protocol !== config.protocol) fail('Task&I capabilities: protocol does not match the descriptor', 'PREDISPATCH');
     if (!HTTP_CONTRACT_REVISIONS.includes(caps.contract)) fail(`Task&I capabilities: contract is not one of ${HTTP_CONTRACT_REVISIONS.join(', ')}`, 'PREDISPATCH');
     if (isV23(caps.contract)) {
-      const broken = checkServerLimits(caps.limits);
+      const broken = checkServerLimits(caps.limits, HTTP_CONTRACT_V23);
       if (broken) fail(`Task&I capabilities: ${broken}`, 'PREDISPATCH');
+      send.proposeLimitsFault = contractRank(caps.contract) >= 4 ? checkServerLimits(caps.limits, caps.contract) : null;
       if (caps.id_pattern !== USABLE_ID.source) fail('Task&I capabilities: id_pattern differs from the task ids this client accepts', 'PREDISPATCH');
     }
     for (const call of calls) if (!caps.calls.includes(call)) fail(`Task&I capabilities do not offer ${call}`, 'PREDISPATCH');
@@ -1061,7 +1324,8 @@ function createHttpClient(cwd, httpConnect, now = Date.now) {
     // lastContract: every successful answer records the negotiated revision (absent only before the first call).
     await withState(cwd, now, async (state, statePath) => { state.lastGrade = caps.grade; state.lastContract = caps.contract; atomicJson(statePath, state); });
     send.calls = caps.calls; send.contract = caps.contract; send.v23 = isV23(caps.contract);
-    send.limits = send.v23 ? Object.fromEntries(SERVER_LIMIT_KEYS.map(key => [key, caps.limits[key]])) : null;
+    send.limits = send.v23 ? Object.fromEntries(limitKeysFor(caps.contract).filter(key => Object.hasOwn(caps.limits, key)).map(key => [key, caps.limits[key]])) : null;
+    send.rank = contractRank(caps.contract);
     return send;
   }
   const parseTask = task => (task === undefined ? undefined : descriptorTaskRef(task, '--task'));
@@ -1130,10 +1394,50 @@ function createHttpClient(cwd, httpConnect, now = Date.now) {
     await settle(true);
     return { bound: true, ...shape(value) };
   }
+  // create_task / update_task enqueue (task_067): the offline payload checks (secrets included), then under the lock, in
+  // this order (AC17): the idempotent re-enqueue (same key and digest), KEY_CONFLICT, and only then, for create_task,
+  // duplicate_proposal and the caps; for update_task the local target rules and update_cap. A refused enqueue writes
+  // nothing (and so counts toward no cap).
+  async function enqueueProposals(kind, items, options, config) {
+    if (options.task !== undefined) fail(`${kind} takes no --task (${kind === 'create_task' ? 'use parent in the payload' : 'name the task in the payload'})`, 'USAGE');
+    const envStamp = process.env.VIBE_SESSION_STAMP ? stableKey(process.env.VIBE_SESSION_STAMP) : null;
+    const prepared = items.map(({ key, input }) => ({ key: stableKey(key), payload: validateProposal(kind, input) }));
+    return withState(cwd, now, async (state, statePath) => {
+      const results = []; let changed = false; const at = now();
+      for (const { key, payload } of prepared) {
+        if (textBytes(wireBody(kind, { ...payload, agent: WORST, session: WORST }, WORST, SOME_REQUEST_ID).text) > HTTP_LIMITS.body) fail(`${kind} would exceed the ${HTTP_LIMITS.body}-byte request body limit`);
+        const hash = jobDigest(kind, payload);
+        const found = state.jobs.find(job => job.key === key) ?? tombstoneOf(state, key);
+        if (found && found.digest === hash) { results.push({ enqueued: false, deduplicated: true, key, state: found.state ?? 'done', bound: true }); continue; }
+        if (found) fail('same key was already used with a different payload (KEY_CONFLICT)', 'KEY_CONFLICT');
+        const claim = claimOf(state);
+        const envAgent = process.env.VIBE_AGENT === 'codex' || process.env.VIBE_AGENT === 'claude' ? process.env.VIBE_AGENT : 'claude';
+        const claimAgent = claim && (claim.agent === 'claude' || claim.agent === 'codex') ? claim.agent : null;
+        let agent, stamp;
+        if (kind === 'create_task') {
+          // The persona: the claim's (a create carries the claim's session), else VIBE_AGENT, else claude.
+          agent = claimAgent ?? envAgent;
+          stamp = options.session !== undefined ? stableKey(options.session) : envStamp;
+          creationChecks(state, { key, payload, stamp, at });
+        } else {
+          const target = payload.task;
+          // The stamp an update counts under: --session, else VIBE_SESSION_STAMP, else the claim's session.
+          stamp = options.session !== undefined ? stableKey(options.session) : envStamp ?? (claim && typeof claim.session === 'string' ? claim.session : null);
+          agent = claim && claim.task === target && claimAgent ? claimAgent : envAgent;
+          updateChecks(state, { key, payload, stamp, agent, claim });
+        }
+        state.jobs.push({ key, kind, digest: hash, payload, agent, sessionStamp: stamp, createdAtMs: at, requestId: randomUUID(), binding: bindingDigest(config), channel: 'taskandi-http', state: 'queued', createdAt: new Date().toISOString() });
+        changed = true; results.push({ enqueued: true, deduplicated: false, key, state: 'queued', bound: true });
+      }
+      if (changed) atomicJson(statePath, state);
+      return results;
+    });
+  }
   // Enqueue under one lock: every item is validated first, and nothing is written unless all of them are accepted.
   async function enqueueAll(kind, items, options = {}) {
     const config = descriptorConfig();
     const optionTask = options.task !== undefined ? parseTask(options.task) : undefined;
+    if (isProposeKind(kind)) return enqueueProposals(kind, items, options, config);
     const prepared = items.map(({ key, input }) => {
       key = stableKey(key); input = ownObject(input, `${kind} payload`);
       if (options.task !== undefined && input.task !== undefined) fail('task given both in the payload and as --task');
@@ -1193,7 +1497,9 @@ function createHttpClient(cwd, httpConnect, now = Date.now) {
         return [...new Set(state.jobs.filter(isQueued).map(job => job.kind))];
       });
       if (!kinds.length) return withNotices(out, notices);
-      const send = await open(config, kinds); const { contract, v23 } = send;
+      // create_task/update_task are gated per job below (task_067), so an older server never fails the whole flush.
+      const send = await open(config, kinds.filter(kind => !isProposeKind(kind))); const { contract, v23 } = send;
+      const offered = job => send.rank >= neededRank(job) && send.calls.includes(job.kind);
       return withState(cwd, now, async (state, statePath) => {
         for (const job of state.jobs.filter(isQueued)) {
           if (job.binding !== bindingDigest(config)) fail(`queued job binding changed; reconcile explicitly before delivery (${job.key})`, 'BINDING_CHANGED');
@@ -1201,6 +1507,20 @@ function createHttpClient(cwd, httpConnect, now = Date.now) {
           if (replayLost(job)) { loseReplay(job); atomicJson(statePath, state); continue; }
           // Downgrade: a job attempted on v2.3 may have been applied; a v2.2 server cannot deduplicate a resend.
           if (!v23 && job.sentBody !== undefined) { job.state = 'uncertain'; job.lastError = DOWNGRADED; out.uncertain++; notices.push(`${job.key}: ${DOWNGRADED}`); atomicJson(statePath, state); continue; }
+          if (isProposeKind(job.kind) && !offered(job)) {
+            // Sent before to a newer server: this one cannot replay it, so a resend could duplicate. Never sent: it waits,
+            // queued, for a server that speaks the revision it needs.
+            if (job.sentBody !== undefined) { const why = `attempted on ${job.sentRevision}; the server now speaks ${contract}, which cannot replay it, so a resend could duplicate`; job.state = 'uncertain'; job.lastError = why; out.uncertain++; notices.push(`${job.key}: ${why}`); atomicJson(statePath, state); continue; }
+            const need = NEEDS(neededRank(job));
+            if (job.lastError !== need) { job.lastError = need; atomicJson(statePath, state); }
+            notices.push(`${job.key}: ${need} (the server speaks ${contract}); kept queued, nothing sent`); continue;
+          }
+          // AC23: a server that does not publish the proposal limits gets no first send of a proposal; it waits, queued.
+          if (isProposeKind(job.kind) && job.sentBody === undefined && send.proposeLimitsFault) {
+            const why = `Task&I capabilities: ${send.proposeLimitsFault}`;
+            if (job.lastError !== why) { job.lastError = why; atomicJson(statePath, state); }
+            notices.push(`${job.key}: ${why}; kept queued, nothing sent`); continue;
+          }
           const claim = claimOf(state); const resend = job.sentBody !== undefined;
           let bodyText;
           // A resend sends sentBody byte for byte; it may have been applied, so no limit is re-checked: the server decides.
@@ -1221,11 +1541,19 @@ function createHttpClient(cwd, httpConnect, now = Date.now) {
           job.state = 'dispatching'; job.dispatchedAt = new Date().toISOString(); atomicJson(statePath, state); out.dispatched++;
           try {
             job.result = await send.raw(job.kind, bodyText, { task: job.payload.task });
+            // AC24: a created task_id that is already known (a ledger id, the claimed or the effective task) is malformed.
+            if (job.kind === 'create_task') {
+              const id = job.result.task_id;
+              if (ledger(state, 'created').some(item => item.key !== job.key && item.task_id === id) || id === claimOf(state)?.task || id === config.task) { delete job.result; throw httpFailure('unknown', 'malformed_response', 'task_id names a task that already exists'); }
+            }
             const at = now(); job.state = 'done'; job.doneAt = new Date(at).toISOString(); job.doneAtMs = at; delete job.lastError; out.done++;
             // The latest spent on the claimed task: every record_usage response carries the server's roll-up, counted the
             // way this revision counts it (spentContract).
             const current = claimOf(state);
             if (job.kind === 'record_usage' && current && job.result.task === current.task) { current.spent = { ...job.result.spent }; current.spentContract = contract; current.spentAt = at; }
+            // The created ledger entry lands in the same state write as `done`.
+            if (job.kind === 'create_task') recordCreated(state, job, job.result.task_id, at);
+            applyUpdate(state, job);
             atomicJson(statePath, state);
           } catch (error) {
             const notSent = error?.code === 'NOT_SENT' || error?.notSent === true;
@@ -1244,7 +1572,19 @@ function createHttpClient(cwd, httpConnect, now = Date.now) {
             // applied one would have been replayed), so the frozen body is dropped and the next attempt is rebuilt with the same request_id. A send
             // that never left the client freezes nothing, but a resend's earlier attempts may still apply: keep its body.
             if (v23 && httpClass !== 'unknown' && !(notSent && resend)) unfreeze(job);
-            if (httpClass === 'rejected') { refuse(job, error.wire); atomicJson(statePath, state); continue; }
+            // create_task/update_task: a 200 that is not exactly the documented result may still have created or changed
+            // the task, and a resend would only replay it, so it is uncertain at once.
+            if (isProposeKind(job.kind) && error?.wire === 'malformed_response') {
+              job.state = 'uncertain'; job.lastError = `Task&I answered ${job.kind} with an unexpected result (${error.message}); the ${job.kind === 'create_task' ? 'task may exist' : 'update may be applied'}: check Task&I, then reconcile${job.kind === 'create_task' ? ' (--action done --task-id <id>)' : ''}`;
+              out.uncertain++; notices.push(`${job.key}: ${job.lastError}`); atomicJson(statePath, state); break;
+            }
+            if (httpClass === 'rejected') {
+              refuse(job, error.wire);
+              if (error.detail) { job.lastError += ` (${error.detail})`; notices[notices.length - 1] += ` (${error.detail})`; }
+              // wrong_scope: the task (an update's target, or a create's ledger parent) is gone for this agent.
+              if (error.wire === 'wrong_scope') { const gone = job.kind === 'update_task' ? job.payload.task : job.kind === 'create_task' ? job.payload.parent : undefined; if (typeof gone === 'string') markGone(state, gone); }
+              atomicJson(statePath, state); continue;
+            }
             if (httpClass === 'later') { job.state = 'queued'; job.lastError = error.message; out.requeued++; notices.push(...(error?.preface ?? []), `${job.key}: ${error.message}`); atomicJson(statePath, state); break; }
             const detail = !error?.wire ? 'unexpected client error' : unknownResend && error.httpClass !== 'unknown' ? `Task&I outcome unknown on a resend: ${error.wire}${error.status ? ` (HTTP ${error.status})` : ''}` : error.message;
             if (v23) {
@@ -1271,11 +1611,18 @@ function createHttpClient(cwd, httpConnect, now = Date.now) {
       let claimedBefore = null;
       if (requested !== undefined) {
         requested = parseTask(requested);
-        claimedBefore = await withState(cwd, now, async state => {
+        const found = await withState(cwd, now, async state => {
           const claimed = claimOf(state)?.task ?? null;
-          if (config.task !== null && requested !== config.task && requested !== claimed) fail('--task is neither the effective task nor the claimed task', 'USAGE');
-          return claimed;
+          if (selfCreated(state, requested)) return { claimed, self: true };
+          // A task vibe proposed (a non-gone ledger entry, owner-assigned; never a reconciled one) may be named too: once
+          // the owner reassigns it to the agent, that is how vibe is asked to work it.
+          const proposed = !!ownEntry(state, requested);
+          if (config.task !== null && requested !== config.task && requested !== claimed && !proposed) fail('--task is neither the effective task nor the claimed task', 'USAGE');
+          return { claimed, self: false };
         });
+        // A task vibe proposed for its own queue is not worked until the owner assigns it (T94 default): no claim is sent.
+        if (found.self) return { bound: true, channel: 'taskandi-http', task: null, reason: 'self_created' };
+        claimedBefore = found.claimed;
       }
       const send = await open(config, ['next_task']);
       if (requested !== undefined && !send.v23) return { bound: true, channel: 'taskandi-http', task: null, reason: 'contract_v2_2' };
@@ -1297,6 +1644,16 @@ function createHttpClient(cwd, httpConnect, now = Date.now) {
       // The server answered with this client's own current claim: that lease is ours, so it is not handed back.
       if (requested !== undefined && task.task !== null && task.task !== requested && task.task === claimedBefore) fail('the server returned your current claim instead');
       if (requested !== undefined && task.task !== null && task.task !== requested) await handBack(task.task, 'vibe asked for another task', 'Task&I answered with another task than the one requested; it was released and nothing was claimed');
+      // A-mode offer of a task vibe proposed for its own queue: hand the lease back and claim nothing (the stored claim and
+      // the body file stay as they were).
+      if (requested === undefined && task.task !== null && await withState(cwd, now, async state => selfCreated(state, task.task) || selfCreatedTitle(state, task.title))) {
+        const notices = [];
+        try {
+          if (!send.calls.includes('release')) throw httpFailure('not_sent', 'release_not_offered');
+          await send.raw('release', wireBody('release', { task: task.task, reason: SELF_CREATED, session }, config.connection, send.v23 ? randomUUID() : undefined).text, { task: task.task });
+        } catch (failure) { notices.push(`could not release the lease on the self-created task (${failure?.wire ?? 'unexpected client error'}); it lapses on its own`); }
+        return withNotices({ bound: true, channel: 'taskandi-http', task: null, reason: 'self_created' }, notices);
+      }
       if (task.task !== null && !USABLE_ID.test(task.task)) await handBack(task.task, 'Task id not usable by vibe; rename it in Task&I.', UNUSABLE_TASK);
       // The claim is stored before the body file is written (AC39): a body-file failure never loses the lease.
       await withState(cwd, now, async (state, statePath) => {
@@ -1509,8 +1866,15 @@ function createHttpClient(cwd, httpConnect, now = Date.now) {
       return withState(cwd, now, async state => {
         const counts = { queued: 0, dispatching: 0, done: 0, uncertain: 0, refused: 0 }; for (const job of state.jobs) if (Object.hasOwn(counts, job.state)) counts[job.state]++;
         const staleBindingKeys = state.jobs.filter(job => job.state === 'queued' && job.channel !== 'file-fallback' && job.binding !== bindingDigest(config)).map(job => job.key);
-        return { bound: true, channel: 'taskandi-http', counts, uncertaintyIds: state.jobs.filter(job => job.state === 'uncertain').map(job => job.key), staleBindingKeys, refusedKeys: state.jobs.filter(job => job.state === 'refused').map(job => ({ key: job.key, code: job.refusedCode ?? 'unknown_error' })), claimedTask: claimOf(state)?.task ?? null, answerCount: state.answers.length, conflictIds: [...new Set(state.conflicts.map(item => item.id))], cursorSequence: state.cursor?.sequence ?? 0, lastGrade: typeof state.lastGrade === 'string' ? state.lastGrade : null, lastContract: typeof state.lastContract === 'string' ? state.lastContract : typeof state.lastGrade === 'string' ? HTTP_CONTRACT_REVISION : null };
+        return { bound: true, channel: 'taskandi-http', counts, uncertaintyIds: state.jobs.filter(job => job.state === 'uncertain').map(job => job.key), staleBindingKeys, refusedKeys: state.jobs.filter(job => job.state === 'refused').map(job => ({ key: job.key, code: job.refusedCode ?? 'unknown_error' })), claimedTask: claimOf(state)?.task ?? null, answerCount: state.answers.length, conflictIds: [...new Set(state.conflicts.map(item => item.id))], cursorSequence: state.cursor?.sequence ?? 0, lastGrade: typeof state.lastGrade === 'string' ? state.lastGrade : null, lastContract: typeof state.lastContract === 'string' ? state.lastContract : typeof state.lastGrade === 'string' ? HTTP_CONTRACT_REVISION : null, gatedKeys: state.jobs.filter(job => job.state === 'queued' && typeof job.lastError === 'string' && /^needs_contract_v2\.[45]$/.test(job.lastError)).map(job => ({ key: job.key, reason: job.lastError })) };
       });
+    },
+    // created [--task REF] [--all] (task_067): offline; the created ledger, non-gone entries unless --all, and with --task
+    // only the entries whose parent is REF.
+    async created({ task, all = false } = {}) {
+      descriptorConfig();
+      const parent = task === undefined ? undefined : normaliseTaskId(task, '--task');
+      return withState(cwd, now, async state => ({ bound: true, created: ledger(state, 'created').filter(item => (all || item.gone !== true) && (parent === undefined || item.parent === parent)).map(item => ({ key: item.key, task_id: item.task_id, title: item.title, assign: item.assign, parent: item.parent ?? null, repeat: item.repeat === true, gone: item.gone === true, at: item.at })) }));
     },
   };
 }
@@ -1615,12 +1979,14 @@ export function createClient({ cwd = process.cwd(), transport = fetchTransport, 
     },
     async enqueue(kind, key, input, options = {}) {
       if (viaHttp()) return h.enqueue(kind, key, input, options);
+      if (isProposeKind(kind)) fail(PROPOSE_NEEDS_DESCRIPTOR(kind));
       return (await fileEnqueueAll(kind, [{ key, input }], options))[0];
     },
     // Many jobs of one kind under one config load and one outbox lock; `mark` (the usage importer's ledger update) lands
     // in the same state write as the jobs, on either path.
     async enqueueBatch(kind, items, options = {}) {
       if (viaHttp()) return h.enqueueAll(kind, items, options);
+      if (isProposeKind(kind)) fail(PROPOSE_NEEDS_DESCRIPTOR(kind));
       return fileEnqueueAll(kind, items, options);
     },
     // The imported-message ledger of one session (read-only snapshot) and its update, for the usage importer.
@@ -1679,21 +2045,38 @@ export function createClient({ cwd = process.cwd(), transport = fetchTransport, 
         return { bound: true, dispatched, done, uncertain };
       });
     },
-    async reconcile(key, action, evidence) {
+    async reconcile(key, action, evidence, { taskId } = {}) {
       key = stableKey(key); if (!['done', 'retry'].includes(action)) fail('reconcile action must be done or retry'); text(evidence, 'evidence', LIMITS.text);
+      if (taskId !== undefined) taskId = normaliseTaskId(taskId, '--task-id');
       return withState(cwd, now, async (state, statePath) => {
         const job = state.jobs.find(item => item.key === key); if (!job) fail('reconcile key was not found');
+        // create_task (task_067): done needs the task id read from Task&I, which the ledger records; --task-id is for nothing else.
+        if (taskId !== undefined && !(job.kind === 'create_task' && action === 'done')) fail('--task-id is only for reconcile --action done on a create_task job');
+        if (job.kind === 'create_task' && action === 'done' && taskId === undefined && job.state === 'uncertain') fail('reconcile --action done on a create_task job needs --task-id <id>: read the created task\'s id in Task&I');
         // refused (v2.2 only): the server did not apply it, so it can be requeued but never marked done.
         if (job.state === 'refused' && job.channel === 'taskandi-http') { if (action === 'done') fail('a refused job was not applied; only --action retry can requeue it'); delete job.refusedCode; }
         else if (job.state !== 'uncertain') fail('only uncertain jobs can be reconciled');
-        // A receipt_collision on a v2.3 resend proves the first send was applied: it is never retried.
-        if (action === 'retry' && job.noRetry === true) fail('this job was applied by its first send (receipt_collision on a resend); only --action done can reconcile it');
+        // A receipt_collision on a v2.3 resend proves the first send was applied: it is never retried (for a create_task,
+        // only --action done --task-id can reconcile it, AC20).
+        if (action === 'retry' && job.noRetry === true) fail(`this job was applied by its first send (receipt_collision on a resend); only --action done${job.kind === 'create_task' ? ' --task-id <id>' : ''} can reconcile it`);
+        // A create_task retry is a new creation: the duplicate and cap checks run again, and the earlier attempt (it may
+        // have been applied) keeps counting toward the caps (AC20).
+        if (action === 'retry' && job.kind === 'create_task') creationChecks(state, { key: job.key, payload: job.payload, stamp: typeof job.sessionStamp === 'string' ? job.sessionStamp : null, at: now() });
+        // done --task-id: the id must be new to this client (AC21); the entry it writes is marked reconciled.
+        if (taskId !== undefined && (taskId === claimOf(state)?.task || taskId === loadConfig(cwd).task || ledger(state, 'created').some(item => item.task_id === taskId && item.key !== job.key))) fail('--task-id names the claimed task, the effective task or a task already in the created ledger; read the created task\'s own id in Task&I');
         // retry: a job with a frozen sentBody resends it (same request_id) on the next v2.3 flush, with a fresh attempt count;
         // one frozen on a replaced connection (replay unavailable) is rebuilt and sent afresh instead.
         const notices = [];
         if (action === 'retry' && job.replayLost === true) { unfreeze(job); notices.push(`${key}: ${RETRY_LOST}`); }
+        // A create_task retry is a new write under a fresh request_id: Task&I cannot tell it from the earlier attempt.
+        if (action === 'retry' && job.kind === 'create_task') {
+          if (job.state === 'uncertain') { job.priorAttempts = [...(Array.isArray(job.priorAttempts) ? job.priorAttempts : []), Number.isSafeInteger(job.createdAtMs) ? job.createdAtMs : now()]; job.createdAtMs = now(); }
+          unfreeze(job); job.requestId = randomUUID(); notices.push(`${key}: ${RETRY_CREATE}`);
+        }
         job.state = action === 'done' ? 'done' : 'queued'; delete job.lastError; delete job.attempts; delete job.replayLost;
         if (action === 'done') job.doneAtMs = now();
+        if (action === 'done' && job.kind === 'create_task' && taskId !== undefined) { job.result = { task_id: taskId, provisional: true }; recordCreated(state, job, taskId, job.doneAtMs, { reconciled: true }); }
+        if (action === 'done') applyUpdate(state, job);
         state.reconciliationLog.push({ key, action, evidence, at: new Date().toISOString() }); atomicJson(statePath, state);
         return withNotices({ key, state: job.state, reconciled: true }, notices);
       });
@@ -1759,6 +2142,11 @@ export function createClient({ cwd = process.cwd(), transport = fetchTransport, 
       if (!viaHttp()) fail('reconcile --direct needs a Task&I descriptor binding (.vibe/taskandi-descriptor.json)');
       return h.reconcileDirect(call, task, action, evidence);
     },
+    async created(options = {}) {
+      if (viaHttp()) return h.created(options);
+      const config = loadConfig(cwd); if (!config.bound) return { ...FALLBACK };
+      fail('created needs a Task&I descriptor binding');
+    },
     async askStatus(options = {}) {
       if (!viaHttp()) fail('ask-status needs a Task&I descriptor binding (.vibe/taskandi-descriptor.json)');
       return h.askStatus(options);
@@ -1817,10 +2205,14 @@ function parseDescriptorArgv(argv) {
   const command = argv[0]; const taskFlag = flags => (flags['--task'] === undefined ? undefined : descriptorTaskRef(flags['--task'], '--task'));
   const flags = (args, required, optional = [], booleans = []) => { try { return strictFlags(args, required, optional, booleans); } catch { fail(HTTP_USAGE); } };
   if (command === 'enqueue') {
-    if (!['ask', 'comment', 'record_usage', 'record_time'].includes(argv[1])) fail(HTTP_USAGE);
+    if (!['ask', 'comment', 'record_usage', 'record_time', ...PROPOSE_KINDS].includes(argv[1])) fail(HTTP_USAGE);
+    // create_task and update_task take an optional --session (the session stamp the caps and update_cap count by); update_task names its task in the payload.
+    if (argv[1] === 'create_task') { const parsed = flags(argv.slice(2), ['--key'], ['--session']); return { command, kind: argv[1], key: stableKey(parsed['--key']), session: parsed['--session'] === undefined ? undefined : stableKey(parsed['--session']), stdin: true }; }
+    if (argv[1] === 'update_task') { const parsed = flags(argv.slice(2), ['--key'], ['--session']); return { command, kind: argv[1], key: stableKey(parsed['--key']), session: parsed['--session'] === undefined ? undefined : stableKey(parsed['--session']), stdin: true }; }
     const parsed = flags(argv.slice(2), ['--key'], ['--task']);
     return { command, kind: argv[1], key: stableKey(parsed['--key']), task: taskFlag(parsed), stdin: true };
   }
+  if (command === 'created') { const parsed = flags(argv.slice(1), [], ['--task'], ['--all']); return { command, task: parsed['--task'] === undefined ? undefined : normaliseTaskId(parsed['--task'], '--task'), all: parsed['--all'] === true }; }
   if (command === 'flush' || command === 'status') { if (argv.length !== 1) fail(HTTP_USAGE); return { command }; }
   if (command === 'poll' || command === 'ask-status') return { command, task: taskFlag(flags(argv.slice(1), [], ['--task'])) };
   if (command === 'next-task') {
@@ -1853,8 +2245,8 @@ function parseDescriptorArgv(argv) {
     return { command, direct: parsed['--direct'], task: parsed['--task'], action: parsed['--action'], evidence: parsed['--evidence'] };
   }
   if (command === 'reconcile') {
-    const parsed = flags(argv.slice(1), ['--key', '--action', '--evidence']);
-    return { command, key: parsed['--key'], action: parsed['--action'], evidence: parsed['--evidence'] };
+    const parsed = flags(argv.slice(1), ['--key', '--action', '--evidence'], ['--task-id']);
+    return { command, key: parsed['--key'], action: parsed['--action'], evidence: parsed['--evidence'], taskId: parsed['--task-id'] === undefined ? undefined : normaliseTaskId(parsed['--task-id'], '--task-id') };
   }
   fail(HTTP_USAGE);
 }
@@ -1866,15 +2258,19 @@ async function checkArgv(argv) {
   if (raw.length) {
     let input; try { input = JSON.parse(raw.toString('utf8')); } catch { fail('stdin is not valid JSON'); }
     input = ownObject(input, `${plan.kind} payload`);
-    if (input.task !== undefined) { if (plan.task !== undefined) fail('task given both in the payload and as --task'); descriptorTaskRef(input.task, 'task'); }
-    validateHttpPayload(plan.kind, Object.fromEntries(Object.entries(input).filter(([name]) => name !== 'task')), plan.key);
+    if (isProposeKind(plan.kind)) validateProposal(plan.kind, input);
+    else {
+      if (input.task !== undefined) { if (plan.task !== undefined) fail('task given both in the payload and as --task'); descriptorTaskRef(input.task, 'task'); }
+      validateHttpPayload(plan.kind, Object.fromEntries(Object.entries(input).filter(([name]) => name !== 'task')), plan.key);
+    }
   }
   return { ok: true };
 }
 async function descriptorMain(client, argv) {
   const plan = parseDescriptorArgv(argv);
   switch (plan.command) {
-    case 'enqueue': return client.enqueue(plan.kind, plan.key, await readStdinJson(), { task: plan.task });
+    case 'enqueue': return client.enqueue(plan.kind, plan.key, await readStdinJson(), isProposeKind(plan.kind) ? { session: plan.session } : { task: plan.task });
+    case 'created': return client.created({ task: plan.task, all: plan.all });
     case 'flush': return client.flush();
     case 'status': return client.status();
     case 'poll': return client.poll({ task: plan.task });
@@ -1884,7 +2280,7 @@ async function descriptorMain(client, argv) {
     case 'complete': return client.complete(plan.task, plan.summary);
     case 'release': return client.release(plan.task, plan.reason, plan.park);
     case 'usage': { const { enqueueTranscriptUsage } = await import('./taskandi-usage.mjs'); return enqueueTranscriptUsage(client, plan.transcript, { session: plan.session, account: plan.account, costEstimate: plan.costEstimate, task: plan.task }); }
-    default: return plan.direct ? client.reconcileDirect(plan.direct, plan.task, plan.action, plan.evidence) : client.reconcile(plan.key, plan.action, plan.evidence);
+    default: return plan.direct ? client.reconcileDirect(plan.direct, plan.task, plan.action, plan.evidence) : client.reconcile(plan.key, plan.action, plan.evidence, { taskId: plan.taskId });
   }
 }
 // Server strings reach stdout as JSON; C1 and bidi controls are escaped as \uXXXX so they cannot steer a terminal.
@@ -1901,12 +2297,15 @@ export async function main(argv = process.argv.slice(2), clientOptions = {}) {
   const descriptor = client.descriptor();
   if (descriptor) result = await descriptorMain(client, argv);
   else if (command === 'enqueue') {
+    // create_task/update_task speak only the browser-agent API (contract v2.4+).
+    if (isProposeKind(argv[1])) fail(PROPOSE_NEEDS_DESCRIPTOR(argv[1]));
     if (!['ask', 'comment', 'record_usage', 'record_time'].includes(argv[1])) fail(USAGE);
     const flags = strictFlags(argv.slice(2), ['--key'], ['--task']);
     if (flags['--task'] !== undefined) taskRef(flags['--task'], '--task');
     result = await client.enqueue(argv[1], flags['--key'], await readStdinJson(), { task: flags['--task'] });
   }
   else if (command === 'flush') result = await client.flush();
+  else if (command === 'created') { const plan = parseDescriptorArgv(argv); result = await client.created({ task: plan.task, all: plan.all }); }
   else if (command === 'poll') result = await client.poll();
   else if (command === 'status') result = await client.status();
   else if (command === 'next-task') {

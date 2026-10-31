@@ -1,0 +1,28 @@
+{
+  "contract": "vibe-agent-exchange-v2.5",
+  "notes": "Changes title, next_action, notes, estimate_minutes or repeat (see update_task_clear_repeat.json) (at least one; the same limits as create_task) of a task this persona created that the owner has not yet kept or removed, or of a task assigned to the persona (tag agent:<persona>, including one it created for its own queue). Anything else is not_assigned; a task outside the subtree, or one the owner removed, is wrong_scope; a closed task is invalid_request. The owner's client applies the change on its next poll (a new estimate in minutes replaces an exact duration). Like any call carrying task, it renews the session's lease. request_id makes a retry safe.",
+  "request": {
+    "action": "update_task",
+    "task": "7b8c9d0e-1f2a-4b3c-8d4e-5f6a7b8c9d0e",
+    "title": "Check the meeting agenda and the minutes",
+    "estimate_minutes": 15,
+    "agent": "claude",
+    "request_id": "9d0e1f2a-3b4c-4d5e-8f6a-7b8c9d0e1f2a"
+  },
+  "response": {
+    "task": "7b8c9d0e-1f2a-4b3c-8d4e-5f6a7b8c9d0e",
+    "update_id": "0e1f2a3b-4c5d-4e6f-8a7b-8c9d0e1f2a3b"
+  },
+  "not_assigned": {
+    "request": {
+      "action": "update_task",
+      "task": "mine",
+      "notes": "A task of the owner's that the agent did not create",
+      "agent": "claude"
+    },
+    "status": 409,
+    "response": {
+      "error": "not_assigned"
+    }
+  }
+}

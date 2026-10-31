@@ -1,0 +1,18 @@
+{
+  "contract": "vibe-agent-exchange-v2.5",
+  "notes": "assign \"agent\" puts the task in the calling persona's own queue (tag agent:<persona>). Once the owner's client has added it and synced, next_task can offer it like any task assigned to the agent, provisional or kept; update_task works on it while it stays assigned to the agent. hardDeadline sets a hard deadline, as the web model stores it (ms since epoch).",
+  "request": {
+    "action": "create_task",
+    "title": "Write the export tests",
+    "estimate_minutes": 45,
+    "priority": "now",
+    "assign": "agent",
+    "hardDeadline": 1762100000000,
+    "agent": "codex",
+    "session": "session-a"
+  },
+  "response": {
+    "task_id": "8c9d0e1f-2a3b-4c4d-8e5f-6a7b8c9d0e1f",
+    "provisional": true
+  }
+}

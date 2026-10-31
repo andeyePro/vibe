@@ -667,3 +667,9 @@ Codex-only continuation delivered: default supervised handoff, run/turn-bound co
 - Security re-review: one new HIGH route (answers given before the replay lookup, such as connection_revoked, counted as proof on a resend) + MEDIUM (unknown 409) → cycle 3: only in-transaction 409 codes (`RESEND_PROOF_CODES`) prove anything on a resend.
 - Chair fix: `open_children` on a `complete` resend is a proof code (decided after the replay lookup); it was missing its HTTP status, so it had been treated as unknown.
 - Full smoke 0, code-check 0.
+
+## task_067 — vibe proposes tasks to the owner (create_task/update_task, repeat) — PASS after 2 cycles (2026-10-31)
+- Spec critic: pass after 2 iterations plus fixes (10 blocking: parent default, persona and session on the wire, a ledger that survives pruning, enforced dedupe, owner removal, self-dispatch, repeats from untrusted text, client-side caps, limit plumbing; then session rule vs fixture and the self_created unblock path).
+- Generator: opus. Tester: sonnet. Tests: `checks_61_taskandi_propose.py`, `checks_62_taskandi_propose_more.py`, `checks_63_taskandi_propose_cycle2.py`; the fake service gained create/update with its own independent repeat validator.
+- Cycle 1: green after the Tester fixed three fake-server bugs. Security review (1 HIGH: update_task added repeats past repeat_cap; 4 MEDIUM) + `/code-review high` (10) → cycle 2 (AC15–AC27), green after four chair rulings on tests.
+- Known limit (documented): the caps and `self_created` are client-side; Task&I has been asked whether it can enforce them.
