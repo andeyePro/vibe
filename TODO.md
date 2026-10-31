@@ -74,7 +74,6 @@ Two vibe-wide behaviour changes shipped and took effect on this rebuild — surf
 
 ## Open
 
-- [ ] **task_061 — Task&I client contract v2.1** (2026-10-30, /vsss slice 1 of the agent exchange) — `taskandi-client.mjs` gains `next_task`, `comment`, `record_time`, `complete`, `release`, v2.1 `ask` (order, estimate, remaining, reversible, blocking) and owner-only `list_asks`; v1 pin still honoured; file fallback unchanged. Spec: `.vs/spec.md`. Contract: brain2 `vibe-taskandeye-client-brief.md` § Contract v2 (+ v2.1 amendments).
 
 - [ ] **Martin-gated: keep the GitHub token out of the container** (2026-10-30, from `docs/alternatives.md` proposal 1) — Docker Sandboxes now inject credentials from the host so the real token never enters the VM; vibe's per-repo PAT sits in the container as `$GITHUB_TOKEN`. Shape: a host-side git credential/HTTPS proxy reachable via `host.docker.internal`, with the container holding only a per-session nonce. Touches `credential-helper.sh` and the launcher's token paths, so needs Martin's `y` and a security review. fromClaude T89.
 - [ ] **Martin-gated: optional Docker Sandboxes backend** (2026-10-30, proposal 2) — when `sbx` is installed, run vibe's image, firewall, hooks and loop inside a Docker Sandboxes microVM instead of a plain container. First step is a spike: does `sbx` accept a custom image and allow LAN/SSH reach? fromClaude T90.

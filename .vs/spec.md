@@ -1,4 +1,4 @@
-# task_061 — Task&I client: agent-exchange contract v2.1 — 2026-10-30 (rev 3 after Spec Critic)
+# task_061 — Task&I client: agent-exchange contract v2.1 — 2026-10-30 (rev 4: two chair corrections in cycle 1)
 
 ## Task summary
 
@@ -78,7 +78,7 @@ CLI usage string (one line, printed on bad usage): `enqueue ask|comment|record_u
 - **AC10 v1 regression and unbound parity.** `python3 smoke/checks_28_taskandi_client.py` and `python3 smoke/checks_29_taskandi_binding_usage.py` exit 0; in `git diff HEAD -- smoke/checks_28_taskandi_client.py smoke/checks_29_taskandi_binding_usage.py` every changed line is one of: (a) `CONTRACT_REVISION` replaced by `LEGACY_CONTRACT_REVISION` (including the import line), (b) an unbound-project v1-shaped `ask` payload rewritten to the v2.1 shape (`to` removed; `order`, `estimate_minutes`, `remaining_minutes`, `reversible` added), and nothing else is removed; in an unbound project every enqueue kind reports `channel: "file-fallback"`, and `flush`, `poll`, `next-task`, `complete`, `release` each make zero transport requests.
 - **AC11 Usage importer.** `usage --transcript <fixture> --session s --account a --cost-estimate 0` produces `record_usage` jobs whose payload `task` equals the binding task; with `--task <claimed>` it equals the claimed task; with `--task ABBR-999` (neither) it exits 1 and enqueues nothing.
 - **AC12 Gates and docs.** `python3 code-check.py` is clean; `python3 smoke-test.py < /dev/null` exits 0; `docs/taskandi-client.md` contains `vibe-agent-exchange-v2.1`, `vibe-action-window-fixture-v1`, every tool name (`next_task`, `ask`, `list_asks`, `comment`, `record_usage`, `record_time`, `complete`, `release`), every required field name from the table, the strings `next-task`, `complete --task`, `release --task`, `staleBindingKeys`, `owner_answer`, `untrusted`; the CLI usage string (bad usage, exit 1) contains `next-task`, `complete`, `release`, `comment`, `record_time`; `CHANGELOG.md` mentions `vibe-agent-exchange-v2.1`. (TODO.md task_061 closure is checked by the Evaluator in the pass commit.)
-- **AC13 No secret or payload leakage.** With sentinel strings `TOKEN-SENTINEL-7f3a` (token), `QUESTION-SENTINEL-9c1d` (ask question), `COMMENT-SENTINEL-2e8b` (comment text) and `ANSWER-SENTINEL-4a6f` (fixture answer), the stdout of `status` and the stderr of every failing command above contain none of them; a fixture that redirects the request URL to another origin is refused `PREDISPATCH` and the recorder never sees an `authorization` header for that origin.
+- **AC13 No secret or payload leakage.** With sentinel strings `TOKEN-SENTINEL-7f3a` (token), `QUESTION-SENTINEL-9c1d` (ask question), `COMMENT-SENTINEL-2e8b` (comment text) and `ANSWER-SENTINEL-4a6f` (fixture answer), the stdout of `status` and the stderr of every failing command above contain none of them; a request whose URL origin differs from the configured origin is refused `PREDISPATCH` before sending; an HTTP 3xx response is refused as a post-send failure (`MCP redirects are refused`, not `PREDISPATCH`, because the request did reach the server), and the recorder never sees a request or an `authorization` header for the redirect target. (Rev 4, chair adjudication in cycle 1: rev 3's wording called a 3xx `PREDISPATCH`, which would have let `flush` retry a request the server may have processed.)
 
 ## Out of scope
 
@@ -91,7 +91,7 @@ CLI usage string (one line, printed on bad usage): `enqueue ask|comment|record_u
 
 ## Test location
 
-`smoke/checks_47_taskandi_contract_v2.py` (new, ≤ 1,500 lines; follow `checks_28`'s standalone-runnable pattern and `smoke/_core.py` helpers; use a Node fixture-transport harness the way `checks_28` does) plus its one `from smoke.checks_47_taskandi_contract_v2 import *` line in `smoke/runner.py`. Tester-owned and immutable once committed. Generator scratch tests live under `.vs/cycle-N/scratch-tests/`.
+`smoke/checks_47_taskandi_contract_v2.py` (new, ≤ 1,500 lines; follow `checks_28`'s standalone-runnable pattern and `smoke/_core.py` helpers; use a Node fixture-transport harness the way `checks_28` does) plus its `from smoke.checks_47_taskandi_contract_v2 import *` line in `smoke/runner.py` and one call per `test_*` function in `runner.main()` (rev 4: the repo's never-run lint requires the calls). Tester-owned and immutable once committed. Generator scratch tests live under `.vs/cycle-N/scratch-tests/`.
 
 ## Files the Generator may change
 

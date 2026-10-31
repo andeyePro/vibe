@@ -41,7 +41,7 @@ import { pathToFileURL } from 'node:url';
 
 const clientMod = await import(pathToFileURL(process.argv[2]).href);
 const usageMod = await import(pathToFileURL(process.argv[3]).href);
-const { CONTRACT_REVISION, createClient, loadConfig } = clientMod;
+const { LEGACY_CONTRACT_REVISION, createClient, loadConfig } = clientMod;
 const { usageRecords, enqueueTranscriptUsage } = usageMod;
 const root = mkdtempSync(join(tmpdir(), 'taskandi-29-'));
 const run = (...args) => execFileSync(args[0], args.slice(1), { cwd: root, stdio: 'ignore' });
@@ -50,7 +50,7 @@ const vibe = join(root, '.vibe'); mkdirSync(vibe, { mode: 0o700 });
 const configPath = join(vibe, 'taskandi.json');
 const mappingPath = join(vibe, 'taskandi-task');
 const tokenPath = join(vibe, 'taskandi-token');
-const config = (task = 'TE-1') => ({ endpoint: 'https://fixture.invalid/mcp', task, contractRevision: CONTRACT_REVISION });
+const config = (task = 'TE-1') => ({ endpoint: 'https://fixture.invalid/mcp', task, contractRevision: LEGACY_CONTRACT_REVISION });
 const writeConfig = (task = 'TE-1') => writeFileSync(configPath, JSON.stringify(config(task)));
 writeConfig();
 
@@ -209,7 +209,7 @@ def test_installed_taskandi_symlink_executes_commands():
         executable = binary / "taskandi-client"
         executable.symlink_to(CLIENT.name)
         response = subprocess.run([str(executable), "enqueue", "ask", "--key", "symlink-test"],
-                                  input=json.dumps({"to": "fixture", "question": "q", "default": "d"}),
+                                  input=json.dumps({"question": "q", "default": "d", "order": 1, "estimate_minutes": 5, "remaining_minutes": 5, "reversible": True}),
                                   cwd=root, text=True, capture_output=True, timeout=10)
         if check("[taskandi] symlinked client enqueue exits 0", response.returncode == 0, response.stderr):
             try:

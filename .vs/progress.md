@@ -620,3 +620,12 @@ Astra diff reviews (gpt-6-astra, 28,161 tokens over two calls): FAIL then FAIL �
 ## task_060 — 2026-09-26 — cycle 1 pass
 
 Codex-only continuation delivered: default supervised handoff, run/turn-bound completion audit, separate Stop routing, consecutive retry accounting and owned crash recovery. Chair implemented; independent subscription Sol planner/spec critic/test design and Astra diff reviews. Review corrections: unresolved `--new-run`, completed-only progress, prior-terminal false success, shared handoff/watch publication mutex. Full smoke and code-check pass. Exact original Claude launcher/commands/shared guard hashes unchanged. Runtime schema generated from installed Codex confirms thread/read; official docs were unreachable after one refresh. Live Docker and overnight behavior requires Test 61 on a rebuilt image; no fixture-to-live inference.
+
+## task_061 — Task&I client contract v2.1 — cycle 1 — PASS (2026-10-31)
+- Spec critic: pass after 3 iterations (12 + 2 blocking concerns fixed).
+- Generator: sonnet (no escalation). Tester: haiku, 17 tests / 236 checks in `smoke/checks_47_taskandi_contract_v2.py`, ten mutant controls each caught.
+- Tester result: 235/236, plus the never-run lint. Chair adjudication, both classed `spec` (my wording), not capability:
+  1. AC13 called a refused HTTP 3xx `PREDISPATCH`. Wrong: the request reached the server, so `PREDISPATCH` would let `flush` retry a possibly-processed request. Spec rev 4 says post-send; the one check was corrected to match; the code was already right.
+  2. Spec allowed only an import line in `runner.py`, but the repo's never-run lint needs the `main()` calls. Rev 4 allows them; 17 calls added.
+- Evaluator fix (diff review, Generator-flagged choice): `complete`/`release` deleted the stored claim whatever task they named, so completing the bound parent task dropped a claim on a child. Now only the named claimed task's claim is dropped; probed both ways.
+- Gates after fixes: checks_47 236/236, checks_28 and checks_29 pass, code-check 0, full smoke 0.

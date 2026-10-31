@@ -41,6 +41,7 @@ export function usageRecords(lines, { session, account, costEstimate }) {
 }
 
 export async function enqueueTranscriptUsage(client, file, options) {
+  if (options.task !== undefined) await client.resolveTask(options.task);
   const handle = await fs.open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   let source;
   try {
@@ -60,7 +61,7 @@ export async function enqueueTranscriptUsage(client, file, options) {
   const records = usageRecords(lines, options);
   let enqueued = 0, deduplicated = 0;
   for (const record of records) {
-    const result = await client.enqueue('record_usage', record.key, record.payload);
+    const result = await client.enqueue('record_usage', record.key, options.task === undefined ? record.payload : { ...record.payload, task: options.task });
     if (result.enqueued) enqueued++;
     else deduplicated++;
   }

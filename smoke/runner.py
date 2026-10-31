@@ -56,6 +56,7 @@ from smoke.checks_43_op_diagnostics import *
 from smoke.checks_44_codex_remote import *
 from smoke.checks_45_model_policy import *
 from smoke.checks_46_link_opener import *
+from smoke.checks_47_taskandi_contract_v2 import *
 
 def main() -> int:
     test_docker_preflight_is_shared_and_mac_start_preserves_target()
@@ -1126,6 +1127,23 @@ def main() -> int:
     test_link_opener_container_side()
     test_link_opener_host_watcher()
     test_link_opener_wiring()
+    test_taskandi_v2_ac1_revision_handling()
+    test_taskandi_v2_ac1_v1_gate_refusals()
+    test_taskandi_v2_ac2_ask_validation()
+    test_taskandi_v2_ac3_task_targeting()
+    test_taskandi_v2_ac4_comment_time_usage()
+    test_taskandi_v2_ac5_flush_v21_fixture()
+    test_taskandi_v2_ac5_flush_schema_drift_and_ask_results()
+    test_taskandi_v2_ac6_next_task()
+    test_taskandi_v2_ac7_poll_v21()
+    test_taskandi_v2_ac8_complete_release()
+    test_taskandi_v2_ac8b_direct_call_predispatch()
+    test_taskandi_v2_ac9_outbox_invariants()
+    test_taskandi_v2_ac10_v1_regression_and_diff()
+    test_taskandi_v2_ac10_unbound_parity()
+    test_taskandi_v2_ac11_usage_importer()
+    test_taskandi_v2_ac12_docs_usage_changelog()
+    test_taskandi_v2_ac13_no_leakage()
     test_launcher_remote_control_default_on()
     test_statusline_records_the_weekly_window()
     test_weekly_limit_vetoes_the_watchdog()

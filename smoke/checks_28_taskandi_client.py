@@ -50,13 +50,13 @@ import { pathToFileURL } from 'node:url';
 
 // argv[1] is a harmless runner label: importing the CLI must not invoke main.
 const mod = await import(pathToFileURL(process.argv[2]).href);
-const { CONTRACT_REVISION, LIMITS, createClient, fetchTransport, loadConfig, validatePayload } = mod;
+const { LEGACY_CONTRACT_REVISION, LIMITS, createClient, fetchTransport, loadConfig, validatePayload } = mod;
 const root = mkdtempSync(join(tmpdir(), 'taskandi-fixture-'));
 const run = (...args) => execFileSync(args[0], args.slice(1), { cwd: root, stdio: 'ignore' });
 run('git', 'init', '-q'); run('git', 'config', 'user.email', 'fixture@example.invalid'); run('git', 'config', 'user.name', 'fixture');
 const vibe = join(root, '.vibe'); mkdirSync(vibe, { mode: 0o700 });
 const configPath = join(vibe, 'taskandi.json'); const tokenPath = join(vibe, 'taskandi-token');
-const cfg = (task = 'task-1', endpoint = 'https://fixture.invalid/mcp') => ({ endpoint, task, contractRevision: CONTRACT_REVISION });
+const cfg = (task = 'task-1', endpoint = 'https://fixture.invalid/mcp') => ({ endpoint, task, contractRevision: LEGACY_CONTRACT_REVISION });
 const writeConfig = (value = cfg()) => writeFileSync(configPath, JSON.stringify(value));
 const writeToken = () => { writeFileSync(tokenPath, 'fixture-token'); chmodSync(tokenPath, 0o600); };
 const rejected = async (fn, needle) => { await assert.rejects(fn, error => String(error.message).includes(needle)); };
@@ -68,7 +68,7 @@ let calls = 0;
 const unbound = createClient({ cwd: root, transport: async () => { calls++; throw Error('network'); } });
 assert.deepEqual(await unbound.flush(), { bound: false, channel: 'file-fallback', dispatched: 0 });
 assert.equal(calls, 0);
-assert.equal((await unbound.enqueue('ask', 'unbound-1', { to: 'owner', question: 'q', default: 'd' })).bound, false);
+assert.equal((await unbound.enqueue('ask', 'unbound-1', { question: 'q', default: 'd', order: 1, estimate_minutes: 5, remaining_minutes: 5, reversible: true })).bound, false);
 
 // Config is deliberately hostile: unknown/tracked/symlink/invalid values refuse.
 writeConfig({ ...cfg(), extra: true }); throws(() => loadConfig(root), 'unknown key');
