@@ -74,7 +74,8 @@ Two vibe-wide behaviour changes shipped and took effect on this rebuild — surf
 
 ## Open
 
-- [ ] **task_062 — `vibe link`** (2026-10-31, /vsss slice 2 of the Task&I agent exchange) — host-side `vibe link allow|deny|list|terminal|open` and `vibe link-open <url>`: consent registry `~/.vibe/link-projects`, strict `vibe://open?project=&task=&tty=` parsing, per-click confirmation, 5 s rate limit, Terminal/iTerm/Ghostty/kitty/WezTerm (+ gnome-terminal) launchers. Slice 3 registers the scheme with the OS (`--install`). Spec: `.vs/spec.md`.
+- [ ] **Harden `~/.vibe/codex-allow` like the link registry** (2026-10-31, from `/code-review high` on task_062) — `codex_registry_usable` checks only mode and symlink; the link registry also refuses a foreign owner, a group/other-writable `~/.vibe`, an owner-unreadable file and >1000 lines. One shared `_vibe_consent_registry_usable <file>` for both would close the gap and stop the copies drifting.
+
 
 
 - [ ] **Martin-gated: keep the GitHub token out of the container** (2026-10-30, from `docs/alternatives.md` proposal 1) — Docker Sandboxes now inject credentials from the host so the real token never enters the VM; vibe's per-repo PAT sits in the container as `$GITHUB_TOKEN`. Shape: a host-side git credential/HTTPS proxy reachable via `host.docker.internal`, with the container holding only a per-session nonce. Touches `credential-helper.sh` and the launcher's token paths, so needs Martin's `y` and a security review. fromClaude T89.

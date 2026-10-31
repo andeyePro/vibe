@@ -57,6 +57,8 @@ from smoke.checks_44_codex_remote import *
 from smoke.checks_45_model_policy import *
 from smoke.checks_46_link_opener import *
 from smoke.checks_47_taskandi_contract_v2 import *
+from smoke.checks_48_vibe_link import *
+from smoke.checks_49_vibe_link_hardening import *
 
 def main() -> int:
     test_docker_preflight_is_shared_and_mac_start_preserves_target()
@@ -1144,6 +1146,39 @@ def main() -> int:
     test_taskandi_v2_ac11_usage_importer()
     test_taskandi_v2_ac12_docs_usage_changelog()
     test_taskandi_v2_ac13_no_leakage()
+    test_vl_ac1_allow_list_deny()
+    test_vl_ac2_allow_refusals()
+    test_vl_ac3_registry_fail_closed()
+    test_vl_ac3_line_grammar()
+    test_vl_ac4_url_refusals()
+    test_vl_ac4_accepts()
+    test_vl_ac5_darwin_terminal_dry_run()
+    test_vl_ac6_darwin_terminals()
+    test_vl_ac6_linux()
+    test_vl_ac7_terminal_preference()
+    test_vl_ac8_dialog_and_assume()
+    test_vl_ac8_real_dialog_replies()
+    test_vl_unknown_project_dialog()
+    test_vl_ac9_rate_limit()
+    test_vl_ac10_launch_path_containment()
+    test_vl_ac11_help_and_docs()
+    test_vl_ac12_no_collateral_change()
+    test_vl_ac14_registered_folder()
+    test_vl_ac15_wrapper_argv()
+    test_vl_ac16_dialog_lock()
+    test_vl_ac17_rate_limit_fails_closed()
+    test_vl_ac18_link_last_symlinks()
+    test_vl_ac19_registry_ownership_and_size()
+    test_vl_ac20_assume_only_from_environment()
+    test_vl_ac21_uuid_task_ids()
+    test_vl_ac22_uuid_task_end_to_end()
+    test_vl_ac23_deny_always_withdraws_consent()
+    test_vl_ac24_stale_lock_race()
+    test_vl_ac25_writers_use_full_usability_check()
+    test_vl_ac26_owner_unreadable_registry()
+    test_vl_ac27_future_dated_recoverable()
+    test_vl_ac28_linear_registry_load()
+    test_vl_ac29_unknown_dialog_rate_limit()
     test_launcher_remote_control_default_on()
     test_statusline_records_the_weekly_window()
     test_weekly_limit_vetoes_the_watchdog()

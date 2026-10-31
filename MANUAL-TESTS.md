@@ -1993,3 +1993,17 @@ Needs a relaunch (the image rebuilds itself for the new `vibe-open`).
 - [ ] Inside the session, `echo $BROWSER` prints `/usr/local/bin/vibe-open`, and `vibe-open file:///etc/passwd` is refused with exit 2 and opens nothing.
 - [ ] On the Mac, `pgrep -af vibe-open-watcher.sh` shows one watcher for the project while vibe runs, and none after Claude exits.
 
+### Test 68: vibe:// links open a session in the chosen terminal (2026-10-31)
+
+Run on the Mac after the next slice (`vibe link --install`) lands, so a click reaches `vibe link-open`. Until then, run each line as `vibe link open 'vibe://open?project=demo'` from a Mac shell. Set up first: in a git project, `vibe link allow demo`.
+
+- [ ] Terminal (default, no `VIBE_TERMINAL`): a dialog names `demo` and its folder, with Cancel as the default; Open starts a new Terminal window in that folder running vibe, which waits for you.
+- [ ] Cancel, and letting the dialog sit for 60 seconds, both open nothing (exit 4). Clicking twice within 5 seconds opens one window.
+- [ ] Click a second time while the first dialog is still showing: the second click is refused at once ("a confirmation for demo is already open", exit 3) and no second dialog appears; answer the first one normally.
+- [ ] "Always for this project": the next click opens without a dialog; `vibe link list` shows `(no confirm)`.
+- [ ] `vibe link terminal iTerm`: a new iTerm window opens and its shell is sent the `/bin/sh -c '…' vibe-link '<folder>' '<vibe>'` line via AppleScript `write text` (iTerm's `command` does not run a shell, so it is not used); vibe starts in the folder. Check the AppleScript application name is still "iTerm" for the installed iTerm2 version.
+- [ ] `vibe link terminal Ghostty` (needs Ghostty 1.2 or later; older versions are out of support), then `kitty`, then `WezTerm`: each opens a new window of that app running vibe in the folder (every terminal runs the same `/bin/sh` wrapper, which changes into the folder itself and refuses to start vibe if the folder has been swapped for a symlink). These start through `open -na`, so check `docker` is found: vibe must get as far as starting the container, not fail with "docker: command not found" (if it does, the app is not starting a login shell and its PATH lacks Docker's bin directory).
+- [ ] `&task=ABBR-1` in the link, and then a bare Task&I task id (a UUID such as `&task=12345678-1234-1234-1234-123456789abc`): the session starts with that Task&I binding (the launch header shows it).
+- [ ] `vibe link allow` in a subfolder of a repository, or in a repository inside (or containing) one already registered, is refused.
+- [ ] `vibe://open?project=nothere` shows the "No vibe project called nothere" dialog and opens nothing; a second unknown link within 5 seconds (any name) shows no further dialog.
+- [ ] With a bare task UUID in the link, inside the container the Task&I client and `vibe codex` accept the binding (no "invalid per-launch task reference" / "invalid launch task binding").

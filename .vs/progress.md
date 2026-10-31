@@ -629,3 +629,12 @@ Codex-only continuation delivered: default supervised handoff, run/turn-bound co
   2. Spec allowed only an import line in `runner.py`, but the repo's never-run lint needs the `main()` calls. Rev 4 allows them; 17 calls added.
 - Evaluator fix (diff review, Generator-flagged choice): `complete`/`release` deleted the stored claim whatever task they named, so completing the bound parent task dropped a claim on a child. Now only the named claimed task's claim is dropped; probed both ways.
 - Gates after fixes: checks_47 236/236, checks_28 and checks_29 pass, code-check 0, full smoke 0.
+
+## task_062 — `vibe link` — PASS after 3 cycles (2026-10-31)
+- Spec critic: pass after 2 iterations plus a one-line fix (9 blocking concerns fixed in rev 2).
+- Generator: opus throughout. Tester: sonnet. Tests: `smoke/checks_48_vibe_link.py`, `smoke/checks_49_vibe_link_hardening.py`.
+- Cycle 1 (AC1–AC13): 244/244, full smoke 0. Security review then found MEDIUM consent-redirect (symlink swap during the dialog) and MEDIUM dialog stacking, plus LOWs; Task&I ruled task ids are UUIDs → rev 4, AC14–AC21 (classified spec gap).
+- Cycle 2 (AC14–AC21): wrapper `/bin/sh -c` re-checks the folder in the launched shell, one dialog at a time via atomic mkdir lock, fail-closed stamps, no symlink following, registry ownership, `VIBE_LINK_ASSUME` env-only, UUID task refs. All gates 0.
+- `/code-review high`: 10 findings → rev 5, AC22–AC30 (UUID refs accepted inside the container too, deny always withdraws consent, atomic stale-lock break, writers use full usability check, owner-unreadable registry, recoverable future stamps, linear registry load 5.4 s → 0.16 s, unknown-project dialog rate limit, single launcher-path resolution); finding 10 (codex-allow hardening) → TODO.
+- Cycle 3: all gates 0. Chair fix: a stamp-age check at 4 s against the 5 s limit flaked once under load; widened to 2 s.
+- Coverage gaps accepted: the supervisor's UUID check is tested via its regex literal (inline, not reachable without Codex); AC25's "Always" path is unreachable when the registry is unusable; real terminals and the macOS dialog are Mac manual Test 68.

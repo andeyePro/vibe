@@ -1274,7 +1274,7 @@ class Supervisor {
     try { promptRaw = readFileSync(options.promptFile, 'utf8'); }
     catch { throw usageError(`--prompt-file cannot be read: ${options.promptFile}`); }
     this.taskRef = process.env.VIBE_TASK_REF || '';
-    if (this.taskRef && !/^(?:[A-Za-z][A-Za-z0-9]*-[0-9]+|taskandeye:\/\/node\/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/.test(this.taskRef)) throw usageError('invalid launch task binding');
+    if (this.taskRef && !/^(?:[A-Za-z][A-Za-z0-9]*-[0-9]+|taskandeye:\/\/node\/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9A-Fa-f]{8}-(?:[0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12})$/.test(this.taskRef)) throw usageError('invalid launch task binding');
     this.taskBinding = bindingFingerprint(loadConfig(options.cwd));
     const promptHash = createHash('sha256').update(promptRaw).digest('hex');
     const policy = completionPolicy(promptRaw);

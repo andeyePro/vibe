@@ -45,6 +45,10 @@
 #   vibe repos remove <owner/repo>       # unregister it (--purge also drops its token)
 #   vibe repos list          # show the machine's shared-repo registry
 #   vibe codex allow|deny|list [path]    # host-side opt-in registry for the Codex login mount
+#   vibe link allow [name] | deny <name> | list  # which folders vibe:// links may open
+#   vibe link terminal <name>  # Terminal|iTerm|Ghostty|kitty|WezTerm|gnome-terminal
+#   vibe link open <url>     # open vibe://open?project=<name>[&task=<ref>], asking first
+#                            # (vibe link --install, registering vibe:// with the OS, is next)
 #   vibe audit [--history|--staged]      # scan git history (default) or the staged diff for secrets/PII
 #   vibe clean [--dry-run|--yes|--all]   # reclaim stopped vibe containers, dangling images, build cache
 #
@@ -105,10 +109,20 @@ while [ -L "$_vibe_src" ]; do
   _vibe_src="$(readlink "$_vibe_src")"
   [[ "$_vibe_src" != /* ]] && _vibe_src="$_vibe_dir/$_vibe_src"
 done
-DEVCONTAINER_DIR="$(cd "$(dirname "$_vibe_src")" && pwd -P)/devcontainer"
+# The resolved folder is read once, with a sentinel so `pwd -P` output is kept
+# exactly; VIBE_LAUNCHER_PATH (this launcher's canonical path, used by
+# `vibe link`) is derived from the same resolution.
+_vibe_dir="$(cd "$(dirname "$_vibe_src")" && pwd -P && printf x)"
+_vibe_dir="${_vibe_dir%x}"
+_vibe_dir="${_vibe_dir%$'\n'}"
+DEVCONTAINER_DIR="$_vibe_dir/devcontainer"
+VIBE_LAUNCHER_PATH="${_vibe_dir%/}/${_vibe_src##*/}"
 unset _vibe_src _vibe_dir
 VIBE_REPO_DIR="$(dirname "$DEVCONTAINER_DIR")"
 
+# `vibe link`'s confirmation bypass counts only from the environment, never
+# from a config line (task_062 AC20): captured here, before the source.
+_VIBE_LINK_ASSUME_ENV="${VIBE_LINK_ASSUME:-}"
 if [ -f "$CONFIG_FILE" ]; then
   # shellcheck source=/dev/null
   source "$CONFIG_FILE"
@@ -2261,6 +2275,1120 @@ codex_handle_subcommand() {
       ;;
     *)
       _codex_usage
+      ;;
+  esac
+}
+
+# ── `vibe link`: open a vibe session from a vibe:// link (task_062) ──────────
+# A Task&I page (or any page) can carry a link such as
+#   vibe://open?project=demo&task=ABBR-12
+# and the OS hands it to `vibe link-open <url>` on the Mac/Linux host, which
+# opens an INTERACTIVE vibe in a registered project, in the user's terminal.
+# Same consent shape as `vibe codex allow` above: the URL is only a REQUEST;
+# the CONSENT is a line in ~/.vibe/link-projects, a host-side file no
+# container can reach, written only by `vibe link allow` run in that folder.
+# A link can never run anything but vibe [--task <ref>] in the registered
+# folder (through one constant /bin/sh wrapper that re-checks the folder in
+# the new terminal, _LINK_WRAPPER), and that vibe waits for the user.
+#
+# Injection defence: every path that reaches a terminal command (the
+# registered project path and this launcher's own canonical path) must pass
+# one ASCII allowlist (_LINK_PATH_RE) — at `allow`, on every registry line
+# read, and for the launcher at `open` — so no quote, `$`, backtick or control
+# byte can ever appear inside the single/double quotes the terminals get. No
+# per-terminal escaping is relied on. URL and registry text is only ever the
+# SUBJECT of a match (regex held in a variable), never a grep/sed pattern or
+# eval'd. The URL grammar is strict and validated in full before anything on
+# disk is read. Exit codes (2 refused/unknown, 3 rate-limited, 4 cancelled,
+# 5 unusable registry, 6 no terminal, 7 launcher path) are part of the
+# contract the tests assert. `vibe link --install` (registering vibe:// with
+# macOS/Linux) is the next slice.
+#
+# VIBE_LINK_DRY_RUN=1 prints the dialog/launch argv instead of running them
+# (and writes no stamp or lock); VIBE_LINK_ASSUME=open|always|cancel answers
+# the confirmation without a dialog — a test/scripting hook: anything able to
+# set the host's environment could already run vibe directly. Only the value
+# from the ENVIRONMENT counts (_VIBE_LINK_ASSUME_ENV, captured before
+# $CONFIG_FILE is sourced); a config-file line is ignored.
+LINK_PROJECTS_FILE="$HOME/.vibe/link-projects"
+LINK_LAST_DIR="$HOME/.vibe/link-last"
+_LINK_NAME_RE='^[a-z0-9][a-z0-9._-]{0,63}$'
+_LINK_PATH_RE='^/[A-Za-z0-9 ._/+@,:=~-]+$'
+# THE task-reference grammar, shared by parse_vibe_args's --task check and the
+# link parser (one variable, so they cannot drift): ABBR-number,
+# taskandeye://node/<uuid>, or a bare UUID (any case). Admits no quote.
+VIBE_TASK_REF_RE='^[A-Za-z][A-Za-z0-9]*-[0-9]+$|^taskandeye://node/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$|^[0-9A-Fa-f]{8}-([0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}$'
+# The one command every link launch runs, in every terminal: `sh -c` with the
+# registered folder as $1 and vibe [--task <ref>] after it. It cds with -P and
+# refuses to exec unless the folder it landed in is exactly the registered
+# string, so no terminal is trusted to resolve the directory and a folder
+# swapped for a symlink after the dialog does not retarget the session. A
+# CONSTANT: the folder, launcher and task ref only ever arrive as separate
+# argv words, never spliced into this text.
+# shellcheck disable=SC2016  # $1/$@ are for the inner sh, not this shell
+_LINK_WRAPPER='cd -P -- "$1" && [ "$(pwd -P)" = "$1" ] && shift && exec "$@"'
+_LINK_URL_RE='^vibe://open/?\?[A-Za-z0-9._~:/&=-]+$'
+
+_link_usage() {
+  printf '%s\n' "Usage: vibe link allow [name] | deny <name> | list | terminal <name> | open <url>" >&2
+  exit 1
+}
+
+_link_valid_name() {
+  local LC_ALL=C re="$_LINK_NAME_RE"
+  [[ "$1" =~ $re ]]
+}
+
+# _link_valid_path <path> — the injection allowlist. ASCII only (C locale, so
+# every bracket range is a byte range), ≤ 1024 bytes, absolute.
+_link_valid_path() {
+  local LC_ALL=C re="$_LINK_PATH_RE"
+  [ "${#1}" -le 1024 ] || return 1
+  [[ "$1" =~ $re ]]
+}
+
+_link_valid_task() {
+  local LC_ALL=C re="$VIBE_TASK_REF_RE"
+  [[ "$1" =~ $re ]]
+}
+
+# _link_os — Darwin or Linux (anything that is not Darwin is treated as Linux).
+_link_os() {
+  if [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
+    printf 'Darwin\n'
+  else
+    printf 'Linux\n'
+  fi
+}
+
+# _link_terminal_known <name> — the union of both OS lists (case-sensitive).
+_link_terminal_known() {
+  case "$1" in
+    Terminal|iTerm|Ghostty|kitty|WezTerm|gnome-terminal) return 0 ;;
+  esac
+  return 1
+}
+
+# _link_terminal_for_os <os> <name> — the terminals vibe link drives per OS.
+_link_terminal_for_os() {
+  case "$1:$2" in
+    Darwin:Terminal|Darwin:iTerm|Darwin:Ghostty|Darwin:kitty|Darwin:WezTerm) return 0 ;;
+    Linux:Ghostty|Linux:kitty|Linux:WezTerm|Linux:gnome-terminal) return 0 ;;
+  esac
+  return 1
+}
+
+# The portable stat -c (GNU) / -f (BSD, macOS) fallbacks, one helper each:
+# _link_mode <file> — octal mode (symlinks followed); _link_owner <file> —
+# numeric owner uid; _link_mtime <file> — mtime in epoch seconds. Each prints
+# nothing and fails when the value cannot be read.
+_link_mode() {
+  stat -L -c %a "$1" 2>/dev/null || stat -L -f %Lp "$1" 2>/dev/null
+}
+_link_owner() {
+  stat -c %u "$1" 2>/dev/null || stat -f %u "$1" 2>/dev/null
+}
+_link_mtime() {
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null
+}
+
+# _link_registry_usable [writer] — codex_registry_usable's rules for this
+# registry: a symlink, any group/other bit, or an unreadable mode → unusable
+# (one ⚠); also a file not owned by this user, one this user cannot read, or
+# a ~/.vibe group/other can write. A missing file is usable and empty. The
+# 1000-line cap is enforced by the one pass that reads the file
+# (_link_registry_load, _link_registry_rewrite). `writer` (allow, deny and
+# "Always") skips only the loose-mode check: a writer repairs that mode, with
+# the `now trusted` note; every other failure refuses writers too.
+_link_registry_usable() {
+  local f="$LINK_PROJECTS_FILE" writer="${1:-}" mode last3 owner me dmode dlast3
+  if [ -L "$f" ]; then
+    printf '%s\n' "  ⚠ ~/.vibe/link-projects is a symlink — ignored, so no project can be opened from a link (it must be a real file; delete it and re-run 'vibe link allow')." >&2
+    return 1
+  fi
+  [ -e "$f" ] || return 0
+  if [ -z "$writer" ]; then
+    mode="$(_link_mode "$f")" || mode=""
+    if [ -z "$mode" ]; then
+      printf '%s\n' "  ⚠ ~/.vibe/link-projects permissions could not be read — ignored (fail closed)." >&2
+      return 1
+    fi
+    last3="${mode: -3}"
+    if [ "${last3:1:2}" != "00" ]; then
+      printf '%s\n' "  ⚠ ~/.vibe/link-projects is readable or writable by group or others (mode ${mode}) — ignored; run 'chmod 600 ~/.vibe/link-projects' or 'vibe link allow' again." >&2
+      return 1
+    fi
+  fi
+  # Owned by someone else (a file another account planted or can replace) →
+  # not this user's consent. An unreadable owner fails closed.
+  owner="$(_link_owner "$f")" || owner=""
+  me="$(id -u 2>/dev/null)" || me=""
+  if [ -z "$owner" ] || [ -z "$me" ] || [ "$owner" != "$me" ]; then
+    printf '%s\n' "  ⚠ ~/.vibe/link-projects is not owned by you (or its owner could not be read) — ignored (fail closed)." >&2
+    return 1
+  fi
+  # Owned but not readable (e.g. mode 200): fail closed with a ⚠, never a raw
+  # bash redirection error further on.
+  if [ ! -r "$f" ]; then
+    printf '%s\n' "  ⚠ ~/.vibe/link-projects cannot be read — ignored (fail closed); run 'chmod 600 ~/.vibe/link-projects'." >&2
+    return 1
+  fi
+  # A ~/.vibe that group or others can write lets them swap the file.
+  dmode="$(_link_mode "$(dirname "$f")")" || dmode=""
+  dlast3="${dmode: -3}"
+  case "$dmode" in
+    ''|*[!0-7]*) dlast3="777" ;;
+  esac
+  case "${dlast3:1:1}${dlast3:2:1}" in
+    [0145][0145]) ;;
+    *)
+      printf '%s\n' "  ⚠ ~/.vibe is writable by group or others (mode ${dmode:-unknown}) — ~/.vibe/link-projects ignored; run 'chmod go-w ~/.vibe'." >&2
+      return 1
+      ;;
+  esac
+  return 0
+}
+
+# _link_too_long — the one ⚠ for the 1000-line cap (a consent file this size
+# is not one `vibe link allow` wrote).
+_link_too_long() {
+  printf '%s\n' "  ⚠ ~/.vibe/link-projects has more than 1000 lines — ignored (fail closed)." >&2
+}
+
+# _link_parse_line <line> — sets _LINK_P_NAME/_LINK_P_PATH/_LINK_P_NOASK for
+# a valid `<name>=<path>[<TAB>noask]` line; returns 1 for anything else.
+_link_parse_line() {
+  local line="$1" tab=$'\t' name rest path suffix
+  case "$line" in
+    *=*) ;;
+    *) return 1 ;;
+  esac
+  name="${line%%=*}"
+  rest="${line#*=}"
+  path="$rest"
+  _LINK_P_NOASK=0
+  case "$rest" in
+    *"$tab"*)
+      path="${rest%%"$tab"*}"
+      suffix="${rest#*"$tab"}"
+      [ "$suffix" = "noask" ] || return 1
+      _LINK_P_NOASK=1
+      ;;
+  esac
+  _link_valid_name "$name" || return 1
+  _link_valid_path "$path" || return 1
+  _LINK_P_NAME="$name"
+  _LINK_P_PATH="$path"
+  return 0
+}
+
+# _link_registry_load — fills _LINK_R_NAMES/_LINK_R_PATHS/_LINK_R_NOASK with
+# the valid, non-duplicated entries. Invalid lines and every line of a
+# duplicated name are skipped with a ⚠ each. Callers check usability first.
+# ONE pass over the file: the line cap is counted and duplicates are noted as
+# it reads (names go into `|`-delimited strings tested with `case`, since a
+# valid name has no `|` and no glob character; bash 3.2 has no associative
+# arrays), then one linear walk over the collected entries drops every entry
+# of a duplicated name. Returns 1 (one ⚠, no entries) past 1000 lines.
+_link_registry_load() {
+  local line n=0 i seen="|" dup="|"
+  local -a vn=() vp=() vq=() vl=()
+  _LINK_R_NAMES=()
+  _LINK_R_PATHS=()
+  _LINK_R_NOASK=()
+  [ -f "$LINK_PROJECTS_FILE" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    n=$((n + 1))
+    if [ "$n" -gt 1000 ]; then
+      _link_too_long
+      return 1
+    fi
+    [ -n "$line" ] || continue
+    if _link_parse_line "$line"; then
+      case "$seen" in
+        *"|$_LINK_P_NAME|"*)
+          case "$dup" in
+            *"|$_LINK_P_NAME|"*) ;;
+            *) dup="$dup$_LINK_P_NAME|" ;;
+          esac
+          ;;
+        *) seen="$seen$_LINK_P_NAME|" ;;
+      esac
+      vn+=("$_LINK_P_NAME")
+      vp+=("$_LINK_P_PATH")
+      vq+=("$_LINK_P_NOASK")
+      vl+=("$n")
+    else
+      printf '%s\n' "  ⚠ ignoring invalid line $n in ~/.vibe/link-projects" >&2
+    fi
+  done < "$LINK_PROJECTS_FILE"
+  i=0
+  while [ "$i" -lt "${#vn[@]}" ]; do
+    if case "$dup" in *"|${vn[$i]}|"*) true ;; *) false ;; esac; then
+      printf '%s\n' "  ⚠ ignoring line ${vl[$i]} in ~/.vibe/link-projects: the name ${vn[$i]} appears more than once (duplicate), so it is not registered" >&2
+    else
+      _LINK_R_NAMES+=("${vn[$i]}")
+      _LINK_R_PATHS+=("${vp[$i]}")
+      _LINK_R_NOASK+=("${vq[$i]}")
+    fi
+    i=$((i + 1))
+  done
+  return 0
+}
+
+# _link_registry_find <name> — after _link_registry_load: sets _LINK_F_PATH and
+# _LINK_F_NOASK for an exact-string name match; returns 1 when absent.
+_link_registry_find() {
+  local i=0
+  while [ "$i" -lt "${#_LINK_R_NAMES[@]}" ]; do
+    if [ "${_LINK_R_NAMES[$i]}" = "$1" ]; then
+      _LINK_F_PATH="${_LINK_R_PATHS[$i]}"
+      _LINK_F_NOASK="${_LINK_R_NOASK[$i]}"
+      return 0
+    fi
+    i=$((i + 1))
+  done
+  return 1
+}
+
+# _link_registry_rewrite <append|remove|replace> <name> [<new line>] — the one
+# writer. Refuses a symlinked registry; creates ~/.vibe; rewrites through a
+# mktemp file in the same directory, then mv, then chmod 600. `remove` drops
+# every line whose name part is exactly <name>; `replace` puts <new line> where
+# the first such line was and drops the rest; `append` adds <new line>. Other
+# lines are kept as they are. A loose mode repaired here prints the note.
+# Returns 2 (after a ⚠) when the registry fails the writer's usability check
+# (foreign owner, unreadable, group/other-writable ~/.vibe, > 1000 lines —
+# counted in the same pass that copies it); callers exit 5 on that.
+_link_registry_rewrite() {
+  local op="$1" name="$2" new="${3:-}" f="$LINK_PROJECTS_FILE" dir tmp line
+  local loose=0 done_one=0 mode n=0
+  if [ -L "$f" ]; then
+    printf '%s\n' "  refused: ~/.vibe/link-projects is a symlink — not writing through it." >&2
+    return 1
+  fi
+  _link_registry_usable writer || return 2
+  dir="$(dirname "$f")"
+  mkdir -p "$dir" || return 1
+  if [ -e "$f" ]; then
+    mode="$(_link_mode "$f")" || mode=""
+    if [ -z "$mode" ] || [ "${mode: -2}" != "00" ]; then
+      loose=1
+    fi
+  fi
+  tmp="$(mktemp "$dir/.link-projects.XXXXXX")" || return 1
+  chmod 600 "$tmp"
+  if [ -f "$f" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      n=$((n + 1))
+      if [ "$n" -gt 1000 ]; then
+        rm -f "$tmp"
+        _link_too_long
+        return 2
+      fi
+      case "$line" in
+        *=*)
+          if [ "${line%%=*}" = "$name" ] && [ "$op" != "append" ]; then
+            if [ "$op" = "replace" ] && [ "$done_one" = 0 ]; then
+              printf '%s\n' "$new" >> "$tmp"
+              done_one=1
+            fi
+            continue
+          fi
+          ;;
+      esac
+      printf '%s\n' "$line" >> "$tmp"
+    done < "$f"
+  fi
+  if [ "$op" = "append" ] || { [ "$op" = "replace" ] && [ "$done_one" = 0 ]; }; then
+    printf '%s\n' "$new" >> "$tmp"
+  fi
+  if ! mv -f "$tmp" "$f"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  chmod 600 "$f"
+  if [ "$loose" = 1 ]; then
+    printf '%s\n' "  note: existing entries in ~/.vibe/link-projects are now trusted"
+  fi
+  return 0
+}
+
+# _link_allow [name] — register the current directory (`pwd -P`).
+_link_allow() {
+  local name="${1:-}" out path mode top rc
+  out="$(pwd -P; printf x)"
+  out="${out%x}"
+  path="${out%$'\n'}"
+  if ! _codex_path_is_single_line "$path" || ! _link_valid_path "$path"; then
+    printf '%s\n' "vibe link allow: refused: this folder's path has characters a link may not carry (allowed: letters, digits, space and . _ / + @ , : = ~ -)" >&2
+    exit 1
+  fi
+  if [ -z "$name" ]; then
+    name="$(printf '%s' "${path##*/}" | tr 'A-Z' 'a-z')"
+  fi
+  if ! _link_valid_name "$name"; then
+    printf '%s\n' "vibe link allow: refused: a link name is 1-64 characters of a-z 0-9 . _ - starting with a letter or digit (give one: vibe link allow <name>)" >&2
+    exit 1
+  fi
+  if [ "$(git -C "$path" rev-parse --is-inside-work-tree 2>/dev/null)" != "true" ]; then
+    printf '%s\n' "vibe link allow: refused: $path is not a git work tree" >&2
+    exit 1
+  fi
+  # Consent is for a whole repository, registered at its root: a subfolder
+  # would hand a link a session whose repo is wider than what was allowed.
+  top="$(git -C "$path" rev-parse --show-toplevel 2>/dev/null; printf x)"
+  top="${top%x}"
+  top="${top%$'\n'}"
+  if [ "$top" != "$path" ]; then
+    printf '%s\n' "vibe link allow: refused: run this at the top of the repository (${top:-unknown}), not in a subfolder" >&2
+    exit 1
+  fi
+  if [ -L "$LINK_PROJECTS_FILE" ]; then
+    printf '%s\n' "vibe link allow: refused: ~/.vibe/link-projects is a symlink — delete it and re-run" >&2
+    exit 1
+  fi
+  if [ -e "$LINK_PROJECTS_FILE" ] && [ ! -f "$LINK_PROJECTS_FILE" ]; then
+    printf '%s\n' "vibe link allow: refused: ~/.vibe/link-projects is not a regular file" >&2
+    exit 1
+  fi
+  # The full usability check (a loose mode alone is repaired on write).
+  _link_registry_usable writer || exit 5
+  _link_registry_load || exit 5
+  if _link_registry_find "$name"; then
+    if [ "$_LINK_F_PATH" != "$path" ]; then
+      printf '%s\n' "vibe link allow: refused: the name $name is already registered to $_LINK_F_PATH (vibe link deny $name first, or choose another name)" >&2
+      exit 1
+    fi
+    # Idempotent: same name, same path. Only a loose mode is repaired.
+    mode="$(_link_mode "$LINK_PROJECTS_FILE")" || mode=""
+    if [ -z "$mode" ] || [ "${mode: -2}" != "00" ]; then
+      chmod 600 "$LINK_PROJECTS_FILE"
+      printf '%s\n' "  note: existing entries in ~/.vibe/link-projects are now trusted"
+    fi
+    printf '%s\n' "  ✓ allowed: $name -> $path"
+    exit 0
+  fi
+  local i=0
+  while [ "$i" -lt "${#_LINK_R_PATHS[@]}" ]; do
+    if [ "${_LINK_R_PATHS[$i]}" = "$path" ]; then
+      printf '%s\n' "vibe link allow: refused: this folder is already registered as ${_LINK_R_NAMES[$i]} (vibe link deny ${_LINK_R_NAMES[$i]} first to rename it)" >&2
+      exit 1
+    fi
+    i=$((i + 1))
+  done
+  # Nested consent is refused both ways: a folder inside a registered one, or
+  # one that contains a registered one (registry paths passed the allowlist,
+  # which has no glob character, and are quoted in the patterns anyway).
+  i=0
+  while [ "$i" -lt "${#_LINK_R_PATHS[@]}" ]; do
+    case "$path/" in
+      "${_LINK_R_PATHS[$i]}/"*)
+        printf '%s\n' "vibe link allow: refused: this folder is inside ${_LINK_R_PATHS[$i]}, already registered as ${_LINK_R_NAMES[$i]}" >&2
+        exit 1
+        ;;
+    esac
+    case "${_LINK_R_PATHS[$i]}/" in
+      "$path/"*)
+        printf '%s\n' "vibe link allow: refused: this folder contains ${_LINK_R_PATHS[$i]}, already registered as ${_LINK_R_NAMES[$i]}" >&2
+        exit 1
+        ;;
+    esac
+    i=$((i + 1))
+  done
+  if [ -f "$LINK_PROJECTS_FILE" ]; then
+    # A name that only appears on invalid or duplicated lines is not
+    # registered, but appending would just add another duplicate.
+    local line
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in
+        *=*)
+          if [ "${line%%=*}" = "$name" ]; then
+            printf '%s\n' "vibe link allow: refused: ~/.vibe/link-projects already has an unusable line for $name (run vibe link deny $name, then allow again)" >&2
+            exit 1
+          fi
+          ;;
+      esac
+    done < "$LINK_PROJECTS_FILE"
+  fi
+  rc=0
+  _link_registry_rewrite append "$name" "$name=$path" || rc=$?
+  [ "$rc" = 2 ] && exit 5
+  if [ "$rc" != 0 ]; then
+    printf '%s\n' "vibe link allow: refused: could not write ~/.vibe/link-projects" >&2
+    exit 1
+  fi
+  printf '%s\n' "  ✓ allowed: $name -> $path"
+  printf '%s\n' "    vibe://open?project=$name now opens a vibe session here (after a confirmation dialog)."
+  exit 0
+}
+
+# _link_last_safe <name> — ~/.vibe/link-last, and <name>'s stamp and dialog
+# lock inside it, must not be symlinks (a symlink would aim a stamp write, a
+# lock or a removal somewhere else). Prints a ⚠ and returns 1 otherwise.
+_link_last_safe() {
+  local name="$1" p
+  for p in "$LINK_LAST_DIR" "$LINK_LAST_DIR/$name" "$LINK_LAST_DIR/$name.dialog"; do
+    if [ -L "$p" ]; then
+      printf '%s\n' "  ⚠ $p is a symlink — refusing to use it (delete it and try again)." >&2
+      return 1
+    fi
+  done
+  if [ -e "$LINK_LAST_DIR" ] && [ ! -d "$LINK_LAST_DIR" ]; then
+    printf '%s\n' "  ⚠ ~/.vibe/link-last is not a directory — refusing to use it (delete it and try again)." >&2
+    return 1
+  fi
+  return 0
+}
+
+# _link_deny <name> — drop every line for <name> (idempotent).
+_link_deny() {
+  local name="$1" rc
+  if ! _link_valid_name "$name"; then
+    printf '%s\n' "vibe link deny: refused: not a valid link name" >&2
+    exit 1
+  fi
+  if [ -L "$LINK_PROJECTS_FILE" ]; then
+    printf '%s\n' "vibe link deny: refused: ~/.vibe/link-projects is a symlink — not writing through it" >&2
+    exit 1
+  fi
+  if [ ! -e "$LINK_PROJECTS_FILE" ]; then
+    printf '%s\n' "  ✓ $name removed from ~/.vibe/link-projects (already absent)"
+    exit 0
+  fi
+  if [ ! -f "$LINK_PROJECTS_FILE" ]; then
+    printf '%s\n' "vibe link deny: refused: ~/.vibe/link-projects is not a regular file" >&2
+    exit 1
+  fi
+  rc=0
+  _link_registry_rewrite remove "$name" || rc=$?
+  [ "$rc" = 2 ] && exit 5
+  if [ "$rc" != 0 ]; then
+    printf '%s\n' "vibe link deny: refused: could not rewrite ~/.vibe/link-projects" >&2
+    exit 1
+  fi
+  # Consent is withdrawn above whatever ~/.vibe/link-last holds; only the
+  # stamp clean-up is skipped (with a ⚠ naming the symlink) when anything
+  # there is a symlink, so nothing is removed through one.
+  if _link_last_safe "$name"; then
+    rm -f "$LINK_LAST_DIR/$name"
+  else
+    printf '%s\n' "  ⚠ $name's rate-limit stamp was not removed (see above); the link consent itself is withdrawn." >&2
+  fi
+  printf '%s\n' "  ✓ $name removed from ~/.vibe/link-projects"
+  exit 0
+}
+
+# _link_list — every valid entry; `(none)` when empty, missing or unusable.
+_link_list() {
+  local i=0 suffix
+  if ! _link_registry_usable || [ ! -f "$LINK_PROJECTS_FILE" ] || ! _link_registry_load; then
+    printf '%s\n' "  (none)"
+    exit 0
+  fi
+  if [ "${#_LINK_R_NAMES[@]}" -eq 0 ]; then
+    printf '%s\n' "  (none)"
+    exit 0
+  fi
+  while [ "$i" -lt "${#_LINK_R_NAMES[@]}" ]; do
+    suffix=""
+    [ "${_LINK_R_NOASK[$i]}" = 1 ] && suffix=" (no confirm)"
+    printf '%s\n' "  ${_LINK_R_NAMES[$i]}  ${_LINK_R_PATHS[$i]}$suffix"
+    i=$((i + 1))
+  done
+  exit 0
+}
+
+# _link_terminal <name> — set VIBE_TERMINAL in $CONFIG_FILE: every existing
+# VIBE_TERMINAL= line (with or without `export`) becomes exactly one
+# `VIBE_TERMINAL=<name>`; other lines and the file mode are preserved.
+_link_terminal() {
+  local name="$1" f="$CONFIG_FILE" dir tmp line mode="" written=0 re
+  re='^[[:space:]]*(export[[:space:]]+)?VIBE_TERMINAL='
+  if ! _link_terminal_known "$name"; then
+    printf '%s\n' "vibe link terminal: refused: choose one of Terminal, iTerm, Ghostty, kitty, WezTerm (macOS) or Ghostty, kitty, WezTerm, gnome-terminal (Linux)" >&2
+    exit 1
+  fi
+  if [ -L "$f" ]; then
+    printf '%s\n' "vibe link terminal: refused: $f is a symlink — not writing through it" >&2
+    exit 1
+  fi
+  if [ -e "$f" ] && [ ! -f "$f" ]; then
+    printf '%s\n' "vibe link terminal: refused: $f is not a regular file" >&2
+    exit 1
+  fi
+  dir="$(dirname "$f")"
+  if ! mkdir -p "$dir" || ! tmp="$(mktemp "$dir/.vibe-config.XXXXXX")"; then
+    printf '%s\n' "vibe link terminal: refused: cannot write in $dir" >&2
+    exit 1
+  fi
+  if [ -f "$f" ]; then
+    mode="$(_link_mode "$f")" || mode=""
+    while IFS= read -r line || [ -n "$line" ]; do
+      if [[ "$line" =~ $re ]]; then
+        if [ "$written" = 0 ]; then
+          printf '%s\n' "VIBE_TERMINAL=$name" >> "$tmp"
+          written=1
+        fi
+        continue
+      fi
+      printf '%s\n' "$line" >> "$tmp"
+    done < "$f"
+  fi
+  [ "$written" = 1 ] || printf '%s\n' "VIBE_TERMINAL=$name" >> "$tmp"
+  chmod "${mode:-600}" "$tmp" 2>/dev/null || chmod 600 "$tmp"
+  if ! mv -f "$tmp" "$f"; then
+    rm -f "$tmp"
+    printf '%s\n' "vibe link terminal: refused: could not replace $f" >&2
+    exit 1
+  fi
+  printf '%s\n' "  ✓ VIBE_TERMINAL=$name saved in $f (vibe:// links open in $name)"
+  if ! _link_terminal_for_os "$(_link_os)" "$name"; then
+    printf '%s\n' "  note: $name is not one vibe link can drive on this system." >&2
+  fi
+  exit 0
+}
+
+_link_print_argv() {
+  local a
+  printf 'DRYRUN %s\n' "$1"
+  shift
+  for a in "$@"; do
+    printf '  argv: %s\n' "$a"
+  done
+}
+
+# _link_unknown_dialog_ok — may the "no vibe project called" dialog be shown
+# now? At most one every 5 s across ALL names (a page cannot pop a stream of
+# them), tracked by the global stamp ~/.vibe/link-last/.unknown under the
+# same rules as a project stamp: a symlink there refuses (⚠, exit 5); an
+# unreadable or future mtime counts as recent (the message names the file).
+# A real run writes the stamp; a dry run writes nothing.
+_link_unknown_dialog_ok() {
+  local u="$LINK_LAST_DIR/.unknown" p age
+  for p in "$LINK_LAST_DIR" "$u"; do
+    if [ -L "$p" ]; then
+      printf '%s\n' "  ⚠ $p is a symlink — refusing to use it (delete it and try again)." >&2
+      exit 5
+    fi
+  done
+  if [ -e "$LINK_LAST_DIR" ] && [ ! -d "$LINK_LAST_DIR" ]; then
+    printf '%s\n' "  ⚠ ~/.vibe/link-last is not a directory — refusing to use it (delete it and try again)." >&2
+    exit 5
+  fi
+  if [ -e "$u" ]; then
+    age="$(_link_mtime_age "$u")"
+    if [ -n "$age" ] && [ "$age" -lt 0 ]; then
+      printf '%s\n' "  (no dialog: $u is dated in the future; delete $u if no confirmation is open)" >&2
+      return 1
+    fi
+    if [ -z "$age" ] || [ "$age" -le 4 ]; then
+      printf '%s\n' "  (no dialog: another unknown-project link was shown less than 5 seconds ago)" >&2
+      return 1
+    fi
+  fi
+  if [ "${VIBE_LINK_DRY_RUN:-}" != "1" ]; then
+    if [ ! -d "$LINK_LAST_DIR" ]; then
+      mkdir -p "$LINK_LAST_DIR" 2>/dev/null || true
+      chmod 700 "$LINK_LAST_DIR" 2>/dev/null || true
+    fi
+    rm -f "$u" 2>/dev/null
+    touch "$u" 2>/dev/null || true
+  fi
+  return 0
+}
+
+# _link_unknown_project <os> <name> <detail> [quiet] — exit 2; on macOS also
+# a short dialog naming only <name> (which passed the name regex) — never URL
+# text — rate-limited by _link_unknown_dialog_ok. `quiet` (the re-check after
+# the confirmation dialog) is stderr only.
+_link_unknown_project() {
+  local os="$1" name="$2" detail="$3" quiet="${4:-}" script
+  printf '%s\n' "vibe link: no vibe project called $name$detail. Run \"vibe link allow\" in its folder." >&2
+  if [ "$os" = "Darwin" ] && [ -z "${_VIBE_LINK_ASSUME_ENV:-}" ] && [ -z "$quiet" ] &&
+     _link_unknown_dialog_ok; then
+    script="display dialog \"No vibe project called $name. Run \\\"vibe link allow\\\" in its folder.\" with title \"vibe\" buttons {\"OK\"} default button \"OK\" giving up after 60"
+    if [ "${VIBE_LINK_DRY_RUN:-}" = "1" ]; then
+      _link_print_argv dialog osascript -e "$script"
+    else
+      osascript -e "$script" >/dev/null 2>&1 || true
+    fi
+  fi
+  exit 2
+}
+
+# _link_parse_url <url> — URL grammar steps 1-4, on the string alone (nothing
+# on disk is read). Sets _LINK_U_PROJECT/_LINK_U_TASK/_LINK_U_TTY, or prints
+# the reason and returns 1. LC_ALL=C is local to THIS function so the C locale
+# never leaks into the terminal/session launched later.
+_link_parse_url() {
+  local url="$1" LC_ALL=C re="$_LINK_URL_RE" rest pair key value
+  local seen_p=0 seen_t=0 seen_y=0
+  _LINK_U_PROJECT=""
+  _LINK_U_TASK=""
+  _LINK_U_TTY=""
+  if [ "${#url}" -gt 1024 ] || ! [[ "$url" =~ $re ]]; then
+    printf '%s\n' "vibe link: refused URL (not a vibe://open?project=<name> link)" >&2
+    return 1
+  fi
+  rest="${url#*\?}"
+  while :; do
+    pair="${rest%%&*}"
+    case "$pair" in
+      *=*=*|"") printf '%s\n' "vibe link: refused URL (malformed query)" >&2; return 1 ;;
+    esac
+    case "$pair" in
+      *=*) ;;
+      *) printf '%s\n' "vibe link: refused URL (malformed query)" >&2; return 1 ;;
+    esac
+    key="${pair%%=*}"
+    value="${pair#*=}"
+    if [ -z "$key" ] || [ -z "$value" ]; then
+      printf '%s\n' "vibe link: refused URL (empty key or value)" >&2
+      return 1
+    fi
+    case "$key" in
+      project)
+        [ "$seen_p" = 0 ] || { printf '%s\n' "vibe link: refused URL (project given twice)" >&2; return 1; }
+        seen_p=1
+        _LINK_U_PROJECT="$value"
+        ;;
+      task)
+        [ "$seen_t" = 0 ] || { printf '%s\n' "vibe link: refused URL (task given twice)" >&2; return 1; }
+        seen_t=1
+        _LINK_U_TASK="$value"
+        ;;
+      tty)
+        [ "$seen_y" = 0 ] || { printf '%s\n' "vibe link: refused URL (tty given twice)" >&2; return 1; }
+        seen_y=1
+        _LINK_U_TTY="$value"
+        ;;
+    esac
+    case "$rest" in
+      *"&"*) rest="${rest#*&}" ;;
+      *) break ;;
+    esac
+  done
+  if [ "$seen_p" = 0 ] || ! _link_valid_name "$_LINK_U_PROJECT"; then
+    printf '%s\n' "vibe link: refused URL (missing or invalid project name)" >&2
+    return 1
+  fi
+  if [ "$seen_t" = 1 ] && ! _link_valid_task "$_LINK_U_TASK"; then
+    printf '%s\n' "vibe link: refused URL (task must be ABBR-number, taskandeye://node/UUID or UUID)" >&2
+    return 1
+  fi
+  if [ "$seen_y" = 1 ] && ! _link_terminal_known "$_LINK_U_TTY"; then
+    printf '%s\n' "vibe link: refused URL (unknown tty)" >&2
+    return 1
+  fi
+  return 0
+}
+
+# _link_path_ok <path> — the registered folder still exists as a directory
+# and resolves (cd + pwd -P) to exactly the stored string, so a folder swapped
+# for a symlink does not retarget the consent.
+_link_path_ok() {
+  [ -d "$1" ] && [ "$( (cd "$1" 2>/dev/null && pwd -P) 2>/dev/null)" = "$1" ]
+}
+
+# _link_as_quote <text> — <text> with every `"` written as `\"`, for use
+# inside an AppleScript string literal. Only ever given the command line
+# below, whose variable words passed the path/task allowlists (no `"`, no
+# backslash), so the only `"`s are _LINK_WRAPPER's own.
+_link_as_quote() {
+  local rest="$1" out=""
+  while :; do
+    case "$rest" in
+      *'"'*)
+        out="$out${rest%%\"*}\\\""
+        rest="${rest#*\"}"
+        ;;
+      *) break ;;
+    esac
+  done
+  printf '%s' "$out$rest"
+}
+
+# _link_mtime_age <file> — seconds since <file>'s mtime (negative when dated
+# in the future), or nothing when the mtime cannot be read (callers treat
+# that as "fresh": fail closed).
+_link_mtime_age() {
+  local mtime now
+  mtime="$(_link_mtime "$1")" || mtime=""
+  case "$mtime" in
+    ''|*[!0-9]*) return 0 ;;
+  esac
+  now="$(date +%s)"
+  printf '%s\n' "$((now - mtime))"
+}
+
+# The dialog lock held by this process and the token written inside it
+# (both empty when none is held).
+_LINK_LOCK=""
+_LINK_LOCK_TOKEN=""
+_LINK_LOCK_HOOKED=""
+
+# _link_unlock — remove the dialog lock, but only while it is still the one
+# this process created (its token file matches): a lock that went stale and
+# was replaced by another click is that click's, and is left alone.
+_link_unlock() {
+  local t=""
+  if [ -n "$_LINK_LOCK" ]; then
+    if [ -d "$_LINK_LOCK" ] && [ ! -L "$_LINK_LOCK" ]; then
+      { IFS= read -r t < "$_LINK_LOCK/token"; } 2>/dev/null || true
+      if [ -n "$t" ] && [ "$t" = "$_LINK_LOCK_TOKEN" ]; then
+        rm -f "$_LINK_LOCK/token" 2>/dev/null || true
+        rmdir "$_LINK_LOCK" 2>/dev/null || true
+      fi
+    fi
+    _LINK_LOCK=""
+    _LINK_LOCK_TOKEN=""
+  fi
+}
+
+# _link_lock_make <lock> — `mkdir` the lock (the atomic step) and write this
+# process's token inside it; returns 1 when the lock already exists.
+_link_lock_make() {
+  local token
+  mkdir "$1" 2>/dev/null || return 1
+  token="$$.${RANDOM}${RANDOM}.$(date +%s)"
+  _LINK_LOCK="$1"
+  _LINK_LOCK_TOKEN="$token"
+  printf '%s\n' "$token" > "$1/token" 2>/dev/null || true
+  if [ -z "$_LINK_LOCK_HOOKED" ]; then
+    vibe_exit_hook_add '_link_unlock'
+    _LINK_LOCK_HOOKED=1
+  fi
+  return 0
+}
+
+# _link_lock_state <lock> — `held`, `future` or `stale` for an existing lock:
+# 70 s or more old, or more than 70 s in the future, is stale (a killed
+# handler; the dialog gives up after 60 s); up to 70 s in the future is
+# `future`; younger, or of unreadable age, is held (fail closed).
+_link_lock_state() {
+  local age
+  age="$(_link_mtime_age "$1")"
+  if [ -z "$age" ]; then
+    printf 'held\n'
+  elif [ "$age" -ge 70 ] || [ "$age" -lt -70 ]; then
+    printf 'stale\n'
+  elif [ "$age" -lt 0 ]; then
+    printf 'future\n'
+  else
+    printf 'held\n'
+  fi
+}
+
+# _link_lock_busy <name> <lock> <state> — the exit-3 refusal for a held lock.
+_link_lock_busy() {
+  if [ "$3" = "future" ]; then
+    printf '%s\n' "vibe link: a confirmation for $1 is already open — ignoring this click ($2 is dated in the future; delete $2 if no confirmation is open)" >&2
+  else
+    printf '%s\n' "vibe link: a confirmation for $1 is already open — ignoring this click" >&2
+  fi
+  exit 3
+}
+
+# _link_lock <name> — take ~/.vibe/link-last/<name>.dialog with `mkdir`
+# (atomic). Held across the stamp check, the dialog and the stamp write, so
+# one click at a time per project gets that far. A held or future-dated lock
+# → exit 3. A stale one is replaced atomically: only the racer that wins a
+# second `mkdir` (<name>.dialog.break, so no two racers ever break the same
+# lock) re-checks it is still stale, RENAMES it with `mv` to a unique
+# <name>.dialog.stale.<pid>.<random>, removes that, and retries `mkdir` once;
+# every other racer, and a breaker whose rename or retry fails (another click
+# took the free lock first), treats the lock as held. A .break left by a
+# killed handler is cleared once it is over 70 s old. Released by
+# _link_unlock (explicitly before launch, and by the launcher's EXIT
+# dispatcher on every other exit); a handler killed by a signal leaves the
+# lock to go stale.
+_link_lock() {
+  local name="$1" lock="$LINK_LAST_DIR/$1.dialog" brk stale won=1
+  brk="$lock.break"
+  _link_lock_make "$lock" && return 0
+  if [ "$(_link_lock_state "$lock")" = "stale" ] && [ ! -L "$lock" ]; then
+    if [ -d "$brk" ] && [ ! -L "$brk" ] && [ "$(_link_lock_state "$brk")" = "stale" ]; then
+      rmdir "$brk" 2>/dev/null || true
+    fi
+    if mkdir "$brk" 2>/dev/null; then
+      if [ "$(_link_lock_state "$lock")" = "stale" ] && [ ! -L "$lock" ]; then
+        stale="$lock.stale.$$.${RANDOM}${RANDOM}"
+        if [ ! -e "$stale" ] && [ ! -L "$stale" ] && mv "$lock" "$stale" 2>/dev/null; then
+          rm -rf "$stale" 2>/dev/null || true
+          _link_lock_make "$lock" && won=0
+        fi
+      fi
+      rmdir "$brk" 2>/dev/null || true
+      [ "$won" = 0 ] && return 0
+    fi
+    _link_lock_busy "$name" "$lock" held
+  fi
+  _link_lock_busy "$name" "$lock" "$(_link_lock_state "$lock")"
+}
+
+# _link_record_always <name> <path> — the "Always" rewrite: the line gains
+# `<TAB>noask`. A registry that fails the writer's usability check refuses
+# the open (exit 5); any other write failure only warns.
+_link_record_always() {
+  local rc=0
+  _link_registry_rewrite replace "$1" "$1=$2"$'\t'"noask" || rc=$?
+  [ "$rc" = 2 ] && exit 5
+  if [ "$rc" != 0 ]; then
+    printf '%s\n' "  ⚠ could not record 'always' for $1" >&2
+  fi
+  return 0
+}
+
+# _link_open <url> — validate, look up, confirm, launch. See the section
+# header for the exit codes; nothing on disk is read before the URL passes.
+_link_open() {
+  local project task tty dry=0 assume="${_VIBE_LINK_ASSUME_ENV:-}"
+  local os vibe_path path noask term stamp age script reply rc cmdline lstate
+  local -a task_args=() run launch
+  [ "${VIBE_LINK_DRY_RUN:-}" = "1" ] && dry=1
+
+  # Steps 1-5: the URL alone. Any failure → exit 2, nothing else touched.
+  _link_parse_url "$1" || exit 2
+  project="$_LINK_U_PROJECT"
+  task="$_LINK_U_TASK"
+  tty="$_LINK_U_TTY"
+
+  # The launcher's own canonical path (resolved once, at the top of this
+  # file) goes into the terminal command too.
+  vibe_path="${VIBE_LAUNCHER_PATH:-}"
+  if [ -z "$vibe_path" ] || ! _codex_path_is_single_line "$vibe_path" || ! _link_valid_path "$vibe_path"; then
+    printf '%s\n' "vibe link: refused: launcher path has characters a link may not carry — install vibe under a plain path" >&2
+    exit 7
+  fi
+
+  os="$(_link_os)"
+
+  # Step 6a: registry lookup.
+  if ! _link_registry_usable; then
+    exit 5
+  fi
+  _link_registry_load || exit 5
+  if ! _link_registry_find "$project"; then
+    _link_unknown_project "$os" "$project" ""
+  fi
+  path="$_LINK_F_PATH"
+  noask="$_LINK_F_NOASK"
+  if ! _link_path_ok "$path"; then
+    _link_unknown_project "$os" "$project" " at $path any more (the folder is missing or was moved)"
+  fi
+
+  # Step 6b: terminal resolution — before any dialog, lock or stamp.
+  if [ -n "$tty" ]; then
+    if ! _link_terminal_for_os "$os" "$tty"; then
+      printf '%s\n' "vibe link: the terminal $tty is not available on this system" >&2
+      exit 2
+    fi
+    term="$tty"
+  elif [ -n "${VIBE_TERMINAL:-}" ] && _link_terminal_for_os "$os" "$VIBE_TERMINAL"; then
+    term="$VIBE_TERMINAL"
+  else
+    if [ -n "${VIBE_TERMINAL:-}" ]; then
+      printf '%s\n' "  ⚠ VIBE_TERMINAL in your vibe config is not a terminal vibe link supports on this system." >&2
+    fi
+    if [ "$os" = "Darwin" ]; then
+      term="Terminal"
+    else
+      printf '%s\n' "vibe link: no terminal chosen for links — run: vibe link terminal <Ghostty|kitty|WezTerm|gnome-terminal>" >&2
+      exit 6
+    fi
+  fi
+  if [ "$os" = "Linux" ]; then
+    local prog
+    case "$term" in
+      Ghostty) prog=ghostty ;;
+      kitty) prog=kitty ;;
+      WezTerm) prog=wezterm ;;
+      *) prog=gnome-terminal ;;
+    esac
+    if ! command -v "$prog" >/dev/null 2>&1; then
+      printf '%s\n' "vibe link: $prog is not installed — install it or choose another with: vibe link terminal <name>" >&2
+      exit 6
+    fi
+  fi
+
+  # Step 6c: ~/.vibe/link-last must hold no symlink; then the dialog lock
+  # (real runs only: a dry run creates nothing, but still honours a fresh
+  # lock someone else holds), then the rate limit (per project). The stamp
+  # check fails closed: an unreadable or future mtime counts as limited.
+  if ! _link_last_safe "$project"; then
+    exit 5
+  fi
+  stamp="$LINK_LAST_DIR/$project"
+  if [ "$dry" = 1 ]; then
+    if [ -e "$stamp.dialog" ]; then
+      lstate="$(_link_lock_state "$stamp.dialog")"
+      [ "$lstate" = "stale" ] || _link_lock_busy "$project" "$stamp.dialog" "$lstate"
+    fi
+  else
+    if [ ! -d "$LINK_LAST_DIR" ]; then
+      mkdir -p "$LINK_LAST_DIR" 2>/dev/null || true
+      chmod 700 "$LINK_LAST_DIR" 2>/dev/null || true
+    fi
+    _link_last_safe "$project" || exit 5
+    _link_lock "$project"
+  fi
+  if [ -e "$stamp" ]; then
+    age="$(_link_mtime_age "$stamp")"
+    if [ -n "$age" ] && [ "$age" -lt 0 ]; then
+      printf '%s\n' "vibe link: $project counts as opened less than 5 seconds ago — ignoring this click ($stamp is dated in the future; delete $stamp if no confirmation is open)" >&2
+      exit 3
+    fi
+    if [ -z "$age" ] || [ "$age" -le 4 ]; then
+      printf '%s\n' "vibe link: $project was opened less than 5 seconds ago — ignoring this click" >&2
+      exit 3
+    fi
+  fi
+
+  # Step 6d: confirmation.
+  if [ "$noask" != 1 ]; then
+    if [ -n "$assume" ]; then
+      case "$assume" in
+        open) ;;
+        always)
+          _link_record_always "$project" "$path"
+          ;;
+        *)
+          printf '%s\n' "vibe link: cancelled" >&2
+          exit 4
+          ;;
+      esac
+    elif [ "$os" = "Darwin" ]; then
+      script="display dialog \"Open a vibe session in project $project?\" & return & return & \"$path\" with title \"vibe\" buttons {\"Cancel\", \"Always for this project\", \"Open\"} default button \"Cancel\" cancel button \"Cancel\" giving up after 60"
+      if [ "$dry" = 1 ]; then
+        _link_print_argv dialog osascript -e "$script"
+      else
+        rc=0
+        reply="$(osascript -e "$script" 2>/dev/null)" || rc=$?
+        case "$reply" in
+          *"gave up:true"*) rc=1 ;;
+        esac
+        if [ "$rc" != 0 ]; then
+          printf '%s\n' "vibe link: cancelled" >&2
+          exit 4
+        fi
+        case "$reply" in
+          *"button returned:Always for this project"*)
+            _link_record_always "$project" "$path"
+            ;;
+          *"button returned:Open"*) ;;
+          *)
+            printf '%s\n' "vibe link: cancelled" >&2
+            exit 4
+            ;;
+        esac
+      fi
+    else
+      if ! command -v zenity >/dev/null 2>&1; then
+        printf '%s\n' "vibe link: cannot ask for confirmation (install zenity) — cancelled" >&2
+        exit 4
+      fi
+      local -a zen=(zenity --question --no-markup --title=vibe "--text=Open a vibe session in project $project? Folder: $path" --ok-label=Open --cancel-label=Cancel --timeout=60)
+      if [ "$dry" = 1 ]; then
+        _link_print_argv dialog "${zen[@]}"
+      elif ! "${zen[@]}" >/dev/null 2>&1; then
+        printf '%s\n' "vibe link: cancelled" >&2
+        exit 4
+      fi
+    fi
+  fi
+
+  # The folder is checked again AFTER the dialog: it may have been swapped
+  # while the dialog was up (and the wrapper re-checks it once more, in the
+  # new terminal, right before exec).
+  if ! _link_path_ok "$path"; then
+    _link_unknown_project "$os" "$project" " at $path any more (the folder is missing or was moved)" quiet
+  fi
+
+  # Launch argv: every terminal runs the constant _LINK_WRAPPER through
+  # /bin/sh with the folder, the launcher and the task pair as separate argv
+  # words. Terminal and iTerm take one shell command line instead: the same
+  # words, the variable ones single-quoted (both paths passed the allowlist
+  # and the task regex admits no quote, so no quote can be closed), and every
+  # `"` of the wrapper escaped for the AppleScript string literal.
+  [ -n "$task" ] && task_args=(--task "$task")
+  run=(/bin/sh -c "$_LINK_WRAPPER" vibe-link "$path" "$vibe_path" ${task_args[@]+"${task_args[@]}"})
+  cmdline="/bin/sh -c '$_LINK_WRAPPER' vibe-link '$path' '$vibe_path'"
+  [ -n "$task" ] && cmdline="$cmdline --task '$task'"
+  cmdline="$(_link_as_quote "$cmdline")"
+  case "$os:$term" in
+    Darwin:Terminal)
+      launch=(osascript -e "tell application \"Terminal\" to do script \"$cmdline\"" -e 'tell application "Terminal" to activate') ;;
+    Darwin:iTerm)
+      launch=(osascript -e 'tell application "iTerm"' -e 'create window with default profile' -e "tell current session of current window to write text \"$cmdline\"" -e 'end tell') ;;
+    Darwin:Ghostty)
+      launch=(open -na Ghostty --args -e "${run[@]}") ;;
+    Darwin:kitty)
+      launch=(open -na kitty --args "${run[@]}") ;;
+    Darwin:WezTerm)
+      launch=(open -na WezTerm --args start -- "${run[@]}") ;;
+    Linux:Ghostty)
+      launch=(ghostty -e "${run[@]}") ;;
+    Linux:kitty)
+      launch=(kitty "${run[@]}") ;;
+    Linux:WezTerm)
+      launch=(wezterm start -- "${run[@]}") ;;
+    *)
+      launch=(gnome-terminal -- "${run[@]}") ;;
+  esac
+
+  if [ "$dry" = 1 ]; then
+    _link_print_argv launch "${launch[@]}"
+    exit 0
+  fi
+
+  # The stamp is written after confirmation, with the dialog lock still held
+  # (so a racing click sees either the lock or the stamp), immediately before
+  # launch: a cancelled dialog does not consume it, a failed launch does.
+  rm -f "$stamp" 2>/dev/null
+  touch "$stamp" 2>/dev/null || true
+  _link_unlock
+  if [ "$os" = "Linux" ]; then
+    # The terminal program IS the session window; hand this process over to
+    # it rather than block the link handler until the window closes.
+    exec "${launch[@]}"
+  fi
+  if ! "${launch[@]}" >/dev/null 2>&1; then
+    printf '%s\n' "vibe link: could not start $term" >&2
+    exit 1
+  fi
+  exit 0
+}
+
+# link_handle_subcommand <args...> — dispatcher for `vibe link` (and, via the
+# link-open block, `vibe link-open <url>`). No default action: a typo or a
+# wrong argument count prints the usage line and exits 1.
+link_handle_subcommand() {
+  shift  # consume "link"
+  local subcmd="${1:-}"
+  case "$subcmd" in
+    allow)
+      [ "$#" -le 2 ] || _link_usage
+      _link_allow "${2:-}"
+      ;;
+    deny)
+      [ "$#" -eq 2 ] || _link_usage
+      _link_deny "$2"
+      ;;
+    list)
+      [ "$#" -eq 1 ] || _link_usage
+      _link_list
+      ;;
+    terminal)
+      [ "$#" -eq 2 ] || _link_usage
+      _link_terminal "$2"
+      ;;
+    open)
+      [ "$#" -eq 2 ] || _link_usage
+      _link_open "$2"
+      ;;
+    *)
+      _link_usage
       ;;
   esac
 }
@@ -4627,8 +5755,10 @@ parse_vibe_args() {
         ;;
       --task)
         shift
-        if ! [[ "${1:-}" =~ ^[A-Za-z][A-Za-z0-9]*-[0-9]+$|^taskandeye://node/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
-          echo "--task needs an ABBR-number or taskandeye://node/UUID reference" >&2; exit 1
+        # VIBE_TASK_REF_RE: defined in the `vibe link` section, shared with
+        # the vibe:// link parser.
+        if ! [[ "${1:-}" =~ $VIBE_TASK_REF_RE ]]; then
+          echo "--task needs an ABBR-number, taskandeye://node/UUID or UUID reference" >&2; exit 1
         fi
         [ -z "$TASK_REF_ARG" ] || { echo "Only one --task binding is allowed" >&2; exit 1; }
         TASK_REF_ARG=$1
@@ -5439,6 +6569,23 @@ fi
 if [ "${1:-}" = "codex" ]; then
   codex_handle_subcommand "$@"
   # codex_handle_subcommand's sub-functions always exit; this is a safety net.
+  exit $?
+fi
+
+# ── Link subcommand dispatch (task_062) ───────────────────────────────────────
+# Must be BEFORE the --* flag-parser loop — exactly like `codex` above.
+# Host-side only: `vibe link` edits ~/.vibe/link-projects or $CONFIG_FILE, and
+# `vibe link-open <url>` (what the OS URL handler runs; identical to
+# `vibe link open <url>`) starts a NEW terminal running an interactive vibe.
+# Neither enters workspace resolution, preflight, image build or launch here.
+if [ "${1:-}" = "link" ]; then
+  link_handle_subcommand "$@"
+  # link_handle_subcommand's sub-functions always exit; this is a safety net.
+  exit $?
+fi
+if [ "${1:-}" = "link-open" ]; then
+  shift
+  link_handle_subcommand link open "$@"
   exit $?
 fi
 

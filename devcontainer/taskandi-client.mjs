@@ -32,7 +32,7 @@ const TOOL_SPECS = Object.freeze({
     release: toolSpec({ task: 'string', reason: 'string' }),
   }),
 });
-const TASK_REF = /^(?:[A-Za-z][A-Za-z0-9]*-[0-9]+|taskandeye:\/\/node\/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/;
+const TASK_REF = /^(?:[A-Za-z][A-Za-z0-9]*-[0-9]+|taskandeye:\/\/node\/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9A-Fa-f]{8}-(?:[0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12})$/;
 const FALLBACK = Object.freeze({ bound: false, channel: 'file-fallback' });
 const revisionOf = config => config?.contractRevision ?? CONTRACT_REVISION;
 function requireV2(config, what) { if (revisionOf(config) !== CONTRACT_REVISION) fail(`${what} requires contract ${CONTRACT_REVISION}`); }

@@ -263,6 +263,20 @@ What is enforced once it starts: the launcher hands off to `/usr/local/bin/codex
 
 See **MANUAL-TESTS Test 54** for the post-relaunch end-to-end checks, and **Test 55** for the Codex system policy and liveness checks.
 
+### Open vibe from a link
+
+A `vibe://open?project=<name>` link (Task&I puts one on each task, with `&task=<ref>`: `ABBR-12`, `taskandeye://node/<uuid>` or a bare task UUID, the same forms `vibe --task` takes) opens an interactive vibe session in that project, in a new terminal window, on the Mac or Linux machine you click it on. Nothing runs until you've seen it: the link only starts a normal `vibe` that waits for you.
+
+```bash
+cd ~/Projects/demo && vibe link allow   # let links open this folder, as "demo" (or: vibe link allow <name>)
+vibe link list                          # what links can open; vibe link deny <name> withdraws one
+vibe link terminal iTerm                # which terminal: Terminal (macOS default), iTerm, Ghostty, kitty, WezTerm; on Linux Ghostty, kitty, WezTerm or gnome-terminal (Linux has no default)
+```
+
+Safety model: a link is only a request, and the consent is your machine's `~/.vibe/link-projects` (written only by `vibe link allow`, never reachable from inside a container), so a link can open only a project you registered and can carry nothing but a project name, a task reference and a terminal name, all checked against strict patterns. `vibe link allow` registers a repository at its top folder only, never a subfolder or a folder nested inside (or around) one already registered. Each click asks first (Open, Always for this project, or Cancel; Cancel is the default and the dialog gives up after 60 seconds); a second click while that dialog is up is ignored, and the same project can't be opened twice within 5 seconds (a stamp or dialog lock in `~/.vibe/link-last/` dated in the future also blocks; the message names the file to delete). An unknown project name shows at most one "No vibe project called …" dialog every 5 seconds. `vibe link deny` always withdraws consent, even when something in `~/.vibe/link-last/` is a symlink it refuses to clean up. The new terminal changes into the folder itself and refuses to start vibe if the folder was swapped for a symlink in the meantime. `VIBE_LINK_ASSUME` (a test hook that answers the dialog) counts only from the environment, never from `~/.vibe/config`. A link doesn't notice a session already running for that project; a second one joins the same working tree.
+
+`vibe link open <url>` (or `vibe link-open <url>`) handles a link by hand. Registering `vibe://` with macOS and Linux so a click reaches it, `vibe link --install`, comes in the next release.
+
 ### Second brain (optional)
 
 vibe can mount a shared "second brain" — any local git repo of Markdown notes — into every container at `/brain2` (read-write), so cross-project knowledge (decisions, conventions, operational notes) is readable and appendable from any session, independent of any single project's git history. Point `VIBE_BRAIN2_PATH` at the repo in `~/.vibe/config` (default `~/brain2`; `=off` to disable). It is entirely optional: vibe works fully without it, and a machine with no such repo gets a silent no-op.
@@ -319,6 +333,7 @@ And cap Docker itself: **Docker Desktop > Settings > Resources > Advanced > "Dis
 | `~/.vibe/tokens` | GitHub PATs (`owner/repo=ghp_...`); optional `ZOTERO_API_KEY=...` line (slash-free key → no collision with a repo entry) surfaced in-container as `$ZOTERO_API_KEY` for direct Zotero web-API calls; optional `OPENPROJECT_MCP_URL=...` + `OPENPROJECT_MCP_BEARER=...` lines — the OpenProject MCP endpoint and bearer, loaded only into projects that opt in (see Security model). A shared repo's PAT lives here too, keyed by its slug — same store, same `chmod 600`. Rotate an expired/revoked PAT with `vibe pat [owner/repo]` (re-prompts, hidden input, overwrites in place — no rebuild needed); a launch also auto-detects a stored PAT GitHub now rejects with `401` and re-runs the same prompt right when it bites (`VIBE_PAT_CHECK=0` skips the check). Never commit or sync to the cloud |
 | `~/.vibe/repos` | Shared-repo machine registry (`owner/repo=/local/path`), `chmod 600`. Written by `vibe repos add`; per-machine, so two Macs sharing a project each register their own local checkout path |
 | `~/.vibe/codex-allow` | Codex login-mount consent registry (one canonical project path per line), `chmod 600`. Written by `vibe codex allow`, cleared by `vibe codex deny`. Never mounted into a container, so nothing running inside one can grant itself the ChatGPT login — the in-project `.vibe-allow-codex` marker alone is not enough |
+| `~/.vibe/link-projects` | Projects a `vibe://` link may open (`name=path`, optionally a tab and `noask` after "Always for this project"), `chmod 600`. Written by `vibe link allow`/`deny`; `~/.vibe/link-last/` holds the 5-second click stamps |
 | `~/.vibe/skipped` | Projects opted out of GitHub |
 | `~/.vibe/learning.config` | Learning library location + visibility |
 
