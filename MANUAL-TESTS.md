@@ -2007,3 +2007,13 @@ Run on the Mac after the next slice (`vibe link --install`) lands, so a click re
 - [ ] `vibe link allow` in a subfolder of a repository, or in a repository inside (or containing) one already registered, is refused.
 - [ ] `vibe://open?project=nothere` shows the "No vibe project called nothere" dialog and opens nothing; a second unknown link within 5 seconds (any name) shows no further dialog.
 - [ ] With a bare task UUID in the link, inside the container the Task&I client and `vibe codex` accept the binding (no "invalid per-launch task reference" / "invalid launch task binding").
+
+### Test 69: Task&I client over HTTP to a real service through host.docker.internal (2026-10-31)
+
+Unverified until run. Needs the Task&I account service running on the Mac (`npm run serve:account` in taskandeye) and a task assigned to the agent persona. In the Task&I web app use **More → Connect Codex**, save the descriptor it gives you as `.vibe/taskandi-descriptor.json` in a test project (`chmod 600` it; no `.vibe/taskandi.json` in that project), then start vibe there.
+
+- [ ] `node devcontainer/taskandi-client.mjs status` prints `"channel":"taskandi-http"` and no token, connection, origin port or workspace.
+- [ ] `next-task --agent claude --session test-1` prints `{"bound":true,"channel":"taskandi-http","task":{…}}` with the assigned task (or `"task":null` when none is eligible). This proves the container reaches `host.docker.internal:<port>` and the service accepts `Host: 127.0.0.1:<port>`; a `wrong_origin` or `connection_scope` error here means the Host rewrite or headers are wrong.
+- [ ] `printf '%s\n' '{"question":"Test?","default":"yes","order":1,"estimate_minutes":1,"remaining_minutes":5,"reversible":true}' | node devcontainer/taskandi-client.mjs enqueue ask --key t69-ask`, then `flush`: prints `"done":1`, and the question appears in Task&I on the claimed task.
+- [ ] Answer it in Task&I, then `poll`: prints the answer under `answers` with `"newAnswers":1`; a second `poll` prints `"newAnswers":0`. `ask-status` lists the ask with `"answered":true`.
+- [ ] Revoke the connection in Task&I, then `poll`: stderr starts with `the Task&I connection was revoked or replaced`.

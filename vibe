@@ -2314,10 +2314,15 @@ LINK_PROJECTS_FILE="$HOME/.vibe/link-projects"
 LINK_LAST_DIR="$HOME/.vibe/link-last"
 _LINK_NAME_RE='^[a-z0-9][a-z0-9._-]{0,63}$'
 _LINK_PATH_RE='^/[A-Za-z0-9 ._/+@,:=~-]+$'
-# THE task-reference grammar, shared by parse_vibe_args's --task check and the
-# link parser (one variable, so they cannot drift): ABBR-number,
+# The vibe:// link parser's task grammar: ABBR-number,
 # taskandeye://node/<uuid>, or a bare UUID (any case). Admits no quote.
+# Task&I guarantees UUIDs in links, so it stays narrower than --task's.
 VIBE_TASK_REF_RE='^[A-Za-z][A-Za-z0-9]*-[0-9]+$|^taskandeye://node/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$|^[0-9A-Fa-f]{8}-([0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}$'
+# parse_vibe_args's --task grammar: any usable Task&I task id (1-200 chars of
+# A-Za-z0-9._:- starting with a letter or digit, which covers ABBR-number and
+# bare UUIDs) or taskandeye://node/<usable id>. Admits no quote or space. The
+# Task&I client applies its binding's own stricter rules on top.
+VIBE_LAUNCH_TASK_REF_RE='^(taskandeye://node/)?[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$'
 # The one command every link launch runs, in every terminal: `sh -c` with the
 # registered folder as $1 and vibe [--task <ref>] after it. It cds with -P and
 # refuses to exec unless the folder it landed in is exactly the registered
@@ -2349,6 +2354,13 @@ _link_valid_path() {
 
 _link_valid_task() {
   local LC_ALL=C re="$VIBE_TASK_REF_RE"
+  [[ "$1" =~ $re ]]
+}
+
+# _valid_launch_task <ref> — the --task check, in the C locale so every bracket
+# range is a byte range.
+_valid_launch_task() {
+  local LC_ALL=C re="$VIBE_LAUNCH_TASK_REF_RE"
   [[ "$1" =~ $re ]]
 }
 
@@ -5755,10 +5767,10 @@ parse_vibe_args() {
         ;;
       --task)
         shift
-        # VIBE_TASK_REF_RE: defined in the `vibe link` section, shared with
-        # the vibe:// link parser.
-        if ! [[ "${1:-}" =~ $VIBE_TASK_REF_RE ]]; then
-          echo "--task needs an ABBR-number, taskandeye://node/UUID or UUID reference" >&2; exit 1
+        # VIBE_LAUNCH_TASK_REF_RE: defined in the `vibe link` section, beside
+        # the link parser's narrower grammar.
+        if ! _valid_launch_task "${1:-}"; then
+          echo "--task needs a Task&I task id (letters, digits, . _ : -), taskandeye://node/<id>, ABBR-number or UUID reference" >&2; exit 1
         fi
         [ -z "$TASK_REF_ARG" ] || { echo "Only one --task binding is allowed" >&2; exit 1; }
         TASK_REF_ARG=$1

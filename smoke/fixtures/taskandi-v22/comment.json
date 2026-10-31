@@ -1,0 +1,15 @@
+{
+  "contract": "vibe-agent-exchange-v2.2",
+  "notes": "Posts text on the task's thread, attributed to the agent persona (agent: claude|codex, default codex). Renews the session's lease on the task.",
+  "request": {
+    "action": "comment",
+    "task": "leaf-b",
+    "text": "Iteration 3: two commits, tests green.",
+    "session": "session-a",
+    "agent": "codex"
+  },
+  "response": {
+    "task": "leaf-b",
+    "comment_id": "2c3d4e5f-6071-4829-8a1b-c2d3e4f50617"
+  }
+}

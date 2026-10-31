@@ -537,7 +537,12 @@ def test_vl_ac21_uuid_task_ids():
                   "--task needs" not in res.stdout + res.stderr and "--no-such-flag-zzz" in res.stdout + res.stderr,
                   res.stdout + res.stderr)
         for u in (_SENTINEL_UUID[:-1], _SENTINEL_UUID + "0", "g23e4567-e89b-12d3-a456-426614174000",
-                  _SENTINEL_UUID.replace("-", ""), "{" + _SENTINEL_UUID + "}"):
+                  _SENTINEL_UUID.replace("-", "")):   # rev 6 AC19: usable ids, now accepted
+            res = fx.vibe("--task", u, "--no-such-flag-zzz")
+            msg = res.stdout + res.stderr
+            check(f"{_VL} vibe --task {u}: accepted as a usable id (parser reaches the unknown flag)",
+                  res.returncode == 1 and "--task needs" not in msg and "--no-such-flag-zzz" in msg, msg)
+        for u in ("{" + _SENTINEL_UUID + "}", "a b", "a'b", "-x", "a" * 201):
             res = fx.vibe("--task", u, "--no-such-flag-zzz")
             check(f"{_VL} vibe --task {u}: rejected with '--task needs'",
                   res.returncode == 1 and "--task needs" in res.stdout + res.stderr, res.stdout + res.stderr)
@@ -614,7 +619,8 @@ def test_vl_ac22_uuid_task_end_to_end():
         for v in vals[:5]:
             check(f"{_VL} supervisor binding regex accepts {v!r}", got.get(v) is True, r.stdout + r.stderr)
         for v in vals[5:]:
-            check(f"{_VL} supervisor binding regex rejects {v!r}", got.get(v) is False, r.stdout + r.stderr)
+            want = v not in ("x y", "")   # rev 6 AC19: other usable ids are accepted
+            check(f"{_VL} supervisor binding regex {'accepts' if want else 'rejects'} {v!r}", got.get(v) is want, r.stdout + r.stderr)
 
 
 # -- AC23 ---------------------------------------------------------------------

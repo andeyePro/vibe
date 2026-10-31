@@ -41,7 +41,10 @@ export function usageRecords(lines, { session, account, costEstimate }) {
 }
 
 export async function enqueueTranscriptUsage(client, file, options) {
-  if (options.task !== undefined) await client.resolveTask(options.task);
+  // Under a descriptor binding the whole import is one pass: one config load and one outbox lock (enqueueBatch resolves
+  // the task itself). Otherwise resolveTask checks the task first, as before.
+  const batch = typeof client.descriptor === 'function' && client.descriptor() && typeof client.enqueueBatch === 'function';
+  if (!batch && options.task !== undefined) options = { ...options, task: await client.resolveTask(options.task) };
   const handle = await fs.open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   let source;
   try {
@@ -60,6 +63,13 @@ export async function enqueueTranscriptUsage(client, file, options) {
   const lines = source.slice(0, source.lastIndexOf('\n') + 1).split('\n');
   const records = usageRecords(lines, options);
   let enqueued = 0, deduplicated = 0;
+  if (batch) {
+    // With nothing to enqueue, --task is still checked (one config load, one lock either way).
+    if (!records.length && options.task !== undefined) await client.resolveTask(options.task);
+    const results = records.length ? await client.enqueueBatch('record_usage', records.map(record => ({ key: record.key, input: record.payload })), { task: options.task }) : [];
+    for (const result of results) { if (result.enqueued) enqueued++; else deduplicated++; }
+    return { enqueued, deduplicated, source: 'explicit-session-transcript', usageAvailable: records.length > 0 };
+  }
   for (const record of records) {
     const result = await client.enqueue('record_usage', record.key, options.task === undefined ? record.payload : { ...record.payload, task: options.task });
     if (result.enqueued) enqueued++;

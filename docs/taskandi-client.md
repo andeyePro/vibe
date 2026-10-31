@@ -1,8 +1,13 @@
 # Task&I agent-exchange client
 
-`devcontainer/taskandi-client.mjs` is a narrow, project-opt-in MCP client for
+`devcontainer/taskandi-client.mjs` is a narrow, project-opt-in Task&I client for
 Vibe. It queues asks, comments, usage and time records durably, takes the next
-task from Task&I, polls answers, and completes or releases a task. It does
+task from Task&I, polls answers, and completes or releases a task. It has two
+transports, chosen by which binding file the project has: MCP (contracts v1 and
+v2.1, `.vibe/taskandi.json`, described first below) and Task&I's browser-agent
+HTTP API (contract v2.2, `.vibe/taskandi-descriptor.json`, see
+[Contract v2.2](#contract-v22-http-transport-descriptor-binding)). It is not
+only an MCP client any more. It does
 not register a global Codex MCP server, change a shell guard, or relax the Vibe
 firewall. Running it remains subject to the existing shell guard and firewall.
 
@@ -50,7 +55,8 @@ are never silently promoted into network deliveries.
 
 ## CLI
 
-All commands run in the foreground. Network calls use a 30000 ms timeout.
+All commands run in the foreground. MCP network calls use a 30000 ms timeout
+and a 1 MiB response cap; the v2.2 HTTP transport uses 15 s and 16 MiB.
 Enqueue reads one bounded JSON object from standard input. Jobs are `ask`,
 `comment`, `record_usage` and `record_time`:
 
@@ -251,3 +257,149 @@ verified server-specific cumulative-upsert key. Confirm that distinction, input
 versus cached-input accounting, and task attribution with the actual server
 before enabling usage delivery. The current fixtures cannot establish those
 service semantics.
+
+## Contract v2.2: HTTP transport (descriptor binding)
+
+Task&I's built service speaks plain `POST <origin>/api/browser-agent`, not MCP.
+A project selects it by having `.vibe/taskandi-descriptor.json` instead of
+`.vibe/taskandi.json` (both present is refused: `two Task&I bindings; keep
+one`). Get the descriptor from Task&I (**More → Connect Codex**) and save it as
+`.vibe/taskandi-descriptor.json`, then `chmod 600 .vibe/taskandi-descriptor.json`.
+The file rules are those of `.vibe/taskandi.json` (regular file, one link, not
+a symlink, owned by you, untracked even case-insensitively, at most 32 KiB,
+`.vibe` not a symlink) plus no group/other permission bits. It has exactly the
+keys `protocol` (`taskandeye-browser-agent-v1`), `origin`, `connection`,
+`workspace`, `root` (a task id, or `null` for the whole workspace) and `token`
+(43 characters). `origin` is either `https://…` or exactly
+`http://127.0.0.1:<port>`; nothing else (no `localhost`, no path, no trailing
+slash). An invalid descriptor is refused; the client never falls back to the
+other binding or to unbound. The token is only ever sent to that origin, and no
+command prints the token, connection, origin or workspace.
+
+**Reaching the Mac from the container.** The Task&I service on the Mac listens
+on `127.0.0.1:<port>`. In container mode (`VIBE_CONTAINER=1`, or `/.dockerenv`
+present and `VIBE_CONTAINER` not `0`) the client connects to
+`host.docker.internal:<port>` over IPv4 (vibe's firewall allows only the IPv4
+host gateway) and sends `Host: 127.0.0.1:<port>`, because the service refuses
+any other Host with 421 `wrong_origin`. Requests carry only `Host`,
+`Content-Type`, `Authorization`, `Content-Length` and `Connection` (a cookie or
+a mismatched `Origin` gets 403 `connection_scope`). https origins use normal
+TLS verification (`rejectUnauthorized: true`) and their own Host; a failed TLS
+handshake counts as not sent (`connect_failed`), so the job stays queued. The
+connect target never comes from an environment variable or argument. Redirects
+are refused; the timeout is 15 s; responses over 16 MiB are refused; request
+bodies over 65536 bytes are refused locally. A connection failure says
+`could not reach the Task&I service (via host.docker.internal)` in container
+mode, or `(on this machine)` outside it.
+
+**Task ids.** Task&I ids are opaque (UUIDs, or ids like `leaf-b`). Under a
+descriptor binding `--task` takes a task id (`^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$`)
+or `taskandeye://node/<id>`; `ABBR-N` references are refused. A typed UUID is
+lower-cased. The effective task is `VIBE_TASK_REF`, else `.vibe/taskandi-task`,
+else the descriptor's `root`. Every command that needs a task uses `--task`,
+else the claimed task (from `next-task`), else the effective task; with
+`root: null` and no claim it exits 1 with `no bound task: the connection covers
+the whole workspace; claim one with next-task`. `complete` and `release` only
+work on the claimed task (they need its session). `--task` is optional on
+`poll`, `ask-status`, `enqueue`, `complete`, `release` and `usage`.
+
+`vibe --task` and the Codex supervisor's launch binding accept any such task id
+or `taskandeye://node/<id>` as well as `ABBR-N` and UUIDs; the client then
+applies the binding's own rules (a descriptor binding still refuses `ABBR-N`,
+an MCP binding keeps its narrower grammar). `vibe link`'s `task=` keeps UUIDs
+only. If `next-task` is handed a task whose id vibe cannot use, the client
+releases it at once (`release` with reason `Task id not usable by vibe; rename
+it in Task&I.`), stores no claim and exits 1; if that release fails it says so
+on stderr and the lease lapses on its own.
+
+```sh
+node devcontainer/taskandi-client.mjs next-task --agent claude --session SESSION-ID
+node devcontainer/taskandi-client.mjs poll [--task ID]
+node devcontainer/taskandi-client.mjs ask-status [--task ID]
+node devcontainer/taskandi-client.mjs complete --summary 'What was done'
+node devcontainer/taskandi-client.mjs release --reason 'Why it is handed back'
+```
+
+Every networked command first sends one `capabilities` request and stops (exit
+1, nothing else sent, jobs left queued) unless the service reports protocol
+`taskandeye-browser-agent-v1`, contract `vibe-agent-exchange-v2.2` and every
+call about to be made; `status` and `reconcile` send nothing, and a `flush` with
+nothing queued sends nothing. The reported grade is stored as `lastGrade`.
+`ask`/`comment` carry `agent` (the claim's agent on the claimed task, else
+`VIBE_AGENT`, else `claude`), and every call on the claimed task carries the
+claim's `session`. Limits are counted in Unicode code points: question 8000,
+default 2000, options 20 × 500, the composed thread post `Question: …\nDefault:
+…[\nOptions: a / b]` 8000, comment 8000, complete summary 7950, release reason
+2000; id fields 1–200. `record_time` takes `seconds` 1–604800 and an ISO
+`started_at` (sent as milliseconds); the run may not end in the future.
+`record_usage` always sends `windows: 0`.
+
+Stdout is JSON: `next-task` prints `{"bound":true,"channel":"taskandi-http","task":…}`;
+`poll` prints `{"bound":true,"channel":"taskandi-http","task":T,"newAnswers":n,"answers":[{ask_id,answer,seen_at,answered_at}],"ignored":m,"conflicts":[…],"cursor":{"now":N}}`
+(owner answers only); `ask-status` prints `{"bound":true,"channel":"taskandi-http","task":T,"asks":[…]}`
+(each ask's `seen_at`, `deferred`, `answered`: use it to see whether the owner
+has opened a question); `complete` prints `{"bound":true,"completed":true,"state":"provisional","completion_id":…}`
+or, while the task has open children, `{"bound":true,"completed":false,"open_children":[…]}`
+(exit 0, claim kept); `release` prints `{"bound":true,"released":true,"comment_id":…}`;
+`flush` adds `refused` and `requeued` counts; `status` adds `channel`,
+`counts.refused`, `refusedKeys`, `claimedTask` and `lastGrade`. A present but
+invalid descriptor makes `status` exit 1 with one stderr line (never a
+`file-fallback` report). Server strings in stdout have C1 and bidi control
+characters escaped as `\uXXXX`, and `title`, `owner`, `grade`, `answered_by`
+and child titles over 2000 code points make the response malformed. Cursors are per
+task; each poll re-reads a 2 s overlap and re-seen answers are not counted again.
+
+**Errors.** Task&I refuses with HTTP 409 `{"error": code}`. A body is
+interpreted when it is a JSON object whose `error` is a string (other keys are
+ignored and never printed; 400, 403 and 421 must carry `invalid_request`,
+`connection_scope` and `wrong_origin`), and only a code matching
+`^[a-z][a-z_]{0,63}$` is ever printed (anything else prints `unknown_error`):
+
+| class | codes | queued job | direct command |
+|---|---|---|---|
+| outcome unknown | `connection_unavailable`, `connection_revoked`, any unlisted code, an unexpected status, a malformed body, a timeout or lost connection | `uncertain`; flush stops | exit 1; `complete`/`release` print `outcome unknown; check the task in Task&I` and keep the claim |
+| not applied, try later | `stale_context`, `sync_required`, `lease_held`, 421 `wrong_origin`, 403 `connection_scope` | back to `queued`; flush stops | exit 1, `Task&I refused for now: <code>` |
+| not applied, rejected | `use_native_connection`, `scope_missing`, `invalid_request`, `wrong_scope`, `wrong_thread`, `unknown_ask`, `not_assigned`, `receipt_collision`, local `body_too_large` | `refused`; flush continues | exit 1, `Task&I refused: <code>` |
+
+`connection_revoked` first prints `the Task&I connection was revoked or
+replaced; copy a fresh descriptor (More → Connect Codex) into
+.vibe/taskandi-descriptor.json`. Flush always exits 0 and names each affected
+job on stderr. `refused` is a job state of its own: `status` lists it under
+`refusedKeys`, `reconcile --action retry` requeues it (after you fix the cause),
+and `--action done` on it is refused, because it was never applied. At
+dispatch each queued job is checked again (known kind, exact payload keys,
+payload digest); an edited job becomes `refused` with `tampered_job` and is
+not sent.
+
+**No v2.2 write is idempotent.** Retrying an `ask`, `comment`, `record_usage`,
+`record_time` or `release` creates a duplicate in Task&I (a second question, a
+double-counted usage row). Uncertain writes are never retried automatically.
+Before `reconcile --action retry`, check what actually happened: for an ask, run
+`ask-status` (or `poll`) and look for it; for anything else, look at the task in
+Task&I. Use `--action done` when it did land.
+
+`complete` and `release` are direct calls, so the client records
+`pendingDirect` in the outbox state before sending and clears it on a definite
+answer. After an unknown outcome, the same call on the same task exits 1 with
+`an earlier <call> for <task> has an unknown outcome; check Task&I, then run
+reconcile --direct <call> --task <task> --action done|retry --evidence TEXT`.
+Check the task in Task&I, then run that command: `done` records that it landed
+(and drops the spent claim), `retry` allows one more send. The record is
+`pendingDirect: {call, task, at}` (`at` in milliseconds); a second one for a
+different call or task is kept in `pendingDirectMore`.
+
+```sh
+node devcontainer/taskandi-client.mjs reconcile --direct complete --task leaf-b --action done --evidence 'Task shows provisional completion'
+```
+
+The binding digest for a descriptor covers `workspace`, the effective task, the
+contract and the origin's scheme and host, not the token, connection or port:
+replacing the descriptor after a reconnect (even on a new port) keeps queued
+jobs, stored answers and a pinned `VIBE_TASK_BINDING` valid, while a different
+workspace, task or host refuses them as for MCP. `usage` under a descriptor
+binding enqueues the whole transcript in one pass, under one outbox lock. Offline tests drive the real transport against a loopback
+`http.createServer` through the test-only `createClient({cwd, httpConnect:
+{host, port, timeoutMs}})` seam (`host` must be `127.0.0.1` or `::1`, and the
+seam is refused for https origins); the fixtures are in
+`smoke/fixtures/taskandi-v22/`. `MANUAL-TESTS.md` Test 69 covers a real service.
+

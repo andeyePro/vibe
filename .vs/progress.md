@@ -638,3 +638,10 @@ Codex-only continuation delivered: default supervised handoff, run/turn-bound co
 - `/code-review high`: 10 findings → rev 5, AC22–AC30 (UUID refs accepted inside the container too, deny always withdraws consent, atomic stale-lock break, writers use full usability check, owner-unreadable registry, recoverable future stamps, linear registry load 5.4 s → 0.16 s, unknown-project dialog rate limit, single launcher-path resolution); finding 10 (codex-allow hardening) → TODO.
 - Cycle 3: all gates 0. Chair fix: a stamp-age check at 4 s against the 5 s limit flaked once under load; widened to 2 s.
 - Coverage gaps accepted: the supervisor's UUID check is tested via its regex literal (inline, not reachable without Codex); AC25's "Always" path is unreachable when the registry is unusable; real terminals and the macOS dialog are Mac manual Test 68.
+
+## task_064 — Task&I client v2.2 over HTTP — PASS after 2 cycles (2026-10-31)
+- Spec critic: pass after 4 iterations; rev 4 folded in Task&I's own answers from its code (error classes, non-idempotent writes, limits, nullability, cursor gap), rev 5 consolidated.
+- Generator: opus. Tester: sonnet. Tests: `smoke/checks_50_taskandi_http.py` (284), `checks_52_taskandi_http_more.py` (181), `checks_55_taskandi_http_review.py` (176); real loopback HTTP servers, a self-signed TLS server for AC21.
+- Cycle 1: green. Chair fix: an AC11 test took its clock early (race found by the Generator). Security review: 1 MEDIUM (origin host not in the binding), 3 LOW (C1/bidi in stdout, no durable record for direct writes, payload keys could override action/connection). `/code-review high`: 10 (launcher and supervisor still refused non-UUID ids, 409 bodies with detail fields misread as unknown, TLS failures counted as sent, unusable id left a 90-minute lease, status hid a broken descriptor, per-record lock churn in usage, duplicated checks, a permanent git-diff test, port in error text).
+- Cycle 2 (AC19–AC30): all fixed. Chair rulings: authorised checks_29/49 to accept newly-valid launch refs; removed checks_47's permanent diff rule (same defect class as the checks_52 one).
+- Full smoke 0, code-check 0.

@@ -158,14 +158,14 @@ def test_launcher_parser_and_task_binding() -> None:
             env | grep '^VIBE_TASK_REF=' && exit 9 || true
         fi
     """)
-    good = ["AB-42", "taskandeye://node/12345678-1234-1234-1234-123456789abc"]
+    good = ["AB-42", "taskandeye://node/12345678-1234-1234-1234-123456789abc", "AB", "taskandeye://node/not-a-uuid"]   # rev 6 AC19: any usable id
     for ref in good:
         result = subprocess.run(["bash", "-c", script, "probe", "--task", ref], capture_output=True, text=True, stdin=subprocess.DEVNULL)
         check(f"[taskandi] --task {ref!r} parses and exits 0", result.returncode == 0, result.stdout + result.stderr)
         check(f"[taskandi] --task {ref!r} echoes TASK_REF", f"TASK_REF=[{ref}]" in result.stdout, result.stdout)
         check(f"[taskandi] --task {ref!r} binds exactly 2 env args", "ENV_COUNT=[2]" in result.stdout, result.stdout)
         check(f"[taskandi] --task {ref!r} forwards VIBE_TASK_REF to the child", f"CHILD_REF=[{ref}]" in result.stdout, result.stdout)
-    for bad in ["AB-0;touch /tmp/pwn", "taskandeye://node/not-a-uuid", "--continue", "AB", "AB-1\nX"]:
+    for bad in ["AB-0;touch /tmp/pwn", "--continue", "AB-1\nX", "a b", "a'b", "-x", "a" * 201]:
         result = subprocess.run(["bash", "-c", script, "probe", "--task", bad], capture_output=True, text=True, stdin=subprocess.DEVNULL)
         check(f"[taskandi] malformed/injection ref refused: {bad!r}", result.returncode != 0, result.stdout + result.stderr)
     duplicate = subprocess.run(["bash", "-c", script, "probe", "--task", "AB-1", "--task", "CD-2"], capture_output=True, text=True, stdin=subprocess.DEVNULL)

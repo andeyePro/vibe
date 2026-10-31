@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-/** Narrow, project-opt-in Task&I MCP client. Node built-ins only. */
+/** Narrow, project-opt-in Task&I client: MCP (contracts v1, v2.1) or, under a descriptor binding, the browser-agent HTTP API (contract v2.2). Node built-ins only. */
 import { createHash, randomUUID } from 'node:crypto';
+import http from 'node:http';
+import https from 'node:https';
 import { closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -81,23 +83,26 @@ function canonical(value) {
 }
 function digest(value) { return createHash('sha256').update(canonical(value)).digest('hex'); }
 
-function assertRegular(path, description, { ownerOnly = false } = {}) {
-  let st;
-  try { st = lstatSync(path); } catch (error) { if (error.code === 'ENOENT') fail(`${description} is missing`, 'MISSING'); throw error; }
-  if (st.isSymbolicLink() || !st.isFile() || st.nlink !== 1) fail(`${description} must be a regular non-symlink file`);
+// File rules shared by every config file: regular, single link, not a symlink, owned by the user, optionally owner-only.
+function fileRules(st, description, { ownerOnly = false, modeHint = '' } = {}) {
+  if (st.isSymbolicLink && st.isSymbolicLink()) fail(`${description} must be a regular non-symlink file (it is a symlink)`);
+  if (!st.isFile()) fail(`${description} must be a regular non-symlink file`);
+  if (st.nlink !== 1) fail(`${description} must be a regular non-symlink file with a single link (no hard links)`);
   if (typeof process.getuid === 'function' && st.uid !== process.getuid()) fail(`${description} must be owned by the current user`);
-  if (ownerOnly && (st.mode & 0o077) !== 0) fail(`${description} permissions must deny group and other access`);
+  if (ownerOnly && (st.mode & 0o077) !== 0) fail(`${description} permissions must deny group and other access${modeHint}`);
   return st;
 }
-function readBounded(path, limit, description, { ownerOnly = false } = {}) {
+function assertRegular(path, description, options = {}) {
+  let st;
+  try { st = lstatSync(path); } catch (error) { if (error.code === 'ENOENT') fail(`${description} is missing`, 'MISSING'); throw error; }
+  return fileRules(st, description, options);
+}
+function readBounded(path, limit, description, options = {}) {
   let fd;
   try { fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
   catch (error) { if (error.code === 'ELOOP') fail(`${description} must be a regular non-symlink file`); if (error.code === 'ENOENT') fail(`${description} is missing`, 'MISSING'); throw error; }
   try {
-    const st = fstatSync(fd);
-    if (!st.isFile() || st.nlink !== 1) fail(`${description} must be a regular non-symlink file`);
-    if (typeof process.getuid === 'function' && st.uid !== process.getuid()) fail(`${description} must be owned by the current user`);
-    if (ownerOnly && (st.mode & 0o077) !== 0) fail(`${description} permissions must deny group and other access`);
+    const st = fileRules(fstatSync(fd), description, options);
     if (st.size > limit) fail(`${description} exceeds ${limit} bytes`);
     const buffer = Buffer.alloc(limit + 1); let size = 0;
     for (;;) {
@@ -126,29 +131,34 @@ function taskReference(value) {
   if (!TASK_REF.test(value)) fail('invalid per-launch task reference');
   return value;
 }
+// Shared by both binding kinds: the project's .vibe directory, and the optional untracked .vibe/taskandi-task mapping.
+function checkVibeDir(cwd) {
+  const vibeStat = lstatSync(join(cwd, '.vibe'));
+  if (vibeStat.isSymbolicLink() || !vibeStat.isDirectory() || vibeStat.uid !== process.getuid() || (vibeStat.mode & 0o022)) fail('.vibe must be a non-symlink directory');
+}
+function mappedTask(cwd, parse) {
+  const mappingPath = join(cwd, '.vibe/taskandi-task');
+  if (!existsSync(mappingPath)) return undefined;
+  if (trackedCaseInsensitive(cwd, mappingPath)) fail('Task&I node mapping must be untracked');
+  return parse(readBounded(mappingPath, 1024, 'Task&I node mapping').trim());
+}
 export function loadConfig(cwd = process.cwd()) {
   cwd = projectRoot(cwd);
   const relative = '.vibe/taskandi.json';
   const path = join(cwd, relative);
+  if (lexists(join(cwd, DESCRIPTOR))) { if (lexists(path)) fail('two Task&I bindings; keep one'); return loadDescriptor(cwd); }
   if (!existsSync(path)) {
     if (process.env.VIBE_TASK_BINDING && process.env.VIBE_TASK_BINDING !== 'unbound') fail('pinned task binding changed');
     return { bound: false, reason: 'missing-config', cwd };
   }
-  const vibeDir = join(cwd, '.vibe');
-  const vibeStat = lstatSync(vibeDir);
-  if (vibeStat.isSymbolicLink() || !vibeStat.isDirectory() || vibeStat.uid !== process.getuid() || (vibeStat.mode & 0o022)) fail('.vibe must be a non-symlink directory');
+  checkVibeDir(cwd);
   assertRegular(path, 'Task&I config');
   if (trackedCaseInsensitive(cwd, path)) fail('Task&I config is tracked by git (case-insensitive match refused)');
   let value;
   try { value = ownObject(JSON.parse(readBounded(path, 32 * 1024, 'Task&I config')), 'config'); } catch (error) { if (error instanceof SyntaxError) fail('Task&I config is not valid JSON'); throw error; }
   exactKeys(value, CONFIG_KEYS, 'config');
   text(value.endpoint, 'endpoint', 2048);
-  const mappingPath = join(cwd, '.vibe/taskandi-task');
-  let task = value.task;
-  if (existsSync(mappingPath)) {
-    if (trackedCaseInsensitive(cwd, mappingPath)) fail('Task&I node mapping must be untracked');
-    task = taskReference(readBounded(mappingPath, 1024, 'Task&I node mapping').trim());
-  }
+  let task = mappedTask(cwd, taskReference) ?? value.task;
   if (process.env.VIBE_TASK_REF) task = taskReference(process.env.VIBE_TASK_REF);
   text(task, 'task', LIMITS.id);
   if (value.contractRevision !== undefined && value.contractRevision !== CONTRACT_REVISION && value.contractRevision !== LEGACY_CONTRACT_REVISION) fail(`contractRevision must exactly equal ${CONTRACT_REVISION} or ${LEGACY_CONTRACT_REVISION}`);
@@ -165,8 +175,15 @@ export function loadConfig(cwd = process.cwd()) {
   return config;
 }
 
+// The one binding digest (fingerprint, job binding and answer binding) for both binding kinds. The descriptor digest
+// leaves out token, connection and the origin's port, so a reconnect keeps queued jobs, stored answers and a pinned
+// supervisor fingerprint valid; the origin's scheme and host are in it, so a different service is a different binding.
+function bindingDigest(config) {
+  if (config.kind === HTTP_KIND) return digest({ kind: HTTP_KIND, workspace: config.workspace, task: config.task, contractRevision: config.contractRevision, originHost: config.originHost });
+  return digest({ endpoint: config.endpoint, task: config.task, contractRevision: config.contractRevision });
+}
 export function bindingFingerprint(config) {
-  return config.bound ? digest({ endpoint: config.endpoint, task: config.task, contractRevision: config.contractRevision }) : 'unbound';
+  return config.bound ? bindingDigest(config) : 'unbound';
 }
 
 function ensurePrivateDir(path) {
@@ -205,10 +222,11 @@ function lockOutbox(cwd) {
   }
   writeFileSync(fd, token); fsyncSync(fd);
   return { ...p, release() {
-    closeSync(fd);
-    // Never unlink a replacement owner's lock.
-    try { if (readBounded(p.lock, 100, 'outbox lock', { ownerOnly: true }) === token) unlinkSync(p.lock); }
-    catch (error) { if (error.code !== 'MISSING') throw error; }
+    // Never unlink a replacement owner's lock: unlink only while the path is still our own file (same inode), checked
+    // through the open descriptor rather than by reopening the lock.
+    const mine = fstatSync(fd); closeSync(fd);
+    try { const current = lstatSync(p.lock); if (current.ino === mine.ino && current.dev === mine.dev) unlinkSync(p.lock); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
   } };
 
 }
@@ -218,11 +236,13 @@ function readState(path) {
   if (state.version !== 1 || !Array.isArray(state.jobs) || !Array.isArray(state.answers) || !Array.isArray(state.conflicts) || !Array.isArray(state.reconciliationLog)) fail('outbox state has an unsupported shape');
   return state;
 }
-function bindAnswers(state, config) {
-  const binding = digest({ endpoint: config.endpoint, task: config.task, contractRevision: config.contractRevision });
+// The one answer-binding check; `bind` also records the binding (callers persist it).
+function bindAnswers(state, config, bind = true) {
+  const binding = bindingDigest(config);
   if (state.answerBinding && state.answerBinding !== binding) fail('answer binding changed; archive the prior outbox before polling another task');
-  if (!state.answerBinding && (state.cursor || state.answers.length || state.conflicts.length)) fail('existing answers have no binding evidence; reconcile before polling');
-  state.answerBinding = binding;
+  if (!state.answerBinding && (state.cursor || state.cursors || state.answers.length || state.conflicts.length)) fail('existing answers have no binding evidence; reconcile before polling');
+  if (state.cursors !== undefined && !plainObject(state.cursors)) fail('outbox state has an unsupported cursor shape');
+  if (bind) state.answerBinding = binding;
 }
 function recoverDispatching(state) {
   let changed = false;
@@ -445,9 +465,532 @@ function validateRelease(value) {
   return { released: true };
 }
 
-export function createClient({ cwd = process.cwd(), transport = fetchTransport } = {}) {
+// ---- Contract v2.2: Task&I's browser-agent HTTP API, selected by .vibe/taskandi-descriptor.json ----
+// Plain `POST <origin>/api/browser-agent` on node:http(s) (never fetch: it cannot set Host). Wire facts:
+// /brain2/andeye/Task&I-agent-exchange-fixtures/README.md "Wire details"; fixtures in smoke/fixtures/taskandi-v22/.
+export const HTTP_CONTRACT_REVISION = 'vibe-agent-exchange-v2.2';
+export const HTTP_PROTOCOL = 'taskandeye-browser-agent-v1';
+export const HTTP_LIMITS = Object.freeze({ response: 16 * 1024 * 1024, timeoutMs: 15000, body: 65536, descriptor: 32 * 1024, id: 200, question: 8000, default: 2000, options: 20, option: 500, post: 8000, comment: 8000, summary: 7950, reason: 2000, answer: 8000, seconds: 604800, shortText: 2000 });
+const HTTP_KIND = 'descriptor-http';
+const DESCRIPTOR = '.vibe/taskandi-descriptor.json';
+const DESCRIPTOR_KEYS = ['protocol', 'origin', 'connection', 'workspace', 'root', 'token'];
+const USABLE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
+const DESCRIPTOR_WORD = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,199}$/;
+const ABBR_REF = /^[A-Za-z][A-Za-z0-9]*-[0-9]+$/;
+const UUID_SHAPE = /^[0-9A-Fa-f]{8}-(?:[0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}$/;
+const PRINTABLE_CODE = /^[a-z][a-z_]{0,63}$/;
+const NO_BOUND_TASK = 'no bound task: the connection covers the whole workspace; claim one with next-task';
+const NEEDS_CLAIM = 'complete/release needs the session that claimed the task; run next-task first';
+const UNUSABLE_TASK = 'task id not usable by vibe: rename it in Task&I or recreate the task';
+const REVOKED = 'the Task&I connection was revoked or replaced; copy a fresh descriptor (More → Connect Codex) into .vibe/taskandi-descriptor.json';
+const HTTP_USAGE = 'usage (Task&I descriptor binding): taskandi-client.mjs enqueue ask|comment|record_usage|record_time --key ID [--task ID] | flush | poll [--task ID] | ask-status [--task ID] | status | next-task --agent claude|codex --session ID | complete [--task ID] --summary TEXT | release [--task ID] --reason TEXT | usage --transcript FILE --session ID --account ID --cost-estimate N [--task ID] | reconcile --key ID --action done|retry --evidence TEXT | reconcile --direct complete|release --task ID --action done|retry --evidence TEXT';
+// Every error class in one table. Codes not listed here (and every malformed, unexpected or lost response) are outcome unknown.
+// later = not applied, may succeed unchanged later; rejected = not applied, the request itself is refused.
+const HTTP_ERRORS = Object.freeze({
+  connection_unavailable: 'unknown', connection_revoked: 'unknown',
+  stale_context: 'later', sync_required: 'later', lease_held: 'later', wrong_origin: 'later', connection_scope: 'later',
+  use_native_connection: 'rejected', scope_missing: 'rejected', invalid_request: 'rejected', wrong_scope: 'rejected', wrong_thread: 'rejected', unknown_ask: 'rejected', not_assigned: 'rejected', receipt_collision: 'rejected', body_too_large: 'rejected',
+});
+// Exactly-formed non-200 bodies: status -> the one code that status may carry (409 carries any code).
+const ERROR_STATUS = Object.freeze({ 409: null, 400: 'invalid_request', 421: 'wrong_origin', 403: 'connection_scope' });
+
+const codePoints = value => [...value].length;
+const plainObject = value => !!value && typeof value === 'object' && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
+function wireText(value, name, max) {
+  if (typeof value !== 'string' || !value.isWellFormed() || value.trim() === '' || codePoints(value) > max) fail(`${name} must be well-formed, non-blank text of at most ${max} code points`);
+  return value;
+}
+function wireId(value, name) {
+  if (typeof value !== 'string' || !value.isWellFormed() || value.trim() === '' || value.length > HTTP_LIMITS.id) fail(`${name} must be well-formed, non-blank text of 1-${HTTP_LIMITS.id} UTF-16 code units`);
+  return value;
+}
+// A task ref under a descriptor binding: a usable id or taskandeye://node/<usable id>; a UUID-shaped user-typed id is lower-cased once.
+export function descriptorTaskRef(value, name = 'task') {
+  if (typeof value !== 'string') fail(`${name} must be a Task&I task id`);
+  if (ABBR_REF.test(value)) fail('Task&I descriptor bindings take task ids, not ABBR-N references');
+  const id = value.startsWith('taskandeye://node/') ? value.slice('taskandeye://node/'.length) : value;
+  if (!USABLE_ID.test(id)) fail(`${name} must be a Task&I task id: 1-200 characters of A-Z a-z 0-9 . _ : - starting with a letter or digit`);
+  return UUID_SHAPE.test(id) ? id.toLowerCase() : id;
+}
+function lexists(path) {
+  try { lstatSync(path); return true; } catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return false; throw error; }
+}
+function descriptorOrigin(origin) {
+  let url; try { url = new URL(origin); } catch { fail('descriptor origin is not a valid URL'); }
+  if (url.origin !== origin) fail('descriptor origin must be a bare origin: no path, query, fragment, userinfo or trailing slash');
+  if (url.protocol === 'https:') return origin;
+  const port = /^http:\/\/127\.0\.0\.1:([1-9][0-9]{0,4})$/.exec(origin)?.[1];
+  if (!port || Number(port) > 65535) fail('descriptor origin must be https, or exactly http://127.0.0.1:<port 1-65535>');
+  return origin;
+}
+function loadDescriptor(cwd) {
+  const path = join(cwd, DESCRIPTOR);
+  const rules = { ownerOnly: true, modeHint: ': run chmod 600 .vibe/taskandi-descriptor.json' };
+  checkVibeDir(cwd);
+  assertRegular(path, 'Task&I descriptor', rules);
+  if (trackedCaseInsensitive(cwd, path)) fail('Task&I descriptor is tracked by git (case-insensitive match refused)');
+  let value;
+  try { value = JSON.parse(readBounded(path, HTTP_LIMITS.descriptor, 'Task&I descriptor', rules)); } catch (error) { if (error instanceof SyntaxError) fail('Task&I descriptor is not valid JSON'); throw error; }
+  if (!plainObject(value)) fail('Task&I descriptor must be a JSON object');
+  if (Object.keys(value).some(key => !DESCRIPTOR_KEYS.includes(key))) fail(`Task&I descriptor has a key outside ${DESCRIPTOR_KEYS.join(', ')}`);
+  for (const key of DESCRIPTOR_KEYS) if (!Object.hasOwn(value, key)) fail(`Task&I descriptor key ${key} is required`);
+  if (value.protocol !== HTTP_PROTOCOL) fail(`Task&I descriptor protocol must be ${HTTP_PROTOCOL}`);
+  for (const key of ['origin', 'connection', 'workspace']) if (typeof value[key] !== 'string' || !DESCRIPTOR_WORD.test(value[key])) fail(`Task&I descriptor ${key} must be 1-200 characters of A-Z a-z 0-9 . _ : @ / - starting with a letter or digit`);
+  descriptorOrigin(value.origin);
+  if (value.root !== null && (typeof value.root !== 'string' || !USABLE_ID.test(value.root))) fail('Task&I descriptor root must be a usable task id or null');
+  if (typeof value.token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(value.token)) fail('Task&I descriptor token must be exactly 43 characters of A-Z a-z 0-9 _ -');
+  // Effective task: VIBE_TASK_REF > .vibe/taskandi-task > root (null: the connection covers the whole workspace).
+  let task = mappedTask(cwd, ref => descriptorTaskRef(ref, '.vibe/taskandi-task')) ?? value.root;
+  if (process.env.VIBE_TASK_REF) task = descriptorTaskRef(process.env.VIBE_TASK_REF, 'VIBE_TASK_REF');
+  const config = { bound: true, kind: HTTP_KIND, cwd, protocol: value.protocol, root: value.root, task, contractRevision: HTTP_CONTRACT_REVISION };
+  // Secrets and identifiers stay off every printable surface: non-enumerable, so no JSON.stringify of a config shows them.
+  const url = new URL(value.origin);
+  const hidden = { origin: value.origin, originHost: `${url.protocol}//${url.hostname}`, connection: value.connection, workspace: value.workspace, token: value.token };
+  for (const [key, item] of Object.entries(hidden)) Object.defineProperty(config, key, { value: item, enumerable: false });
+  if (process.env.VIBE_TASK_BINDING && process.env.VIBE_TASK_BINDING !== bindingFingerprint(config)) fail('pinned task binding changed');
+  return config;
+}
+function containerMode() { return process.env.VIBE_CONTAINER === '1' || (process.env.VIBE_CONTAINER !== '0' && existsSync('/.dockerenv')); }
+
+function httpFailure(httpClass, wire, detail = '') {
+  const printable = PRINTABLE_CODE.test(wire) ? wire : 'unknown_error';
+  const lead = { unknown: 'Task&I outcome unknown', later: 'Task&I refused for now', rejected: 'Task&I refused', not_sent: 'Task&I request not sent' }[httpClass] ?? 'Task&I';
+  const error = new Error(`${lead}: ${printable}${!detail ? '' : httpClass === 'not_sent' ? `; ${detail}` : ` (${detail})`}`);
+  error.code = { unknown: 'OUTCOME_UNKNOWN', later: 'TRY_LATER', rejected: 'REFUSED', not_sent: 'NOT_SENT', open_children: 'OPEN_CHILDREN' }[httpClass];
+  error.httpClass = httpClass; error.wire = printable;
+  if (printable === 'connection_revoked') error.preface = [REVOKED];
+  return error;
+}
+// The v2.2 transport. The connect target is the descriptor host, or for http://127.0.0.1:<P> in container mode host.docker.internal:<P>
+// (IPv4 only: the firewall allows only the IPv4 host gateway) with Host kept as 127.0.0.1:<P>, which the service requires.
+// `connect` is the createClient httpConnect test seam (127.0.0.1 or ::1, http origins only); it is never read from env or argv.
+export function httpTransport({ origin, token, body, container = false, connect = null, timeoutMs = HTTP_LIMITS.timeoutMs }) {
+  const url = new URL(origin); const secure = url.protocol === 'https:';
+  if (connect && (secure || (connect.host !== '127.0.0.1' && connect.host !== '::1'))) fail('the httpConnect test seam takes 127.0.0.1 or ::1, and only for http origins');
+  const payload = Buffer.from(JSON.stringify(body), 'utf8');
+  const common = { 'content-type': 'application/json', authorization: `Bearer ${token}`, 'content-length': payload.length, connection: 'close' };
+  let options, where;
+  if (secure) { options = { host: url.hostname, port: url.port || 443, rejectUnauthorized: true, headers: common }; where = ''; }
+  else {
+    const port = Number(url.port);
+    const target = connect ?? (container ? { host: 'host.docker.internal', port } : { host: '127.0.0.1', port });
+    options = { host: target.host, port: target.port, family: target.host === '::1' ? 6 : 4, setHost: false, headers: { host: `127.0.0.1:${port}`, ...common } };
+    where = container && !connect ? ' (via host.docker.internal)' : ' (on this machine)';
+  }
+  return new Promise((resolvePromise, reject) => {
+    let sent = false, settled = false;
+    const req = (secure ? https : http).request({ ...options, method: 'POST', path: '/api/browser-agent', agent: false }, res => {
+      const status = res.statusCode;
+      if (status >= 300 && status < 400) return finish(httpFailure('unknown', 'redirect', 'redirects are refused'));
+      const declared = res.headers['content-length'];
+      if (declared !== undefined && !(Number(declared) <= HTTP_LIMITS.response)) return finish(httpFailure('unknown', 'response_too_large', 'over 16 MiB'));
+      const chunks = []; let size = 0;
+      res.on('data', chunk => { size += chunk.length; if (size > HTTP_LIMITS.response) return finish(httpFailure('unknown', 'response_too_large', 'over 16 MiB')); chunks.push(chunk); });
+      res.on('end', () => finish(null, { status, body: Buffer.concat(chunks).toString('utf8') }));
+      res.on('aborted', () => finish(httpFailure('unknown', 'connection_lost')));
+      res.on('error', () => finish(httpFailure('unknown', 'connection_lost')));
+    });
+    // The one timeout: a hard timer over the whole exchange.
+    const timer = setTimeout(() => finish(lost('timeout')), timeoutMs);
+    function finish(error, value) {
+      if (settled) return; settled = true; clearTimeout(timer);
+      if (error) { req.destroy(); reject(error); } else resolvePromise(value);
+    }
+    // Connected (for https: the TLS handshake verified) counts as sent: from then on a failure leaves the outcome unknown.
+    function lost(what) { return sent ? httpFailure('unknown', what) : httpFailure('not_sent', what === 'connection_lost' ? 'connect_failed' : what, `could not reach the Task&I service${where}`); }
+    req.on('socket', socket => {
+      if (secure) socket.once('secureConnect', () => { sent = true; });
+      else if (!socket.connecting) sent = true; else socket.once('connect', () => { sent = true; });
+    });
+    req.on('error', () => finish(lost(sent ? 'connection_lost' : 'connect_failed')));
+    req.end(payload);
+  });
+}
+// A non-200 body is interpreted when it is a JSON object whose `error` is a string (any other key is ignored and never
+// printed, except `children` of open_children, which is validated); 400/403/421 must carry their one code.
+function interpretHttp(action, response) {
+  let parsed; try { parsed = JSON.parse(response.body); } catch { parsed = undefined; }
+  if (response.status === 200) { if (!plainObject(parsed)) throw httpFailure('unknown', 'malformed_response', 'not a JSON object'); return parsed; }
+  if (!Object.hasOwn(ERROR_STATUS, response.status)) throw httpFailure('unknown', 'unexpected_status', `HTTP ${response.status}`);
+  const only = ERROR_STATUS[response.status];
+  if (!plainObject(parsed) || typeof parsed.error !== 'string' || (only !== null && parsed.error !== only)) throw httpFailure('unknown', 'unrecognised_response', `HTTP ${response.status}`);
+  if (response.status === 409 && action === 'complete' && parsed.error === 'open_children') {
+    let value;
+    try { value = conform(RESPONSE_SCHEMA.open_children, { children: parsed.children }, 'open_children', {}); }
+    catch (error) { if (error.code === 'MALFORMED') throw httpFailure('unknown', 'unrecognised_response', 'HTTP 409'); throw error; }
+    const error = httpFailure('open_children', 'open_children'); error.children = value.children.map(({ task, title }) => ({ task, title })); throw error;
+  }
+  const printable = PRINTABLE_CODE.test(parsed.error) ? parsed.error : 'unknown_error';
+  throw httpFailure(Object.hasOwn(HTTP_ERRORS, printable) ? HTTP_ERRORS[printable] : 'unknown', printable);
+}
+
+// Response schemas: every v2.2 response, including all next_task and list_asks rules, lives in this one constant.
+// A string names a scalar check; obj(required, optional, rule) is an exact-key object; [s] an array of s.
+const obj = (k, o = {}, rule = null) => ({ k, o, rule });
+const nullable = schema => ({ nullable: schema });
+const oneOf = (...values) => ({ oneOf: values });
+const SPENT = obj({ windows: 'count', tokens: 'count' });
+const RESPONSE_SCHEMA = Object.freeze({
+  capabilities: obj({ protocol: 'str', contract: 'str', grade: 'short', calls: ['str'] }),
+  next_task: { when: value => plainObject(value) && value.task === null, then: obj({ task: oneOf(null) }), else: obj({
+    task: 'str', title: 'short', body: 'str', priority: nullable('int'), effective_priority: nullable('int'),
+    allowance: nullable(obj({}, { windows: 'count', tokens: 'count' })), spent: SPENT, owner: 'short',
+    lease: obj({ until: 'ms', session: 'id' }), defaults_allowed: 'bool',
+  }, { hardDeadline: 'ms', estimate_minutes: 'count', latest_start: 'ms' }) },
+  ask: obj({ ask_id: 'id', placed: oneOf('subtask', 'thread') }),
+  list_asks: obj({ task: 'task', now: 'ms', asks: [obj({
+    ask_id: 'id', task: 'task', question: 'str', default: 'str', subtask_id: nullable('str'), placed: oneOf('subtask', 'thread'),
+    options: ['str'], order: 'count', estimate_minutes: 'count', remaining_minutes: 'count', reversible: 'bool', blocking: 'bool',
+    in_reply_to: nullable('str'), agent: oneOf('claude', 'codex'), created_at: 'ms', seen_at: 'ms', answered_at: 'ms',
+    answer: 'str', answered_by: 'short', owner_answer: 'bool',
+  }, {}, ask => ((ask.placed === 'subtask') !== (ask.subtask_id !== null) ? 'subtask_id does not match placed' : codePoints(ask.answer) > HTTP_LIMITS.answer ? `answer over ${HTTP_LIMITS.answer} code points` : null))] },
+  {}, (page, ctx) => (page.now < ctx.since ? 'now is before the requested since' : new Set(page.asks.map(ask => ask.ask_id)).size !== page.asks.length ? 'an ask_id repeats' : null)),
+  ask_status: obj({ task: 'task', asks: [obj({ ask_id: 'id', seen_at: nullable('ms'), deferred: 'bool', answered: 'bool' })] }),
+  comment: obj({ task: 'task', comment_id: 'id' }),
+  record_usage: obj({ task: 'task', spent: SPENT }),
+  record_time: obj({ entry_id: 'id', task: 'task', start: 'ms', end: 'ms', actor: oneOf('agent') }),
+  complete: obj({ task: 'task', state: oneOf('provisional'), completion_id: 'id' }),
+  release: obj({ task: 'task', released: oneOf(true), comment_id: 'id' }),
+  open_children: obj({ children: { list: obj({ task: 'id', title: 'short' }), min: 1, max: 200 } }),
+});
+const SCALARS = Object.freeze({
+  ms: value => Number.isSafeInteger(value) && value >= 0, count: value => Number.isSafeInteger(value) && value >= 0, int: value => Number.isSafeInteger(value),
+  bool: value => typeof value === 'boolean', str: value => typeof value === 'string',
+  short: value => typeof value === 'string' && codePoints(value) <= HTTP_LIMITS.shortText,
+  id: value => typeof value === 'string' && value.length >= 1 && value.length <= HTTP_LIMITS.id && value.isWellFormed(),
+  task: (value, ctx) => typeof value === 'string' && value === ctx.task,
+});
+// Messages name schema paths only, never a server-supplied key or value.
+function conform(schema, value, path, ctx) {
+  const bad = why => fail(`${path}: ${why}`, 'MALFORMED');
+  if (typeof schema === 'string') { if (!SCALARS[schema](value, ctx)) bad(schema === 'task' ? 'does not echo the requested task' : schema === 'short' ? `is not a string of at most ${HTTP_LIMITS.shortText} code points` : `is not ${schema}`); return value; }
+  if (Array.isArray(schema)) { if (!Array.isArray(value)) bad('is not an array'); value.forEach((item, i) => conform(schema[0], item, `${path}[${i}]`, ctx)); return value; }
+  if (schema.when) return conform(schema.when(value) ? schema.then : schema.else, value, path, ctx);
+  if (schema.nullable) return value === null ? null : conform(schema.nullable, value, path, ctx);
+  if (schema.oneOf) { if (!schema.oneOf.includes(value)) bad('has an unexpected value'); return value; }
+  if (schema.list) { if (!Array.isArray(value) || value.length < schema.min || value.length > schema.max) bad(`must hold ${schema.min}-${schema.max} items`); value.forEach((item, i) => conform(schema.list, item, `${path}[${i}]`, ctx)); return value; }
+  if (!plainObject(value)) bad('is not an object');
+  if (Object.keys(value).some(key => !Object.hasOwn(schema.k, key) && !Object.hasOwn(schema.o, key))) bad('has an unexpected key');
+  for (const key of Object.keys(schema.k)) { if (!Object.hasOwn(value, key)) bad(`is missing ${key}`); conform(schema.k[key], value[key], `${path}.${key}`, ctx); }
+  for (const key of Object.keys(schema.o)) if (Object.hasOwn(value, key)) conform(schema.o[key], value[key], `${path}.${key}`, ctx);
+  const broken = schema.rule?.(value, ctx); if (broken) bad(broken);
+  return value;
+}
+
+// Enqueue payload under a descriptor binding: limits are checked here, before anything is queued.
+const HTTP_PAYLOAD_KEYS = Object.freeze({
+  ask: ['question', 'default', 'options', 'order', 'estimate_minutes', 'remaining_minutes', 'reversible', 'blocking', 'in_reply_to', 'task'],
+  comment: ['text', 'task'], record_time: ['seconds', 'started_at', 'task'],
+  record_usage: ['account', 'model', 'input', 'output', 'cache_read', 'cache_write', 'cost_estimate', 'task'],
+});
+export function validateHttpPayload(kind, input, key, now = Date.now()) {
+  input = ownObject(input, `${kind} payload`);
+  for (const name of ['action', 'connection', 'agent', 'session']) if (Object.hasOwn(input, name)) fail(`${kind} payload must not set ${name}; the client supplies it`);
+  if (!Object.hasOwn(HTTP_PAYLOAD_KEYS, kind)) fail(`unsupported enqueue kind ${kind}`);
+  exactKeys(input, new Set(HTTP_PAYLOAD_KEYS[kind]), `${kind} payload`);
+  if (kind === 'ask') {
+    const out = { question: wireText(input.question, 'question', HTTP_LIMITS.question), default: wireText(input.default, 'default', HTTP_LIMITS.default), order: safeCount(input.order, 'order'), estimate_minutes: safeCount(input.estimate_minutes, 'estimate_minutes'), remaining_minutes: safeCount(input.remaining_minutes, 'remaining_minutes'), reversible: boolean(input.reversible, 'reversible'), blocking: input.blocking === undefined ? true : boolean(input.blocking, 'blocking') };
+    if (input.options !== undefined) {
+      if (!Array.isArray(input.options) || input.options.length > HTTP_LIMITS.options) fail(`options must be an array of at most ${HTTP_LIMITS.options} entries`);
+      out.options = input.options.map((item, i) => wireText(item, `options[${i}]`, HTTP_LIMITS.option));
+    }
+    if (input.in_reply_to !== undefined) out.in_reply_to = wireId(input.in_reply_to, 'in_reply_to');
+    // Placement (subtask or thread) cannot be predicted, so the composed thread post must fit too.
+    const post = `Question: ${out.question}\nDefault: ${out.default}${out.options?.length ? `\nOptions: ${out.options.join(' / ')}` : ''}`;
+    if (codePoints(post) > HTTP_LIMITS.post) fail(`ask would post more than ${HTTP_LIMITS.post} code points as a thread reply (Question, Default and Options lines together)`);
+    return out;
+  }
+  if (kind === 'comment') return { text: wireText(input.text, 'text', HTTP_LIMITS.comment) };
+  if (kind === 'record_time') {
+    if (!Number.isSafeInteger(input.seconds) || input.seconds < 1 || input.seconds > HTTP_LIMITS.seconds) fail(`seconds must be an integer from 1 to ${HTTP_LIMITS.seconds}`);
+    const startedAt = Date.parse(utcTimestamp(input.started_at, 'started_at'));
+    if (startedAt + input.seconds * 1000 > now) fail('record_time must not end in the future');
+    return { seconds: input.seconds, started_at: startedAt };
+  }
+  return { model: wireId(input.model, 'model'), input: safeCount(input.input, 'input'), output: safeCount(input.output, 'output'), cache_read: safeCount(input.cache_read, 'cache_read'), cache_write: safeCount(input.cache_write, 'cache_write'), cost_estimate: safeCost(input.cost_estimate), windows: 0, account: wireId(input.account, 'account'), source: 'vibe', source_ref: wireId(stableKey(key), 'source_ref') };
+}
+const WORST = 'x'.repeat(HTTP_LIMITS.id);
+const bodyBytes = body => Buffer.byteLength(JSON.stringify(body), 'utf8');
+// The one claimed-task accessor (both binding kinds).
+const claimOf = state => (plainObject(state.claimed) && typeof state.claimed.task === 'string' ? state.claimed : null);
+// Target resolution: --task, else the claimed task, else the effective task.
+function targetFrom(state, config, explicit, { claimOnly = false } = {}) {
+  const claim = claimOf(state);
+  const task = explicit ?? claim?.task ?? config.task;
+  if (task === null || task === undefined) fail(NO_BOUND_TASK, 'USAGE');
+  if (claimOnly && task !== claim?.task) fail(NEEDS_CLAIM, 'USAGE');
+  if (explicit !== undefined && config.task !== null && explicit !== config.task && explicit !== claim?.task) fail('task is neither the bound task nor the claimed task', 'USAGE');
+  return { task, claim, session: claim && claim.task === task && typeof claim.session === 'string' ? claim.session : undefined };
+}
+// Exact payload keys of each queued job kind, re-checked at dispatch (with the digest) so an edited state.json cannot send.
+const JOB_SHAPES = Object.freeze({
+  ask: [['task', 'question', 'default', 'order', 'estimate_minutes', 'remaining_minutes', 'reversible', 'blocking'], ['options', 'in_reply_to']],
+  comment: [['task', 'text'], []],
+  record_time: [['task', 'seconds', 'started_at'], []],
+  record_usage: [['task', 'model', 'input', 'output', 'cache_read', 'cache_write', 'cost_estimate', 'windows', 'account', 'source', 'source_ref'], []],
+});
+function jobIntact(job) {
+  if (typeof job.kind !== 'string' || !Object.hasOwn(JOB_SHAPES, job.kind) || !plainObject(job.payload)) return false;
+  const [required, optional] = JOB_SHAPES[job.kind];
+  if (Object.keys(job.payload).some(key => !required.includes(key) && !optional.includes(key)) || required.some(key => !Object.hasOwn(job.payload, key))) return false;
+  return digest({ kind: job.kind, payload: job.payload }) === job.digest;
+}
+// The wire fields of a queued job at dispatch: agent was resolved at enqueue, session comes from the current claim.
+function jobFields(job, claim) {
+  const fields = { ...job.payload };
+  if (job.kind === 'ask' || job.kind === 'comment') fields.agent = job.agent === 'codex' ? 'codex' : 'claude';
+  if (claim && claim.task === job.payload.task && typeof claim.session === 'string') fields.session = claim.session;
+  return fields;
+}
+const httpClassOf = error => (error?.code === 'TRY_LATER' || error?.code === 'NOT_SENT' ? 'later' : error?.code === 'REFUSED' ? 'rejected' : 'unknown');
+function withNotices(result, notices) { Object.defineProperty(result, 'notices', { value: notices, enumerable: false }); return result; }
+// complete/release: after the request may have been sent, an unknown outcome keeps the claim and says so.
+function sentWriteFailure(error) {
+  if (httpClassOf(error) !== 'unknown') return error;
+  const wrapped = new Error(`outcome unknown; check the task in Task&I: ${error?.wire ?? 'unknown_error'}`); wrapped.code = 'OUTCOME_UNKNOWN'; wrapped.preface = error?.preface; return wrapped;
+}
+const DIRECT_CALLS = ['complete', 'release'];
+// A complete/release whose outcome is unknown stays recorded in state.pendingDirect ({call, task, at: ms}) until
+// reconcile --direct clears it. Only the same call on the same task is blocked by it; a record for a different call or
+// task that arrives while one is held goes to state.pendingDirectMore, so no unknown outcome is ever overwritten.
+const pendingList = state => [state.pendingDirect, ...(Array.isArray(state.pendingDirectMore) ? state.pendingDirectMore : [])].filter(item => item !== undefined);
+const samePending = (item, call, task) => plainObject(item) && item.call === call && item.task === task;
+function refusePendingDirect(state, call, task) {
+  if (!pendingList(state).some(item => samePending(item, call, task))) return;
+  fail(`an earlier ${call} for ${task} has an unknown outcome; check Task&I, then run reconcile --direct ${call} --task ${task} --action done|retry --evidence TEXT`, 'PENDING');
+}
+function addPendingDirect(state, call, task) {
+  const record = { call, task, at: Date.now() };
+  if (state.pendingDirect === undefined) state.pendingDirect = record;
+  else state.pendingDirectMore = [...(Array.isArray(state.pendingDirectMore) ? state.pendingDirectMore : []), record];
+}
+function clearPendingDirect(state, call, task) {
+  const rest = pendingList(state).filter(item => !samePending(item, call, task));
+  delete state.pendingDirect; delete state.pendingDirectMore;
+  if (rest.length) state.pendingDirect = rest[0];
+  if (rest.length > 1) state.pendingDirectMore = rest.slice(1);
+}
+
+function createHttpClient(cwd, httpConnect) {
+  const descriptorConfig = () => { const config = loadConfig(cwd); if (config.kind !== HTTP_KIND) fail('not a Task&I descriptor binding'); return config; };
+  // Opens a session: exactly one capabilities request, gated on protocol, contract and the calls about to be made.
+  async function open(config, calls) {
+    if (httpConnect && new URL(config.origin).protocol !== 'http:') fail('the httpConnect test seam is refused for https origins');
+    const send = async (action, fields, ctx) => {
+      const body = { ...fields, action, connection: config.connection };
+      if (bodyBytes(body) > HTTP_LIMITS.body) { const error = httpFailure('rejected', 'body_too_large', `request body over ${HTTP_LIMITS.body} bytes`); error.notSent = true; throw error; }
+      const response = await httpTransport({ origin: config.origin, token: config.token, body, container: containerMode(), connect: httpConnect ? { host: httpConnect.host, port: httpConnect.port } : null, timeoutMs: httpConnect?.timeoutMs ?? HTTP_LIMITS.timeoutMs });
+      const value = interpretHttp(action, response);
+      try { return conform(RESPONSE_SCHEMA[action], value, action, ctx); } catch (error) { if (error.code === 'MALFORMED') throw httpFailure('unknown', 'malformed_response', error.message); throw error; }
+    };
+    const caps = await send('capabilities', {}, {});
+    if (caps.protocol !== config.protocol) fail('Task&I capabilities: protocol does not match the descriptor', 'PREDISPATCH');
+    if (caps.contract !== HTTP_CONTRACT_REVISION) fail(`Task&I capabilities: contract is not ${HTTP_CONTRACT_REVISION}`, 'PREDISPATCH');
+    for (const call of calls) if (!caps.calls.includes(call)) fail(`Task&I capabilities do not offer ${call}`, 'PREDISPATCH');
+    await withState(cwd, async (state, statePath) => { state.lastGrade = caps.grade; atomicJson(statePath, state); });
+    send.calls = caps.calls;
+    return send;
+  }
+  const parseTask = task => (task === undefined ? undefined : descriptorTaskRef(task, '--task'));
+  // Shared by complete/release: only the claiming session may send them; success clears the claim. pendingDirect is
+  // written before the request and cleared on a definite answer, so an unknown outcome survives the process.
+  async function finish(action, task, extra, shape) {
+    const config = descriptorConfig(); const explicit = parseTask(task);
+    const target = await withState(cwd, async state => { const resolved = targetFrom(state, config, explicit, { claimOnly: true }); refusePendingDirect(state, action, resolved.task); return resolved; });
+    const fields = { task: target.task, ...extra, session: target.session };
+    if (bodyBytes({ ...fields, action, connection: config.connection }) > HTTP_LIMITS.body) fail(`${action} would exceed the ${HTTP_LIMITS.body}-byte request body limit`);
+    const send = await open(config, [action]);
+    await withState(cwd, async (state, statePath) => { refusePendingDirect(state, action, target.task); addPendingDirect(state, action, target.task); atomicJson(statePath, state); });
+    const settle = clearClaim => withState(cwd, async (state, statePath) => {
+      clearPendingDirect(state, action, target.task);
+      if (clearClaim && claimOf(state)?.task === target.task) delete state.claimed;
+      atomicJson(statePath, state);
+    });
+    let value;
+    try { value = await send(action, fields, { task: target.task }); }
+    catch (error) {
+      if (error?.code === 'OPEN_CHILDREN') { await settle(false); return { bound: true, completed: false, open_children: error.children }; }
+      if (httpClassOf(error) !== 'unknown') await settle(false);
+      throw sentWriteFailure(error);
+    }
+    await settle(true);
+    return { bound: true, ...shape(value) };
+  }
+  // Enqueue under one lock: every item is validated first, and nothing is written unless all of them are accepted.
+  async function enqueueAll(kind, items, options = {}) {
+    const config = descriptorConfig();
+    const optionTask = options.task !== undefined ? parseTask(options.task) : undefined;
+    const prepared = items.map(({ key, input }) => {
+      key = stableKey(key); input = ownObject(input, `${kind} payload`);
+      if (options.task !== undefined && input.task !== undefined) fail('task given both in the payload and as --task');
+      const explicit = optionTask ?? (input.task !== undefined ? descriptorTaskRef(input.task, 'task') : undefined);
+      return { key, explicit, fields: validateHttpPayload(kind, Object.fromEntries(Object.entries(input).filter(([name]) => name !== 'task')), key) };
+    });
+    return withState(cwd, async (state, statePath) => {
+      const results = []; let changed = false;
+      for (const { key, explicit, fields } of prepared) {
+        const { task, claim } = targetFrom(state, config, explicit);
+        const payload = { task, ...fields };
+        if (bodyBytes({ ...payload, action: kind, connection: WORST, agent: WORST, session: WORST }) > HTTP_LIMITS.body) fail(`${kind} would exceed the ${HTTP_LIMITS.body}-byte request body limit`);
+        const hash = digest({ kind, payload });
+        const found = state.jobs.find(job => job.key === key);
+        if (found) { if (found.digest !== hash) fail('same key was already used with a different payload', 'KEY_CONFLICT'); results.push({ enqueued: false, deduplicated: true, key, state: found.state, bound: true }); continue; }
+        // agent: the claim's when this is the claimed task, else VIBE_AGENT, else claude. Kept outside payload and digest.
+        const agent = kind === 'ask' || kind === 'comment' ? (claim && claim.task === task && (claim.agent === 'claude' || claim.agent === 'codex') ? claim.agent : process.env.VIBE_AGENT === 'codex' || process.env.VIBE_AGENT === 'claude' ? process.env.VIBE_AGENT : 'claude') : undefined;
+        state.jobs.push({ key, kind, digest: hash, payload, ...(agent ? { agent } : {}), binding: bindingDigest(config), channel: 'taskandi-http', state: 'queued', createdAt: new Date().toISOString() });
+        changed = true; results.push({ enqueued: true, deduplicated: false, key, state: 'queued', bound: true });
+      }
+      if (changed) atomicJson(statePath, state);
+      return results;
+    });
+  }
+  return {
+    async resolveTask(task) {
+      const config = descriptorConfig(); const explicit = parseTask(task);
+      return withState(cwd, async state => targetFrom(state, config, explicit).task);
+    },
+    async enqueue(kind, key, input, options = {}) { return (await enqueueAll(kind, [{ key, input }], options))[0]; },
+    enqueueAll,
+    async flush() {
+      const config = descriptorConfig(); const notices = [];
+      const out = { bound: true, dispatched: 0, done: 0, uncertain: 0, refused: 0, requeued: 0 };
+      const isQueued = job => job.state === 'queued' && job.channel !== 'file-fallback';
+      const refuse = (job, code) => { job.state = 'refused'; job.refusedCode = code; job.lastError = `Task&I refused: ${code}`; out.refused++; notices.push(`${job.key}: Task&I refused: ${code}`); };
+      // Binding, job integrity and final body size are checked before any request, so a flush with nothing sendable sends nothing.
+      const kinds = await withState(cwd, async (state, statePath) => {
+        const queued = state.jobs.filter(isQueued);
+        for (const job of queued) if (job.binding !== bindingDigest(config)) fail(`queued job binding changed; reconcile explicitly before delivery (${job.key})`, 'BINDING_CHANGED');
+        let changed = false;
+        for (const job of queued) {
+          if (!jobIntact(job)) { refuse(job, 'tampered_job'); changed = true; }
+          else if (bodyBytes({ ...jobFields(job, claimOf(state)), action: job.kind, connection: config.connection }) > HTTP_LIMITS.body) { refuse(job, 'body_too_large'); changed = true; }
+        }
+        if (changed) atomicJson(statePath, state);
+        return [...new Set(state.jobs.filter(isQueued).map(job => job.kind))];
+      });
+      if (!kinds.length) return withNotices(out, notices);
+      const send = await open(config, kinds);
+      return withState(cwd, async (state, statePath) => {
+        for (const job of state.jobs.filter(isQueued)) {
+          if (job.binding !== bindingDigest(config)) fail(`queued job binding changed; reconcile explicitly before delivery (${job.key})`, 'BINDING_CHANGED');
+          if (!jobIntact(job)) { refuse(job, 'tampered_job'); atomicJson(statePath, state); continue; }
+          const claim = claimOf(state);
+          job.state = 'dispatching'; job.dispatchedAt = new Date().toISOString(); atomicJson(statePath, state); out.dispatched++;
+          try {
+            job.result = await send(job.kind, jobFields(job, claim), { task: job.payload.task });
+            job.state = 'done'; job.doneAt = new Date().toISOString(); delete job.lastError; out.done++; atomicJson(statePath, state);
+          } catch (error) {
+            const httpClass = httpClassOf(error);
+            if (error?.code === 'NOT_SENT' || error?.notSent) out.dispatched--;
+            if (httpClass === 'rejected') { refuse(job, error.wire); atomicJson(statePath, state); continue; }
+            if (httpClass === 'later') { job.state = 'queued'; job.lastError = error.message; out.requeued++; notices.push(`${job.key}: ${error.message}`); atomicJson(statePath, state); break; }
+            // No v2.2 write is idempotent: an uncertain job is never retried automatically.
+            job.state = 'uncertain'; job.lastError = `outcome unknown; reconcile explicitly: ${error?.wire ? error.message : 'unexpected client error'}`; out.uncertain++;
+            notices.push(...(error?.preface ?? []), `${job.key}: ${job.lastError}`); atomicJson(statePath, state); break;
+          }
+        }
+        return withNotices(out, notices);
+      });
+    },
+    async nextTask({ agent, session }) {
+      const config = descriptorConfig();
+      const send = await open(config, ['next_task']);
+      const task = await send('next_task', { agent, session }, {});
+      if (task.task !== null && !USABLE_ID.test(task.task)) {
+        // The server leased a task vibe cannot work on: hand it straight back rather than hold the lease for 90 minutes.
+        const error = new Error(UNUSABLE_TASK); error.code = 'INVALID';
+        try {
+          if (!send.calls.includes('release')) throw httpFailure('not_sent', 'release_not_offered');
+          await send('release', { task: task.task, reason: 'Task id not usable by vibe; rename it in Task&I.', session }, { task: task.task });
+        } catch (failure) {
+          error.preface = [`could not release the lease on the unusable task (${failure?.wire ?? 'unexpected client error'}); it lapses on its own`];
+        }
+        throw error;
+      }
+      await withState(cwd, async (state, statePath) => {
+        if (task.task === null) delete state.claimed;
+        else state.claimed = { task: task.task, agent, session, lease: { ...task.lease }, claimedAt: new Date().toISOString() };
+        atomicJson(statePath, state);
+      });
+      return { bound: true, channel: 'taskandi-http', task: task.task === null ? null : task };
+    },
+    async complete(task, summary) {
+      wireText(summary, 'summary', HTTP_LIMITS.summary);
+      return finish('complete', task, { summary }, value => ({ completed: true, state: 'provisional', completion_id: value.completion_id }));
+    },
+    async release(task, reason) {
+      wireText(reason, 'reason', HTTP_LIMITS.reason);
+      return finish('release', task, { reason }, value => ({ released: true, comment_id: value.comment_id }));
+    },
+    async reconcileDirect(call, task, action, evidence) {
+      if (!DIRECT_CALLS.includes(call)) fail('reconcile --direct takes complete or release');
+      task = descriptorTaskRef(task, '--task');
+      if (!['done', 'retry'].includes(action)) fail('reconcile action must be done or retry'); text(evidence, 'evidence', LIMITS.text);
+      return withState(cwd, async (state, statePath) => {
+        if (!pendingList(state).some(item => samePending(item, call, task))) fail(`no earlier ${call} for ${task} has an unknown outcome`);
+        // done: the call was applied, so its claim is spent; retry: one more send is allowed.
+        clearPendingDirect(state, call, task);
+        if (action === 'done' && claimOf(state)?.task === task) delete state.claimed;
+        state.reconciliationLog.push({ direct: call, task, action, evidence, at: new Date().toISOString() }); atomicJson(statePath, state);
+        return { direct: call, task, action, reconciled: true };
+      });
+    },
+    async poll({ task } = {}) {
+      const config = descriptorConfig(); const explicit = parseTask(task);
+      const target = await withState(cwd, async state => {
+        const resolved = targetFrom(state, config, explicit); bindAnswers(state, config, false);
+        return { ...resolved, prior: state.cursors?.[resolved.task]?.now ?? null };
+      });
+      // `now` is wall-clock and the server filters answered_at > since, so re-read a 2 s overlap.
+      const since = target.prior === null ? 0 : Math.max(0, target.prior - 2000);
+      const send = await open(config, ['list_asks']);
+      const page = await send('list_asks', { task: target.task, since, ...(target.session ? { session: target.session } : {}) }, { task: target.task, since });
+      return withState(cwd, async (state, statePath) => {
+        bindAnswers(state, config);
+        state.cursors ??= {};
+        if ((state.cursors[target.task]?.now ?? null) !== target.prior) fail('poll cursor changed concurrently; response was not applied');
+        const added = [], changed = []; let ignored = 0;
+        for (const ask of page.asks) {
+          const existing = state.answers.find(item => item.task === target.task && item.id === ask.ask_id);
+          if (!existing) {
+            state.answers.push({ task: target.task, id: ask.ask_id, content: ask.answer, ownerAnswer: ask.owner_answer, seenAt: ask.seen_at, answeredAt: ask.answered_at, answeredBy: ask.answered_by, receivedAt: new Date().toISOString() });
+            if (ask.owner_answer) added.push({ ask_id: ask.ask_id, answer: ask.answer, seen_at: ask.seen_at, answered_at: ask.answered_at }); else ignored++;
+          } else if (existing.content !== ask.answer) {
+            const priorDigest = digest(existing.content), newDigest = digest(ask.answer);
+            if (!state.conflicts.some(item => item.task === target.task && item.id === ask.ask_id && item.priorDigest === priorDigest && item.newDigest === newDigest)) { state.conflicts.push({ task: target.task, id: ask.ask_id, priorDigest, newDigest, content: ask.answer, detectedAt: new Date().toISOString() }); changed.push(ask.ask_id); }
+          }
+        }
+        atomicJson(statePath, state); // answers are durable before the cursor advances
+        state.cursors[target.task] = { now: page.now }; atomicJson(statePath, state);
+        return { bound: true, channel: 'taskandi-http', task: target.task, newAnswers: added.length, answers: added, ignored, conflicts: changed, cursor: { now: page.now } };
+      });
+    },
+    async askStatus({ task } = {}) {
+      const config = descriptorConfig(); const explicit = parseTask(task);
+      const target = await withState(cwd, async state => targetFrom(state, config, explicit));
+      const send = await open(config, ['ask_status']);
+      const value = await send('ask_status', { task: target.task, ...(target.session ? { session: target.session } : {}) }, { task: target.task });
+      return { bound: true, channel: 'taskandi-http', task: target.task, asks: value.asks };
+    },
+    // A present but invalid descriptor is an error (exit 1), never a file-fallback report.
+    async status() {
+      const config = descriptorConfig();
+      return withState(cwd, async state => {
+        const counts = { queued: 0, dispatching: 0, done: 0, uncertain: 0, refused: 0 }; for (const job of state.jobs) if (Object.hasOwn(counts, job.state)) counts[job.state]++;
+        const staleBindingKeys = state.jobs.filter(job => job.state === 'queued' && job.channel !== 'file-fallback' && job.binding !== bindingDigest(config)).map(job => job.key);
+        return { bound: true, channel: 'taskandi-http', counts, uncertaintyIds: state.jobs.filter(job => job.state === 'uncertain').map(job => job.key), staleBindingKeys, refusedKeys: state.jobs.filter(job => job.state === 'refused').map(job => ({ key: job.key, code: job.refusedCode ?? 'unknown_error' })), claimedTask: claimOf(state)?.task ?? null, answerCount: state.answers.length, conflictIds: [...new Set(state.conflicts.map(item => item.id))], cursorSequence: state.cursor?.sequence ?? 0, lastGrade: typeof state.lastGrade === 'string' ? state.lastGrade : null };
+      });
+    },
+  };
+}
+
+export function createClient({ cwd = process.cwd(), transport = fetchTransport, httpConnect } = {}) {
   cwd = projectRoot(cwd);
-  const currentBinding = config => digest({ endpoint: config.endpoint, task: config.task, contractRevision: config.contractRevision });
+  // httpConnect {host, port, timeoutMs?} is the v2.2 test seam: tests point the transport at a loopback listener with it
+  // (127.0.0.1 or ::1 only; refused for https origins).
+  if (httpConnect !== undefined && (!plainObject(httpConnect) || (httpConnect.host !== '127.0.0.1' && httpConnect.host !== '::1') || !Number.isInteger(httpConnect.port) || httpConnect.port < 1 || httpConnect.port > 65535 || (httpConnect.timeoutMs !== undefined && !(Number.isInteger(httpConnect.timeoutMs) && httpConnect.timeoutMs > 0)))) fail('httpConnect must be {host: 127.0.0.1 or ::1, port, timeoutMs?}');
+  const h = createHttpClient(cwd, httpConnect);
+  const viaHttp = () => lexists(join(cwd, DESCRIPTOR));
   function guardedMcp(config) {
     const tokenPath = join(cwd, '.vibe/taskandi-token');
     if (trackedCaseInsensitive(cwd, tokenPath)) fail('Task&I token must be untracked');
@@ -472,7 +1015,7 @@ export function createClient({ cwd = process.cwd(), transport = fetchTransport }
       const wrapped = new Error(`outcome unknown; check the task in Task&I: ${error.message}`); wrapped.code = 'OUTCOME_UNKNOWN'; throw wrapped;
     }
   }
-  const claimedTask = state => (typeof state.claimed?.task === 'string' ? state.claimed.task : null);
+  const claimedTask = state => claimOf(state)?.task ?? null;
   async function checkTarget(config, task) {
     if (task === config.task) return;
     if (task !== await withState(cwd, async state => claimedTask(state))) fail('task is neither the bound task nor the claimed task');
@@ -490,11 +1033,14 @@ export function createClient({ cwd = process.cwd(), transport = fetchTransport }
   }
   return {
     config() { return loadConfig(cwd); },
+    descriptor() { return viaHttp(); },
     async resolveTask(task) {
+      if (viaHttp()) return h.resolveTask(task);
       taskRef(task); const config = loadConfig(cwd); if (!config.bound) return task;
       requireV2(config, 'usage --task'); await checkTarget(config, task); return task;
     },
     async enqueue(kind, key, input, options = {}) {
+      if (viaHttp()) return h.enqueue(kind, key, input, options);
       key = stableKey(key);
       const config = loadConfig(cwd);
       const binding = config.bound ? config : { task: `file:${digest(cwd).slice(0, 32)}` };
@@ -509,11 +1055,19 @@ export function createClient({ cwd = process.cwd(), transport = fetchTransport }
         if (config.bound && payload.task !== undefined && payload.task !== config.task && payload.task !== claimedTask(state)) fail('task is neither the bound task nor the claimed task');
         const found = state.jobs.find(job => job.key === key);
         if (found) { if (found.digest !== hash) fail('same key was already used with a different payload', 'KEY_CONFLICT'); return { enqueued: false, deduplicated: true, key, state: found.state, bound: config.bound }; }
-        state.jobs.push({ key, kind, digest: hash, payload, binding: config.bound ? currentBinding(config) : null, channel: config.bound ? 'taskandi-mcp' : 'file-fallback', state: 'queued', createdAt: new Date().toISOString() }); atomicJson(statePath, state);
+        state.jobs.push({ key, kind, digest: hash, payload, binding: config.bound ? bindingDigest(config) : null, channel: config.bound ? 'taskandi-mcp' : 'file-fallback', state: 'queued', createdAt: new Date().toISOString() }); atomicJson(statePath, state);
         return { enqueued: true, deduplicated: false, key, state: 'queued', bound: config.bound };
       });
     },
+    // Many jobs of one kind: under a descriptor binding, one config load and one outbox lock for all of them.
+    async enqueueBatch(kind, items, options = {}) {
+      if (viaHttp()) return h.enqueueAll(kind, items, options);
+      const results = [];
+      for (const { key, input } of items) results.push(await this.enqueue(kind, key, input, options));
+      return results;
+    },
     async flush() {
+      if (viaHttp()) return h.flush();
       const config = loadConfig(cwd); if (!config.bound) return { bound: false, channel: 'file-fallback', dispatched: 0 };
       const mcp = guardedMcp(config); const tools = await mcp.discover();
       const byName = new Map(tools.map(tool => [tool?.name, tool]));
@@ -523,7 +1077,7 @@ export function createClient({ cwd = process.cwd(), transport = fetchTransport }
       return withState(cwd, async (state, statePath) => {
         let dispatched = 0, done = 0, uncertain = 0;
         const queued = state.jobs.filter(item => item.state === 'queued' && item.channel !== 'file-fallback');
-        for (const job of queued) if (job.binding !== currentBinding(config)) fail(`queued job binding changed; reconcile explicitly before delivery (${job.key})`, 'BINDING_CHANGED');
+        for (const job of queued) if (job.binding !== bindingDigest(config)) fail(`queued job binding changed; reconcile explicitly before delivery (${job.key})`, 'BINDING_CHANGED');
         for (const job of queued) {
           validateTool(byName.get(job.kind), job.kind, revision);
           job.state = 'dispatching'; job.dispatchedAt = new Date().toISOString(); atomicJson(statePath, state); dispatched++;
@@ -556,7 +1110,10 @@ export function createClient({ cwd = process.cwd(), transport = fetchTransport }
     async reconcile(key, action, evidence) {
       key = stableKey(key); if (!['done', 'retry'].includes(action)) fail('reconcile action must be done or retry'); text(evidence, 'evidence', LIMITS.text);
       return withState(cwd, async (state, statePath) => {
-        const job = state.jobs.find(item => item.key === key); if (!job) fail('reconcile key was not found'); if (job.state !== 'uncertain') fail('only uncertain jobs can be reconciled');
+        const job = state.jobs.find(item => item.key === key); if (!job) fail('reconcile key was not found');
+        // refused (v2.2 only): the server did not apply it, so it can be requeued but never marked done.
+        if (job.state === 'refused' && job.channel === 'taskandi-http') { if (action === 'done') fail('a refused job was not applied; only --action retry can requeue it'); delete job.refusedCode; }
+        else if (job.state !== 'uncertain') fail('only uncertain jobs can be reconciled');
         job.state = action === 'done' ? 'done' : 'queued'; delete job.lastError;
         state.reconciliationLog.push({ key, action, evidence, at: new Date().toISOString() }); atomicJson(statePath, state);
         return { key, state: job.state, reconciled: true };
@@ -565,6 +1122,7 @@ export function createClient({ cwd = process.cwd(), transport = fetchTransport }
     async nextTask({ agent, session }) {
       if (agent !== 'claude' && agent !== 'codex') fail('--agent must be claude or codex');
       session = stableKey(session);
+      if (viaHttp()) return h.nextTask({ agent, session });
       const config = loadConfig(cwd); if (!config.bound) return { ...FALLBACK };
       requireV2(config, 'next-task');
       const mcp = await toolMcp(config, 'next_task');
@@ -577,14 +1135,17 @@ export function createClient({ cwd = process.cwd(), transport = fetchTransport }
       return { bound: true, task: task.task === null ? null : task };
     },
     complete(task, summary) {
+      if (viaHttp()) return h.complete(task, summary);
       text(summary, 'summary');
       return targeted('complete', 'complete', task, { summary }, validateComplete, (state, value) => { if (!value.completed || claimedTask(state) !== task) return false; delete state.claimed; return true; });
     },
     release(task, reason) {
+      if (viaHttp()) return h.release(task, reason);
       text(reason, 'reason');
       return targeted('release', 'release', task, { reason }, validateRelease, state => { if (claimedTask(state) !== task) return false; delete state.claimed; return true; });
     },
-    async poll() {
+    async poll(options = {}) {
+      if (viaHttp()) return h.poll(options);
       const config = loadConfig(cwd); if (!config.bound) return { bound: false, channel: 'file-fallback', newAnswers: 0, conflicts: [] };
       const revision = revisionOf(config); const legacy = revision === LEGACY_CONTRACT_REVISION;
       const mcp = await toolMcp(config, 'list_asks');
@@ -614,11 +1175,20 @@ export function createClient({ cwd = process.cwd(), transport = fetchTransport }
         return legacy ? { bound: true, newAnswers: added.length, answers: added, conflicts: changed, cursor: page.cursor } : { bound: true, newAnswers: added.length, answers: added, ignored, conflicts: changed, cursor: page.cursor };
       });
     },
+    async reconcileDirect(call, task, action, evidence) {
+      if (!viaHttp()) fail('reconcile --direct needs a Task&I descriptor binding (.vibe/taskandi-descriptor.json)');
+      return h.reconcileDirect(call, task, action, evidence);
+    },
+    async askStatus(options = {}) {
+      if (!viaHttp()) fail('ask-status needs a Task&I descriptor binding (.vibe/taskandi-descriptor.json)');
+      return h.askStatus(options);
+    },
     async status() {
+      if (viaHttp()) return h.status();
       let config; try { config = loadConfig(cwd); } catch (error) { config = { bound: false, reason: 'invalid-config', error: error.message }; }
       return withState(cwd, async state => {
         const counts = { queued: 0, dispatching: 0, done: 0, uncertain: 0 }; for (const job of state.jobs) if (Object.hasOwn(counts, job.state)) counts[job.state]++;
-        const staleBindingKeys = config.bound ? state.jobs.filter(job => job.state === 'queued' && job.channel !== 'file-fallback' && job.binding !== currentBinding(config)).map(job => job.key) : [];
+        const staleBindingKeys = config.bound ? state.jobs.filter(job => job.state === 'queued' && job.channel !== 'file-fallback' && job.binding !== bindingDigest(config)).map(job => job.key) : [];
         return { bound: config.bound, channel: config.bound ? 'taskandi-mcp' : 'file-fallback', reason: config.reason, configError: config.error, counts, uncertaintyIds: state.jobs.filter(job => job.state === 'uncertain').map(job => job.key), staleBindingKeys, claimedTask: claimedTask(state), answerCount: state.answers.length, conflictIds: [...new Set(state.conflicts.map(item => item.id))], cursorSequence: state.cursor?.sequence ?? 0 };
       });
     },
@@ -649,9 +1219,43 @@ function strictFlags(args, required, optional = []) {
   if (required.some(flag => !Object.hasOwn(out, flag))) fail(USAGE);
   return out;
 }
-export async function main(argv = process.argv.slice(2)) {
-  const client = createClient(); const command = argv[0]; let result;
+// Descriptor-binding CLI: --task is optional (target resolution) and takes Task&I task ids.
+async function descriptorMain(client, argv) {
+  const command = argv[0]; const taskFlag = flags => (flags['--task'] === undefined ? undefined : descriptorTaskRef(flags['--task'], '--task'));
+  const flags = (args, required, optional = []) => { try { return strictFlags(args, required, optional); } catch { fail(HTTP_USAGE); } };
   if (command === 'enqueue') {
+    if (!['ask', 'comment', 'record_usage', 'record_time'].includes(argv[1])) fail(HTTP_USAGE);
+    const parsed = flags(argv.slice(2), ['--key'], ['--task']); const task = taskFlag(parsed);
+    return client.enqueue(argv[1], parsed['--key'], await readStdinJson(), { task });
+  }
+  if (command === 'flush' || command === 'status') { if (argv.length !== 1) fail(HTTP_USAGE); return command === 'flush' ? client.flush() : client.status(); }
+  if (command === 'poll') return client.poll({ task: taskFlag(flags(argv.slice(1), [], ['--task'])) });
+  if (command === 'ask-status') return client.askStatus({ task: taskFlag(flags(argv.slice(1), [], ['--task'])) });
+  if (command === 'next-task') {
+    const parsed = flags(argv.slice(1), ['--agent', '--session']);
+    if (parsed['--agent'] !== 'claude' && parsed['--agent'] !== 'codex') fail(HTTP_USAGE);
+    return client.nextTask({ agent: parsed['--agent'], session: stableKey(parsed['--session']) });
+  }
+  if (command === 'complete') { const parsed = flags(argv.slice(1), ['--summary'], ['--task']); return client.complete(taskFlag(parsed), parsed['--summary']); }
+  if (command === 'release') { const parsed = flags(argv.slice(1), ['--reason'], ['--task']); return client.release(taskFlag(parsed), parsed['--reason']); }
+  if (command === 'usage') {
+    const { enqueueTranscriptUsage } = await import('./taskandi-usage.mjs');
+    const parsed = flags(argv.slice(1), ['--transcript', '--session', '--account', '--cost-estimate'], ['--task']);
+    return enqueueTranscriptUsage(client, parsed['--transcript'], { session: parsed['--session'], account: parsed['--account'], costEstimate: costEstimateValue(parsed['--cost-estimate']), task: taskFlag(parsed) });
+  }
+  if (command === 'reconcile' && argv.includes('--direct')) { const parsed = flags(argv.slice(1), ['--direct', '--task', '--action', '--evidence']); return client.reconcileDirect(parsed['--direct'], parsed['--task'], parsed['--action'], parsed['--evidence']); }
+  if (command === 'reconcile') { const parsed = flags(argv.slice(1), ['--key', '--action', '--evidence']); return client.reconcile(parsed['--key'], parsed['--action'], parsed['--evidence']); }
+  fail(HTTP_USAGE);
+}
+// Server strings reach stdout as JSON; C1 and bidi controls are escaped as \uXXXX so they cannot steer a terminal.
+const TERMINAL_UNSAFE = /[\u0080-\u009f\u202a-\u202e\u2066-\u2069]/g;
+export function terminalSafeJson(value) { return JSON.stringify(value).replace(TERMINAL_UNSAFE, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`); }
+// clientOptions reach createClient (tests pass the httpConnect seam); the CLI itself never sets them.
+export async function main(argv = process.argv.slice(2), clientOptions = {}) {
+  const client = createClient(clientOptions); const command = argv[0]; let result;
+  const descriptor = client.descriptor();
+  if (descriptor) result = await descriptorMain(client, argv);
+  else if (command === 'enqueue') {
     if (!['ask', 'comment', 'record_usage', 'record_time'].includes(argv[1])) fail(USAGE);
     const flags = strictFlags(argv.slice(2), ['--key'], ['--task']);
     if (flags['--task'] !== undefined) taskRef(flags['--task'], '--task');
@@ -679,11 +1283,20 @@ export async function main(argv = process.argv.slice(2)) {
   }
   else if (command === 'reconcile') result = await client.reconcile(argValue(argv, '--key'), argValue(argv, '--action'), argValue(argv, '--evidence'));
   else fail(USAGE);
-  process.stdout.write(`${JSON.stringify(result)}\n`);
+  process.stdout.write(`${descriptor ? terminalSafeJson(result) : JSON.stringify(result)}\n`);
+  for (const notice of result?.notices ?? []) process.stderr.write(`taskandi-client: ${notice}\n`);
+}
+// The CLI entry: stdout from main, every failure as `taskandi-client: <message>` lines on stderr and exit code 1.
+export async function cli(argv = process.argv.slice(2), clientOptions = {}) {
+  try { await main(argv, clientOptions); return 0; }
+  catch (error) {
+    for (const line of error?.preface ?? []) process.stderr.write(`taskandi-client: ${line}\n`);
+    process.stderr.write(`taskandi-client: ${error?.message ?? error}\n`); process.exitCode = 1; return 1;
+  }
 }
 
 function invokedDirectly() {
   try { return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); }
   catch { return false; }
 }
-if (invokedDirectly()) main().catch(error => { process.stderr.write(`taskandi-client: ${error.message}\n`); process.exitCode = 1; });
+if (invokedDirectly()) cli();

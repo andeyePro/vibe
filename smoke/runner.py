@@ -59,6 +59,9 @@ from smoke.checks_46_link_opener import *
 from smoke.checks_47_taskandi_contract_v2 import *
 from smoke.checks_48_vibe_link import *
 from smoke.checks_49_vibe_link_hardening import *
+from smoke.checks_50_taskandi_http import *
+from smoke.checks_52_taskandi_http_more import *
+from smoke.checks_55_taskandi_http_review import *
 
 def main() -> int:
     test_docker_preflight_is_shared_and_mac_start_preserves_target()
@@ -1204,6 +1207,40 @@ def main() -> int:
         test_codex_supervisor_compaction_refused_by_server,
         test_codex_supervisor_compaction_binds_only_this_threads_turn,
     ])
+
+    test_taskandi_http_ac1_descriptor()
+    test_taskandi_http_ac2_wire_per_fixture()
+    test_taskandi_http_ac3_host_and_headers()
+    test_taskandi_http_ac3_status_refusals_and_source()
+    test_taskandi_http_ac4_flush_job_states()
+    test_taskandi_http_ac4_direct_and_extras()
+    test_taskandi_http_ac5_capabilities_gate()
+    test_taskandi_http_ac5b_transport_limits()
+    test_taskandi_http_ac6_task_ids()
+    test_taskandi_http_ac7_binding_digest()
+    test_taskandi_http_ac8_cursors()
+    test_taskandi_http_ac9_next_task_shape()
+    test_taskandi_http_ac17_unusable_task_id()
+    test_taskandi_http_ac10_sessions_and_agents()
+    test_taskandi_http_ac11_record_time_and_usage()
+    test_taskandi_http_ac12_root_null_targets()
+    test_taskandi_http_ac16_limits()
+    test_taskandi_http_ac18_list_asks_shape()
+    test_taskandi_http_ac13_no_leakage()
+    test_taskandi_http_ac14_regression_and_matrix()
+    test_taskandi_http_ac15_docs_and_gates()
+    test_r6_ac19_launcher_and_supervisor()
+    test_r6_ac20_409_detail_fields()
+    test_r6_ac21_tls_counts_as_not_sent()
+    test_r6_ac22_unusable_id_releases_lease()
+    test_r6_ac23_status_invalid_descriptor()
+    test_r6_ac24_usage_one_pass()
+    test_r6_ac25_origin_in_binding()
+    test_r6_ac26_terminal_safe_stdout()
+    test_r6_ac27_pending_direct()
+    test_r6_ac28_tampered_jobs()
+    test_r6_ac29_seam_limits()
+    test_r6_ac30_observable_cleanups()
 
     print()
     if FAILURES:

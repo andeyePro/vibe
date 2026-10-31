@@ -1,0 +1,26 @@
+{
+  "contract": "vibe-agent-exchange-v2.2",
+  "notes": "vibe's usage row plus task. input and output are required token counts; cache_read, cache_write and windows default to 0; cost_estimate and account are optional. spent is the roll-up on the task across sessions: tokens = input + output + cache_read + cache_write, windows summed.",
+  "request": {
+    "action": "record_usage",
+    "task": "leaf-b",
+    "model": "invented-model",
+    "input": 1000,
+    "output": 200,
+    "cache_read": 50,
+    "cache_write": 10,
+    "cost_estimate": 0.12,
+    "windows": 0,
+    "account": "invented-account",
+    "source": "vibe",
+    "source_ref": "session-a",
+    "session": "session-a"
+  },
+  "response": {
+    "task": "leaf-b",
+    "spent": {
+      "windows": 0,
+      "tokens": 1260
+    }
+  }
+}
