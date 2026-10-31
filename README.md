@@ -275,7 +275,15 @@ vibe link terminal iTerm                # which terminal: Terminal (macOS defaul
 
 Safety model: a link is only a request, and the consent is your machine's `~/.vibe/link-projects` (written only by `vibe link allow`, never reachable from inside a container), so a link can open only a project you registered and can carry nothing but a project name, a task reference and a terminal name, all checked against strict patterns. `vibe link allow` registers a repository at its top folder only, never a subfolder or a folder nested inside (or around) one already registered. Each click asks first (Open, Always for this project, or Cancel; Cancel is the default and the dialog gives up after 60 seconds); a second click while that dialog is up is ignored, and the same project can't be opened twice within 5 seconds (a stamp or dialog lock in `~/.vibe/link-last/` dated in the future also blocks; the message names the file to delete). An unknown project name shows at most one "No vibe project called …" dialog every 5 seconds. `vibe link deny` always withdraws consent, even when something in `~/.vibe/link-last/` is a symlink it refuses to clean up. The new terminal changes into the folder itself and refuses to start vibe if the folder was swapped for a symlink in the meantime. `VIBE_LINK_ASSUME` (a test hook that answers the dialog) counts only from the environment, never from `~/.vibe/config`. A link doesn't notice a session already running for that project; a second one joins the same working tree.
 
-`vibe link open <url>` (or `vibe link-open <url>`) handles a link by hand. Registering `vibe://` with macOS and Linux so a click reaches it, `vibe link --install`, comes in the next release.
+`vibe link open <url>` (or `vibe link-open <url>`) handles a link by hand. To make a click reach it, register `vibe://` with your OS once:
+
+```bash
+vibe link --install     # macOS: builds ~/Applications/Vibe Link.app on this Mac and signs it ad hoc (no download, no notarisation); Linux: writes vibe-link.desktop and runs xdg-mime
+vibe link --status      # what is installed, which launcher it points at ("stale" after you move vibe), how many projects, which terminal
+vibe link --uninstall   # removes it (on Linux the xdg-mime association is left in mimeapps.list, dangling but harmless)
+```
+
+The handler holds no logic: it runs `vibe link-open '<url>'` in the background, so every check, confirmation and launch above still applies. The applet itself needs no permission. macOS may ask once to let `vibe` (via osascript) control Terminal or iTerm, and may ask again after `--install` re-signs the applet; Ghostty, kitty and WezTerm launch with `open -na` and need no prompt. A reinstall stages the new bundle beside the old one, so a failed `--install` leaves the working handler in place. `--status` on macOS also shows which bundle currently claims `vibe:` (`default:`). Re-run `vibe link --install` after moving or reinstalling vibe: it rebuilds vibe's own bundle in place and refuses to replace anything that is not vibe's. The launcher path must be a plain path (letters, digits and `. _ / + @ , : = ~ -` and spaces), or install refuses with exit 7.
 
 ### Second brain (optional)
 

@@ -48,7 +48,7 @@
 #   vibe link allow [name] | deny <name> | list  # which folders vibe:// links may open
 #   vibe link terminal <name>  # Terminal|iTerm|Ghostty|kitty|WezTerm|gnome-terminal
 #   vibe link open <url>     # open vibe://open?project=<name>[&task=<ref>], asking first
-#                            # (vibe link --install, registering vibe:// with the OS, is next)
+#   vibe link --install | --uninstall | --status  # register vibe:// with the OS (macOS applet, Linux .desktop)
 #   vibe audit [--history|--staged]      # scan git history (default) or the staged diff for secrets/PII
 #   vibe clean [--dry-run|--yes|--all]   # reclaim stopped vibe containers, dangling images, build cache
 #
@@ -2301,8 +2301,8 @@ codex_handle_subcommand() {
 # eval'd. The URL grammar is strict and validated in full before anything on
 # disk is read. Exit codes (2 refused/unknown, 3 rate-limited, 4 cancelled,
 # 5 unusable registry, 6 no terminal, 7 launcher path) are part of the
-# contract the tests assert. `vibe link --install` (registering vibe:// with
-# macOS/Linux) is the next slice.
+# contract the tests assert. `vibe link --install` registers vibe:// with
+# macOS/Linux (task_063).
 #
 # VIBE_LINK_DRY_RUN=1 prints the dialog/launch argv instead of running them
 # (and writes no stamp or lock); VIBE_LINK_ASSUME=open|always|cancel answers
@@ -2335,7 +2335,7 @@ _LINK_WRAPPER='cd -P -- "$1" && [ "$(pwd -P)" = "$1" ] && shift && exec "$@"'
 _LINK_URL_RE='^vibe://open/?\?[A-Za-z0-9._~:/&=-]+$'
 
 _link_usage() {
-  printf '%s\n' "Usage: vibe link allow [name] | deny <name> | list | terminal <name> | open <url>" >&2
+  printf '%s\n' "Usage: vibe link allow [name] | deny <name> | list | terminal <name> | open <url> | --install | --uninstall | --status" >&2
   exit 1
 }
 
@@ -3168,11 +3168,8 @@ _link_open() {
 
   # The launcher's own canonical path (resolved once, at the top of this
   # file) goes into the terminal command too.
-  vibe_path="${VIBE_LAUNCHER_PATH:-}"
-  if [ -z "$vibe_path" ] || ! _codex_path_is_single_line "$vibe_path" || ! _link_valid_path "$vibe_path"; then
-    printf '%s\n' "vibe link: refused: launcher path has characters a link may not carry — install vibe under a plain path" >&2
-    exit 7
-  fi
+  _link_launcher_check
+  vibe_path="$VIBE_LAUNCHER_PATH"
 
   os="$(_link_os)"
 
@@ -3372,6 +3369,473 @@ _link_open() {
   exit 0
 }
 
+# ── vibe link --install / --uninstall / --status (task_063) ────────────────
+# Registers vibe:// with the OS. The handler holds no logic: it runs
+# `<launcher> link-open '<url>'`. Every external tool is resolved with
+# `command -v` first (PATH is never prepended, so test shims win), with an
+# absolute system fallback; a bare name is then what gets run.
+_LINK_APP_ID="com.andeye.vibe.link"
+_LINK_TILDE='~'
+_LINK_APP_TILDE="$_LINK_TILDE/Applications/Vibe Link.app"
+_LINK_LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+_LINK_TOOL=""
+# _link_tool <name> [fallback] — sets _LINK_TOOL to the bare name when it is on
+# PATH, else to the fallback when that is executable; returns 1 otherwise.
+_link_tool() {
+  if command -v "$1" >/dev/null 2>&1; then
+    _LINK_TOOL="$1"
+    return 0
+  fi
+  if [ -n "${2:-}" ] && [ -x "$2" ]; then
+    _LINK_TOOL="$2"
+    return 0
+  fi
+  _LINK_TOOL=""
+  return 1
+}
+
+_link_refuse() {
+  printf '%s\n' "vibe link: refused: $1" >&2
+  exit "${2:-1}"
+}
+
+# _link_launcher_check [--executable] — launcher path must be non-empty, one
+# line and pass the allowlist; with --executable it must also be an executable
+# regular file (exit 7 otherwise). Shared by link-open and --install.
+_link_launcher_check() {
+  local p="${VIBE_LAUNCHER_PATH:-}"
+  if [ -z "$p" ] || ! _codex_path_is_single_line "$p" || ! _link_valid_path "$p"; then
+    _link_refuse "launcher path has characters a link may not carry — install vibe under a plain path" 7
+  fi
+  if [ "${1:-}" = "--executable" ] && { [ ! -f "$p" ] || [ ! -x "$p" ]; }; then
+    _link_refuse "launcher path is not an executable file — install vibe under a plain path" 7
+  fi
+}
+
+# _link_dry_source <path> <text> — the final DRYRUN source block.
+_link_dry_source() {
+  local line
+  printf 'DRYRUN source\n'
+  printf '  path: %s\n' "$1"
+  while IFS= read -r line; do
+    printf '  | %s\n' "$line"
+  done <<EOT
+$2
+EOT
+}
+
+_LINK_TMP=""
+_link_tmp_cleanup() {
+  if [ -n "$_LINK_TMP" ]; then rm -rf "$_LINK_TMP" 2>/dev/null; fi
+  return 0
+}
+
+# _link_mac_plist_get <app> <key> — prints one Info.plist value of the bundle;
+# fails when PlistBuddy is unavailable or the read fails.
+_link_mac_plist_get() {
+  local app="$1" key="$2"
+  _link_tool PlistBuddy /usr/libexec/PlistBuddy || return 1
+  "$_LINK_TOOL" -c "Print :$key" "$app/Contents/Info.plist" 2>/dev/null
+}
+
+# _link_mac_state <app> — sets _LINK_STATE to absent|vibe|foreign; symlinks
+# are refused (exit 1) before anything else.
+_link_mac_state() {
+  local app="$1" id
+  if [ -L "$HOME/Applications" ]; then
+    _link_refuse "${_LINK_APP_TILDE%/*} is a symlink — not following it"
+  fi
+  if [ -L "$app" ]; then
+    _link_refuse "$_LINK_APP_TILDE is a symlink — not following it"
+  fi
+  if [ ! -e "$app" ]; then
+    _LINK_STATE=absent
+    return 0
+  fi
+  id="$(_link_mac_plist_get "$app" CFBundleIdentifier)" || id=""
+  if [ "$id" = "$_LINK_APP_ID" ]; then
+    _LINK_STATE=vibe
+  else
+    _LINK_STATE=foreign
+  fi
+}
+
+_LINK_STATE=""
+_LINK_TPL_TEXT=""
+_link_mac_source() {
+  local tpl="$VIBE_REPO_DIR/devcontainer/link/VibeLink.applescript" text
+  if [ ! -f "$tpl" ] || [ ! -r "$tpl" ]; then
+    _link_refuse "applet template missing: $tpl"
+  fi
+  text="$(cat "$tpl")" || _link_refuse "applet template unreadable"
+  _LINK_TPL_TEXT="${text//@@VIBE@@/$VIBE_LAUNCHER_PATH}"
+}
+
+# _link_step <label> <cmd...> — run one step; a failure refuses.
+_link_step() {
+  local label="$1"
+  shift
+  "$@" >/dev/null 2>&1 || _link_refuse "$label failed"
+}
+
+# _LINK_PLIST_CMDS — the one list of PlistBuddy -c strings, used by both the
+# dry run and the real run. Values that can hold a space are double-quoted
+# (the path allowlist excludes " and \).
+_LINK_PLIST_CMDS=()
+_link_plist_cmds() {
+  _LINK_PLIST_CMDS=("Set :CFBundleIdentifier $_LINK_APP_ID"
+    'Set :CFBundleName "Vibe Link"'
+    "Add :LSUIElement bool true"
+    "Add :CFBundleURLTypes array"
+    "Add :CFBundleURLTypes:0 dict"
+    "Add :CFBundleURLTypes:0:CFBundleURLName string $_LINK_APP_ID"
+    "Add :CFBundleURLTypes:0:CFBundleURLSchemes array"
+    "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string vibe"
+    "Add :VibeLauncherPath string \"$VIBE_LAUNCHER_PATH\"")
+}
+
+# _link_plist_run <pb> <plist> <cmd> — run one string; a failed `Set :K V`
+# falls back to `Add :K string V`.
+_link_plist_run() {
+  local pb="$1" plist="$2" cmd="$3" kv key val
+  "$pb" -c "$cmd" "$plist" >/dev/null 2>&1 && return 0
+  case "$cmd" in
+    "Set :"*)
+      kv="${cmd#Set :}"
+      key="${kv%% *}"
+      val="${kv#* }"
+      "$pb" -c "Add :$key string $val" "$plist" >/dev/null 2>&1 && return 0
+      ;;
+  esac
+  _link_refuse "PlistBuddy failed"
+}
+
+_link_install_mac() {
+  local dry="$1" app="$HOME/Applications/Vibe Link.app" tmp="" pb="" osa="" cs="" lsr=""
+  local plist created=0 i newb oldb
+  newb="$HOME/Applications/.Vibe Link.app.new-$$"
+  oldb="$HOME/Applications/.Vibe Link.app.old-$$"
+  _link_mac_state "$app"
+  if [ "$_LINK_STATE" = foreign ]; then
+    _link_refuse "$_LINK_APP_TILDE exists and is not vibe's"
+  fi
+  _link_mac_source
+  _link_plist_cmds
+  if [ "$dry" = 1 ]; then
+    plist="<tmp>/Vibe Link.app/Contents/Info.plist"
+    _link_print_argv osacompile osacompile -o "<tmp>/Vibe Link.app" "<tmp>/VibeLink.applescript"
+    i=0
+    while [ "$i" -lt "${#_LINK_PLIST_CMDS[@]}" ]; do
+      _link_print_argv plistbuddy PlistBuddy -c "${_LINK_PLIST_CMDS[$i]}" "$plist"
+      i=$((i + 1))
+    done
+    _link_print_argv codesign codesign --force --deep --sign - "<tmp>/Vibe Link.app"
+    if [ "$_LINK_STATE" = vibe ]; then
+      _link_print_argv mv mv "<tmp>/Vibe Link.app" "$newb"
+      _link_print_argv lsregister-u lsregister -u "$app"
+      _link_print_argv mv mv "$app" "$oldb"
+      _link_print_argv mv mv "$newb" "$app"
+      _link_print_argv lsregister lsregister -f "$app"
+      _link_print_argv rm rm -rf "$oldb"
+    else
+      _link_print_argv mv mv "<tmp>/Vibe Link.app" "$app"
+      _link_print_argv lsregister lsregister -f "$app"
+    fi
+    _link_dry_source "$app" "$_LINK_TPL_TEXT"
+    exit 0
+  fi
+  _link_tool osacompile /usr/bin/osacompile || _link_refuse "osacompile not found"
+  osa="$_LINK_TOOL"
+  _link_tool PlistBuddy /usr/libexec/PlistBuddy || _link_refuse "PlistBuddy not found"
+  pb="$_LINK_TOOL"
+  _link_tool codesign /usr/bin/codesign || _link_refuse "codesign not found"
+  cs="$_LINK_TOOL"
+  _link_tool lsregister "$_LINK_LSREGISTER" || _link_refuse "lsregister not found"
+  lsr="$_LINK_TOOL"
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/vibe-link.XXXXXX")" || _link_refuse "could not create a temporary directory"
+  _LINK_TMP="$tmp"
+  vibe_exit_hook_add _link_tmp_cleanup
+  printf '%s\n' "$_LINK_TPL_TEXT" > "$tmp/VibeLink.applescript" || _link_refuse "could not write the applet source"
+  plist="$tmp/Vibe Link.app/Contents/Info.plist"
+  _link_step osacompile "$osa" -o "$tmp/Vibe Link.app" "$tmp/VibeLink.applescript"
+  i=0
+  while [ "$i" -lt "${#_LINK_PLIST_CMDS[@]}" ]; do
+    _link_plist_run "$pb" "$plist" "${_LINK_PLIST_CMDS[$i]}"
+    i=$((i + 1))
+  done
+  _link_step codesign "$cs" --force --deep --sign - "$tmp/Vibe Link.app"
+  if [ ! -d "$HOME/Applications" ]; then
+    mkdir -p "$HOME/Applications" 2>/dev/null || _link_refuse "could not create ~/Applications"
+    created=1
+  fi
+  if [ "$_LINK_STATE" = vibe ]; then
+    # Reinstall: stage the new bundle beside the old one first, so a failure
+    # before the final rename leaves the working, registered handler alone.
+    if [ -e "$newb" ] || [ -L "$newb" ] || [ -e "$oldb" ] || [ -L "$oldb" ]; then
+      _link_refuse "a staging path in ~/Applications already exists — remove it and retry"
+    fi
+    mv "$tmp/Vibe Link.app" "$newb" >/dev/null 2>&1 || { rm -rf "$newb" 2>/dev/null; _link_refuse "mv failed"; }
+    "$lsr" -u "$app" >/dev/null 2>&1 || true
+    if ! mv "$app" "$oldb" >/dev/null 2>&1; then
+      "$lsr" -f "$app" >/dev/null 2>&1 || true
+      rm -rf "$newb" 2>/dev/null
+      _link_refuse "mv failed"
+    fi
+    if [ -e "$app" ] || [ -L "$app" ] || ! mv "$newb" "$app" >/dev/null 2>&1; then
+      # Roll back: put the old bundle back, re-register it, drop the new one.
+      if [ ! -e "$app" ] && [ ! -L "$app" ]; then mv "$oldb" "$app" >/dev/null 2>&1; fi
+      "$lsr" -f "$app" >/dev/null 2>&1 || true
+      rm -rf "$newb" 2>/dev/null
+      _link_refuse "mv failed"
+    fi
+    if ! "$lsr" -f "$app" >/dev/null 2>&1; then
+      rm -rf "$oldb" 2>/dev/null
+      printf '%s\n' "vibe link: refused: lsregister failed — the bundle is in place at $app; re-run vibe link --install" >&2
+      exit 1
+    fi
+    rm -rf "$oldb" 2>/dev/null
+  else
+    # AC15: the target must not have appeared since the state check (mv would
+    # nest the bundle inside an existing directory).
+    if [ -e "$app" ] || [ -L "$app" ]; then
+      [ "$created" = 1 ] && rmdir "$HOME/Applications" 2>/dev/null
+      _link_refuse "$_LINK_APP_TILDE appeared during install — not replacing it"
+    fi
+    if ! mv "$tmp/Vibe Link.app" "$app" >/dev/null 2>&1; then
+      [ "$created" = 1 ] && rmdir "$HOME/Applications" 2>/dev/null
+      _link_refuse "mv failed"
+    fi
+    if ! "$lsr" -f "$app" >/dev/null 2>&1; then
+      printf '%s\n' "vibe link: refused: lsregister failed — the bundle is in place at $app; re-run vibe link --install" >&2
+      exit 1
+    fi
+  fi
+  printf '%s\n' "installed: $app"
+  exit 0
+}
+
+_link_linux_dir() {
+  printf '%s\n' "${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+}
+
+_link_desktop_text() {
+  printf '%s\n' "[Desktop Entry]" "Version=1.0" "Type=Application" "Name=Vibe Link" \
+    "Exec=\"$VIBE_LAUNCHER_PATH\" link-open %u" "Terminal=false" "NoDisplay=true" \
+    "MimeType=x-scheme-handler/vibe;"
+}
+
+# _link_desktop_is_ours <file> — the file is vibe's .desktop handler.
+_link_desktop_is_ours() {
+  local line a=0 b=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ "$line" = "Name=Vibe Link" ] && a=1
+    [ "$line" = "MimeType=x-scheme-handler/vibe;" ] && b=1
+  done < "$1"
+  [ "$a" = 1 ] && [ "$b" = 1 ]
+}
+
+_link_linux_checks() {
+  local dir="$1" file="$2"
+  if [ -L "$dir" ]; then
+    _link_refuse "$dir is a symlink — not following it"
+  fi
+  if [ -L "$file" ]; then
+    _link_refuse "$file is a symlink — not following it"
+  fi
+}
+
+_link_install_linux() {
+  local dry="$1" dir file text xm="" udd="" tmp
+  dir="$(_link_linux_dir)"
+  file="$dir/vibe-link.desktop"
+  _link_linux_checks "$dir" "$file"
+  if [ -e "$file" ] && ! _link_desktop_is_ours "$file"; then
+    _link_refuse "$file exists and is not vibe's"
+  fi
+  text="$(_link_desktop_text)"
+  if [ "$dry" = 1 ]; then
+    _link_print_argv xdg-mime xdg-mime default vibe-link.desktop x-scheme-handler/vibe
+    _link_print_argv update-desktop-database update-desktop-database "$dir"
+    _link_dry_source "$file" "$text"
+    exit 0
+  fi
+  _link_tool xdg-mime || _link_refuse "xdg-mime not found"
+  xm="$_LINK_TOOL"
+  udd=""
+  if _link_tool update-desktop-database; then udd="$_LINK_TOOL"; fi
+  mkdir -p "$dir" 2>/dev/null || _link_refuse "could not create $dir"
+  _link_linux_checks "$dir" "$file"
+  tmp="$(mktemp "$dir/.vibe-link.XXXXXX")" || _link_refuse "could not write into $dir"
+  _LINK_TMP="$tmp"
+  vibe_exit_hook_add _link_tmp_cleanup
+  printf '%s\n' "$text" > "$tmp" || _link_refuse "could not write $tmp"
+  mv "$tmp" "$file" >/dev/null 2>&1 || _link_refuse "mv failed"
+  _LINK_TMP=""
+  chmod 644 "$file" 2>/dev/null || true
+  if ! "$xm" default vibe-link.desktop x-scheme-handler/vibe >/dev/null 2>&1; then
+    rm -f "$file" 2>/dev/null
+    _link_refuse "xdg-mime failed"
+  fi
+  [ -n "$udd" ] && { "$udd" "$dir" >/dev/null 2>&1 || true; }
+  printf '%s\n' "installed: $file"
+  exit 0
+}
+
+_link_install() {
+  local dry=0
+  [ "${VIBE_LINK_DRY_RUN:-}" = "1" ] && dry=1
+  _link_launcher_check --executable
+  if [ "$(_link_os)" = Darwin ]; then
+    _link_install_mac "$dry"
+  else
+    _link_install_linux "$dry"
+  fi
+}
+
+_link_uninstall() {
+  local app="$HOME/Applications/Vibe Link.app" dir file lsr=""
+  if [ "$(_link_os)" = Darwin ]; then
+    _link_mac_state "$app"
+    case "$_LINK_STATE" in
+      absent) printf '%s\n' "nothing to remove"; exit 0 ;;
+      foreign) _link_refuse "$_LINK_APP_TILDE is not vibe's" ;;
+    esac
+    if [ "${VIBE_LINK_DRY_RUN:-}" = "1" ]; then
+      _link_print_argv lsregister-u lsregister -u "$app"
+      _link_print_argv rm rm -rf "$app"
+      exit 0
+    fi
+    _link_tool lsregister "$_LINK_LSREGISTER" \
+      || _link_refuse "lsregister not found"
+    lsr="$_LINK_TOOL"
+    "$lsr" -u "$app" >/dev/null 2>&1 || true
+    rm -rf "$app" 2>/dev/null || _link_refuse "rm failed"
+    printf '%s\n' "removed: $app"
+    exit 0
+  fi
+  dir="$(_link_linux_dir)"
+  file="$dir/vibe-link.desktop"
+  _link_linux_checks "$dir" "$file"
+  if [ ! -e "$file" ]; then
+    printf '%s\n' "nothing to remove"
+    exit 0
+  fi
+  _link_desktop_is_ours "$file" || _link_refuse "$file is not vibe's"
+  if [ "${VIBE_LINK_DRY_RUN:-}" = "1" ]; then
+    _link_print_argv rm rm -f "$file"
+    _link_print_argv update-desktop-database update-desktop-database "$dir"
+    exit 0
+  fi
+  rm -f "$file" 2>/dev/null || _link_refuse "rm failed"
+  if _link_tool update-desktop-database; then "$_LINK_TOOL" "$dir" >/dev/null 2>&1 || true; fi
+  printf '%s\n' "removed: $file"
+  exit 0
+}
+
+# _link_mac_default <our-app-or-empty> — prints `default: <bundle path>` from
+# `lsregister -dump`, plus `not the default handler` when another bundle
+# claims the vibe: scheme before ours. Deliberately conservative: it looks only
+# at a column-0 `path:` line and the `bindings:` / `claimed schemes:` lines that
+# follow it, and anything unexpected (no tool, dump fails, nothing claims
+# vibe:) prints `default: (unknown)` and nothing else. A PATH shim that prints
+# a few such lines is enough to exercise it; no real LaunchServices is needed.
+_link_mac_default() {
+  local ours="$1" dump line cur="" first="" rest
+  if ! _link_tool lsregister "$_LINK_LSREGISTER"; then
+    printf '%s\n' "default: (unknown)"
+    return 0
+  fi
+  dump="$("$_LINK_TOOL" -dump 2>/dev/null)" || dump=""
+  if [ -n "$dump" ]; then
+    while IFS= read -r line; do
+      case "$line" in
+        path:*)
+          rest="${line#path:}"
+          rest="${rest#"${rest%%[![:space:]]*}"}"
+          cur="${rest%% (0x*}"
+          ;;
+        bindings:*|"claimed schemes:"*)
+          case "$line" in
+            *[[:space:],]vibe:*)
+              if [ -n "$cur" ]; then first="$cur"; break; fi
+              ;;
+          esac
+          ;;
+      esac
+    done <<EOT
+$dump
+EOT
+  fi
+  if [ -z "$first" ]; then
+    printf '%s\n' "default: (unknown)"
+    return 0
+  fi
+  printf '%s\n' "default: $first"
+  if [ -n "$ours" ] && [ "$first" != "$ours" ]; then
+    printf '%s\n' "not the default handler"
+  fi
+  return 0
+}
+
+_link_status() {
+  local os app="$HOME/Applications/Vibe Link.app" file handler="" baked="" cur n=0 term line def=""
+  os="$(_link_os)"
+  cur="${VIBE_LAUNCHER_PATH:-}"
+  if [ "$os" = Darwin ]; then
+    if [ ! -L "$HOME/Applications" ] && [ ! -L "$app" ] && [ -e "$app" ] \
+      && [ "$(_link_mac_plist_get "$app" CFBundleIdentifier)" = "$_LINK_APP_ID" ]; then
+      handler="$app"
+      baked="$(_link_mac_plist_get "$app" VibeLauncherPath)" || baked=""
+    fi
+  else
+    file="$(_link_linux_dir)/vibe-link.desktop"
+    if [ ! -L "$(_link_linux_dir)" ] && [ ! -L "$file" ] && [ -f "$file" ] && _link_desktop_is_ours "$file"; then
+      handler="$file"
+      while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+          'Exec="'*)
+            baked="${line#Exec=\"}"
+            baked="${baked%\" link-open %u}"
+            break
+            ;;
+        esac
+      done < "$file"
+    fi
+  fi
+  if [ -n "$handler" ]; then
+    printf '%s\n' "handler: $handler"
+    printf '%s\n' "launcher: $baked"
+  else
+    printf '%s\n' "handler: not installed"
+  fi
+  printf '%s\n' "current: $cur"
+  if [ -n "$handler" ] && [ "$baked" != "$cur" ]; then
+    printf '%s\n' "stale: run vibe link --install"
+  fi
+  if _link_registry_usable && [ -f "$LINK_PROJECTS_FILE" ] && _link_registry_load; then
+    n="${#_LINK_R_NAMES[@]}"
+  fi
+  printf '%s\n' "projects: $n"
+  if [ -n "${VIBE_TERMINAL:-}" ] && _link_terminal_for_os "$os" "$VIBE_TERMINAL"; then
+    term="$VIBE_TERMINAL"
+  elif [ "$os" = Darwin ]; then
+    term="Terminal"
+  else
+    term="(none chosen)"
+  fi
+  printf '%s\n' "terminal: $term"
+  if [ "$os" = Darwin ]; then
+    _link_mac_default "$handler"
+  else
+    if _link_tool xdg-mime; then
+      def="$("$_LINK_TOOL" query default x-scheme-handler/vibe 2>/dev/null)" || def=""
+    fi
+    printf '%s\n' "default: $def"
+    [ "$def" = "vibe-link.desktop" ] || printf '%s\n' "not the default handler"
+  fi
+  exit 0
+}
+
 # link_handle_subcommand <args...> — dispatcher for `vibe link` (and, via the
 # link-open block, `vibe link-open <url>`). No default action: a typo or a
 # wrong argument count prints the usage line and exits 1.
@@ -3398,6 +3862,18 @@ link_handle_subcommand() {
     open)
       [ "$#" -eq 2 ] || _link_usage
       _link_open "$2"
+      ;;
+    --install)
+      [ "$#" -eq 1 ] || _link_usage
+      _link_install
+      ;;
+    --uninstall)
+      [ "$#" -eq 1 ] || _link_usage
+      _link_uninstall
+      ;;
+    --status)
+      [ "$#" -eq 1 ] || _link_usage
+      _link_status
       ;;
     *)
       _link_usage

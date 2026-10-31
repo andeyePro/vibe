@@ -1995,7 +1995,16 @@ Needs a relaunch (the image rebuilds itself for the new `vibe-open`).
 
 ### Test 68: vibe:// links open a session in the chosen terminal (2026-10-31)
 
-Run on the Mac after the next slice (`vibe link --install`) lands, so a click reaches `vibe link-open`. Until then, run each line as `vibe link open 'vibe://open?project=demo'` from a Mac shell. Set up first: in a git project, `vibe link allow demo`.
+Run on the Mac. Set up first: in a git project, `vibe link allow demo`, then `vibe link --install`. Without the install, run each line as `vibe link open 'vibe://open?project=demo'` from a shell.
+
+- [ ] `vibe link --install` prints `installed: ~/Applications/Vibe Link.app`; `vibe link --status` shows `handler:`, `launcher:`, `current:` (same path), `projects:` and `terminal:`, with no `stale:` line. Run `vibe link --install` again: it replaces the bundle and still exits 0.
+- [ ] The applet itself asks for no permission. The first click may show a macOS Automation prompt letting `vibe` (via osascript) control Terminal or iTerm; allow it. It may appear again after a re-run of `vibe link --install` (the applet is re-signed). Ghostty, kitty and WezTerm launch with `open -na` and show no prompt.
+- [ ] `vibe link --status` on macOS prints `default: <bundle path>`; if another app claims `vibe:` it also prints `not the default handler`.
+- [ ] Click `vibe://open?project=demo` in Safari and in the Task&I Mac app: vibe's confirmation dialog appears, and after Open, Terminal opens in the project.
+- [ ] A second click while the dialog is open is refused (no second dialog).
+- [ ] Move or rename the vibe checkout (or run it from a copy): `vibe link --status` says `stale: run vibe link --install`; re-install clears it.
+- [ ] `vibe link --uninstall` prints `removed:`; clicking a `vibe://` link afterwards shows macOS's "no application" outcome. Uninstall again prints `nothing to remove`.
+- [ ] Linux: `vibe link --install` writes `~/.local/share/applications/vibe-link.desktop`; `xdg-open 'vibe://open?project=demo'` shows the confirmation dialog and opens the chosen terminal; `vibe link --status` shows `default: vibe-link.desktop`; `vibe link --uninstall` removes the file (the `mimeapps.list` line stays).
 
 - [ ] Terminal (default, no `VIBE_TERMINAL`): a dialog names `demo` and its folder, with Cancel as the default; Open starts a new Terminal window in that folder running vibe, which waits for you.
 - [ ] Cancel, and letting the dialog sit for 60 seconds, both open nothing (exit 4). Clicking twice within 5 seconds opens one window.

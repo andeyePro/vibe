@@ -645,3 +645,10 @@ Codex-only continuation delivered: default supervised handoff, run/turn-bound co
 - Cycle 1: green. Chair fix: an AC11 test took its clock early (race found by the Generator). Security review: 1 MEDIUM (origin host not in the binding), 3 LOW (C1/bidi in stdout, no durable record for direct writes, payload keys could override action/connection). `/code-review high`: 10 (launcher and supervisor still refused non-UUID ids, 409 bodies with detail fields misread as unknown, TLS failures counted as sent, unusable id left a 90-minute lease, status hid a broken descriptor, per-record lock churn in usage, duplicated checks, a permanent git-diff test, port in error text).
 - Cycle 2 (AC19–AC30): all fixed. Chair rulings: authorised checks_29/49 to accept newly-valid launch refs; removed checks_47's permanent diff rule (same defect class as the checks_52 one).
 - Full smoke 0, code-check 0.
+
+## task_063 — `vibe link --install` / `--uninstall` / `--status` — PASS after 2 cycles (2026-10-31)
+- Spec critic: pass after 2 iterations (6 blocking: test PATH could touch the real Mac, missing re-sign, PlistBuddy forms, desktop-entry Exec quoting, status extraction, dry-run format).
+- Generator: sonnet. Tester: sonnet (`smoke/checks_56_vibe_link_install.py`). Cycle 1 green.
+- `/code-review high`: 10 findings (reinstall could delete the working handler before the new one was in place, unquoted plist values with spaces, wrong Automation wording, no macOS default-handler check, mv race nesting a bundle, Linux file left after xdg-mime failure, duplicated launcher check and plist list, constant) → cycle 2 (AC12–AC20), green.
+- Known limit: the macOS `default:` status line parses `lsregister -dump` conservatively and prints `(unknown)` on unexpected formats; Test 68 covers the real Mac.
+- Process: the cycle-1 Generator edited one checks_48 case (accepted).

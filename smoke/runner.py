@@ -62,6 +62,7 @@ from smoke.checks_49_vibe_link_hardening import *
 from smoke.checks_50_taskandi_http import *
 from smoke.checks_52_taskandi_http_more import *
 from smoke.checks_55_taskandi_http_review import *
+from smoke.checks_56_vibe_link_install import *
 
 def main() -> int:
     test_docker_preflight_is_shared_and_mac_start_preserves_target()
@@ -1241,6 +1242,24 @@ def main() -> int:
     test_r6_ac28_tampered_jobs()
     test_r6_ac29_seam_limits()
     test_r6_ac30_observable_cleanups()
+    test_vli_ac1_darwin_dry_run()
+    test_vli_ac2_darwin_real_run()
+    test_vli_ac3_tool_failures()
+    test_vli_ac4_shim_precedence()
+    test_vli_ac5_linux()
+    test_vli_ac6_launcher_path()
+    test_vli_ac7_uninstall()
+    test_vli_ac8_status()
+    test_vli_ac9_template()
+    test_vli_ac10_usage_and_help()
+    test_vli_ac11_docs()
+    test_vli_ac12_reinstall_safe()
+    test_vli_ac13_14_plist_quoting()
+    test_vli_ac15_racing_directory()
+    test_vli_ac16_macos_default_handler()
+    test_vli_ac17_linux_failure_cleanup()
+    test_vli_ac18_docs_wording()
+    test_vli_ac19_20_shared_helpers()
 
     print()
     if FAILURES:

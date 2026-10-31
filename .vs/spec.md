@@ -187,3 +187,18 @@ Notarisation, a Dock icon, any logic in the applet beyond the one handler, Windo
 - Tester: sonnet.
 - Fable rung: not pre-authorised.
 - `/code-review high` before the pass commit, because `vibe` is a hot file.
+
+## Rev 4 addendum (cycle 2) — `/code-review high` findings (2026-10-31)
+
+Cycle 1 passed (checks_56; full suite 0). The review found the following; cycle 2 fixes them. Where this contradicts earlier sections, this wins. The Tester adds tests for AC12–AC20 and may change only checks asserting the old behaviour named here.
+
+- **AC12 Reinstall never loses the working handler.** On macOS, the new bundle is first moved to a sibling `~/Applications/.Vibe Link.app.new-<pid>` (refused if that path exists), and only then is the old bundle deregistered (`lsregister -u`), renamed to `.Vibe Link.app.old-<pid>`, the new one renamed into place, registered (`lsregister -f`), and the old one removed. If any step before the final rename fails, the old bundle is untouched and still registered, the sibling is removed, and the command exits 1. Test: `SHIM_FAIL=mv` on a reinstall leaves the old bundle byte-identical and no sibling behind.
+- **AC13 PlistBuddy values with spaces are quoted.** Every value inside a `-c` string that can contain a space is double-quoted: `Set :CFBundleName "Vibe Link"`, `Add :VibeLauncherPath string "<path>"` (the path allowlist already excludes `"` and `\`). The dry-run argv shows the quotes. The `Print` read back strips nothing (PlistBuddy prints the value unquoted).
+- **AC14 One source for the plist edits.** A single bash array of the `-c` strings feeds both the dry-run blocks and the real run.
+- **AC15 No nesting on a racing directory.** The final rename refuses (exit 1 `refused:`) if the target appeared since the check (`[ -e ]` immediately before the `mv`, and `mv` never moves into an existing directory: use `mv -n` or test after).
+- **AC16 macOS status checks the default handler.** `--status` on macOS adds `default: <bundle path or (unknown)>` from `lsregister -dump` filtered for the `vibe` scheme claim, and `not the default handler` when another bundle claims `vibe:` before ours. If `lsregister -dump` is unavailable or unparsable, print `default: (unknown)` and nothing else.
+- **AC17 Linux failure after writing.** If `xdg-mime default` fails after the .desktop file was written, the file is removed again before exiting 1. `--uninstall` runs `update-desktop-database <dir>` when present.
+- **AC18 README and MANUAL-TESTS wording.** Replace the Automation note: the applet itself needs no permission; macOS may ask once to let `vibe` (via osascript) control Terminal or iTerm, and may ask again after `--install` re-signs the applet; Ghostty, kitty and WezTerm launch with `open -na` and need no prompt. Test 68 wording follows.
+- **AC19 One launcher-path check.** `_link_open` and `--install` share one helper (`_link_launcher_check [--executable]`).
+- **AC20 Constants and comments.** `_LINK_LSREGISTER` constant for the LaunchServices path used by install, uninstall and status; fix the stale comment above the plist getter.
+- **Process note (not an AC):** the TODO.md entry for task_063 is closed by the Evaluator in the pass commit.

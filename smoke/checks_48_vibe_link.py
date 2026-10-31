@@ -1079,7 +1079,7 @@ def test_vl_ac12_no_collateral_change():
         out = res.stdout + res.stderr
         check(f"{_VL} --help still contains codex allow, repos add and clean",
               all(s in out for s in ("vibe codex allow", "vibe repos add", "vibe clean")), out[:200])
-        usage_cases = [("link",), ("link", "bogus"), ("link", "--install"), ("link", "allow", "a", "b"),
+        usage_cases = [("link",), ("link", "bogus"), ("link", "--install", "extra"), ("link", "allow", "a", "b"),
                        ("link", "deny"), ("link", "deny", "a", "b"), ("link", "list", "x"),
                        ("link", "terminal"), ("link", "open"), ("link", "open", "a", "b"), ("link-open",),
                        ("link-open", "a", "b")]
