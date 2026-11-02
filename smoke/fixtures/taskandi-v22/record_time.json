@@ -1,0 +1,18 @@
+{
+  "contract": "vibe-agent-exchange-v2.2",
+  "notes": "Wall-clock agent time: started_at is ms since epoch, seconds 1..604800, and the run may not end in the future. The owner's client adds it as a time entry with actor \"agent\", never counted in the owner's own total.",
+  "request": {
+    "action": "record_time",
+    "task": "leaf-b",
+    "seconds": 600,
+    "started_at": 1761799400000,
+    "session": "session-a"
+  },
+  "response": {
+    "entry_id": "3d4e5f60-7182-4930-9b2c-d3e4f5061728",
+    "task": "leaf-b",
+    "start": 1761799400000,
+    "end": 1761800000000,
+    "actor": "agent"
+  }
+}

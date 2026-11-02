@@ -1745,6 +1745,148 @@ Use a disposable folder on the Mac or Linux host with the reviewed Vibe source. 
 
 ---
 
+### Test 57: Docker hygiene — reaping, pruning and `vibe clean` (task_059)
+
+The one thing no host-side fixture can prove: that these commands leave the
+named volumes, and every running container, alone on a real daemon.
+
+```bash
+docker volume ls                       # note vibe-claude-config's presence
+docker system df                       # note the "before" figures
+cd ~/Projects/vibe-test && vibe        # let it come up, then exit
+docker ps -a --filter status=exited    # note this project's stopped container
+touch ~/.vibe-src/devcontainer/Dockerfile
+cd ~/Projects/vibe-test && vibe        # forces a rebuild + recreate
+```
+
+**Expected on the rebuild run:**
+- [ ] "devcontainer/ changed since last build — rebuilding image."
+- [ ] After the build: "reclaimed N GB of superseded image layers and build cache."
+- [ ] "removed N stopped container(s) this project had left behind." (only if this project actually had any)
+- [ ] `docker volume ls` still lists `vibe-claude-config` and `vibe-bash-history`
+- [ ] Claude is still logged in inside the new container — the login volume survived
+
+**Then, with a second project's container running:**
+
+```bash
+# In another terminal, leave a vibe session open in a different project.
+vibe clean --dry-run
+vibe clean
+```
+
+- [ ] `--dry-run` lists stopped containers and removes nothing (`docker ps -a` unchanged)
+- [ ] the confirm prompt appears, and answering `n` removes nothing
+- [ ] answering `y` removes only stopped containers; the other project's RUNNING container is untouched and its session keeps working
+- [ ] `docker volume ls` unchanged after the sweep
+- [ ] `docker system df` shows the reclaim
+- [ ] `vibe clean --all` additionally clears build cache of any age, and `docker volume ls` is STILL unchanged
+
+**Preflight warning:**
+
+```bash
+VIBE_DOCKER_RECLAIM_WARN_GIB=1 rm -f ~/.vibe/.hygiene-checked && vibe
+```
+
+- [ ] a "Docker is holding N GB of reclaimable..." line appears before launch
+- [ ] the launch proceeds normally regardless
+- [ ] a second launch within the day does not repeat it
+- [ ] `VIBE_HYGIENE=0 vibe` shows neither warning
+
+**Docker Desktop disk limit (Docker Desktop hosts only):**
+- [ ] Settings > Resources > Advanced > "Disk usage limit" is set (not the drive default)
+
+---
+
+### Test 58: Terminal colour reaches the container
+
+The one thing no host-side fixture can prove: that the container actually
+renders 24-bit colour, and that a 256-colour-only terminal is not sent
+sequences it cannot draw. `build_color_env`'s output is asserted in
+`smoke/checks_22_codex_agent.py`; what a pixel looks like is not.
+
+**From a truecolor terminal (Ghostty, iTerm2, Kitty, WezTerm):**
+
+```bash
+cd ~/Projects/vibe-test && vibe
+# then, inside the session:
+!echo "$TERM / ${COLORTERM:-<unset>}" && tput colors
+```
+
+- [ ] prints `xterm-256color / truecolor` and `256`
+- [ ] `!echo "$TERM_PROGRAM"` prints your terminal (`ghostty` / `iTerm.app`), and under
+      `vibe --agent codex` a finished turn raises a macOS notification from Ghostty/iTerm2
+      (iTerm2: Profiles > Terminal > "Send escape sequence-generated alerts" must be on)
+- [ ] drag-select some output: the selection is a legible blue, not near-black
+      (fullscreen renderer only — `/tui` says which one is live)
+- [ ] `/config` → Input & controls lists "Copy on select"
+
+**From Apple Terminal (256 colours, sets no COLORTERM):**
+
+```bash
+cd ~/Projects/vibe-test && vibe
+!echo "$TERM / ${COLORTERM:-<unset>}" && tput colors
+```
+
+- [ ] prints `xterm-256color / <unset>` and `256` — TERM is still upgraded, but
+      no COLORTERM is claimed on the terminal's behalf
+- [ ] the UI is legible: no garbled escape text where colours should be
+
+**Codex lead (same check, other runtime):**
+
+```bash
+cd ~/Projects/vibe-test && vibe --agent codex
+```
+
+- [ ] the Codex TUI renders in full colour from a truecolor terminal
+
+### Test 59: The /vsss keep-going guard stops an early exit
+
+The Stop hook's logic is covered offline by `smoke/checks_35_vsss_stop_guard.py`.
+What only a live session can show is that each runtime actually feeds the refusal
+back to the model and the model carries on.
+
+**Claude lead:**
+
+```bash
+cd ~/Projects/vibe-test && vibe
+# inside: start a small run, then ask it to stop and wait for you
+/vsss --hours 0.5 tidy the README; when you reach the licence section, stop and ask me which licence to use
+```
+
+- [ ] when it reaches the question, the turn does not end: a hook message quoting
+      "vibe /vsss keep-going guard" appears and the model posts the question to
+      `vibe-fromClaude.md` (or `.vss/`) and moves on
+- [ ] a normal finish (Final state written, `active=0`) ends the turn without a refusal
+- [ ] if it tries to ask you with a pop-up question (AskUserQuestion) after its first
+      iteration, the question is refused with "vibe /vsss keep-going guard … Do not ask
+      it here", and the question lands in fromClaude instead
+- [ ] in a second, ordinary `vibe` session in the same project while the run is live,
+      a turn ends normally (the run is not that session's)
+
+**Codex lead:** use Test 61 below. Codex now has its own supervised handoff
+and Stop routing. It deliberately does not write the shared `.vss/stop-guard`
+counter: completed turns return to the supervisor for evidence validation.
+The Claude checks above remain unchanged.
+
+### Test 60: Agents know their capabilities and use the Mac account
+
+Offline tests (`smoke/checks_37_capabilities.py`) cover the inventory and the nudge's matching. This checks the live behaviour.
+
+- [ ] In a new session on a Mac with the account set up, `!vibe-capabilities` lists the Mac account first with `port 22 open`, and `!vibe-capabilities --setup mac-account` ends with "declared as <account>".
+- [ ] `!vibe-shot --check` prints "is ready" (after `npm i -g playwright && npx playwright install chromium` on the account); `!vibe-shot https://example.org --viewport 390x844` prints a PNG path under `.vibe/shots/`, and opening it shows the page at phone width. `!vibe-shot site/dist` (any built folder) shows its index page. With Xcode installed: `!vibe-shot --sim` returns a Simulator home screen. With the account logged in on the display: `!vibe-shot --screen --app Calculator` shows Calculator.
+- [ ] Ask: "Build the site and tell me whether the header wraps on a phone-width screen." The agent should render it on the Mac account and look at a screenshot, rather than say it can't see the page. With no `.vibe-allow-ssh` it asks for a one-line OK first.
+- [ ] Get it to end a reply with "I can't see the rendered page" (for example, by asking it to skip the check). The turn should not end. A "vibe capability check" message quoting that sentence appears, and the agent either does the check or names the one-line step.
+- [ ] `vibe --agent codex`: the same prompt; Codex runs `vibe-capabilities` (its session context names it), and the same Stop-hook nudge fires once; `codex-guard-liveness` still passes at launch.
+
+### Test 61: Automatic CLI updates
+
+- [ ] `rm ~/.vibe/.update-check` on the Mac, then `vibe`. If npm has a newer Claude Code or Codex than the image, you see `↑ update available: …`, a rebuild, and afterwards `~/.vibe/.image-versions` names the new versions. The build log shows `codex-compat-check: Codex <version> is compatible`.
+- [ ] A second `vibe` the same day does not check again.
+- [ ] Inside `vibe --agent codex`: no "Update available" prompt appears.
+- [ ] `VIBE_AUTO_UPDATE=0 vibe` never checks.
+
+---
+
 ## Test Summary
 
 After completing all tests, check:
@@ -1759,3 +1901,156 @@ After completing all tests, check:
 - [ ] Can commit and push via GitHub token
 - [ ] SSH outbound works (if configured)
 - [ ] No credentials leaked to host/container boundary
+- [ ] `vibe clean` and the post-rebuild prune left every named volume intact
+
+
+### Test 61: Codex unattended handoff and recovery (2026-09-26)
+
+Run on a rebuilt image. Offline `checks_41` exercises evidence rejection,
+detached ownership, a SIGKILLed supervisor and read-only reconciliation; it
+does not establish live app-server history fidelity or overnight duration.
+
+- [ ] In interactive Codex, invoke `$vsss` on a disposable project with several
+      independent tasks. It hands off once, prints status/log paths, and the
+      chair stops editing. The worker does not recursively hand off.
+- [ ] Close the initiating terminal after acknowledgement. From another
+      terminal inspect `codex-autonomy status --cwd /workspace`; work continues.
+- [ ] Try another start against the same checkout: it refuses without changing
+      the saved private prompt. Check prompt/control paths are ignored by Git.
+- [ ] Ask the worker to report a milestone without completing the queue. The
+      supervisor continues; unsupported `VSSS-EXIT:` text is not success.
+- [ ] Use a short explicit `--budget 1m`; elapsed downtime counts, and the run
+      checkpoints at the cap without claiming perfection. A run without an
+      explicit cap has no five-hour finish line.
+- [ ] Stop during work and during a retry wait. No new thread or restart follows.
+- [ ] On a disposable run, kill only the supervisor process, retaining the
+      outer runner. Its owned descendants are reaped before any restart. A
+      proven last completed turn recovers without replay; incomplete/unknown
+      turns remain checkpointed for effects review. Never remove a live lock.
+- [ ] Leave a multi-task Codex run overnight; inspect audit, completion evidence,
+      quota/compaction counters and final reason. Record actual duration.
+- [ ] Re-run Test 59's Claude steps: its fourth-stop release, marker handling,
+      launcher watchdog and quota auto-resume retain their existing behavior.
+
+### Test 62: Sessions survive edits, weekly limits and a second launch (2026-09-26)
+
+- [ ] Start `vibe` in a disposable project and leave claude open. In another terminal, add a comment line near the end of `vibe` (then revert it). Quit claude: the launcher exits cleanly, no `unbound variable` or stray command errors.
+- [ ] With a claude session open in project X, make any change under `devcontainer/` and launch `vibe` in X from a second terminal. It rebuilds the image, then prints "a newer vibe image is ready, but another vibe session is using this project's container" and joins it; the first session keeps running. Close both and relaunch: now it prints "image moved on … recreating it".
+- [ ] Same setup, but add a domain to X's `.vibe/domains` before the second launch: it refuses with "other vibe session(s) are still running in it" and exits 1; the first session is untouched. `vibe --rebuild` from the second terminal ends it, after an "ending the 1 other vibe session(s)" line.
+- [ ] During a live Claude session, and again during a supervised Codex run (`vibe --codex-run <file>`), run `docker exec <cid> ps -eo pid=,ppid=,args=` on the Mac: the session's process (`claude …`, or `node /usr/local/bin/codex-autonomy watch …`) has PPID 0. That is what the live-session check counts.
+- [ ] During a `/vsss` run that reaches a weekly limit (five-hour window not used up), `.vss/rate-limit` carries `used7=` near 100 and `resets7=`, and after 30+ minutes idle the launcher prints no "assuming the usage-limit picker is stuck" warning and does not kill claude.
+
+### Test 63: Launch log and automatic clean (2026-09-29)
+
+- [ ] Launch `vibe` in any project, exit Claude, then `cat .vibe/last-launch.log`: it holds the launch header and every line printed before Claude started, with no colour-code garbage, and nothing from the Claude session itself. Launch again: the previous log is now `.vibe/prev-launch.log`.
+- [ ] The Claude TUI looks and behaves exactly as before (colours, resizing, mouse, paste). The log is handed back before Claude starts, so nothing should differ.
+- [ ] In a project with no GitHub CLI login (or after `gh auth logout`), launch and accept the sign-in: the `gh auth login` prompts work normally, and its one-time code does not appear in `.vibe/last-launch.log`.
+- [ ] With some other project's vibe container stopped for over an hour (`docker ps -a --filter status=exited`), launch with `VIBE_DOCKER_RECLAIM_WARN_GIB=0 VIBE_HYGIENE_INTERVAL_HOURS=0 vibe`: a `✓ auto-clean:` line appears, that stopped container is gone, `docker volume ls` still lists `vibe-claude-config` and `vibe-bash-history`, and every running container is still running.
+- [ ] Launch with `VIBE_DISK_WARN_GIB=100000 vibe` (pretends the disk is low): the low-disk warning is repeated under "Needs you" as the last lines before Claude starts.
+- [ ] On the Mac, note whether `devcontainer up`'s output is coloured during a launch (it gets `FORCE_COLOR=1`; whether the CLI honours it is unverified), and that Ctrl-C during it still stops the launch.
+- [ ] With one vibe session open in a project, launch a second: "1 other vibe session(s) already open in this project" appears under "Needs you".
+
+### Test 64: Codex's databases stay out of the Mac's ~/.codex (2026-09-30)
+
+- [ ] `vibe --rebuild` in a Codex-enabled project: the build log shows `codex-compat-check: ok   all 7 Codex databases under /home/node/.codex-sqlite (the requirement beats -c and $CODEX_SQLITE_HOME decoys)`.
+- [ ] On the Mac, note the modification times: `ls -la ~/.codex/*.sqlite*`. In vibe, run `codex doctor | grep -A3 "sqlite home"` (it says `/home/node/.codex-sqlite`), then `/ask astra say ok` or one Codex-led turn. On the Mac, `ls -la ~/.codex/*.sqlite*` again: no file there has a newer time from that turn (the Mac's own Codex app may still touch them).
+- [ ] `docker volume ls` lists `vibe-codex-sqlite`; `docker run --rm -v vibe-codex-sqlite:/v alpine ls -la /v` shows the Codex databases owned by uid 1000.
+- [ ] The "couldn't save diagnostic logs" warning no longer appears in a vibe Codex session.
+- [ ] With a Codex session open in an opted-in project from before this change, launch a second session there: it says the container is due to be recreated for Codex's database volume and joins it (not refused).
+- [ ] In a project WITHOUT the Codex opt-in, `ls /home/node/.codex-sqlite` inside vibe is empty or missing (the volume is not mounted there).
+
+
+### Test 65: Codex phone remote control (2026-10-06)
+
+- [ ] `vibe --rebuild` in a Codex-enabled project: the build log shows `codex-compat-check: ok   -c agents.enabled=false beats a user config asking for native sub-agents` and `codex-compat-check: ok   app-server --remote-control on a unix socket answers remoteControl/status/read`.
+- [ ] `VIBE_REMOTE=0 vibe --agent codex` (remote control switched off): starts exactly as before. The "Running without the shared background server" warning still appears; that is expected here.
+- [ ] Plain `vibe --agent codex` (remote control is on by default since 2026-10-14): the header says `codex remote control: on`, then `starting codex with remote control`, then `remote control: connected as "<container id>"`. With no phone paired, it asks `Pair one now? [y/N]`. Answer `y`; it prints a code that expires in a few minutes.
+- [ ] In the ChatGPT iPhone app, open Codex, connect a computer, and enter the code: the terminal prints `Paired.` and Codex starts. Send a message from the phone: the Codex session in the terminal shows it and answers. The phone shows the reply.
+- [ ] The Mac's own Codex app is still listed on the phone next to the vibe one (vibe's Codex shares the Mac's `~/.codex/installation_id`).
+- [ ] Ask Codex in the session to `spawn_agent` or start a sub-agent: it has no such tool.
+- [ ] Inside the container (a second `docker exec -it <cid> bash`), run `VIBE_CODEX_REMOTE_SOCKET=$(ls -d /tmp/vibe-codex-remote.*)/app-server.sock codex-remote clients`: the phone is listed. `codex-remote revoke <id>` unpairs it, and the phone loses the session.
+- [ ] Quit Codex: `docker exec <cid> ps -eo args | grep app-server` shows no `--remote-control` server, and `/tmp/vibe-codex-remote.*` is gone. Relaunch with plain `vibe --agent codex`: a phone paired earlier still works without re-pairing (record what you see; persistence across launches is unverified).
+- [ ] Log out of Codex in the container, or block chatgpt.com, and relaunch with plain `vibe --agent codex`: the launch says `Remote control is not available this session` and Codex still starts.
+- [ ] `grep -r "<the pairing code>" ~/.codex .vibe/last-launch.log` on the Mac finds nothing.
+
+### Test 66: Model routing policy and default remote control (2026-10-14)
+
+Needs a `vibe --rebuild` (new `vibe-models` in the image; launcher changes).
+
+- [x] Plain `vibe` (Claude): Claude starts normally, and the session shows up in the Claude phone app and at claude.ai/code. Send a prompt from the phone; it lands in the terminal session. Then `VIBE_REMOTE=0 vibe`: no remote session appears. Note anything Claude prints about Remote Control at start-up.
+- [x] From the phone, send `$vs say hello` (or `/vs say hello`) to a Claude-led session: it is handled like a typed prompt. Repeat from the ChatGPT app for a Codex-led session. *(2026-10-14: both pass — Claude from the Claude app, Codex from the ChatGPT app on iPhone.)*
+- [x] In a Claude session: `vibe-models status` shows `lead` = the model under the input box, `latest.sol` = the newest Sol in the Codex picker, and an `allowedWithoutAsking` list without astra/fable for an Opus lead. Switch with `/model sonnet`, send one message, re-run: `lead` follows.
+- [x] In a Codex-led session (GPT-6.1-Sol selected): `vibe-models status` says `lead: gpt-6.1-sol`. Ask it to run `vibe-delegate role reviewer --model astra --cwd /workspace` with a short brief: refused with "ask the user for explicit permission", and `.vibe/delegate-usage.jsonl` gains no line. With `--model luna`, it runs, and the ledger line names the newest Luna.
+- [x] In a Claude session, ask for an `Agent` with `model: "fable"`: the hook denies it with the vibe-models message. With `model: "sonnet"`: it runs.
+- [ ] `$vsss` handoff in a Codex session on GPT-6.1-Sol: `.vss/codex-supervisor.json` has `"model": "gpt-6.1-sol"`, and the supervisor log never shows another model. Resume an older checkpoint (no `model` key) with `vibe --codex-resume`: it continues on the `model` from `~/.codex/config.toml`, not on the thread's original model. *(2026-10-14: supervisor records `gpt-6.1-sol`, passes; the host `vibe --codex-resume` half is still to run on the Mac.)*
+- [x] Ask the lead to use an older Sol "for today": it asks how long, records `vibe-models pin sol gpt-6-sol --for <duration>`, and `vibe-models status` shows the pin. With a pin longer than 8h (say `--for 24h`), nine hours later (or set `VIBE_MODELS_NOW` forward) a Sol dispatch is refused until it re-asks you and runs `vibe-models confirm sol`. A pin whose `--for` has run out drops back to the newest Sol silently, by design.
+
+### Test 67: Clicking links opens the host browser (2026-10-26)
+
+Needs a relaunch (the image rebuilds itself for the new `vibe-open`).
+
+- [ ] In a plain `vibe` Claude session, ask Claude to print `https://vibe.andeye.com`. Click it (and try Cmd-click): the page opens in the Mac's default browser within a second.
+- [ ] Inside the session, `echo $BROWSER` prints `/usr/local/bin/vibe-open`, and `vibe-open file:///etc/passwd` is refused with exit 2 and opens nothing.
+- [ ] On the Mac, `pgrep -af vibe-open-watcher.sh` shows one watcher for the project while vibe runs, and none after Claude exits.
+
+### Test 68: vibe:// links open a session in the chosen terminal (2026-10-31)
+
+Run on the Mac. Set up first: in a git project, `vibe link allow demo`, then `vibe link --install`. Without the install, run each line as `vibe link open 'vibe://open?project=demo'` from a shell.
+
+- [ ] `vibe link --install` prints `installed: ~/Applications/Vibe Link.app`; `vibe link --status` shows `handler:`, `launcher:`, `current:` (same path), `projects:` and `terminal:`, with no `stale:` line. Run `vibe link --install` again: it replaces the bundle and still exits 0.
+- [ ] The applet itself asks for no permission. The first click may show a macOS Automation prompt letting `vibe` (via osascript) control Terminal or iTerm; allow it. It may appear again after a re-run of `vibe link --install` (the applet is re-signed). Ghostty, kitty and WezTerm launch with `open -na` and show no prompt.
+- [ ] `vibe link --status` on macOS prints `default: <bundle path>`; if another app claims `vibe:` it also prints `not the default handler`.
+- [ ] Click `vibe://open?project=demo` in Safari and in the Task&I Mac app: vibe's confirmation dialog appears, and after Open, Terminal opens in the project.
+- [ ] A second click while the dialog is open is refused (no second dialog).
+- [ ] Move or rename the vibe checkout (or run it from a copy): `vibe link --status` says `stale: run vibe link --install`; re-install clears it.
+- [ ] `vibe link --uninstall` prints `removed:`; clicking a `vibe://` link afterwards shows macOS's "no application" outcome. Uninstall again prints `nothing to remove`.
+- [ ] Linux: `vibe link --install` writes `~/.local/share/applications/vibe-link.desktop`; `xdg-open 'vibe://open?project=demo'` shows the confirmation dialog and opens the chosen terminal; `vibe link --status` shows `default: vibe-link.desktop`; `vibe link --uninstall` removes the file (the `mimeapps.list` line stays).
+
+- [ ] Terminal (default, no `VIBE_TERMINAL`): a dialog names `demo` and its folder, with Cancel as the default; Open starts a new Terminal window in that folder running vibe, which waits for you.
+- [ ] Cancel, and letting the dialog sit for 60 seconds, both open nothing (exit 4). Clicking twice within 5 seconds opens one window.
+- [ ] Click a second time while the first dialog is still showing: the second click is refused at once ("a confirmation for demo is already open", exit 3) and no second dialog appears; answer the first one normally.
+- [ ] "Always for this project": the next click opens without a dialog; `vibe link list` shows `(no confirm)`.
+- [ ] `vibe link terminal iTerm`: a new iTerm window opens and its shell is sent the `/bin/sh -c '…' vibe-link '<folder>' '<vibe>'` line via AppleScript `write text` (iTerm's `command` does not run a shell, so it is not used); vibe starts in the folder. Check the AppleScript application name is still "iTerm" for the installed iTerm2 version.
+- [ ] `vibe link terminal Ghostty` (needs Ghostty 1.2 or later; older versions are out of support), then `kitty`, then `WezTerm`: each opens a new window of that app running vibe in the folder (every terminal runs the same `/bin/sh` wrapper, which changes into the folder itself and refuses to start vibe if the folder has been swapped for a symlink). These start through `open -na`, so check `docker` is found: vibe must get as far as starting the container, not fail with "docker: command not found" (if it does, the app is not starting a login shell and its PATH lacks Docker's bin directory).
+- [ ] `&task=ABBR-1` in the link, and then a bare Task&I task id (a UUID such as `&task=12345678-1234-1234-1234-123456789abc`): the session starts with that Task&I binding (the launch header shows it).
+- [ ] `vibe link allow` in a subfolder of a repository, or in a repository inside (or containing) one already registered, is refused.
+- [ ] `vibe://open?project=nothere` shows the "No vibe project called nothere" dialog and opens nothing; a second unknown link within 5 seconds (any name) shows no further dialog.
+- [ ] With a bare task UUID in the link, inside the container the Task&I client and `vibe codex` accept the binding (no "invalid per-launch task reference" / "invalid launch task binding").
+
+### Test 69: Task&I client over HTTP to a real service through host.docker.internal (2026-10-31)
+
+Unverified until run. Needs the Task&I account service running on the Mac (`npm run serve:account` in taskandeye) and a task assigned to the agent persona. In the Task&I web app use **More → Connect Codex**, save the descriptor it gives you as `.vibe/taskandi-descriptor.json` in a test project (`chmod 600` it; no `.vibe/taskandi.json` in that project), then start vibe there.
+
+- [ ] `node devcontainer/taskandi-client.mjs status` prints `"channel":"taskandi-http"` and no token, connection, origin port or workspace.
+- [ ] `next-task --agent claude --session test-1` prints `{"bound":true,"channel":"taskandi-http","task":{…}}` with the assigned task (or `"task":null` when none is eligible). This proves the container reaches `host.docker.internal:<port>` and the service accepts `Host: 127.0.0.1:<port>`; a `wrong_origin` or `connection_scope` error here means the Host rewrite or headers are wrong.
+- [ ] `printf '%s\n' '{"question":"Test?","default":"yes","order":1,"estimate_minutes":1,"remaining_minutes":5,"reversible":true}' | node devcontainer/taskandi-client.mjs enqueue ask --key t69-ask`, then `flush`: prints `"done":1`, and the question appears in Task&I on the claimed task.
+- [ ] Answer it in Task&I, then `poll`: prints the answer under `answers` with `"newAnswers":1`; a second `poll` prints `"newAnswers":0`. `ask-status` lists the ask with `"answered":true`.
+- [ ] Revoke the connection in Task&I, then `poll`: stderr starts with `the Task&I connection was revoked or replaced`.
+- [ ] **v2.3 (task_066), unverified until run.** Against a Task&I service built from `claude/exchange-2-20261031` or later (v2.3, v2.4 or v2.5): `status` prints `"lastContract"` naming that revision after any command. Enqueue a comment, stop the service and `flush`: it exits 1 and `status` still counts the comment as queued. Start the service again and `flush`: the comment appears once in Task&I, not twice. `poll` prints `"cursor":{"seq":N}`. Against a v2.2 service the same steps behave as above, and `status` prints `"lastContract":"vibe-agent-exchange-v2.2"`. Copy a fresh descriptor (More → Connect Codex) over the old one, then enqueue and `flush` a comment: it is delivered once on the new connection (a body frozen on the old connection is never resent; the smoke tests cover that path, which needs a lost response to reach).
+
+### Test 70: A bound `/vsss` works its Task&I task end to end (2026-10-31)
+
+Unverified until run. This change adds a file to the image (`/usr/local/share/vibe/taskandi-harness.md`), so the first `vibe` launch after it rebuilds the image; check that file exists in the container before starting. Needs Test 69's setup (the Task&I account service running on the Mac, a descriptor-bound test project) plus `vibe link --install` from Test 68, and two tasks assigned to the agent persona: task A with an allowance of a few hundred thousand tokens and a `hardDeadline`, task B with none. While Task&I's `defaults_allowed` is always false, the proceed paths (step 6 `proceed`, `decide --resolve … --as proceeded`) and windows metering (`--windows-used`, `unmetered`) cannot happen against the real service: they stay **unverified** here and are covered only by the offline fixture checks.
+
+- [ ] In the test project run `/vsss` with no arguments. The agent reads `/usr/local/share/vibe/taskandi-harness.md` in full, and the session log shows `taskandi-client status` (`"channel":"taskandi-http"`), then `next-task --agent claude --session <session stamp>` claiming task A; `.vibe/taskandi-body.txt` holds task A's full description (mode 0600).
+- [ ] At the first iteration boundary the log shows, in order: `enqueue comment`, `usage --transcript ~/.claude/projects/-workspace/<session id>.jsonl … --cost-estimate 0`, `enqueue record_time`, `flush`, `poll`, `decide`. In Task&I, task A shows the comment, a time entry, and spent tokens that rose by roughly this session's usage (subagents included).
+- [ ] Make the run need input (for example ask it, in task A's description, to choose between two named options). The question appears in Task&I as a subtask of task A, not in the fromClaude file; `taskandi-client decide` lists it with `"why":"unseen"` until you open it in Task&I, then `"defaults-off"`.
+- [ ] With every remaining item waiting on that question, the run releases task A (`--parked-asks <ask id>`, reason `Waiting on 1 question(s).`) and claims task B. If Task&I offers task A again before you answer, the next `decide` says `"reclaimed_parked":true`, `"next":"release-again"`, and the run releases it again without working on it.
+- [ ] Answer the question in Task&I. At the next boundary `poll` prints it under `answers`, the run applies it, and work on task A resumes; finishing it runs `complete --task <task A> --summary "…"` and Task&I shows task A provisionally done.
+- [ ] Lower task A's allowance below its spent tokens, re-open it, and let `/vsss` claim it: `decide` prints `"next":"stop"` with budget `"why":"cap"`, the run posts a comment and releases with `--budget-stopped`, and a later offer of task A with the same allowance gives `"next":"release-again"`.
+- [ ] Click task B's **Open in vibe** link in Task&I (a `vibe link` launch): the session opens bound to task B (`VIBE_TASK_REF`). Run `/vss do one small thing on this task` (args mode): it never calls `next-task` or `decide`, and its comment, usage and time land on task B through `--task <task B>`.
+- [ ] Stop the Task&I service and run `/vss`: the run uses the file channel, writes one question saying the Task&I binding is broken (quoting the client's message), and still does its work.
+- [ ] In a project with neither `.vibe/taskandi-descriptor.json` nor `.vibe/taskandi.json`, run `/vss`: the session log shows no `taskandi-client` command at all (not even `status`), and the run uses the fromClaude file as before.
+- [ ] **v2.3 (task_066), unverified until run.** Against a v2.3-family service, click task B's **Open in vibe** link and run `/vsss`. The log shows `next-task --agent claude --session <stamp> --task <task B>` claiming task B, and the run then works it with a full claim (`decide`, `complete`). Put task B on hold in Task&I and repeat: `next-task --task` prints `"task":null,"reason":"on_hold"`, the run notes the reason and falls to A-mode. Against a v2.2 service the same click prints `"reason":"contract_v2_2"`, and the run uses the old no-claim linked mode.
+
+### Test 71: vibe proposes tasks to the owner in Task&I (2026-10-31)
+
+Unverified until run. Needs Test 69's setup (the Task&I account service on the Mac speaking contract v2.5, a descriptor-bound test project) and the owner's Task&I page open in a browser. The client's rules (validation, caps, the created ledger, `self_created`) are covered by the offline fixture checks; this test checks what the owner sees.
+
+- [ ] In the test project run `/vss` with args that make it find a follow-up only the owner can do (for example: `/vss tidy the README; anything that needs me, propose it as a task`). The session log shows `taskandi-client created` before the proposal, then `enqueue create_task --key new-<16 hex> --session <stamp>` with `"assign":"owner"` and no `parent`, then `flush` with `"done":1`.
+- [ ] In Task&I the new task appears under the connection's root, marked **Added by Claude, keep?** with **Keep** and **Remove**. Press **Keep**: the mark goes and it is an ordinary task. `taskandi-client created` lists it with its `task_id`.
+- [ ] Ask the same session, in a typed reply, for a repeat (for example "remind me every 2nd Friday at 09:00 to check the meeting agenda"). It proposes one task with `repeat` `{"every":2,"unit":"week","weekdays":["fri"],"time":"09:00","timeZone":"Europe/London"}` (plus `starts` if you named a date). Task&I shows it as a repeating task due on the next matching Friday.
+- [ ] Ask it to propose the first task again, with different capitalisation or a trailing full stop. The enqueue exits 1 with `duplicate_proposal`, nothing reaches Task&I, and the run stops proposing it.
+- [ ] Remove the repeating task in Task&I, then ask the session to correct its title. `update_task` is refused by Task&I with `wrong_scope`, and `taskandi-client created --all` shows the entry with `"gone":true`.
+- [ ] Ask the session to put an API key (any `sk-…` string of 20+ characters) in a proposal's notes. The enqueue exits 1 with `contains_secret: notes`, and nothing reaches Task&I.
+- [ ] On the claimed (owner's) task, ask the session to change its title. The enqueue exits 1 with `on the owner's task vibe may only change next_action`; a `next_action` change goes through once, and a second one in the same session exits 1 with `update_cap`.

@@ -24,7 +24,7 @@ payload=$(cat) || exit 0
 event=$(printf '%s' "$payload" | jq -r '.hook_event_name // empty' 2>/dev/null) || exit 0
 if [ "$event" = "SessionStart" ]; then
   jq -n '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext:
-    "Read /usr/local/share/vibe/codex-context.md for project context discovery and FM2C asynchronous answers. Run codex-context to locate configured references. Read project AGENTS.md and CLAUDE.md before work; preserve active task state on resume."}}' || true
+    "Read /usr/local/share/vibe/codex-context.md for project context discovery and FM2C asynchronous answers. Run codex-context to locate configured references. Read project AGENTS.md and CLAUDE.md before work; preserve active task state on resume. Before telling the user you cannot see, run, build, render or reach something, run vibe-capabilities and use what it lists (for example a Mac account over SSH for screenshots and native builds)."}}' || true
   exit 0
 fi
 # Sentinel capture (Astra re-review): `$(...)` would strip trailing newlines,
@@ -43,7 +43,7 @@ help_text=$(printf '%s' "$help_text" | tr '[:upper:]' '[:lower:]')
 case "$help_text" in
   help|help\?|commands|\?|"what can i do"|"what can i do?"|"what can you do"|"what can you do?")
     jq -n '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext:
-      "The user is asking for Vibe help. Give a short practical command guide, not a development task. Explain: ordinary text describes what to build; $vs runs adversarial implementation/testing; $vss handles one task autonomously; $vsss continues within the task scope until finished or externally blocked; see FM2C reads the configured reply file; ask to switch to Claude or Codex to queue a change with vibe-agent, then exit normally to reopen. In Codex the $ spellings are reliable. A bare /vs, /vss or /vsss may be rejected by the composer before submission; one leading space makes the slash form reach Vibe. Interactive $vsss is not automatically supervised after process exit. Host terminal: vibe reopens the project, vibe --help lists launcher options, vibe --codex-run <project-local-prompt> provides supervised execution. Mention other commands only after checking installed skills/command documents; do not invent parity with Claude-only commands. Do not execute a harness merely to answer help."}}' || true
+      "The user is asking for Vibe help. Give a short practical command guide, not a development task. Explain: ordinary text describes what to build; $vs runs adversarial implementation/testing; $vss handles one task autonomously; $vsss continues within the task scope until finished, posting questions to FM2C and carrying on with unblocked work rather than stopping; see FM2C reads the configured reply file; ask to switch to Claude or Codex to queue a change with vibe-agent, then exit normally to reopen. In Codex the $ spellings are reliable. A bare /vs, /vss or /vsss may be rejected by the composer before submission; one leading space makes the slash form reach Vibe. For $vsss, read /usr/local/share/vibe/codex-vsss.md and hand off with codex-autonomy before implementation; the supervised worker continues unattended. Host terminal: vibe reopens the project, vibe --help lists launcher options, vibe --codex-run <project-local-prompt> provides supervised execution. Mention other commands only after checking installed skills/command documents; do not invent parity with Claude-only commands. Do not execute a harness merely to answer help."}}' || true
     exit 0
     ;;
 esac
@@ -56,6 +56,7 @@ rest=${rest#"${rest%%[![:space:]]*}"}
 
 case "$first" in
   /vs | /vss | /vsss) name=${first#/} ;;
+  '$vsss') name=vsss ;;
   *)
     if [ "$fm2c" = 1 ]; then
       jq -n --arg note "$fm2c_note" '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: $note}}' || true
@@ -81,6 +82,9 @@ fi
 [ -n "$out" ] || exit 0
 if [ "$fm2c" = 1 ]; then
   out=$(printf '%s' "$out" | jq --arg note "$fm2c_note" '.hookSpecificOutput.additionalContext += ("\n" + $note)') || exit 0
+fi
+if [ "$name" = vsss ]; then
+  out=$(printf '%s' "$out" | jq '.hookSpecificOutput.additionalContext += "\nFirst read /usr/local/share/vibe/codex-vsss.md and run codex-autonomy context. Outside its owned thread, hand off with codex-autonomy start before implementation; never spawn a nested runner."') || exit 0
 fi
 printf '%s\n' "$out"
 exit 0

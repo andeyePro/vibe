@@ -1,5 +1,7 @@
 # Use Codex in any project
 
+Codex works in vibe, but vibe works better with Claude Code: under Codex, `/vs` roles run as separate processes rather than native subagents, and overnight runs go through a separate background supervisor. The README's [Claude or Codex](../README.md#claude-or-codex-which-should-lead) section has the details.
+
 Open the project folder in your host terminal and type:
 
 ```bash
@@ -11,6 +13,8 @@ On first use, choose Codex when Vibe asks. Follow its project authorisation prom
 If you already use Claude in that folder, select Codex with `vibe --agent codex`. This becomes the remembered choice and replaces any queued in-session switch. Use `vibe --agent claude` to switch back. Inside either agent, ask it to switch, or run `vibe-agent claude` / `vibe-agent codex` in the container shell. Exit the current TUI normally and Vibe reopens with your choice. Finish or stop autonomous runs first; conversations stay separate. A switch reloads saved project configuration and carries explicit profile/task overrides, without carrying vendor-specific model or resume flags. Your first Codex grant explains that this project's container can read your file-stored ChatGPT login; confirm only for a project you trust. Vibe does not use an API billing fallback.
 
 Once Codex opens, type `help` to see the workflow, or describe what you want to build. For autonomous adversarial work use `$vs`, `$vss`, or `$vsss` followed by the task. A bare `/vs` may be rejected by Codex's composer before Vibe sees it; one leading space (` /vs …`) reaches Vibe's hook, while the `$` form is reliable. Interactive `$vsss` cannot survive process exits automatically; [supervised launch](codex-development.md) is available for unattended runs.
+
+You can drive the session from Codex in the ChatGPT phone app: remote control is on by default, so a plain `vibe --agent codex` is enough (`VIBE_REMOTE=0` turns it off for one launch, or in `~/.vibe/config` for good). While no phone is paired, the launch asks whether to pair one now. Say `y`, then in the app open Codex, connect a computer and type the code from your terminal. Inside the session, `codex-remote status`, `codex-remote clients` and `codex-remote revoke <id>` check the connection and unpair phones. A paired phone can do anything you could do at the keyboard. Codex's native sub-agents stay off, as usual. Anything running in the container as the same user, the agent included, can also reach that connection. So switch it on only for projects you trust, as with the Codex login itself.
 
 Say “use FM2C for my replies” to use `.vss/fromMartin-toCodex.md`, with questions in `.vss/fromCodex.md`. Codex checks replies between tasks. Neither these files nor a brain2 mount is required for ordinary chat.
 

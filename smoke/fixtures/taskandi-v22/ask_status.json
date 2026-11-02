@@ -1,0 +1,20 @@
+{
+  "contract": "vibe-agent-exchange-v2.2",
+  "notes": "Read-only: every ask on the task, open or answered, in the order asked. seen_at is set when the owner opened the question's details; deferred is true when the owner explicitly put it off (no such control exists yet, so always false); answered says whether list_asks has an answer for it. Renews the session's lease like any call carrying a task.",
+  "request": {
+    "action": "ask_status",
+    "task": "project",
+    "session": "session-a"
+  },
+  "response": {
+    "task": "project",
+    "asks": [
+      {
+        "ask_id": "0f7f8f0e-6c4b-4c62-9d4c-1b2f3a4d5e6f",
+        "seen_at": 1761799700000,
+        "deferred": false,
+        "answered": true
+      }
+    ]
+  }
+}

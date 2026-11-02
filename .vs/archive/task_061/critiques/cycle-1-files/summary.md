@@ -1,0 +1,3 @@
+total: 236 passed: 235 failed: 1
+Regressions: none in the pre-existing suite. The one suite failure is the new lint `[lint] no smoke test is defined but never run` (smoke/checks_12_harness_lints.py:530), caused by the 17 new test_* functions in checks_47 not being called from runner.main(); the spec allows only the single import line in runner.py.
+Key failures: (1) AC13 `fetchTransport` refuses a 307 redirect with code INVALID ("MCP redirects are refused"), not PREDISPATCH as the spec requires; the redirect is refused and no request reaches the other origin. (2) smoke-test.py exits 1 solely because of the never-run lint above.

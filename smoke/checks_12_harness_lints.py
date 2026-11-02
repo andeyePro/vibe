@@ -506,3 +506,47 @@ def test_gitignore_managed_block_and_site_gitignore() -> None:
     check("[lint] site/.gitignore is exactly the expected 4-line content",
           actual_site_gi == expected_site_gi,
           f"actual: {actual_site_gi!r} expected: {expected_site_gi!r}")
+
+
+# Deliberately-unregistered helpers named test_*: none today. Add a name here
+# with a one-line reason if one is ever meant to be defined but not run.
+UNREGISTERED_TESTS_ALLOWED: dict[str, str] = {}
+
+
+def test_every_smoke_test_is_registered_in_the_runner():
+    """task_043 found test_review_command_docs defined and never called, so a
+    whole doc suite was silently dead. Every `def test_*` in smoke/checks_*.py
+    must be reachable from runner.main() — called directly or passed to
+    run_supervisor_tests([...]) — unless it is allow-listed above."""
+    print("\n[lint] every smoke test_* function is registered in smoke/runner.py")
+    runner = (REPO / "smoke" / "runner.py").read_text()
+    main_src = runner[runner.index("def main("):]
+    registered = set(re.findall(r"\b(test_\w+)\b", main_src))
+    missing = []
+    for path in sorted((REPO / "smoke").glob("checks_*.py")):
+        for name in re.findall(r"^def (test_\w+)\(", path.read_text(), re.M):
+            if name not in registered and name not in UNREGISTERED_TESTS_ALLOWED:
+                missing.append(f"{path.name}:{name}")
+    check("[lint] no smoke test is defined but never run", not missing, ", ".join(missing))
+    stale = sorted(n for n in UNREGISTERED_TESTS_ALLOWED if n in registered)
+    check("[lint] the unregistered allow-list names nothing that is registered", not stale, ", ".join(stale))
+
+
+def test_vibe_expands_possibly_empty_arrays_safely():
+    """`vibe` runs under macOS's bash 3.2 with `set -u`, where expanding an
+    EMPTY array as a bare "${arr[@]}" aborts the launcher (the TASK_BIND_ENV
+    launch break, 2026-09-12). Every array `vibe` ever assigns `=()` must be
+    expanded only in the guarded ${arr[@]+"${arr[@]}"} form."""
+    print("\n[lint] vibe: every possibly-empty array expansion is guarded for bash 3.2")
+    src = VIBE.read_text()
+    arrays = sorted(set(re.findall(r"(?:^|[\s;(])(?:local\s+)?([A-Za-z_]\w*)=\(\)", src, re.M)))
+    check("[lint] found the launcher's =() arrays", len(arrays) >= 3, str(arrays))
+    bare = []
+    for name in arrays:
+        guarded = '${%s[@]+"${%s[@]}"}' % (name, name)
+        for n, line in enumerate(src.splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            if ('"${%s[@]}"' % name) in line.replace(guarded, ""):
+                bare.append(f"vibe:{n} {name}")
+    check("[lint] no bare \"${arr[@]}\" expansion of an array that can be empty", not bare, "; ".join(bare))

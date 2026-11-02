@@ -43,6 +43,10 @@
 #   --bin  <dir>       binary root                 (default /usr/local/bin)
 #   --login-dir <dir>  Codex login mount           (default /home/node/.codex)
 #   --codex <path>     the codex binary to start   (default: codex on the fixed PATH)
+#   --remote-control   run the session on a vibe-owned app-server with Codex
+#                      remote control on, so the ChatGPT phone app can drive
+#                      it (the launcher passes this by default; VIBE_REMOTE=0 or
+#                      VIBE_CODEX_REMOTE=0 on the Mac turns it off)
 #   --                 everything after this is passed to codex unchanged
 #
 # As in codex-guard-liveness, the flags exist ONLY so the offline tests can
@@ -59,6 +63,7 @@ login_dir=/home/node/.codex
 codex_bin=codex
 codex_bin_given=0
 supervise=0
+remote=0
 
 refuse() {
   printf 'codex-led session refused: %s\n' "$1" >&2
@@ -66,13 +71,16 @@ refuse() {
 }
 
 usage() {
-  printf 'usage: codex-entry [--root <dir>] [--bin <dir>] [--login-dir <dir>] [--codex <path>] [-- <codex args>]\n'
+  printf 'usage: codex-entry [--root <dir>] [--bin <dir>] [--login-dir <dir>] [--codex <path>] [--remote-control] [-- <codex args>]\n'
 }
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --supervise)
       supervise=1; shift
+      ;;
+    --remote-control)
+      remote=1; shift
       ;;
     --root)
       [ "$#" -ge 2 ] || refuse "--root needs a directory"
@@ -186,10 +194,86 @@ fi
 # (b) proven: hand over to the unmodified vendor binary, in the cwd
 # `devcontainer exec` put us in (the workspace), with only the arguments the
 # caller passed after `--`.
+[ "$supervise" = 0 ] || [ "$remote" = 0 ] ||
+  refuse "remote control is for interactive Codex sessions; a supervised run already owns its app-server"
 if [ "$supervise" = 1 ]; then
   [ -x "$bin/codex-supervisor" ] || refuse "codex-supervisor is missing or not executable"
   printf 'codex-led session: guard chain proven, starting supervisor\n'
-  exec "$bin/codex-supervisor" "$@"
+  [ -x "$bin/codex-autonomy" ] || refuse "codex-autonomy is missing or not executable"
+  exec "$bin/codex-autonomy" watch -- "$@"
+fi
+if [ "$remote" = 1 ]; then
+  # Remote control (2026-10-06). Codex's phone remote control needs the TUI on
+  # a shared app-server. Codex's own managed daemon is unusable here: it drops
+  # `-c` (so the sub-agents override below would be lost), installs and
+  # auto-updates its own copy of Codex outside the image's compat gate, and
+  # keeps its pid and socket files in $CODEX_HOME, which is the Mac's shared
+  # ~/.codex. So vibe starts the image's own binary as a plain app-server,
+  # with the same override, on a socket in a fresh private directory, and
+  # points the TUI at it. codex-remote (beside this script) pairs phones and
+  # reports status. The server lives exactly as long as this session. If it
+  # cannot start, the session falls back to the ordinary path below.
+  #
+  # Same-user limit, stated plainly: the agent runs as this same user, so it
+  # can talk to the socket (as it could already run `codex` with any flag
+  # itself). The fresh mktemp directory stops an earlier session pre-staging
+  # the path; it cannot stop the live session tampering with its own server.
+  remote_helper=$bin/codex-remote
+  [ -x "$remote_helper" ] || refuse "$remote_helper is missing or not executable — remote control cannot be set up"
+  server_pid=
+  stop_server() {
+    [ -n "$server_pid" ] || return 0
+    # The server leads its own process group (setsid), so this also stops the
+    # tool processes it started.
+    kill -- "-$server_pid" 2>/dev/null || kill "$server_pid" 2>/dev/null || true
+    server_pid=
+  }
+  if sock_dir=$(mktemp -d "${TMPDIR:-/tmp}/vibe-codex-remote.XXXXXXXX"); then
+    sock=$sock_dir/app-server.sock
+    trap 'stop_server; rm -rf "$sock_dir"' EXIT
+    trap 'exit 129' HUP
+    trap 'exit 143' TERM
+    # Output goes nowhere: a pairing code must never land in a file.
+    setsid "$codex_bin" app-server --remote-control -c agents.enabled=false --listen "unix://$sock" \
+      </dev/null >/dev/null 2>&1 &
+    server_pid=$!
+    if "$remote_helper" --socket "$sock" wait; then
+      export VIBE_CODEX_REMOTE_SOCKET="$sock"
+      printf 'codex-led session: guard chain proven, starting codex with remote control\n'
+      if "$remote_helper" --socket "$sock" --timeout 20 status; then
+        if [ "$("$remote_helper" --socket "$sock" clients 2>/dev/null)" = "no paired phones" ] && [ -t 0 ]; then
+          printf 'No phone is paired with this Codex yet. Pair one now? [y/N] '
+          answer=
+          read -r -t 60 answer || { echo; answer=; }
+          case "$answer" in
+            [yY]*)
+              # Ctrl-C stops the pairing wait, not the session.
+              trap 'true' INT
+              "$remote_helper" --socket "$sock" pair || true
+              trap - INT
+              ;;
+          esac
+        fi
+        printf 'To pair a phone later, quit Codex and relaunch: the offer comes back while no phone is paired.\n'
+      else
+        printf 'Remote control is not available this session; Codex runs normally in this terminal.\n'
+      fi
+      # Not exec: this script stays to stop the server when Codex exits. The
+      # server runs every thread and carries the override; the TUI gets it
+      # too, in case it ever forwards its own config with a thread.
+      rc=0
+      "$codex_bin" --remote "unix://$sock" -c agents.enabled=false "$@" || rc=$?
+      exit "$rc"
+    fi
+    stop_server
+    rm -rf "$sock_dir"
+    trap - EXIT HUP TERM
+    printf 'codex-led session: the remote-control app-server did not start; continuing without remote control\n' >&2
+  else
+    printf 'codex-led session: cannot create a private directory for remote control; continuing without it\n' >&2
+  fi
 fi
 printf 'codex-led session: guard chain proven, starting codex\n'
-exec "$codex_bin" "$@"
+# Native sub-agents off, on the command line so no user or project config can
+# turn them back on (see /etc/codex/config.toml [agents]).
+exec "$codex_bin" -c agents.enabled=false "$@"

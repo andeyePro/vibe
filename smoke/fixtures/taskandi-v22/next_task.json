@@ -1,0 +1,31 @@
+{
+  "contract": "vibe-agent-exchange-v2.2",
+  "notes": "Returns the top eligible task assigned to the agent persona (tag agent:<persona>, or assigned to an agent actor) inside the token's subtree: open, no open children or dependencies, not waiting on an unanswered ask, lease free or held by this session. Ranked by effective_priority (lower first; null means none set) then outline order. Takes a 90-minute lease for session; any call carrying the task with the same session renews it, and next_task re-issues it to that session. allowance is the task's own, else its nearest ancestor's, else null. spent rolls up record_usage on the task across sessions. hardDeadline is the nearest one on the task or above. Returns {\"task\": null} when nothing is eligible. defaults_allowed says whether the owner's Strategy policy allows proceeding on a seen, unanswered, reversible ask's default at this task's effective priority; until that policy is wired it is always false, so the agent always parks.",
+  "request": {
+    "action": "next_task",
+    "agent": "codex",
+    "session": "session-a"
+  },
+  "response": {
+    "task": "leaf-b",
+    "title": "Invented leaf-b",
+    "body": "",
+    "priority": 2,
+    "effective_priority": 2,
+    "allowance": {
+      "tokens": 200000
+    },
+    "spent": {
+      "windows": 0,
+      "tokens": 0
+    },
+    "hardDeadline": 1761900000000,
+    "estimate_minutes": 5,
+    "owner": "fixture-account-id",
+    "lease": {
+      "until": 1761804400000,
+      "session": "session-a"
+    },
+    "defaults_allowed": false
+  }
+}

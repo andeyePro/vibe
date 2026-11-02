@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, rmSync, lstatSync,
   openSync, fstatSync, writeSync, closeSync, constants as fsConstants } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
+import { CLASSES, classOf, resolveModel, checkCeiling, detectLead, readPolicy, policyPath, loadCatalog } from './vibe-models.mjs';
 
 const MAX_BYTES = 8 * 1024 * 1024;
 const object = (properties) => ({ type: 'object', properties,
@@ -24,14 +25,43 @@ const REVIEW_SCHEMA = object({
 // pinned argv vector — see docs/codex-integration-plan.md D5/AC4.
 const ROLES = ['planner', 'spec-critic', 'generator', 'tester', 'reviewer', 'evaluator'];
 const WRITE_ROLES = new Set(['generator', 'tester']);
-const OPENAI_ROLE_MODELS = Object.freeze({ astra: 'gpt-6-astra', sol: 'gpt-5.6-sol', terra: 'gpt-5.6-terra', luna: 'gpt-5.6-luna' });
-const ROLE_MODELS = [...Object.keys(OPENAI_ROLE_MODELS), 'opus', 'sonnet', 'haiku', 'fable'];
+// Model classes, not ids (2026-10-14): each class resolves to its newest
+// model at call time through vibe-models (Codex's catalog for OpenAI, Claude
+// Code's aliases for Claude), subject to the lead's cost ceiling and any
+// older-model pin the user asked for. A hard-coded `sol` -> gpt-5.6-sol table
+// here ran a whole night two releases behind.
+const OPENAI_CLASSES = Object.keys(CLASSES).filter((c) => CLASSES[c].vendor === 'openai');
+const ROLE_MODELS = Object.keys(CLASSES);
+const isOpenAI = (cls) => OPENAI_CLASSES.includes(cls);
 const ROLE_STATUSES = ['done', 'blocked'];
 const ROLE_SCHEMA = object({ report: string, status: { type: 'string', enum: ROLE_STATUSES } });
 const USAGE = 'Usage: node /usr/local/bin/vibe-delegate slots | review codex | ' +
-  'ask <astra|opus|sonnet|haiku|fable> [--consent-credits] | ' +
+  'ask <astra|sol|luna|terra|fable|opus|sonnet|haiku> [--consent-credits] [--consent-model] | ' +
   'role <planner|spec-critic|generator|tester|reviewer|evaluator> ' +
-  '--model <astra|sol|terra|luna|opus|sonnet|haiku|fable> --cwd <abs dir> [--consent-credits]; payload on stdin';
+  '--model <astra|sol|luna|terra|fable|opus|sonnet|haiku> --cwd <abs dir> [--consent-credits] [--consent-model]; payload on stdin';
+
+// Cost ceiling + latest-in-class, before any vendor process or stdin read.
+// --consent-credits already means the user agreed to Fable's spend, so it
+// also authorises Fable's tier; any other dearer class needs --consent-model
+// or a live `vibe-models grant`.
+function routeModel(cls, cwd, { consentCredits = false, consentModel = false } = {}) {
+  const policy = readPolicy(policyPath(cwd));
+  const lead = detectLead(process.env);
+  checkCeiling(cls, lead, { policy, consent: consentModel || (cls === 'fable' && consentCredits) });
+  if (CLASSES[cls].vendor !== 'openai') return resolveModel(cls, { policy });
+  const env = codexEnv();
+  codexMounted(env);
+  return resolveModel(cls, { policy, catalog: loadCatalog(env) });
+}
+
+// The /review codex slot: the dearest OpenAI class the lead may use without
+// asking (an Opus lead gets Sol, not Astra).
+function reviewClass(cwd) {
+  const leadClass = classOf(detectLead(process.env));
+  if (!leadClass) checkCeiling('terra', null);
+  const fits = OPENAI_CLASSES.filter((c) => CLASSES[c].tier <= CLASSES[leadClass].tier);
+  return fits.sort((a, b) => CLASSES[b].tier - CLASSES[a].tier)[0];
+}
 
 // `usage`, when supplied, is attached to the thrown Error so a caller several
 // stack frames up (task_052's ledger write) can still recover it even though
@@ -61,9 +91,36 @@ function tokenCountOrNull(value) {
   return Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
-function run(binary, args, { cwd, env, input = '', timeout = 600000 } = {}) {
-  const result = spawnSync(binary, args, { cwd, env, input, encoding: 'utf8',
+// A model call that could not reach its API. The container's extra firewall
+// domains (the OpenAI hosts among them) are pinned at start and sit behind
+// CDNs whose addresses move, so the commonest cause is a stale pin: refresh
+// once (the sudo rule allows exactly this script, no arguments) and retry
+// once. Only for calls that cannot have changed anything yet: read-only or
+// tool-less invocations (the caller says so), never a writable role.
+const CONNECTION_RE = /ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|EHOSTUNREACH|connection refused|error sending request|failed to connect|stream disconnected|network is unreachable|tcp connect error|connection error|fetch failed/i;
+const FAILED_EVENT_RE = /"type"\s*:\s*"(turn\.failed|error)"/;
+
+export function connectionFailure(result) {
+  const failed = result.error || result.status !== 0 || FAILED_EVENT_RE.test(result.stdout || '');
+  return Boolean(failed) && CONNECTION_RE.test(`${result.stderr || ''}\n${result.stdout || ''}`);
+}
+
+function refreshExtraDomains() {
+  const r = spawnSync('sudo', ['-n', '/usr/local/bin/refresh-extra-domains.sh'],
+    { input: '', encoding: 'utf8', timeout: 60000 });
+  return !r.error && r.status === 0;
+}
+
+function run(binary, args, { cwd, env, input = '', timeout = 600000, retryOnConnection = false } = {}) {
+  const spawn = () => spawnSync(binary, args, { cwd, env, input, encoding: 'utf8',
     timeout, killSignal: 'SIGKILL', maxBuffer: 32 * 1024 * 1024 });
+  let result = spawn();
+  if (retryOnConnection && connectionFailure(result)) {
+    process.stderr.write(`vibe-delegate: ${binary} could not reach its API; refreshing the firewall's `
+      + 'extra domains and retrying once\n');
+    refreshExtraDomains();
+    result = spawn();
+  }
   if (result.error || result.status !== 0) {
     // Vendor stderr can contain request details. Don't echo it into the lead's context.
     fail(`${binary} failed (${result.error?.code || result.status || result.signal}); ` +
@@ -262,7 +319,7 @@ function codexVersionOk(cwd, env) {
   }
 }
 
-function codexReady(cwd, env) {
+function codexMounted(env) {
   // The login dir is mounted only into projects that opted in; without it the
   // login probe would fail with a misleading "sign in" message.
   if (!existsSync(env.CODEX_HOME)) {
@@ -270,6 +327,10 @@ function codexReady(cwd, env) {
       'On the Mac, in the project folder: create the untracked .vibe-allow-codex marker, ' +
       'add chatgpt.com, api.openai.com and auth.openai.com to .vibe/domains, then relaunch vibe');
   }
+}
+
+function codexReady(cwd, env) {
+  codexMounted(env);
   codexVersionOk(cwd, env);
   const result = spawnSync('codex', ['-c', 'cli_auth_credentials_store="file"', 'login', 'status'],
     { cwd, env, input: '', encoding: 'utf8', timeout: 15000 });
@@ -286,8 +347,8 @@ function codexReady(cwd, env) {
 // return value of THIS function in a local variable regardless of what a
 // later reply-schema check does with it, so usage survives a downstream
 // throw without needing to be threaded back through an exception.
-function codexEvents(cwd, env, args, input) {
-  const events = run('codex', args, { cwd, env, input })
+function codexEvents(cwd, env, args, input, retryOnConnection = false) {
+  const events = run('codex', args, { cwd, env, input, retryOnConnection })
     .split(/\r?\n/).filter(Boolean).map(line => parse(line, 'Codex event'));
   return reduceCodexUsage(events);
 }
@@ -309,13 +370,13 @@ function reduceCodexUsage(events) {
   return usage;
 }
 
-function codex(payload, review, cwd) {
+function codex(payload, review, cwd, modelId) {
   const env = codexEnv();
   codexReady(cwd, env);
   const schemaPath = join(cwd, 'schema.json');
   const outputPath = join(cwd, 'answer.json');
   writeFileSync(schemaPath, JSON.stringify(review ? REVIEW_SCHEMA : ASK_SCHEMA), { mode: 0o600 });
-  const args = ['exec', '-m', 'gpt-6-astra', '--ignore-user-config', '--ignore-rules',
+  const args = ['exec', '-m', modelId, '--ignore-user-config', '--ignore-rules',
     '--ephemeral', '--skip-git-repo-check', '--sandbox', 'read-only',
     '-c', 'approval_policy="never"', '-c', 'forced_login_method="chatgpt"',
     '-c', 'cli_auth_credentials_store="file"', '-c', 'project_doc_max_bytes=0',
@@ -338,7 +399,7 @@ function codex(payload, review, cwd) {
   let usage = null;
   try {
     usage = codexEvents(cwd, env, args,
-      instruction + 'Do not invoke tools or access files, credentials, or network.\n\n' + payload);
+      instruction + 'Do not invoke tools or access files, credentials, or network.\n\n' + payload, true);
     const reply = parse(readFileSync(outputPath, 'utf8'), 'Codex answer');
     if (review) {
       if (!exact(reply, ['verdict', 'summary', 'findings']) ||
@@ -354,12 +415,12 @@ function codex(payload, review, cwd) {
     } else if (!exact(reply, ['answer']) || typeof reply.answer !== 'string' || !reply.answer.trim()) {
       fail('Codex answer does not match its schema');
     }
-    const result = { runtime: 'codex', model: 'gpt-6-astra', billing: 'subscription', ...reply, usage };
-    appendLedgerLine(ledgerEntry({ op, runtime: 'codex', model: 'gpt-6-astra', servedModels: null,
+    const result = { runtime: 'codex', model: modelId, billing: 'subscription', ...reply, usage };
+    appendLedgerLine(ledgerEntry({ op, runtime: 'codex', model: modelId, servedModels: null,
       role: null, billing: 'subscription', usage, ok: true, error: null }));
     return result;
   } catch (error) {
-    appendLedgerLine(ledgerEntry({ op, runtime: 'codex', model: 'gpt-6-astra', servedModels: null,
+    appendLedgerLine(ledgerEntry({ op, runtime: 'codex', model: modelId, servedModels: null,
       role: null, billing: 'subscription', usage, ok: false, error: errorCategory(error) }));
     throw error;
   }
@@ -373,9 +434,8 @@ function codex(payload, review, cwd) {
 // tools ON, `-C <cwd>` is the real workspace, no --ignore-user-config (system
 // requirements + managed hooks mediate every write), schema/output files
 // still live in the helper's own scratch dir, never inside the workspace.
-function codexRole(payload, roleName, cwd, scratch, model = 'astra') {
-  const modelId = OPENAI_ROLE_MODELS[model];
-  if (!modelId) fail('Unknown OpenAI role model');
+function codexRole(payload, roleName, cwd, scratch, modelId) {
+  if (!isOpenAI(classOf(modelId))) fail('Unknown OpenAI role model');
   const env = codexEnv();
   const write = WRITE_ROLES.has(roleName);
   const runCwd = write ? cwd : scratch;
@@ -407,7 +467,7 @@ function codexRole(payload, roleName, cwd, scratch, model = 'astra') {
   // every role reply (Astra: always "subscription", never a served list).
   let usage = null;
   try {
-    usage = codexEvents(runCwd, env, args, instruction + payload);
+    usage = codexEvents(runCwd, env, args, instruction + payload, !write);
     const reply = parse(readFileSync(outputPath, 'utf8'), 'Codex role reply');
     if (!exact(reply, ['report', 'status']) || typeof reply.report !== 'string' || !reply.report.trim() ||
         !ROLE_STATUSES.includes(reply.status)) fail('Codex role reply does not match its schema');
@@ -429,7 +489,7 @@ function codexRole(payload, roleName, cwd, scratch, model = 'astra') {
 function claudeBilling(model, consent) {
   const billing = process.env.VIBE_CLAUDE_P_BILLING || 'subscription';
   if (!['subscription', 'credits', 'api'].includes(billing)) fail('Unknown VIBE_CLAUDE_P_BILLING');
-  if ((model === 'fable' || billing !== 'subscription') && !consent) {
+  if ((classOf(model) === 'fable' || billing !== 'subscription') && !consent) {
     fail('Explicit per-task credit consent required; no call made (use --consent-credits only after the user agrees)');
   }
   const configDir = process.env.VIBE_CLAUDE_P_CONFIG_DIR || process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
@@ -504,7 +564,7 @@ function claude(payload, model, consent, cwd) {
   // over this local null so a schema-invalid-after-completion still logs.
   let usage = null;
   try {
-    const response = parse(run('claude', args, { cwd, env, input: payload }), 'Claude result');
+    const response = parse(run('claude', args, { cwd, env, input: payload, retryOnConnection: true }), 'Claude result');
     const reply = claudeReply(response);
     usage = reply.usage;
     const result = { runtime: 'claude-p', model, served_models: reply.servedModels, billing,
@@ -581,7 +641,8 @@ function claudeRole(payload, roleName, model, consent, cwd, scratch) {
   // every role reply too, so the ledger and the printed JSON agree.
   let usage = null;
   try {
-    const response = parse(run('claude', args, { cwd: runCwd, env, input: instruction + payload }), 'Claude result');
+    const response = parse(run('claude', args, { cwd: runCwd, env, input: instruction + payload,
+      retryOnConnection: !write }), 'Claude result');
     const reply = claudeReply(response);
     usage = reply.usage;
     const result = { runtime: 'claude-p', model, role: roleName, status: claudeRoleStatus(response.result),
@@ -597,12 +658,13 @@ function claudeRole(payload, roleName, model, consent, cwd, scratch) {
 }
 
 function parseRoleFlags(rest) {
-  const parsed = { model: null, cwd: null, consentCredits: false };
+  const parsed = { model: null, cwd: null, consentCredits: false, consentModel: false };
   for (let i = 0; i < rest.length; i++) {
     const token = rest[i];
     if (token === '--model' && i + 1 < rest.length) parsed.model = rest[++i];
     else if (token === '--cwd' && i + 1 < rest.length) parsed.cwd = rest[++i];
     else if (token === '--consent-credits') parsed.consentCredits = true;
+    else if (token === '--consent-model') parsed.consentModel = true;
     else return null;
   }
   return parsed;
@@ -621,16 +683,17 @@ function runRole(roleName, rest) {
   if (!insideGitWorkTree(flags.cwd)) fail('--cwd must be inside a git work tree; no vendor process was started');
   // codex=off is this project's "no OpenAI egress" switch (see slots() call
   // in main()): an Astra role must refuse it identically to `ask astra`.
-  if (Object.hasOwn(OPENAI_ROLE_MODELS, flags.model) && !slots(flags.cwd).codex) {
+  if (isOpenAI(flags.model) && !slots(flags.cwd).codex) {
     fail('codex disabled by .vibe/review-slots (codex=off)');
   }
+  const modelId = routeModel(flags.model, flags.cwd, flags);
   const payload = readFileSync(0, 'utf8');
   if (!payload.trim() || Buffer.byteLength(payload) > MAX_BYTES) fail('Supply a non-empty payload of at most 8 MiB on stdin');
   const scratch = mkdtempSync(join(tmpdir(), 'vibe-delegate-'));
   try {
-    const result = Object.hasOwn(OPENAI_ROLE_MODELS, flags.model)
-      ? codexRole(payload, roleName, flags.cwd, scratch, flags.model)
-      : claudeRole(payload, roleName, flags.model, flags.consentCredits, flags.cwd, scratch);
+    const result = isOpenAI(flags.model)
+      ? codexRole(payload, roleName, flags.cwd, scratch, modelId)
+      : claudeRole(payload, roleName, modelId, flags.consentCredits, flags.cwd, scratch);
     console.log(JSON.stringify(result));
   } finally { rmSync(scratch, { recursive: true, force: true }); }
 }
@@ -655,8 +718,8 @@ function main() {
     return;
   }
   if (!['ask', 'review'].includes(operation) ||
-      (operation === 'review' ? model !== 'codex' : !['astra', 'opus', 'sonnet', 'haiku', 'fable'].includes(model)) ||
-      flags.length > 1 || (flags.length && flags[0] !== '--consent-credits') ||
+      (operation === 'review' ? model !== 'codex' : !ROLE_MODELS.includes(model)) ||
+      new Set(flags).size !== flags.length || flags.some((f) => !['--consent-credits', '--consent-model'].includes(f)) ||
       (operation === 'review' && flags.length)) {
     fail(USAGE);
   }
@@ -665,16 +728,20 @@ function main() {
   // project content can still reach OpenAI through /ask alone. slots() itself
   // fails closed (untracked/symlink/duplicate/unknown checks all throw), so
   // this consults it before ANY vendor process and before the payload is read.
-  if ((operation === 'review' || model === 'astra') && !slots(process.cwd()).codex) {
+  if ((operation === 'review' || isOpenAI(model)) && !slots(process.cwd()).codex) {
     fail('codex disabled by .vibe/review-slots (codex=off)');
   }
+  const modelId = operation === 'review'
+    ? routeModel(reviewClass(process.cwd()), process.cwd())
+    : routeModel(model, process.cwd(), { consentCredits: flags.includes('--consent-credits'),
+      consentModel: flags.includes('--consent-model') });
   const payload = readFileSync(0, 'utf8');
   if (!payload.trim() || Buffer.byteLength(payload) > MAX_BYTES) fail('Supply a non-empty payload of at most 8 MiB on stdin');
   const scratch = mkdtempSync(join(tmpdir(), 'vibe-delegate-'));
   try {
-    const result = operation === 'review' || model === 'astra'
-      ? codex(payload, operation === 'review', scratch)
-      : claude(payload, model, flags.includes('--consent-credits'), scratch);
+    const result = operation === 'review' || isOpenAI(model)
+      ? codex(payload, operation === 'review', scratch, modelId)
+      : claude(payload, modelId, flags.includes('--consent-credits'), scratch);
     console.log(JSON.stringify(result));
   } finally { rmSync(scratch, { recursive: true, force: true }); }
 }

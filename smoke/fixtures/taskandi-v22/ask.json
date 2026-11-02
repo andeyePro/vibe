@@ -1,0 +1,25 @@
+{
+  "contract": "vibe-agent-exchange-v2.2",
+  "notes": "task is the agent's task id inside the token's subtree. placed is \"subtask\" unless the owner has already written on that task or in_reply_to names an earlier ask on it; then the question is posted in the thread. blocking defaults to true. session and agent (claude|codex) are optional.",
+  "request": {
+    "action": "ask",
+    "task": "project",
+    "question": "Which date format should the export use?",
+    "default": "ISO 8601 (2026-10-30)",
+    "options": [
+      "ISO 8601 (2026-10-30)",
+      "Local (30/10/2026)"
+    ],
+    "order": 1,
+    "estimate_minutes": 2,
+    "remaining_minutes": 45,
+    "reversible": true,
+    "blocking": true,
+    "session": "session-a",
+    "agent": "codex"
+  },
+  "response": {
+    "ask_id": "0f7f8f0e-6c4b-4c62-9d4c-1b2f3a4d5e6f",
+    "placed": "subtask"
+  }
+}

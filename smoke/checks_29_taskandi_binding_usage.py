@@ -41,7 +41,7 @@ import { pathToFileURL } from 'node:url';
 
 const clientMod = await import(pathToFileURL(process.argv[2]).href);
 const usageMod = await import(pathToFileURL(process.argv[3]).href);
-const { CONTRACT_REVISION, createClient, loadConfig } = clientMod;
+const { LEGACY_CONTRACT_REVISION, createClient, loadConfig } = clientMod;
 const { usageRecords, enqueueTranscriptUsage } = usageMod;
 const root = mkdtempSync(join(tmpdir(), 'taskandi-29-'));
 const run = (...args) => execFileSync(args[0], args.slice(1), { cwd: root, stdio: 'ignore' });
@@ -50,7 +50,7 @@ const vibe = join(root, '.vibe'); mkdirSync(vibe, { mode: 0o700 });
 const configPath = join(vibe, 'taskandi.json');
 const mappingPath = join(vibe, 'taskandi-task');
 const tokenPath = join(vibe, 'taskandi-token');
-const config = (task = 'TE-1') => ({ endpoint: 'https://fixture.invalid/mcp', task, contractRevision: CONTRACT_REVISION });
+const config = (task = 'TE-1') => ({ endpoint: 'https://fixture.invalid/mcp', task, contractRevision: LEGACY_CONTRACT_REVISION });
 const writeConfig = (task = 'TE-1') => writeFileSync(configPath, JSON.stringify(config(task)));
 writeConfig();
 
@@ -158,14 +158,14 @@ def test_launcher_parser_and_task_binding() -> None:
             env | grep '^VIBE_TASK_REF=' && exit 9 || true
         fi
     """)
-    good = ["AB-42", "taskandeye://node/12345678-1234-1234-1234-123456789abc"]
+    good = ["AB-42", "taskandeye://node/12345678-1234-1234-1234-123456789abc", "AB", "taskandeye://node/not-a-uuid"]   # rev 6 AC19: any usable id
     for ref in good:
         result = subprocess.run(["bash", "-c", script, "probe", "--task", ref], capture_output=True, text=True, stdin=subprocess.DEVNULL)
         check(f"[taskandi] --task {ref!r} parses and exits 0", result.returncode == 0, result.stdout + result.stderr)
         check(f"[taskandi] --task {ref!r} echoes TASK_REF", f"TASK_REF=[{ref}]" in result.stdout, result.stdout)
         check(f"[taskandi] --task {ref!r} binds exactly 2 env args", "ENV_COUNT=[2]" in result.stdout, result.stdout)
         check(f"[taskandi] --task {ref!r} forwards VIBE_TASK_REF to the child", f"CHILD_REF=[{ref}]" in result.stdout, result.stdout)
-    for bad in ["AB-0;touch /tmp/pwn", "taskandeye://node/not-a-uuid", "--continue", "AB", "AB-1\nX"]:
+    for bad in ["AB-0;touch /tmp/pwn", "--continue", "AB-1\nX", "a b", "a'b", "-x", "a" * 201]:
         result = subprocess.run(["bash", "-c", script, "probe", "--task", bad], capture_output=True, text=True, stdin=subprocess.DEVNULL)
         check(f"[taskandi] malformed/injection ref refused: {bad!r}", result.returncode != 0, result.stdout + result.stderr)
     duplicate = subprocess.run(["bash", "-c", script, "probe", "--task", "AB-1", "--task", "CD-2"], capture_output=True, text=True, stdin=subprocess.DEVNULL)
@@ -209,7 +209,7 @@ def test_installed_taskandi_symlink_executes_commands():
         executable = binary / "taskandi-client"
         executable.symlink_to(CLIENT.name)
         response = subprocess.run([str(executable), "enqueue", "ask", "--key", "symlink-test"],
-                                  input=json.dumps({"to": "fixture", "question": "q", "default": "d"}),
+                                  input=json.dumps({"question": "q", "default": "d", "order": 1, "estimate_minutes": 5, "remaining_minutes": 5, "reversible": True}),
                                   cwd=root, text=True, capture_output=True, timeout=10)
         if check("[taskandi] symlinked client enqueue exits 0", response.returncode == 0, response.stderr):
             try:

@@ -616,3 +616,66 @@ Generator: sonnet. Tester: sonnet (10 functions in checks_18, 1,427 lines). Eval
 Spec Critic: revise twice (custom prompts absent at 0.154 → re-scoped to the leading-space pass-through + managed UserPromptSubmit hook; grouped liveness regex; the two named checks_18 edits).
 Verified: hook matches/non-matches/unreadable input, script shape, liveness (a)/(c) with both hardened commands, Dockerfile, SKILL.md/README/plan/MANUAL-TESTS; multi-line, 300 KB and trailing-newline arguments; code-check clean; full suite green (4,515). Chair also replaced task_051's self-referential "+1 line vs HEAD" assertion with an absolute one.
 Astra diff reviews (gpt-6-astra, 28,161 tokens over two calls): FAIL then FAIL — (1) unguarded jq / ARG_MAX via --arg → every jq call guarded, arguments on jq's stdin; (2) `read` dropped later lines and stripped whitespace → parameter-expansion split, later lines kept, no placeholder in the verbatim field; (3, re-review) `$(...)` stripped trailing newlines → sentinel capture. All fixed with tests; the third chair-evaluated (D9's one re-review spent).
+
+## task_060 — 2026-09-26 — cycle 1 pass
+
+Codex-only continuation delivered: default supervised handoff, run/turn-bound completion audit, separate Stop routing, consecutive retry accounting and owned crash recovery. Chair implemented; independent subscription Sol planner/spec critic/test design and Astra diff reviews. Review corrections: unresolved `--new-run`, completed-only progress, prior-terminal false success, shared handoff/watch publication mutex. Full smoke and code-check pass. Exact original Claude launcher/commands/shared guard hashes unchanged. Runtime schema generated from installed Codex confirms thread/read; official docs were unreachable after one refresh. Live Docker and overnight behavior requires Test 61 on a rebuilt image; no fixture-to-live inference.
+
+## task_061 — Task&I client contract v2.1 — cycle 1 — PASS (2026-10-31)
+- Spec critic: pass after 3 iterations (12 + 2 blocking concerns fixed).
+- Generator: sonnet (no escalation). Tester: haiku, 17 tests / 236 checks in `smoke/checks_47_taskandi_contract_v2.py`, ten mutant controls each caught.
+- Tester result: 235/236, plus the never-run lint. Chair adjudication, both classed `spec` (my wording), not capability:
+  1. AC13 called a refused HTTP 3xx `PREDISPATCH`. Wrong: the request reached the server, so `PREDISPATCH` would let `flush` retry a possibly-processed request. Spec rev 4 says post-send; the one check was corrected to match; the code was already right.
+  2. Spec allowed only an import line in `runner.py`, but the repo's never-run lint needs the `main()` calls. Rev 4 allows them; 17 calls added.
+- Evaluator fix (diff review, Generator-flagged choice): `complete`/`release` deleted the stored claim whatever task they named, so completing the bound parent task dropped a claim on a child. Now only the named claimed task's claim is dropped; probed both ways.
+- Gates after fixes: checks_47 236/236, checks_28 and checks_29 pass, code-check 0, full smoke 0.
+
+## task_062 — `vibe link` — PASS after 3 cycles (2026-10-31)
+- Spec critic: pass after 2 iterations plus a one-line fix (9 blocking concerns fixed in rev 2).
+- Generator: opus throughout. Tester: sonnet. Tests: `smoke/checks_48_vibe_link.py`, `smoke/checks_49_vibe_link_hardening.py`.
+- Cycle 1 (AC1–AC13): 244/244, full smoke 0. Security review then found MEDIUM consent-redirect (symlink swap during the dialog) and MEDIUM dialog stacking, plus LOWs; Task&I ruled task ids are UUIDs → rev 4, AC14–AC21 (classified spec gap).
+- Cycle 2 (AC14–AC21): wrapper `/bin/sh -c` re-checks the folder in the launched shell, one dialog at a time via atomic mkdir lock, fail-closed stamps, no symlink following, registry ownership, `VIBE_LINK_ASSUME` env-only, UUID task refs. All gates 0.
+- `/code-review high`: 10 findings → rev 5, AC22–AC30 (UUID refs accepted inside the container too, deny always withdraws consent, atomic stale-lock break, writers use full usability check, owner-unreadable registry, recoverable future stamps, linear registry load 5.4 s → 0.16 s, unknown-project dialog rate limit, single launcher-path resolution); finding 10 (codex-allow hardening) → TODO.
+- Cycle 3: all gates 0. Chair fix: a stamp-age check at 4 s against the 5 s limit flaked once under load; widened to 2 s.
+- Coverage gaps accepted: the supervisor's UUID check is tested via its regex literal (inline, not reachable without Codex); AC25's "Always" path is unreachable when the registry is unusable; real terminals and the macOS dialog are Mac manual Test 68.
+
+## task_064 — Task&I client v2.2 over HTTP — PASS after 2 cycles (2026-10-31)
+- Spec critic: pass after 4 iterations; rev 4 folded in Task&I's own answers from its code (error classes, non-idempotent writes, limits, nullability, cursor gap), rev 5 consolidated.
+- Generator: opus. Tester: sonnet. Tests: `smoke/checks_50_taskandi_http.py` (284), `checks_52_taskandi_http_more.py` (181), `checks_55_taskandi_http_review.py` (176); real loopback HTTP servers, a self-signed TLS server for AC21.
+- Cycle 1: green. Chair fix: an AC11 test took its clock early (race found by the Generator). Security review: 1 MEDIUM (origin host not in the binding), 3 LOW (C1/bidi in stdout, no durable record for direct writes, payload keys could override action/connection). `/code-review high`: 10 (launcher and supervisor still refused non-UUID ids, 409 bodies with detail fields misread as unknown, TLS failures counted as sent, unusable id left a 90-minute lease, status hid a broken descriptor, per-record lock churn in usage, duplicated checks, a permanent git-diff test, port in error text).
+- Cycle 2 (AC19–AC30): all fixed. Chair rulings: authorised checks_29/49 to accept newly-valid launch refs; removed checks_47's permanent diff rule (same defect class as the checks_52 one).
+- Full smoke 0, code-check 0.
+
+## task_063 — `vibe link --install` / `--uninstall` / `--status` — PASS after 2 cycles (2026-10-31)
+- Spec critic: pass after 2 iterations (6 blocking: test PATH could touch the real Mac, missing re-sign, PlistBuddy forms, desktop-entry Exec quoting, status extraction, dry-run format).
+- Generator: sonnet. Tester: sonnet (`smoke/checks_56_vibe_link_install.py`). Cycle 1 green.
+- `/code-review high`: 10 findings (reinstall could delete the working handler before the new one was in place, unquoted plist values with spaces, wrong Automation wording, no macOS default-handler check, mv race nesting a bundle, Linux file left after xdg-mime failure, duplicated launcher check and plist list, constant) → cycle 2 (AC12–AC20), green.
+- Known limit: the macOS `default:` status line parses `lsregister -dump` conservatively and prints `(unknown)` on unexpected formats; Test 68 covers the real Mac.
+- Process: the cycle-1 Generator edited one checks_48 case (accepted).
+
+## task_065 — `/vss` and `/vsss` with Task&I — PASS after 3 cycles (2026-10-31)
+- Spec critic: pass after 4 iterations plus fixes (11 blocking in iteration 1: unsafe default-proceed corners, repeatable proceed, no-action wait, park/reclaim loop, unmeterable budget, budget ask that parked its own task, unguaranteed inputs, no failure table, misbilling, wrong parity premise, which task a session works).
+- Generator: opus. Tester: sonnet. Tests: `checks_53_taskandi_decide.py`, `checks_54_harness_prose.py`, `checks_57_taskandi_decide_review.py`.
+- Cycle 1 → chair ruling: the full procedure broke the 14,300-word cap on `/vs`+`/vss`+`/vsss` (loaded every run); it moved to one shared `devcontainer/taskandi-harness.md` (shipped by one Dockerfile COPY), with a short skip-plus-pointer block in each command. Generator trimmed launcher prose in `vsss.md` (reviewed: no behaviour or setting lost).
+- `/code-review high` (10) → cycle 3: tombstones keep dedupe after pruning, a byte-offset usage ledger instead of every id, the skip condition checks for a binding file before running the client (a non-git folder had made every `/vss` post a "binding broken" question), renewal keeps the larger spend, reclaim guard over all open blocking asks, `--as parked` removed, one open-ask predicate, claim stored before the body file, fixture copies pinned by sha256.
+- Chair rulings: an answer counts only with a matching task and `ownerAnswer: true` (never hide an open ask); checks_54 per-block word cap 60 → 75 (the exact skip string alone is 50 words); checks_52's live-brain2 comparison replaced (drifting baseline).
+
+## task_066 — Task&I client v2.3 family alongside v2.2 — PASS after 3 cycles (2026-10-31)
+- Spec critic: pass after 2 iterations (10 blocking in iteration 1, all on retry safety and version switching). Re-scoped mid-flight (Rev 3) when Task&I recopied every fixture as v2.5: v2.3, v2.4 and v2.5 are one family for the calls covered.
+- Generator: opus. Tester: sonnet. Tests: `checks_58_taskandi_v23.py`, `checks_59_taskandi_v23_more.py`, `checks_60_taskandi_v23_review.py`, fake service `smoke/taskandi_v23_server.mjs` with per-connection replay.
+- Cycle 1: 5 failures (v2.2 lastContract, v2.2 limits accepted). Security review (1 HIGH, 2 MEDIUM) + `/code-review high` (10) + the chair's own re-grant finding → cycle 2: governing rule "same connection: a non-replay answer proves nothing was applied; new connection: never resend".
+- Security re-review: one new HIGH route (answers given before the replay lookup, such as connection_revoked, counted as proof on a resend) + MEDIUM (unknown 409) → cycle 3: only in-transaction 409 codes (`RESEND_PROOF_CODES`) prove anything on a resend.
+- Chair fix: `open_children` on a `complete` resend is a proof code (decided after the replay lookup); it was missing its HTTP status, so it had been treated as unknown.
+- Full smoke 0, code-check 0.
+
+## task_067 — vibe proposes tasks to the owner (create_task/update_task, repeat) — PASS after 2 cycles (2026-10-31)
+- Spec critic: pass after 2 iterations plus fixes (10 blocking: parent default, persona and session on the wire, a ledger that survives pruning, enforced dedupe, owner removal, self-dispatch, repeats from untrusted text, client-side caps, limit plumbing; then session rule vs fixture and the self_created unblock path).
+- Generator: opus. Tester: sonnet. Tests: `checks_61_taskandi_propose.py`, `checks_62_taskandi_propose_more.py`, `checks_63_taskandi_propose_cycle2.py`; the fake service gained create/update with its own independent repeat validator.
+- Cycle 1: green after the Tester fixed three fake-server bugs. Security review (1 HIGH: update_task added repeats past repeat_cap; 4 MEDIUM) + `/code-review high` (10) → cycle 2 (AC15–AC27), green after four chair rulings on tests.
+- Known limit (documented): the caps and `self_created` are client-side; Task&I has been asked whether it can enforce them.
+
+## task_068 — Harden `~/.vibe/codex-allow` like the link registry — PASS after 2 cycles (2026-10-31)
+- Spec critic: pass after 2 iterations (4 blocking: per-registry pinned messages, cap outside the link path, deny keeps refusing 644, writer order and umask 002).
+- Generator: sonnet. Tester: sonnet (`smoke/checks_65_codex_allow_hardening.py`).
+- `/code-review high`: 2 reproduced bugs (a grant reported but refused on read when `~/.vibe` pre-existed 775; a non-regular registry crashed or hung reads) plus fail-open default branches and a `set -e` capture → cycle 2, green.
+- Chair fix: checks_59/62 compared fixtures with the live brain2 copies (Task&I recopied them again); removed, sha256 pins remain.

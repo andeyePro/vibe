@@ -1,0 +1,41 @@
+{
+  "contract": "vibe-agent-exchange-v2.2",
+  "notes": "Answers only: the asks on the task answered after since (ms since epoch, default 0), oldest answer first; now is the next cursor. owner_answer is computed by the service; act only where it is true. seen_at is when the owner opened the question's details. Use ask_status for open asks.",
+  "request": {
+    "action": "list_asks",
+    "task": "project",
+    "since": 0,
+    "session": "session-a"
+  },
+  "response": {
+    "task": "project",
+    "now": 1761800000000,
+    "asks": [
+      {
+        "ask_id": "0f7f8f0e-6c4b-4c62-9d4c-1b2f3a4d5e6f",
+        "task": "project",
+        "subtask_id": "5a1c2b3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+        "placed": "subtask",
+        "question": "Which date format should the export use?",
+        "default": "ISO 8601 (2026-10-30)",
+        "options": [
+          "ISO 8601 (2026-10-30)",
+          "Local (30/10/2026)"
+        ],
+        "order": 1,
+        "estimate_minutes": 2,
+        "remaining_minutes": 45,
+        "reversible": true,
+        "blocking": true,
+        "in_reply_to": null,
+        "agent": "codex",
+        "created_at": 1761799000000,
+        "seen_at": 1761799700000,
+        "answer": "ISO 8601 (2026-10-30)",
+        "answered_by": "fixture-account-id",
+        "answered_at": 1761799800000,
+        "owner_answer": true
+      }
+    ]
+  }
+}

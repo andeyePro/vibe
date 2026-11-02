@@ -13,7 +13,7 @@ Autonomous loop wrapper around `/vss`. Higher blast radius — read this whole f
 
 Inherited verbatim from `/vss` (raise via `AskUserQuestion`+`PushNotification`, not prose — task_058). Every iteration honours it; see `/vss` for the full list.
 
-A hard-escalate trigger inside any iteration aborts the entire loop, not just that iteration.
+A hard-escalate trigger inside any iteration aborts the entire loop: write Final state and `active=0` first, then ask.
 
 ## Session-budget capture
 
@@ -40,7 +40,7 @@ The session file is the single canonical audit Martin reviews. There is no separ
 
 ## Resumption protocol (after out-of-tokens halt or interrupted session)
 
-A `/vsss` session can be killed by token-exhaustion, a manual interrupt, or any unhandled error. Without resumption the work in flight is dropped: partial commits sit on `main`, the priority queue is forgotten, and the user has to re-issue the original invocation.
+A `/vsss` session can be killed by token-exhaustion, a manual interrupt, or any unhandled error; resumption keeps the work in flight and the priority queue.
 
 ### State that survives a halt
 
@@ -78,26 +78,27 @@ Only when the ORIGINAL invocation carried an explicit `--hours`/`--budget` cap d
 
 Automatic continuation across credit windows is the DEFAULT: a `/vsss` run keeps relaunching after out-of-credit halts until the task genuinely completes. `--sessions X` caps the run at X windows total (X-1 relaunches); `--sessions 1` opts out of relaunch entirely. Skill side (this spec) and launcher side (`/workspace/vibe`) split the work:
 
-**Skill side — you maintain the marker.** At session start, write `.vss/auto-resume` (the marker file keeps its name — it's the launcher-side contract; KEY=VALUE lines, digits only — the launcher rejects anything else):
+**Skill side — you maintain the marker.** At session start, write `.vss/auto-resume` (the marker file keeps its name — it's the launcher-side contract; KEY=VALUE lines, digits only except `owner=`, which only the Stop hook reads):
 
 ```
 active=1
 remaining=<X-1 if --sessions X was passed; 9999 otherwise — FRESH invocations only, see below>
 resume_at=<current window's start + 5*3600, epoch seconds>
 session_file=.vss/sessions/<start-ISO>.md
+owner=<$CLAUDE_CODE_SESSION_ID, or $CODEX_THREAD_ID under Codex; re-stamped on resume>
 ```
 
 `9999` is the unbounded-persistence sentinel — the launcher contract is digits-only, and 9999 windows is "as many as it takes" with a runaway failsafe. The launcher decrements it per relaunch like any other value; no launcher change is involved.
 
 - **`remaining` is LAUNCHER-OWNED once first written.** Only a fresh (non-resumed) invocation sets it (X-1 from `--sessions X`, else the 9999 sentinel). On every per-iteration refresh, and at the start of any RESUMED window, read the existing marker's `remaining` back and rewrite it UNCHANGED — never re-derive it from the flag or the sentinel. Re-deriving would silently undo the launcher's per-relaunch decrement, making a `--sessions X` cap unenforceable (the run would relaunch forever). A missing/unreadable marker on a resumed window is the one exception: rewrite it with the value the session file's window count implies, and note the reconstruction in the session file.
-- `resume_at` is the best estimate of the 5h-window reset, always computed from the CURRENT window's start: a fresh invocation uses `START_TIME + 5*3600`; a RESUMED window re-bases it from the resumption timestamp (resumption epoch + 5*3600), NOT the original `START_TIME` — a stale `resume_at` already in the past would collapse the launcher's countdown to its 120s past-grace and probe a genuinely exhausted window every 2 minutes, each probe costing a full stall-watchdog cycle. (This re-basing is only about the marker; an explicit `--hours`/`--budget` cap still measures against the original `START_TIME` per § Resume budget arithmetic.) The window may have opened before the current window's `/vsss` start did, so `resume_at` can still be late — the launcher pads and rate-limit-caps it. Refresh the whole marker at the top of every iteration (cheap, atomic: write to `.vss/auto-resume.tmp`, `mv` over; `remaining` preserved as above).
+- `resume_at` is the best estimate of the 5h-window reset, always computed from the CURRENT window's start: a fresh invocation uses `START_TIME + 5*3600`; a RESUMED window re-bases it from the resumption timestamp (resumption epoch + 5*3600), NOT the original `START_TIME` — a stale past `resume_at` would make the launcher re-probe an exhausted window every 2 minutes, each probe a full stall-watchdog cycle. (This re-basing is only about the marker; an explicit `--hours`/`--budget` cap still measures against the original `START_TIME` per § Resume budget arithmetic.) The window may have opened before the current window's `/vsss` start did, so `resume_at` can still be late — the launcher pads and rate-limit-caps it. Refresh the whole marker at the top of every iteration (cheap, atomic: write to `.vss/auto-resume.tmp`, `mv` over; `remaining` preserved as above).
 - **Spent marker (`active=1, remaining=0`)**: when the launcher declines the final relaunch, nothing is left running to write `active=0`. That marker is inert — the countdown requires `remaining>=1` and the freshness gates see it as stale — and the next `/vsss` invocation overwrites it wholesale (a resumed final window's own clean exit writes `active=0` as normal). No manual cleanup is required, but deleting it is always safe.
 - **On ANY clean exit** (perfection gate, explicit user budget cap, hard-escalate abort, three no-op iterations — anything that writes `## Final state`), rewrite the marker with `active=0`. A finished loop must never relaunch. This is part of the atomic exit write; do not skip it on aborts.
 - With `--sessions 1` only, never write the marker (and set `active=0` in any stale one you find at start). Every other invocation — flag or no flag — writes it. Note the trade `--sessions 1` accepts: the stall watchdog never arms (with no marker file the heartbeat hooks stay quiet too; if only a deactivated stale marker exists, the hooks — gated on file existence, not `active` — still write the heartbeat, but the watchdog's `active=1` condition alone keeps it disarmed), so a wedged usage-limit picker in that window hangs until the user intervenes — opting out of relaunch also opts out of the stall kill.
 
-**Launcher side (already implemented in `/workspace/vibe`).** When claude exits while the marker says `active=1` and `remaining>=1` AND the marker was (re)written during the current launcher session (the same mtime-vs-session-ref freshness check the stall watchdog uses — required now that every run writes a marker, so a crash-left marker from an earlier session can't ambush a later plain launch with a surprise countdown; a stale marker instead prints a hint to run `/vsss --resume` explicitly and is left in place), the launcher counts down to `resume_at` (+2 min pad/grace, env-overridable via `VIBE_RESUME_PAST_GRACE_SECS`; 30 min fallback if the field is unusable; Ctrl-C cancels), decrements `remaining`, and relaunches `claude --continue "/vsss --resume"` — which lands in this spec's Resumption protocol above. The relaunch cost is one window from the X budget, whatever the halt cause was — the launcher cannot reliably distinguish credit exhaustion from a crash, and both are legitimate resume cases; a user-typed `/exit` mid-run also triggers the countdown, which is why the countdown is loud and cancellable. The countdown is also rate-limit-AWARE: `resume_at` is a blind worst-case estimate (session start + 5h), so vibe's statusLine drops the REAL 5h-window usage into `.vss/rate-limit` as it renders, and a reading that is fresh (`VIBE_RATE_READING_MAX_AGE`, default 1800s) with headroom (`used` at most `VIBE_RESUME_USED_MAX`, default 50%) caps the wait at the 2-minute grace instead of sitting out a stale estimate — both knobs env-overridable per launch.
+**Launcher side (already implemented in `/workspace/vibe`).** When claude exits while the marker says `active=1` and `remaining>=1` AND the marker was (re)written during the current launcher session (the same mtime-vs-session-ref freshness check the stall watchdog uses — required now that every run writes a marker, so a crash-left marker from an earlier session can't ambush a later plain launch with a surprise countdown; a stale marker instead prints a hint to run `/vsss --resume` explicitly and is left in place), the launcher counts down to `resume_at` (+2 min pad/grace, env-overridable via `VIBE_RESUME_PAST_GRACE_SECS`; 30 min fallback if the field is unusable; Ctrl-C cancels), decrements `remaining`, and relaunches `claude --continue "/vsss --resume"` — which lands in this spec's Resumption protocol above. Each relaunch costs one window whatever the halt cause (the launcher cannot tell credit exhaustion from a crash); a user-typed `/exit` mid-run also triggers the loud, cancellable countdown. The countdown is also rate-limit-aware: vibe's statusLine writes the real 5h-window usage to `.vss/rate-limit`, and a fresh reading (`VIBE_RATE_READING_MAX_AGE`, default 1800s) with headroom (`used` at most `VIBE_RESUME_USED_MAX`, default 50%) caps the wait at the 2-minute grace.
 
-**Launcher-side stall watchdog (the reason the marker refresh above is now load-bearing).** Interactive claude does NOT exit when a Pro/Max usage window runs out — it blocks forever at an interactive usage-limit picker, so the relaunch above never fires on its own. The launcher now backgrounds claude, watches a container-side heartbeat file (`.vss/heartbeat`, refreshed by `settings.local.json` hooks on tool activity while a marker exists), and kills a genuinely wedged claude itself. The kill only arms when THREE conditions hold: the marker is `active=1`; the marker was refreshed DURING the current launcher session (proven via the marker's mtime against a session-start reference file) — this is exactly why your per-iteration marker refresh (above) matters: without it, a live persistent run could look like a stale crash-left marker and never get the stall protection — and, since the launcher's countdown gained the same freshness gate, never get an auto-relaunch either; and the heartbeat has gone stale past the threshold. Defaults: `VIBE_STALL_SECS=1800` (heartbeat staleness before a kill is even considered — 30 min, chosen because hooks fire for subagent tool calls too, so long Task/Agent dispatches keep the heartbeat fresh, and a single Bash call is capped at 10 min by Claude Code itself), `VIBE_STALL_POLL_SECS=60` (watchdog poll interval), `VIBE_STALL_GRACE_SECS=120` (warn-then-wait before killing), `VIBE_STALL_KILL_PAUSE_SECS=10` (pause between the in-container kill attempt and the host-side fallback). All four are env-overridable per launch. On kill: with `remaining>=1` the launcher drops straight into the countdown/relaunch above; on the final window (`remaining=0`) the loop is simply not entered and vibe exits cleanly instead of hanging forever. The skill needs NO new behaviour beyond the marker refresh it already specifies above — this is entirely a launcher-side addition.
+**Launcher-side stall watchdog (the reason the marker refresh above is now load-bearing).** Interactive claude does NOT exit when a Pro/Max usage window runs out — it blocks forever at an interactive usage-limit picker, so the relaunch above never fires on its own. The launcher now backgrounds claude, watches a container-side heartbeat file (`.vss/heartbeat`, refreshed by `settings.local.json` hooks on tool activity while a marker exists), and kills a genuinely wedged claude itself. The kill only arms when THREE conditions hold: the marker is `active=1`; the marker was refreshed DURING the current launcher session (proven via the marker's mtime against a session-start reference file) — without your per-iteration refresh a live run looks crash-left and gets neither the stall kill nor a relaunch; and the heartbeat has gone stale past the threshold. Defaults, all env-overridable per launch: `VIBE_STALL_SECS=1800` (heartbeat staleness before a kill is considered; subagent tool calls keep it fresh), `VIBE_STALL_POLL_SECS=60`, `VIBE_STALL_GRACE_SECS=120` (warn, then wait), `VIBE_STALL_KILL_PAUSE_SECS=10`. On kill: with `remaining>=1` the launcher drops straight into the countdown/relaunch above; on the final window (`remaining=0`) the loop is simply not entered and vibe exits cleanly instead of hanging forever.
 
 **Budget arithmetic under persistence (default, and `--sessions X`).** Overriding the resume-budget rule above whenever the marker is active: each auto-resumed window gets a FRESH `BUDGET_HOURS` allowance (the whole point is spanning multiple 5h windows); `remaining` is what bounds total run length (effectively nothing, under the 9999 sentinel — the task's real exit conditions bound it). `--hours` still caps each window individually.
 
@@ -144,10 +145,20 @@ Two corollaries, both of which have caused real multi-hour stalls:
   clock inside a turn, so "wait 10 minutes and re-check" is not implementable.
   Poll the inbound channel at iteration boundaries instead.
 
+**A Stop hook enforces this** (`vsss-stop-guard`, both runtimes): while the run the marker's `owner=` names is live, ending the turn is refused. Three refusals without a new commit let go.
+
 Between iterations, progress belongs in `.vss/sessions/<start-ISO>.md`, not in a
 message to the user — it is durable, it survives an abort, and Martin is not
 watching a live feed anyway. Questions for the user go through § fromto
 channels below — never through stopping.
+
+## Optional task tracker
+
+<!-- taskandi-bound:start -->
+Skip this section unless `.vibe/taskandi-descriptor.json` or `.vibe/taskandi.json` exists in the project; if one does, run `taskandi-client status`: continue only if it prints `"bound":true` with `"channel":"taskandi-http"`, and if it exits 1, use the file channel for this run and post one question saying the Task&I binding is broken, quoting its message.
+
+Otherwise read `/usr/local/share/vibe/taskandi-harness.md` now, in full, and follow it for this run; it overrides the fromClaude steps below wherever they conflict.
+<!-- taskandi-bound:end -->
 
 ## fromto channels — asynchronous user Q&A without stopping
 
@@ -329,11 +340,11 @@ Even with autonomy turned all the way up, never autonomously:
 
 If a wrapped `/vss` iteration tries any of these, the iteration aborts (per `/vss` rules) AND the `/vsss` loop exits per condition 1.
 
-Dispatch rule inherited by every wrapped iteration's subagents: long build/test/ssh runs are foreground with `timeout: 600000`, never `run_in_background`: a backgrounded command's completion notification goes to the chair, not the subagent that launched it, so the subagent parks forever.
+Wrapped iterations' subagents inherit `/vss`'s foreground-only rule for long build/test/ssh runs.
 
 ## Why `/vsss` exists alongside `/vss`
 
-`/vss` is one bounded unit of work — use it to step away briefly. `/vsss` is "burn the rest of my session productively": hours of session credit spent on the project, with the escalate list catching anything dangerous. Higher blast radius, and more spec-level discipline (the optimiser keeps the loop honest).
+`/vss` is one bounded unit of work — use it to step away briefly. `/vsss` is "burn the rest of my session productively": hours of session credit spent on the project, with the escalate list catching anything dangerous.
 
 Three vacuous iterations are the design saying "nothing useful left to do" — let it stop rather than feeding it noise tasks.
 
@@ -376,7 +387,7 @@ Claude-only primitives it and the wrapped `/vss`/`/vs` use. Role dispatch
 becomes `vibe-delegate role <role> --model <model> --cwd <workspace>`.
 Unattended runs are driven by `codex-supervisor`: it starts one thread, sends
 `$vsss` as the first turn, re-enters with the literal `continue` after every
-turn that did not end the run, and stops on the report's `VSSS-EXIT:` line.
+turn that did not end the run, and stops on the report's `VSSS-EXIT:` line, once challenging a reason that reads as waiting.
 
 ---
 

@@ -1,0 +1,16 @@
+{
+  "contract": "vibe-agent-exchange-v2.5",
+  "notes": "Only for a task assigned to the agent. Refused with HTTP 409 {\"error\":\"open_children\",\"children\":[{\"task\",\"title\"}]} while the task has open children or unanswered questions, with not_assigned for a task not assigned to the persona and lease_held while another session holds it. summary is at most limits.summary (7950) code points. Otherwise posts the summary, ends the lease and lands provisional: the owner sees \"Done by <agent>, confirm?\" and confirms or keeps it open. Repeating it while unresolved returns the same completion. request_id (optional, a UUID the client generates once per intended write) makes a retry safe: the same request_id with the same body from the same connection returns the original response and applies nothing; the same request_id with a different body is refused with receipt_collision.",
+  "request": {
+    "action": "complete",
+    "task": "leaf-b",
+    "summary": "Exporter written; tests green.",
+    "session": "session-a",
+    "request_id": "9e3a4f5b-6c7d-4e8f-8a9b-1c2d3e4f5a6b"
+  },
+  "response": {
+    "task": "leaf-b",
+    "state": "provisional",
+    "completion_id": "4e5f6071-8293-4a41-8c3d-e4f506172839"
+  }
+}

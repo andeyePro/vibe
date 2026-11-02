@@ -1,465 +1,499 @@
 [
-  {
-    "id": "task_001",
-    "description": "Add --json output to code-check.py emitting machine-readable shellcheck findings",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "evaluator",
-    "mode": "rigorous",
-    "last_modified": "2026-04-23T01:00:00Z"
-  },
-  {
-    "id": "task_003",
-    "description": "Prize-worthy haiku about vibe \u2192 HAIKU.md (fuzzy mode)",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "evaluator",
-    "mode": "fuzzy",
-    "last_modified": "2026-04-23T05:00:00Z"
-  },
-  {
-    "id": "task_004",
-    "description": "Cross-org learning library (opt-in, host-only capture, public/private)",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "evaluator",
-    "mode": "rigorous",
-    "last_modified": "2026-04-23T09:15:00Z"
-  },
-  {
-    "id": "task_005",
-    "description": "OSC 52 clipboard bridge: vibe-copy shell helper + /copy slash command",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-04-23T19:57:00Z"
-  },
-  {
-    "id": "task_006",
-    "description": "/c (renamed from /copy) + host-side clipboard watcher (vibe-copy-watcher.sh)",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-04-23T22:00:00Z"
-  },
-  {
-    "id": "task_007",
-    "description": "Ship two operational rules (WebSearch-before-refusing + no-SSH-out-without-explicit-OK) to all vibe users via inline-prose CLAUDE.md fragments synced from devcontainer/claude-md/ by install-claude-extras.sh",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-04-25T14:32:00Z"
-  },
-  {
-    "id": "task_008",
-    "description": "vibe: drain clipboard scratch on exit (race fix in EXIT trap)",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "evaluator",
-    "mode": "rigorous",
-    "last_modified": "2026-04-25T17:00:00Z"
-  },
-  {
-    "id": "task_009",
-    "description": "In-container /learn slash command + /learnings write-confirm PreToolUse hook (Write/Edit/Bash all gated)",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "evaluator",
-    "mode": "rigorous",
-    "last_modified": "2026-04-26T18:30:00Z"
-  },
-  {
-    "id": "task_013",
-    "description": "/vs intelligent Spec Critic iteration cap (convergence/plateau/divergence + --max-iter flag, replaces hardcoded max 2)",
-    "implementation_status": "complete",
-    "test_status": "failing",
-    "assigned_to": "parked",
-    "mode": "rigorous",
-    "last_modified": "2026-04-27T00:00:00Z",
-    "parked_note": "Cycle 1 Step 6 escalation: AC10 spec defect (diff.patch from git diff includes Planner bookkeeping in .vs/spec.md + .vs/tasks.json, which AC10 didn't whitelist). 18/19 task_013 checks pass; only AC10 fails. Resume options documented in TODO.md task_013 entry."
-  },
-  {
-    "id": "task_010",
-    "description": "/learn smart-capture: semantic check phase (contradiction detection, quality gate, option scheme Z1/Z2/N)",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-05-07T00:00:00Z"
-  },
-  {
-    "id": "task_014",
-    "description": "Per-project Claude projects/ bind: each host project gets its own /home/node/.claude/projects/ inside the container so vibe X --continue scopes by project, not globally",
-    "implementation_status": "pending",
-    "test_status": "passing",
-    "assigned_to": "planner",
-    "mode": "rigorous",
-    "last_modified": "2026-04-29T00:00:00Z"
-  },
-  {
-    "id": "task_015",
-    "description": "Auto-recreate a project's container when it was built from a superseded vibe-dev:latest (image-drift detection before devcontainer up); fixes silent stale-container env claude ENOENT",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-05-27T00:00:00Z"
-  },
-  {
-    "id": "task_016",
-    "description": "--sessions auto-resume survives the out-of-credits block: heartbeat hooks + host-side stall watchdog (3-part gate), countdown Ctrl-C deactivate, claude exit-status propagation",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-07-10T12:22:14Z"
-  },
-  {
-    "id": "task_017",
-    "description": "shared-repos: declaration+registry, /repos/<name> mounts, rw single-writer lock, claim/handoff, seam fragment, per-repo PATs via useHttpPath",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-07-11T05:19:20Z",
-    "cycle_1_note": "Generator (sonnet) delivered AC1-AC7: registry/declaration helpers, vibe repos add|remove|list, shared_repos_scan single-classification-pass mount assembly (2 binds/repo, ro hard-pinned), runtime manifest + install-claude-extras.sh safe.directory wiring, gitignore ownership, README+CHANGELOG. code-check clean, smoke 1080/1080 (no Tester checks yet - append-only per /vs convention, lands next). implementation_status stays in_progress (C1 of 4); C2 (rw lock) not started.",
-    "cycle_2_note": "Tester (haiku) added 18 append-only smoke-test.py functions covering AC8 (rw-intent resolution: free-lock grant, live-holder contention fallback + named warning, ro-declared repos never touch the lock, shared_repo_declaration_set_mode at the helper level, PLUS CLI-level vibe repos add --rw: fresh-add-rw, upgrade-in-place, no-silent-downgrade on plain re-add, --rw position-agnostic - the flag wiring landed as an integrator edit mid-cycle after the Tester flagged it missing), AC9 (lock acquire/contend/stale-reclaim/release/torn-meta, all against real backgrounded processes), AC10 (exit dispatcher survives a refusing first hook via evidence files, single trap -p EXIT installer, no raw trap EXIT elsewhere, clipboard-flush + /learn tempfile cleanup both confirmed migrated into vibe_exit_hook_add), and one mode-coherence fixture tying manifest/override-JSON agreement together. Full suite: smoke-test.py 1273/1273 checks passing, 0 regressions in the frozen C1 suite; code-check.py shellcheck clean. Artifacts: .vs/cycle-2/test-output.log, .vs/cycle-2/summary.md.",
-    "cycle_3_note": "Tester (haiku) added 10 append-only smoke-test.py functions (61 checks) covering AC12 (/repo command file shape incl. host/container ~/.vibe boundary + negation-window regression guard, claim path/KEY=VALUE content shape, and a substituted-placeholder run of the documented mkdir+write proving syntactic validity + last-claim-wins overwrite since the claim flow has no sourced vibe helper - pure documentation), AC13 (statusLine \u26a0 rw:<requester> segment: structural regression guard on forceLoginMethod/defaultMode/guard-bash.sh/guard-fs.sh entries, byte-identical spot-check of two frozen fixtures with VIBE_REPOS_DIR pointed at an empty temp dir, and three functional fixtures - holder+request present, request present but not-us-the-holder, holder-but-no-request - all via VIBE_REPOS_DIR/VIBE_PROJECT_NAME env overrides), AC14 (shared-repos.md fragment shape + install-claude-extras.sh gating on VIBE_SHARED_REPOS_MANIFEST across missing/empty/non-empty), and VIBE_PROJECT_NAME plumbing (top-level export site before the _build_override_config command-substitution subshell, remoteEnv-only carriage in devcontainer.json, absent from containerEnv). Full suite: smoke-test.py 1334/1334 checks passing, 0 regressions in the frozen C1/C2 suite; code-check.py shellcheck clean. AC13(c)'s discriminating power verified by hand-running a deliberately broken statusLine variant (holder-equality check removed) and confirming the assertion fails against it. No AC12-AC15 mechanism found unimplemented. Artifacts: .vs/cycle-3/test-output.log, .vs/cycle-3/summary.md.",
-    "cycle_4_note": "Tester (haiku) added 28 append-only smoke-test.py functions (92 checks) covering AC16 (credential-helper.sh driven directly as a stdin->stdout filter: project-slug exact match, shared-slug match gated by the launcher-exported VIBE_SHARED_SLUG_* twin, unknown-repo silence, .git suffix, subdir suffix, trailing-slash-only (both unmatched and on the project's own slug), case-sensitivity, '..' traversal, embedded control byte, shell-metacharacter injection with a no-execution sentinel check, the post-security-review sanitisation-collision hardening (twin-mismatch silence is the gate-discriminating fixture; twin-match still serves correctly; twin-entirely-unset also silences), non-get ops, non-github host, lookalike subdomain host, http-not-https, empty-token-never-served, and a consolidated never-widen attack battery asserting $GITHUB_TOKEN never appears on stdout across 8 simultaneous non-project attempts), AC17 (useHttpPath registered at the same --global scope as credential.helper in setup-git.sh, plus a functional run of setup-git.sh against a fresh sandbox HOME confirming both settings land), AC18 (structural: GITHUB_REPO_SLUG / shared-token / shared-slug-twin exports all sit at column-0 top-level scope strictly outside and before the _build_override_config command-substitution call; functional: render_devcontainer_with_mounts injects matching VIBE_SHARED_TOKEN_*/VIBE_SHARED_SLUG_* remoteEnv passthroughs, remoteEnv-only never containerEnv), AC19 (CLAUDE.md + README text checks for the amended single-repo-PAT/launch-header-blast-radius/never-multi-repo-token wording). Full suite: smoke-test.py 1426/1426 checks passing, 0 regressions in the frozen C1-C3 suite; code-check.py shellcheck clean across 15 files. GAP FOUND: AC18's sanctioned C4 relaxation (missing token for an acked+registered ro repo should WARN and still MOUNT ro) is NOT implemented - shared_repos_scan still hard-blocks with 'B ... no token configured', so the C1 frozen test test_task017_delta_scan_b_token_absent is unchanged and still passes; no frozen-test amendment needed yet, this is UNIMPLEMENTED plumbing for the chair to pick up, not a Tester-side fix. AC20 (security-review) ran mid-cycle with a CLEAR verdict, closing one LOW (the sanitisation-collision twin-check) which this cycle's tests now cover as the gate-discriminating fixture. AC21's MANUAL-TESTS.md end-to-end push section (shared repo / project repo / undeclared repo) has not been authored yet - Generator/chair responsibility per spec, not Tester's. Artifacts: .vs/cycle-4/test-output.log, .vs/cycle-4/summary.md."
-  },
-  {
-    "id": "task_019",
-    "description": "regrettable-content guard: pre-commit/commit-msg/pre-push secret+PII scanner (block-by-default, two-tier, override/allowlist/opt-out) + vibe audit full-history scan; ships core",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-07-15",
-    "cycle_1_note": "Tester (haiku) added 15 append-only smoke-test.py functions (45 checks) covering AC1-AC17 (AC12/AC14 not testable via smoke-test: AC12 is regression guard on pre-existing guard-bash.sh, AC14 is pre-existing suite integrity - both verified separately). Scanner core tested: BLOCK tier (GitHub PAT, private-key), WARN tier (RFC1918 IP, home-path), clean content. Git hooks tested: real pre-commit blocks secrets; real commit-msg scans messages; pre-push new-branch permits WARN-tier PII (BLOCK-only backstop). Override (VIBE_CONTENT_GUARD=off) logs loudly. Allowlist (.vibe-content-allow regex) suppresses findings. Opt-out marker (.vibe-content-guard-off) immediate exit. Install wiring (install-claude-extras.sh + core.hooksPath) functional. Audit tested: --history finds deleted secrets (attributes to commit SHA), reports WARN-only with exit 0 (advisory). Trailer exemption verified on Co-Authored-By. All fixtures runtime-constructed (no literal secrets in test code). Full suite: smoke-test.py 1471/1471 checks passing (45 task_019 + 1426 pre-existing frozen), 0 regressions; code-check.py shellcheck clean on 15 files. Artifacts: .vs/cycle-1/test-output.log."
-  },
-  {
-    "id": "task_022",
-    "description": "vibe audit --history perf: scanner match primitives -> bash-native =~ (kill per-line grep forks) + --messages-stdin single-pass message scan; byte-identical findings gate",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-07-17T07:16:00Z"
-  },
-  {
-    "id": "task_023",
-    "description": "content guard: path-warn:<glob> allowlist entries - per-file WARN-tier demotion in diff modes so vibe's repo is self-clean; BLOCK never path-suppressible; path-warn lines never enter the ERE loop",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-07-17T07:38:43Z"
-  },
-  {
-    "id": "task_024",
-    "description": "content guard: hunk-aware diff parsing in scan_diff_stream + scan_blob_stdin - close added-line header-spoof hole (incl. suppressBlankEmpty zero-byte context exploit); BLOCK unhideable via ++ /dev/null spoof",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-07-17T08:10:42Z"
-  },
-  {
-    "id": "task_025",
-    "description": "code-check.py shellchecks devcontainer/git-hooks/ (scanner + 3 extensionless bash hooks via shebang detection) + CODE_CHECK_SCRIPTS env seam retiring the brittle scripts()-body text-patch fixture",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-07-17T09:19:00Z"
-  },
-  {
-    "id": "task_026",
-    "description": "vibe pat [repo] PAT rotation subcommand + launch-time 401 stored-token reprompt (fail-open probe, -K - stdin auth header, VIBE_PAT_CHECK=0 opt-out)",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-07-21T15:54:05Z"
-  },
-  {
-    "id": "task_027",
-    "description": "detect_github_repo dotted-repo-name fix (dots in repo segment, shell .git strip, slug validation) + brain2 meta/vibe-operation.md auto-refreshed vibe --help managed block + vibe-cli.md claude-md fragment",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-07-22T01:24:51Z"
-  },
-  {
-    "id": "task_028",
-    "description": "CLAUDE.md fragment merges (learnings trilogy; memory+history; content-guard trim) + single --fable-subagents definition in vs.md with vss/vsss pointers; >=1,900 words off every session's context",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-09-02T17:55:00Z"
-  },
-  {
-    "id": "task_029",
-    "description": "fromto format: minimal fromClaude template as vsss.md default, /brain2/meta/fromto-format.md verbatim override, exit-append mandates deleted, one exit line",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-09-02T18:59:36Z"
-  },
-  {
-    "id": "task_030",
-    "description": "site deck: everyday-launch hero chip (banner/firewall/sign-in/ready), First time group with the PAT+build lines, Once a quarter `vibe pat` chip; site-check guards rewritten",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-09-02T20:05:10Z"
-  },
-  {
-    "id": "task_031",
-    "description": "smoke-test.py split into smoke/ modules <=1,500 lines, unchanged entrypoint; .vs/review-focus.md; policy in CLAUDE.md (worktree task031)",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-09-02T21:06:35Z"
-  },
-  {
-    "id": "task_032",
-    "description": "asciinema pipeline: real-session cast replay via asciinema-player driving the 13 deck chips; record.md, scrub.mjs, placeholder cast, site-check fidelity over the cast",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-09-02T22:47:35Z"
-  },
-  {
-    "id": "task_033",
-    "description": "/wide parallelism mode + /narrow + --wide on /vs,/vss,/vsss (worktree task033)",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-09-02T21:23:47Z"
-  },
-  {
-    "id": "task_034",
-    "description": "Linux host support: unconditional host-gateway add-host, Linux clipboard fallback chain, install.sh preflight/hints, mDNS probe, nsswitch idempotence, README/ONBOARDING Linux section, MANUAL-TESTS 44-50 (worktree task034)",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-09-02T22:47:35Z"
-  },
-  {
-    "id": "task_035",
-    "description": "harness hygiene: stdin-immune suite, one sandbox builder + whole-suite meta-check, sha-pin lint, SAFE prunes, CLAUDE.md \u00a7 Testing rules",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-09-03T00:27:35Z"
-  },
-  {
-    "id": "task_036",
-    "description": "--spec-first for /vs: spec-first checkpoint (Step 3b), /vs --approve, tasks.json awaiting-approval status, /vss and /vsss passthrough, fromClaude action point",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-09-04T03:00:00Z"
-  },
-  {
-    "id": "task_037",
-    "description": "/vs --TDD: mandatory red-first trail (.vs/cycle-N/tdd-trail.md) written by the Generator before implementing, cross-checked by the Tester; incompatible with --fuzzy; vss/vsss passthrough",
-    "implementation_status": "complete",
-    "test_status": "passing",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-09-04T15:30:00Z"
-  },
-  {
-    "id": "task_038",
-    "description": "--aux model slot: second model (local Ollama / any OpenAI-compatible / GreenPT) for mechanical jobs only \u2014 launcher --aux + ~/.vibe/aux, vibe-aux helper, /vs --aux-review, /learn embeddings; never replaces Claude Code's model",
-    "implementation_status": "awaiting-approval",
-    "test_status": "pending",
-    "assigned_to": "generator",
-    "mode": "rigorous",
-    "last_modified": "2026-09-04T03:36:09Z"
-  },
-  {
-    "id": "task_039",
-    "description": "/review: Claude code-review on the working diff with a merged verdict; empty opt-in fan-out slots (gemini, codex) documented; --solo/--level/--slot/--comment",
-    "implementation_status": "complete",
-    "test_status": "pass",
-    "assigned_to": "evaluator",
-    "mode": "rigorous",
-    "last_modified": "2026-09-04T04:03:00Z"
-  },
-  {
-    "id": "task_040",
-    "description": "language-profile mechanism: vibe --profile <name> child images FROM the unchanged base, precedence flag > .vibe/profile > VIBE_PROFILE, staleness markers, VIBE_IMAGE_TAG render, suggestion line; first profile python",
-    "implementation_status": "complete",
-    "test_status": "pass",
-    "assigned_to": "evaluator",
-    "mode": "rigorous",
-    "last_modified": "2026-09-04T04:28:09Z"
-  },
-  {
-    "id": "task_044",
-    "description": "Codex helper hardening: codex=off also refuses /ask astra; claude -p argv plan+prompts none, no disableAllHooks; launcher warns on group/other-readable Codex login dir",
-    "implementation_status": "complete",
-    "test_status": "pass",
-    "assigned_to": "evaluator",
-    "mode": "rigorous",
-    "last_modified": "2026-09-11T18:23:44Z"
-  },
-  {
-    "id": "task_045",
-    "description": "host-side Codex opt-in registry ~/.vibe/codex-allow required alongside the untracked marker; vibe codex allow|deny|list; deny stops the container",
-    "implementation_status": "complete",
-    "test_status": "pass",
-    "assigned_to": "evaluator",
-    "mode": "rigorous",
-    "last_modified": "2026-09-11T19:03:53Z"
-  },
-  {
-    "id": "task_046",
-    "description": "Codex system policy layer (/etc/codex requirements+config+managed hooks), guard adapter (ask->deny, patch paths), liveness gate, tool inventory; new checks_18",
-    "implementation_status": "complete",
-    "test_status": "pass",
-    "assigned_to": "evaluator",
-    "mode": "rigorous",
-    "last_modified": "2026-09-11T19:46:46Z"
-  },
-  {
-    "id": "task_047",
-    "description": "Codex skills $vs/$vss/$vsss in /etc/codex/skills with a substitution table; vibe-delegate role <role> --model --cwd dispatches /vs roles as fresh codex exec / claude -p processes",
-    "implementation_status": "complete",
-    "test_status": "pass",
-    "assigned_to": "evaluator",
-    "mode": "rigorous",
-    "last_modified": "2026-09-11T20:29:54Z",
-    "cycle_1_note": "Generator (sonnet) delivered AC1-AC7 (AC8 is the Tester's per spec, AC9 verified green by this cycle). SKILL.md wrappers at devcontainer/codex/skills/{vs,vss,vsss}/SKILL.md; Dockerfile COPY --chown=root:root codex/ already covers them (verified, no extra COPY; added explicit chmod 0755/0644 for the new dirs/files alongside the existing task_046 chmod block). vibe-delegate.mjs gained the `role` operation: ask/review/slots/status refactored only via two extractions (codexEvents(), claudeBilling()+claudeReply()) that reproduce their prior bodies verbatim -- diffed byte-for-byte equivalent, confirmed by the full existing suite staying green. Read-only roles (planner/spec-critic/reviewer/evaluator) reuse ask's own read-only argv verbatim in a private temp cwd; write roles (generator/tester) use the AC4 pinned vectors verbatim (Astra: -C <workspace> + danger-full-access, no --ignore-user-config; Claude: --permission-mode bypassPermissions, fixed tool allowlist), schema/output files always in the helper's own scratch dir. AC5 reply contract implemented (Astra schema-native status; Claude STATUS: done|blocked last-line derivation, missing -> blocked). vs.md/vss.md/vsss.md each gained an 6-line Running under Codex section (total word count 14289/14300 -- no trim needed elsewhere). README Codex section, ask.md pointer, and plan D5 wording updated. TDD scratch suite at .vs/cycle-1/scratch-tests/test_role.py (standalone, no smoke import) run red (against git-stashed pre-edit vibe-delegate.mjs) then green; python3 code-check.py clean; python3 smoke-test.py < /dev/null fully green (3695 checks), 0 regressions."
-  },
-  {
-    "id": "task_048",
-    "description": "codex-supervisor: unattended Codex thread via app-server JSON on stdio; prefix rewrite, quota wait on resetsAt, transient/turn-failure retries, ceilings, atomic state, thread/resume after kill, VSSS-EXIT gate",
-    "implementation_status": "complete",
-    "test_status": "pass",
-    "assigned_to": "evaluator",
-    "mode": "rigorous",
-    "last_modified": "2026-09-11T22:33:05Z",
-    "cycle_1_note": "Generator (opus) delivered AC1-AC9 and AC11 (AC10 is the Tester's). New devcontainer/codex-supervisor.mjs (Node ESM, builtins only) installed by the Dockerfile as root-owned /usr/local/bin/codex-supervisor and added to the chmod +x chain. vsss.md gained the VSSS-EXIT last-line exit contract and a 7-line Running under Codex note; README gained the \"unattended supervisor\" paragraph; plan D7 rewritten with method names verified against tag rust-v0.154.0. The vs+vss+vsss 14,300-word cap had 11 words of headroom, so the additions were paid for by compressing rationale prose in vsss.md (no rule or asserted phrase removed; total now 14,289). TDD harness at .vs/cycle-1/scratch-tests/{stub-codex.py,drive.py}: 20 scenarios / 116 assertions over every AC10 case, run red then green. python3 code-check.py clean; python3 smoke-test.py < /dev/null fully green.",
-    "cycle_1_tester_note": "Tester (sonnet) wrote smoke/checks_19_codex_supervisor.py (1018 lines, 25 test_codex_supervisor_* functions) independently of the Generator's diff/report, against a from-scratch Python stub codex app-server (self-locating fixture/log/meta files, since the supervisor's own spawn() env is pinned to exactly PATH/HOME/CODEX_HOME/LANG so no env-var channel to the stub exists). Registered in smoke/runner.py (import + call list). Every AC10 scenario covered: normal VSSS-EXIT completion, no-exit-line -> literal continue -> exit line, quota wait with known resetsAt (1020s = 900+120 grace) and blind backoff (300/600 with a fresh account/rateLimits/read before each retry), transient 429 backoff (60s), exec-policy-forbidden retry with the SAME resent text, sessionBudgetExceeded/interrupted exit 1, an unattended approval request answered without blocking, mid-run SIGTERM (subprocess.Popen, exit 130, valid state) followed by a resume run asserting thread/resume+turn/start and never turn/steer, promptHash/cwd mismatch exit 2 plus --new-run archiving, all three named ceilings (max-turns/max-quota-waits/max-wall-seconds mid quota-wait) exit 3, relative --cwd and missing CODEX_HOME exit 2 with nothing spawned, status with/without a state file, exact argv/env/initialize-line/ordering assertions, atomicity (no .tmp left), no stray files under --cwd, the REWRITES table via node -e import, and the Dockerfile/vsss.md/README/plan-D7 doc checks. python3 code-check.py clean; python3 smoke-test.py < /dev/null fully green (4037 passing check() lines). No AC left uncovered.",
-    "cycle_2_note": "Generator (opus) cycle 2: fixed all five Evaluator findings in devcontainer/codex-supervisor.mjs against the AMENDED AC4/AC6/AC7. (1) Terminal state + resume input: adoptState() now carries exitReason through, run() prints 'already complete: <reason>' and returns 0 without spawning, and a resumed run's first input is the literal 'continue' when turns is non-empty (the rewritten prompt only when no turn was ever started). (2) AC7(a) wall deadline while awaiting a turn: new nextNotificationOrDeadline() races the next notification against startedAt+maxWallSeconds \u2014 a single unref'd timer on the real clock, a 100 ms poll of the --now-source clock so a virtual advance fires it \u2014 then expireDuringTurn() sends turn/interrupt {threadId,turnId}, closes stdin, persists and exits 3. (3) AC7(b) waits capped: recordWait() records the would-be wait in waits[] and throws the ceiling instead of sleeping whenever until > deadline, so both the quota and transient paths are covered. (4) checkGates() gained turnFailures >= maxTurnFailures, and every --max-* below 1 is now a parse-time exit 2. (5) A persisted waits[] entry whose until is still in the future is honoured on resume before anything is sent (sleep, or exit 3 if it ends past the ceiling) \u2014 gates run either side of it, all before the server is spawned. Child env, argv, initialize line, REWRITES table and state-file atomicity untouched. TDD harness .vs/cycle-2/scratch-tests/{stub-codex.py,drive.py}: 13 scenarios / 48 assertions, run red (23 failing) then green (0 failing). python3 code-check.py clean (22 files); python3 smoke-test.py < /dev/null green, exit 0, 4037 passing checks including all 25 pinned smoke/checks_19_codex_supervisor.py tests, which were not edited.",
-    "cycle_2_tester_note": "Tester (sonnet) cycle 2: appended 11 test_codex_supervisor_c2_* functions covering every amended AC4/AC6/AC7 behaviour, driven through the real devcontainer/codex-supervisor.mjs (no scratch-tests, generator-report.md or diff.patch read). Cycle 1's smoke/checks_19_codex_supervisor.py (1019 lines) is untouched; the new tests live in a new smoke/checks_21_codex_supervisor_c2.py (563 lines, registered in smoke/runner.py) because appending in place would have crossed the smoke/ 1500-line-per-part convention. Covered: terminal exitReason state short-circuits run() to 'already complete: <reason>' exit 0 with the stub never spawned, and --new-run archives + starts fresh; the wall deadline firing while AWAITING a turn (turn/interrupt sent, exit 3, state written); a quota wait and a transient back-off each capped by the remaining wall budget (would-be wait still recorded in waits[], exit 3, no second turn/start); the turnFailures gate (--max-turn-failures 1 exits 1 on the first failure per AC5(v), then a resumed run already at the ceiling exits 3 without spawning) and every --max-* flag rejecting 0 with exit 2; an outstanding persisted waits[] entry honoured via the virtual clock before thread/resume+turn/start (or exit 3 without spawning if it would end past the deadline); and the resume-input split (rewritten prompt vs literal 'continue'). RESULT: 10 of 11 pass. The one failure is real, not a test bug: test_codex_supervisor_c2_resume_after_sigterm_sends_continue kills a turn mid-flight (turn/start sent, never completed -> persisted turns: []) and expects the resumed run to send 'continue' per the amended AC4 text ('the literal continue when turns is non-empty... the rewritten prompt only when no turn was ever started'); the actual implementation sent the rewritten prompt ('$vsss go c2') instead, because resumeThread()'s `if (resumed.turns.length) firstText = 'continue'` cannot distinguish 'a turn was attempted and killed before completing' from 'no turn was ever attempted' -- both leave turns: [] on disk with no other persisted marker. python3 code-check.py clean (22 files, shellcheck); python3 smoke-test.py < /dev/null: 4119 checks, 4118 passed, 1 failed, exit 1. No regressions: all cycle-1 checks_19 tests and every other smoke test still pass. Full output in .vs/cycle-2/test-output.log, 3-line summary in .vs/cycle-2/summary.md.",
-    "cycle_3_note": "Generator (sonnet) cycle 3: single targeted fix in devcontainer/codex-supervisor.mjs for the cycle-2 Tester finding, per the amended AC4 wording (turnsStarted). Added a persisted `turnsStarted` counter: present in freshState() (starts at 0), carried through adoptState()'s per-key copy loop (defaults to 0 for a legacy state file that predates the field), incremented and written atomically (this.persist(), the existing tmp+rename helper) at the very top of runTurn() \u2014 i.e. immediately before every `turn/start` send, including re-sends after a quota/transient/turn-failure wait, since the loop always re-enters runTurn() for those \u2014 and surfaced as a 'turns started' row in statusReport(). run()'s resume branch now decides firstText from `Number(resumed.turnsStarted || 0) >= 1` (literal 'continue') instead of `resumed.turns.length` (which cannot distinguish a turn killed mid-flight, leaving turns: [], from a thread that never got a turn/start at all). No other behaviour touched: argv, env, the initialize line, ordering/wait semantics, and state-file atomicity are all unchanged, and no test under smoke/ was edited. python3 code-check.py clean (22 files, shellcheck). python3 smoke-test.py < /dev/null: fully green, exit 0, 4120 check() lines all passing (0 failed), including every checks_19 and checks_21 test \u2014 test_codex_supervisor_c2_resume_after_sigterm_sends_continue (the cycle-2 failure) now passes. Report: .vs/cycle-3/generator-report.md. Diff: .vs/cycle-3/diff.patch.",
-    "cycle_4_tester_note": "Tester (sonnet) cycle 4: appended 6 test_codex_supervisor_c4_* functions to smoke/checks_21_codex_supervisor_c2.py (951 lines, still one part; checks_19 and the pre-existing checks_21 tests are untouched), registered in smoke/runner.py after the checks_21 block. Spec-only read (.vs/spec.md AC4/AC5/AC7 amended again after the reviewer's second pass); no cycle-4 generator-report.md, diff.patch or scratch-tests read. Covers: (a) three fresh scenarios -- quota failure, transient failure, and a plain failed turn, each BEFORE any completed turn -- asserting explicitly that the first turn/start is the rewritten prompt and the second is the literal 'continue' (checks_19's turn_failure_retries_same_text already covers the failed-turn path for its own purpose and is frozen/unedited; these three are independent cycle-4 confirmations across all three retry paths). (b) two never-answers-the-request tests using a new hang-stub variant (_write_hang_stub / _CODEX_STUB_HANG_SRC, self-locating like the base stub, logs receipt via the same IN/OUT log format then idles watching stdin for EOF instead of leaking a real sleeping process): turn/start never answered and thread/start never answered, each with a tiny --max-wall-seconds (5s, no --now-source) -- confirmed by reading codex-supervisor.mjs's boundedRequest() (lines ~512-521) that the real per-request setTimeout is computed as min(own limit, remaining wall budget) ONCE at request-issue time (not re-derived by polling a virtual clock afterward), so a small ceiling with instant stub replies on the earlier handshake steps naturally leaves only a few REAL seconds of budget by the time the hung request is sent. Both assert exit 3 naming max-wall-seconds (never exit 1) and that the stub log shows the request was received; only the turn/start case also asserts a state file exists, since thread/start had already succeeded and set this.state before turn/start hung, whereas the thread/start-hang case never obtains a threadId and the exit path only persists `if (this.state)` -- confirmed correct against the source (a spec-consistent design, not a bug) rather than assumed, after an initial draft of these two tests (using the c2 wall-deadline test's advance-the-clock-mid-run pattern) failed for the wrong reason and was corrected. (c) one hand-written-state-file resume test proving AC4/AC6's fresh-snapshot-wins merge rule: a persisted lastRateLimits.primary.resetsAt 1000s in the past is superseded by the stub's fresh account/rateLimits/read reply (resetsAt = now+900), so the recorded quota wait is 1020s (900+120 grace), not a stale/negative one. python3 code-check.py clean (22 files, shellcheck). python3 smoke-test.py < /dev/null: fully green, exit 0, 4155 check() lines all passing (0 failed) -- 30 new c4 checks across the 6 new functions, no regressions in any checks_19/checks_21/other smoke test. Full output: .vs/cycle-4/test-output.log. Summary: .vs/cycle-4/summary.md. Everything in the amended AC4/AC5/AC7 is covered; nothing left untested for this cycle's scope."
-  },
-  {
-    "id": "task_049",
-    "description": "vibe --agent codex: launcher flag/.vibe/agent/VIBE_AGENT, refused without the Codex login grant, launch_codex via root-owned codex-entry (liveness gate then exec codex), header line, Test 55; auto-resume stays Claude-only",
-    "implementation_status": "complete",
-    "test_status": "pass",
-    "assigned_to": "evaluator",
-    "mode": "rigorous",
-    "last_modified": "2026-09-11T23:16:47Z",
-    "cycle_1_tester_note": "Tester (sonnet) wrote smoke/checks_22_codex_agent.py (650 lines, 16 test_* functions, 87 check() assertions), independently of the Generator's diff/report (spec.md-only read; implementation was already complete on disk). Registered in smoke/runner.py (import + call list). Since launch_claude/launch_codex/launch_codex_plain and the AC2 gate/AC5 header block all live BELOW the VIBE_SOURCE_ONLY guard (sourcing vibe never reaches them, and no existing test in this suite runs the full launcher end-to-end through image-build/GitHub-setup to reach them either), the argv/header/pre-launch-line golden tests extract those exact snippets from the current vibe source text (same technique _task022_extract_function_body already uses elsewhere, here executed rather than only shape-checked) and run them for real against a devcontainer PATH stub (argv captured as JSON, compared for exact list equality), with the real _agent_resolve/_codex_desired_source/_codex_dir_mode_warning sourced live via VIBE_SOURCE_ONLY=1 so the registry/marker/config fixtures exercise the production functions rather than a reimplementation. Covered: _agent_resolve's full precedence matrix (flag > file > env > default) plus every file-rung failure mode (malformed content, tracked, symlinked file, symlinked .vibe dir -- each exactly one \u26a0 line, falls through); parser usage errors (--agent bogus / bare --agent -> usage + exit 1, zero devcontainer calls, via the real launcher + a devcontainer PATH stub); --agent codex granted -> the AC3 devcontainer exec argv equals the golden vector exactly, the AC5 agent header line, and the Claude-only pre-launch line all present; --agent codex denied -> exact AC2 refusal text, zero devcontainer calls; --agent claude and no flag -> the unchanged launch_claude golden argv (identical both ways) with the codex mount banner still shown but NO agent line, even when the codex mount is granted; launch_codex/launch_codex_plain source-shape checks (&, wait, no vibe_stall_watchdog, no heartbeat/marker seeding); launch_claude proven byte-identical between HEAD and the working tree (HEAD, no pinned sha); codex-entry.sh offline (missing requirements.toml, missing login-dir, liveness failure with pass-through text, success execing the stub with the args after --, and no 'dangerously'/' -c ' anywhere in the script); Dockerfile COPY --chown=root:root + chmod +x, codex-guard-liveness.sh's ownership list, the managed .gitignore block, and the README/MANUAL-TESTS Test 55/plan-item-7 doc text. python3 code-check.py clean (23 files, shellcheck including codex-entry.sh). python3 smoke-test.py < /dev/null: fully green, exit 0, 4245 check() lines all passing (0 failed), including all 87 new checks and zero regressions elsewhere. Not covered, with reason: the live Codex TUI trial (approval policy, denied .codex/config.toml write, git push --force denial) is explicitly out of scope for the smoke suite -- it needs a real Docker daemon and is Martin's MANUAL-TESTS Test 55 run, per the task's own framing that nothing in the suite has ever started a real Codex session. Full output: .vs/cycle-1/test-output.log. Summary: .vs/cycle-1/summary.md."
-  },
-  {
-    "id": "task_050",
-    "description": "codex-panel: N independent tool-less codex exec reviewers with nonces for /vs --panel under Codex; ordered ship/verify argv pin vs the delegate; verify mode reads each reviewer's own rollout (source-pinned filename template); incomplete panel never passes",
-    "implementation_status": "complete",
-    "test_status": "pass",
-    "assigned_to": "evaluator",
-    "mode": "rigorous",
-    "last_modified": "2026-09-11T23:54:59Z"
-  },
-  {
-    "id": "task_052",
-    "description": "delegate usage ledger .vibe/delegate-usage.jsonl (one line per model-invoking call, exact key set, no payload) and /budget split of Astra vs claude -p",
-    "implementation_status": "complete",
-    "test_status": "pass",
-    "assigned_to": "evaluator",
-    "mode": "rigorous",
-    "last_modified": "2026-09-12T00:33:01Z"
-  },
-  {
-    "id": "task_051",
-    "description": "$vs/$vss/$vsss aliases in Claude Code via a synced CLAUDE.md fragment plus one alias line per command file; hook route Martin-gated",
-    "implementation_status": "complete",
-    "test_status": "pass",
-    "assigned_to": "evaluator",
-    "mode": "rigorous",
-    "last_modified": "2026-09-12T01:06:28Z",
-    "cycle_1_tester_note": "Tester (haiku) AC5: updated the two checks_09_openproject_and_scanner.py pins (AC1 fragment count 14->15, expected_names gains dollar-prefix.md; AC2's 6,700-word cap left unchanged since the 15-fragment total is 6,563 words -- the new fragment fit, so per task_042's precedent only a comment was added, not a raise) with no other edits to that function. Extended the fixture-isolated fragment-sync test (task_007/t3 in smoke/checks_03_vibecopy_and_watcher.py) with a new test_task051_ac2_dollar_prefix_synced_like_web_research(), same isolation pattern with two fragments in source, asserting dollar-prefix.md's header and body sync exactly like web-research.md's; added a DOLLAR_PREFIX_MD constant to smoke/_core.py's __all__. Added test_dollar_prefix_fragment_and_aliases() to smoke/checks_13_spec_first.py (37 checks): fragment <=25 lines/<=200 words and contains $vs/$vss/$vsss/'first'/'case-sensitive'/literal $vss:foo; each of vs.md/vss.md/vsss.md has its own-named alias line immediately under its H1 pointing at claude-md/dollar-prefix.md; vs.md's line count is exactly HEAD+1; vss.md and vsss.md get only the alias-line and vsss.md's two protected-phrase checks ('never be reported as a perfection gate', 'VSSS-EXIT:'), per the spec's allowance that vss.md's rationale prose was trimmed to fit a word cap; README's $ spelling sentence and dollar-prefix.md pointer; the plan's section 3 'DELIVERED (task_051)' marker on item 10; TODO.md's UserPromptSubmit/Martin-gated/task_051 sentinels. Both new test functions registered in smoke/runner.py in a new task_051 block after task_050's. python3 code-check.py: clean, shellcheck across 23 files, exit 0. python3 smoke-test.py < /dev/null: fully green, exit 0, 4,445 check() lines passing, 0 failed. Not covered, with reason: the live/manual side of the deterministic UserPromptSubmit hook alternative is out of scope for this task (instructional-route-only; the hook itself is Martin-gated future work per TODO.md), so only its documented sentinel words were asserted, not a live hook trial. Full output: .vs/cycle-1/test-output.log. Summary: .vs/cycle-1/summary.md."
-  },
-  {
-    "id": "task_053",
-    "description": "/vs in Codex's own terminal: leading-space pass-through plus a root-owned managed UserPromptSubmit hook (codex-prompt-prefix) adding context that points at the $vs skill; hooks.json/liveness/docs updated",
-    "implementation_status": "complete",
-    "test_status": "pass",
-    "assigned_to": "evaluator",
-    "mode": "rigorous",
-    "last_modified": "2026-09-12T01:35:00Z",
-    "cycle_1_generator_note": "devcontainer/codex-prompt-prefix.sh (new, 41 lines, shellcheck-clean): reads UserPromptSubmit JSON via jq, matches /vs|/vss|/vsss as the first whitespace-delimited token (case-sensitive, exact), emits additionalContext via jq -n --arg, else/on-error prints nothing and exits 0. hooks.json gains the UserPromptSubmit group (no matcher key -- no tool to match), hardened command, timeout 10, no async. codex-guard-liveness.sh: check (a) ownership list gains codex-prompt-prefix; check (c) regex grouped to accept both hardened forms and now resolves hook_target per-program via bash [[ =~ ]] + BASH_REMATCH instead of a hardcoded adapter path. Dockerfile: COPY --chown=root:root next to the task_046 lines + chmod +x list. All three SKILL.md 'The / form' sections rewritten (only $name is a GUARANTEED match; leading-space /name also works, model-mediated) -- worded to satisfy the existing task_047 smoke assertions (checks_18) verbatim while being accurate about the new route. README's Codex-led-container paragraph gains two sentences before the panel-runner sentence; Test 55 not pushed past the 2000-char scan window. docs/codex-integration-plan.md: F6 gains an addendum with the two source citations (slash_commands.rs enum absence; slash_input.rs/chat_composer.rs leading-space mechanism); D3 rewritten to the shipped design; the stale out-of-scope bullet referencing '/prompts:vs is his call' corrected for consistency (not separately named in AC4 but directly contradicted the rewritten D3). MANUAL-TESTS.md Test 55 gains step 4 (renumbering old 4-6 to 5-7, 'Six further steps' -> 'Seven'); Pass criteria line mentions the new step. TODO.md Martin's-answers entry (b) verified accurate, no edit needed. Two permitted checks_18 edits only: _codex_liveness_fixture's copy tuple gains ('codex-prompt-prefix', PROMPT_PREFIX); test_codex_hooks_json_ac3's event-set check becomes {PreToolUse, UserPromptSubmit} plus new assertions on the UserPromptSubmit group's single hook (command, timeout==10, no async). python3 code-check.py: clean, shellcheck across 24 files. python3 smoke-test.py < /dev/null: 4453 passed, 1 failed -- '[task051] vs.md line count grew by exactly one vs HEAD' (HEAD had 462, now 462). Verified via git stash (full pop-back afterward, no data lost) that this failure is PRE-EXISTING and independent of every task_053 change: it reproduces identically against a working tree that exactly matches HEAD (4bffdb8, task_051's own commit), because the check computes current-vs-HEAD line-count delta and can never see +1 once the change it is checking for is already inside HEAD itself -- a self-referential test authored to run mid-cycle pre-commit that fails permanently post-commit. Confirmed unrelated to any AC1-4 file and out of my edit scope (checks_13_spec_first.py is not one of the two permitted checks_18 edits) -- left unfixed and flagged for the Evaluator/Tester rather than touched.",
-    "cycle_1_tester_note": "Tester (sonnet) read spec.md, smoke/_core.py, checks_18/checks_22 (conventions), and the current source tree only (no generator-report/diff/scratch-tests consulted). The flagged pre-existing failure in checks_13_spec_first.py ('[task051] vs.md line count grew by exactly one vs HEAD') was already gone from the tree at read time -- its check has been rewritten (lines ~966-976) to assert vs.md carries exactly one alias line, placed as the first non-blank line after the H1, instead of a HEAD-relative +1 line-count diff; a comment there attributes the fix to 'task_053's Generator caught the self-referential drift', so no action was needed from me. Added 10 AC5 test functions to smoke/checks_18_codex_runtime.py (grew from 1208 to 1421, well under the 1,500-line ceiling, so no move to checks_22_codex_agent.py was needed): test_codex_prompt_prefix_matches_ac5 and test_codex_prompt_prefix_non_matches_ac5 run devcontainer/codex-prompt-prefix.sh for real against Python-composed JSON UserPromptSubmit fixtures (hook_event_name/prompt/cwd/session_id/transcript_path) covering ' /vs fix the build' -> $vs + 'fix the build', '/vsss --hours 2 go' -> $vsss + '--hours 2 go', '/vss' and '/vss   ' -> $vss + '(no arguments)', and all six non-matches ($vs go, /vss:foo, /vssx, /VS, hello /vs) plus empty stdin, non-JSON stdin, and JSON with no .prompt key, all asserting silent exit 0; test_codex_prompt_prefix_script_shape_ac5 checks <=60 lines, #!/bin/bash shebang, no 'dangerously', no literal ' -c '; test_codex_liveness_hooks_hardened_both_commands_ac5 reuses the checks_18 fixture builder (_codex_liveness_fixture/_run_liveness/_codex_version_stub) to prove liveness check (c) passes with both hardened commands and fails (naming hooks-commands) when either the codex-prompt-prefix or the codex-guard-adapter command in a copied hooks.json is swapped for a bare `env`; test_codex_liveness_ownership_prompt_prefix_ac5 asserts the liveness source lists check_owned \"$prompt_prefix\" and that deleting codex-prompt-prefix from the fixture bin dir fails ownership naming the file; test_codex_prompt_prefix_dockerfile_ac5 checks the COPY --chown=root:root and chmod +x lines; test_codex_skill_leading_space_docs_ac5 checks each SKILL.md's 'The `/` form' section mentions the leading space and never mentions /prompts; test_codex_readme_prompt_prefix_ac5 checks README mentions the leading space and mentions /prompts: only alongside 'withdrawn' (never as a live /prompts:vs route) -- an initial stricter '/prompts: not in readme' assertion was corrected after a real run showed README explicitly names and retracts the route, matching AC4's 'withdraws any mention of /prompts:' intent; test_codex_integration_plan_prompt_prefix_ac5 checks the plan's F6 section cites SlashCommandItem and D3 cites UserPromptSubmit; test_manual_tests_55_leading_space_vs_ac5 checks Test 55 names a leading-space ' /vs' line. hooks.json's exactly-two-events/hardened-command/timeout-10/no-async shape is already covered by the Generator's permitted edit to test_codex_hooks_json_ac3, so it was not duplicated. All 10 registered in smoke/runner.py in a new task_053 block after the task_051 block, which stays frozen and unchanged. python3 code-check.py: clean, shellcheck across 24 files including codex-prompt-prefix.sh, exit 0. python3 smoke-test.py < /dev/null: fully green, 4,511 check() lines passing, 0 failed, exit 0. Nothing from AC5 left uncovered. Full output: .vs/cycle-1/test-output.log. Summary: .vs/cycle-1/summary.md."
-  },
-  {
-    "id": "task_054",
-    "description": "Codex project context, FM2C and OpenAI-native role routing",
-    "implementation_status": "complete",
-    "test_status": "pass",
-    "assigned_to": "evaluator",
-    "mode": "rigorous",
-    "last_modified": "2026-09-12T07:11:06Z",
-    "evidence": "Required shell check and complete smoke suite passed; independent review findings resolved. Source and offline fixtures only; see docs/codex-taskandi-readiness.md for live acceptance prerequisites."
-  },
-  {
-    "id": "task_055",
-    "description": "Restricted Mac build snapshot protocol and fixtures",
-    "implementation_status": "complete",
-    "test_status": "pass",
-    "assigned_to": "evaluator",
-    "mode": "rigorous",
-    "last_modified": "2026-09-12T07:11:06Z",
-    "evidence": "Required shell check and complete smoke suite passed; independent review findings resolved. Source and offline fixtures only; see docs/codex-taskandi-readiness.md for live acceptance prerequisites."
-  },
-  {
-    "id": "task_056",
-    "description": "Codex supervised launcher, ownership and recovery",
-    "implementation_status": "complete",
-    "test_status": "pass",
-    "assigned_to": "evaluator",
-    "mode": "rigorous",
-    "last_modified": "2026-09-12T07:11:06Z",
-    "evidence": "Required shell check and complete smoke suite passed; independent review findings resolved. Source and offline fixtures only; see docs/codex-taskandi-readiness.md for live acceptance prerequisites."
-  },
-  {
-    "id": "task_057",
-    "description": "Scoped Task&I Action Window client and durable outbox",
-    "implementation_status": "complete",
-    "test_status": "pass",
-    "assigned_to": "evaluator",
-    "mode": "rigorous",
-    "last_modified": "2026-09-12T07:11:06Z",
-    "evidence": "Required shell check and complete smoke suite passed; independent review findings resolved. Source and offline fixtures only; see docs/codex-taskandi-readiness.md for live acceptance prerequisites."
-  },
-  {
-    "id": "task_058",
-    "description": "Project-agnostic guided Codex onboarding, shared host Docker readiness and persistent runtime switching",
-    "implementation_status": "complete",
-    "test_status": "pass",
-    "assigned_to": "evaluator",
-    "mode": "rigorous",
-    "last_modified": "2026-09-12T11:52:05.578303+00:00",
-    "evidence": "Frozen full smoke suite passed (4782 passing assertion/summary lines), code-check clean across 25 shell files; independent reviews and real separate-repo 4-test development fixture. Rebuilt host acceptance remains open in MANUAL-TESTS Test 57 and docs/codex-readiness.md."
-  }
+ {
+  "id": "task_001",
+  "description": "Add --json output to code-check.py emitting machine-readable shellcheck findings",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-04-23T01:00:00Z"
+ },
+ {
+  "id": "task_003",
+  "description": "Prize-worthy haiku about vibe \u2192 HAIKU.md (fuzzy mode)",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "evaluator",
+  "mode": "fuzzy",
+  "last_modified": "2026-04-23T05:00:00Z"
+ },
+ {
+  "id": "task_004",
+  "description": "Cross-org learning library (opt-in, host-only capture, public/private)",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-04-23T09:15:00Z"
+ },
+ {
+  "id": "task_005",
+  "description": "OSC 52 clipboard bridge: vibe-copy shell helper + /copy slash command",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-04-23T19:57:00Z"
+ },
+ {
+  "id": "task_006",
+  "description": "/c (renamed from /copy) + host-side clipboard watcher (vibe-copy-watcher.sh)",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-04-23T22:00:00Z"
+ },
+ {
+  "id": "task_007",
+  "description": "Ship two operational rules (WebSearch-before-refusing + no-SSH-out-without-explicit-OK) to all vibe users via inline-prose CLAUDE.md fragments synced from devcontainer/claude-md/ by install-claude-extras.sh",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-04-25T14:32:00Z"
+ },
+ {
+  "id": "task_008",
+  "description": "vibe: drain clipboard scratch on exit (race fix in EXIT trap)",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-04-25T17:00:00Z"
+ },
+ {
+  "id": "task_009",
+  "description": "In-container /learn slash command + /learnings write-confirm PreToolUse hook (Write/Edit/Bash all gated)",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-04-26T18:30:00Z"
+ },
+ {
+  "id": "task_013",
+  "description": "/vs intelligent Spec Critic iteration cap (convergence/plateau/divergence + --max-iter flag, replaces hardcoded max 2)",
+  "implementation_status": "complete",
+  "test_status": "failing",
+  "assigned_to": "parked",
+  "mode": "rigorous",
+  "last_modified": "2026-04-27T00:00:00Z",
+  "parked_note": "Cycle 1 Step 6 escalation: AC10 spec defect (diff.patch from git diff includes Planner bookkeeping in .vs/spec.md + .vs/tasks.json, which AC10 didn't whitelist). 18/19 task_013 checks pass; only AC10 fails. Resume options documented in TODO.md task_013 entry."
+ },
+ {
+  "id": "task_010",
+  "description": "/learn smart-capture: semantic check phase (contradiction detection, quality gate, option scheme Z1/Z2/N)",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-05-07T00:00:00Z"
+ },
+ {
+  "id": "task_014",
+  "description": "Per-project Claude projects/ bind: each host project gets its own /home/node/.claude/projects/ inside the container so vibe X --continue scopes by project, not globally",
+  "implementation_status": "pending",
+  "test_status": "passing",
+  "assigned_to": "planner",
+  "mode": "rigorous",
+  "last_modified": "2026-04-29T00:00:00Z"
+ },
+ {
+  "id": "task_015",
+  "description": "Auto-recreate a project's container when it was built from a superseded vibe-dev:latest (image-drift detection before devcontainer up); fixes silent stale-container env claude ENOENT",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-05-27T00:00:00Z"
+ },
+ {
+  "id": "task_016",
+  "description": "--sessions auto-resume survives the out-of-credits block: heartbeat hooks + host-side stall watchdog (3-part gate), countdown Ctrl-C deactivate, claude exit-status propagation",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-07-10T12:22:14Z"
+ },
+ {
+  "id": "task_017",
+  "description": "shared-repos: declaration+registry, /repos/<name> mounts, rw single-writer lock, claim/handoff, seam fragment, per-repo PATs via useHttpPath",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-07-11T05:19:20Z",
+  "cycle_1_note": "Generator (sonnet) delivered AC1-AC7: registry/declaration helpers, vibe repos add|remove|list, shared_repos_scan single-classification-pass mount assembly (2 binds/repo, ro hard-pinned), runtime manifest + install-claude-extras.sh safe.directory wiring, gitignore ownership, README+CHANGELOG. code-check clean, smoke 1080/1080 (no Tester checks yet - append-only per /vs convention, lands next). implementation_status stays in_progress (C1 of 4); C2 (rw lock) not started.",
+  "cycle_2_note": "Tester (haiku) added 18 append-only smoke-test.py functions covering AC8 (rw-intent resolution: free-lock grant, live-holder contention fallback + named warning, ro-declared repos never touch the lock, shared_repo_declaration_set_mode at the helper level, PLUS CLI-level vibe repos add --rw: fresh-add-rw, upgrade-in-place, no-silent-downgrade on plain re-add, --rw position-agnostic - the flag wiring landed as an integrator edit mid-cycle after the Tester flagged it missing), AC9 (lock acquire/contend/stale-reclaim/release/torn-meta, all against real backgrounded processes), AC10 (exit dispatcher survives a refusing first hook via evidence files, single trap -p EXIT installer, no raw trap EXIT elsewhere, clipboard-flush + /learn tempfile cleanup both confirmed migrated into vibe_exit_hook_add), and one mode-coherence fixture tying manifest/override-JSON agreement together. Full suite: smoke-test.py 1273/1273 checks passing, 0 regressions in the frozen C1 suite; code-check.py shellcheck clean. Artifacts: .vs/cycle-2/test-output.log, .vs/cycle-2/summary.md.",
+  "cycle_3_note": "Tester (haiku) added 10 append-only smoke-test.py functions (61 checks) covering AC12 (/repo command file shape incl. host/container ~/.vibe boundary + negation-window regression guard, claim path/KEY=VALUE content shape, and a substituted-placeholder run of the documented mkdir+write proving syntactic validity + last-claim-wins overwrite since the claim flow has no sourced vibe helper - pure documentation), AC13 (statusLine \u26a0 rw:<requester> segment: structural regression guard on forceLoginMethod/defaultMode/guard-bash.sh/guard-fs.sh entries, byte-identical spot-check of two frozen fixtures with VIBE_REPOS_DIR pointed at an empty temp dir, and three functional fixtures - holder+request present, request present but not-us-the-holder, holder-but-no-request - all via VIBE_REPOS_DIR/VIBE_PROJECT_NAME env overrides), AC14 (shared-repos.md fragment shape + install-claude-extras.sh gating on VIBE_SHARED_REPOS_MANIFEST across missing/empty/non-empty), and VIBE_PROJECT_NAME plumbing (top-level export site before the _build_override_config command-substitution subshell, remoteEnv-only carriage in devcontainer.json, absent from containerEnv). Full suite: smoke-test.py 1334/1334 checks passing, 0 regressions in the frozen C1/C2 suite; code-check.py shellcheck clean. AC13(c)'s discriminating power verified by hand-running a deliberately broken statusLine variant (holder-equality check removed) and confirming the assertion fails against it. No AC12-AC15 mechanism found unimplemented. Artifacts: .vs/cycle-3/test-output.log, .vs/cycle-3/summary.md.",
+  "cycle_4_note": "Tester (haiku) added 28 append-only smoke-test.py functions (92 checks) covering AC16 (credential-helper.sh driven directly as a stdin->stdout filter: project-slug exact match, shared-slug match gated by the launcher-exported VIBE_SHARED_SLUG_* twin, unknown-repo silence, .git suffix, subdir suffix, trailing-slash-only (both unmatched and on the project's own slug), case-sensitivity, '..' traversal, embedded control byte, shell-metacharacter injection with a no-execution sentinel check, the post-security-review sanitisation-collision hardening (twin-mismatch silence is the gate-discriminating fixture; twin-match still serves correctly; twin-entirely-unset also silences), non-get ops, non-github host, lookalike subdomain host, http-not-https, empty-token-never-served, and a consolidated never-widen attack battery asserting $GITHUB_TOKEN never appears on stdout across 8 simultaneous non-project attempts), AC17 (useHttpPath registered at the same --global scope as credential.helper in setup-git.sh, plus a functional run of setup-git.sh against a fresh sandbox HOME confirming both settings land), AC18 (structural: GITHUB_REPO_SLUG / shared-token / shared-slug-twin exports all sit at column-0 top-level scope strictly outside and before the _build_override_config command-substitution call; functional: render_devcontainer_with_mounts injects matching VIBE_SHARED_TOKEN_*/VIBE_SHARED_SLUG_* remoteEnv passthroughs, remoteEnv-only never containerEnv), AC19 (CLAUDE.md + README text checks for the amended single-repo-PAT/launch-header-blast-radius/never-multi-repo-token wording). Full suite: smoke-test.py 1426/1426 checks passing, 0 regressions in the frozen C1-C3 suite; code-check.py shellcheck clean across 15 files. GAP FOUND: AC18's sanctioned C4 relaxation (missing token for an acked+registered ro repo should WARN and still MOUNT ro) is NOT implemented - shared_repos_scan still hard-blocks with 'B ... no token configured', so the C1 frozen test test_task017_delta_scan_b_token_absent is unchanged and still passes; no frozen-test amendment needed yet, this is UNIMPLEMENTED plumbing for the chair to pick up, not a Tester-side fix. AC20 (security-review) ran mid-cycle with a CLEAR verdict, closing one LOW (the sanitisation-collision twin-check) which this cycle's tests now cover as the gate-discriminating fixture. AC21's MANUAL-TESTS.md end-to-end push section (shared repo / project repo / undeclared repo) has not been authored yet - Generator/chair responsibility per spec, not Tester's. Artifacts: .vs/cycle-4/test-output.log, .vs/cycle-4/summary.md."
+ },
+ {
+  "id": "task_019",
+  "description": "regrettable-content guard: pre-commit/commit-msg/pre-push secret+PII scanner (block-by-default, two-tier, override/allowlist/opt-out) + vibe audit full-history scan; ships core",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-07-15",
+  "cycle_1_note": "Tester (haiku) added 15 append-only smoke-test.py functions (45 checks) covering AC1-AC17 (AC12/AC14 not testable via smoke-test: AC12 is regression guard on pre-existing guard-bash.sh, AC14 is pre-existing suite integrity - both verified separately). Scanner core tested: BLOCK tier (GitHub PAT, private-key), WARN tier (RFC1918 IP, home-path), clean content. Git hooks tested: real pre-commit blocks secrets; real commit-msg scans messages; pre-push new-branch permits WARN-tier PII (BLOCK-only backstop). Override (VIBE_CONTENT_GUARD=off) logs loudly. Allowlist (.vibe-content-allow regex) suppresses findings. Opt-out marker (.vibe-content-guard-off) immediate exit. Install wiring (install-claude-extras.sh + core.hooksPath) functional. Audit tested: --history finds deleted secrets (attributes to commit SHA), reports WARN-only with exit 0 (advisory). Trailer exemption verified on Co-Authored-By. All fixtures runtime-constructed (no literal secrets in test code). Full suite: smoke-test.py 1471/1471 checks passing (45 task_019 + 1426 pre-existing frozen), 0 regressions; code-check.py shellcheck clean on 15 files. Artifacts: .vs/cycle-1/test-output.log."
+ },
+ {
+  "id": "task_022",
+  "description": "vibe audit --history perf: scanner match primitives -> bash-native =~ (kill per-line grep forks) + --messages-stdin single-pass message scan; byte-identical findings gate",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-07-17T07:16:00Z"
+ },
+ {
+  "id": "task_023",
+  "description": "content guard: path-warn:<glob> allowlist entries - per-file WARN-tier demotion in diff modes so vibe's repo is self-clean; BLOCK never path-suppressible; path-warn lines never enter the ERE loop",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-07-17T07:38:43Z"
+ },
+ {
+  "id": "task_024",
+  "description": "content guard: hunk-aware diff parsing in scan_diff_stream + scan_blob_stdin - close added-line header-spoof hole (incl. suppressBlankEmpty zero-byte context exploit); BLOCK unhideable via ++ /dev/null spoof",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-07-17T08:10:42Z"
+ },
+ {
+  "id": "task_025",
+  "description": "code-check.py shellchecks devcontainer/git-hooks/ (scanner + 3 extensionless bash hooks via shebang detection) + CODE_CHECK_SCRIPTS env seam retiring the brittle scripts()-body text-patch fixture",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-07-17T09:19:00Z"
+ },
+ {
+  "id": "task_026",
+  "description": "vibe pat [repo] PAT rotation subcommand + launch-time 401 stored-token reprompt (fail-open probe, -K - stdin auth header, VIBE_PAT_CHECK=0 opt-out)",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-07-21T15:54:05Z"
+ },
+ {
+  "id": "task_027",
+  "description": "detect_github_repo dotted-repo-name fix (dots in repo segment, shell .git strip, slug validation) + brain2 meta/vibe-operation.md auto-refreshed vibe --help managed block + vibe-cli.md claude-md fragment",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-07-22T01:24:51Z"
+ },
+ {
+  "id": "task_028",
+  "description": "CLAUDE.md fragment merges (learnings trilogy; memory+history; content-guard trim) + single --fable-subagents definition in vs.md with vss/vsss pointers; >=1,900 words off every session's context",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-09-02T17:55:00Z"
+ },
+ {
+  "id": "task_029",
+  "description": "fromto format: minimal fromClaude template as vsss.md default, /brain2/meta/fromto-format.md verbatim override, exit-append mandates deleted, one exit line",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-09-02T18:59:36Z"
+ },
+ {
+  "id": "task_030",
+  "description": "site deck: everyday-launch hero chip (banner/firewall/sign-in/ready), First time group with the PAT+build lines, Once a quarter `vibe pat` chip; site-check guards rewritten",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-09-02T20:05:10Z"
+ },
+ {
+  "id": "task_031",
+  "description": "smoke-test.py split into smoke/ modules <=1,500 lines, unchanged entrypoint; .vs/review-focus.md; policy in CLAUDE.md (worktree task031)",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-09-02T21:06:35Z"
+ },
+ {
+  "id": "task_032",
+  "description": "asciinema pipeline: real-session cast replay via asciinema-player driving the 13 deck chips; record.md, scrub.mjs, placeholder cast, site-check fidelity over the cast",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-09-02T22:47:35Z"
+ },
+ {
+  "id": "task_033",
+  "description": "/wide parallelism mode + /narrow + --wide on /vs,/vss,/vsss (worktree task033)",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-09-02T21:23:47Z"
+ },
+ {
+  "id": "task_034",
+  "description": "Linux host support: unconditional host-gateway add-host, Linux clipboard fallback chain, install.sh preflight/hints, mDNS probe, nsswitch idempotence, README/ONBOARDING Linux section, MANUAL-TESTS 44-50 (worktree task034)",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-09-02T22:47:35Z"
+ },
+ {
+  "id": "task_035",
+  "description": "harness hygiene: stdin-immune suite, one sandbox builder + whole-suite meta-check, sha-pin lint, SAFE prunes, CLAUDE.md \u00a7 Testing rules",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-09-03T00:27:35Z"
+ },
+ {
+  "id": "task_036",
+  "description": "--spec-first for /vs: spec-first checkpoint (Step 3b), /vs --approve, tasks.json awaiting-approval status, /vss and /vsss passthrough, fromClaude action point",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-09-04T03:00:00Z"
+ },
+ {
+  "id": "task_037",
+  "description": "/vs --TDD: mandatory red-first trail (.vs/cycle-N/tdd-trail.md) written by the Generator before implementing, cross-checked by the Tester; incompatible with --fuzzy; vss/vsss passthrough",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-09-04T15:30:00Z"
+ },
+ {
+  "id": "task_038",
+  "description": "--aux model slot: second model (local Ollama / any OpenAI-compatible / GreenPT) for mechanical jobs only \u2014 launcher --aux + ~/.vibe/aux, vibe-aux helper, /vs --aux-review, /learn embeddings; never replaces Claude Code's model",
+  "implementation_status": "awaiting-approval",
+  "test_status": "pending",
+  "assigned_to": "generator",
+  "mode": "rigorous",
+  "last_modified": "2026-09-04T03:36:09Z"
+ },
+ {
+  "id": "task_039",
+  "description": "/review: Claude code-review on the working diff with a merged verdict; empty opt-in fan-out slots (gemini, codex) documented; --solo/--level/--slot/--comment",
+  "implementation_status": "complete",
+  "test_status": "pass",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-09-04T04:03:00Z"
+ },
+ {
+  "id": "task_040",
+  "description": "language-profile mechanism: vibe --profile <name> child images FROM the unchanged base, precedence flag > .vibe/profile > VIBE_PROFILE, staleness markers, VIBE_IMAGE_TAG render, suggestion line; first profile python",
+  "implementation_status": "complete",
+  "test_status": "pass",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-09-04T04:28:09Z"
+ },
+ {
+  "id": "task_044",
+  "description": "Codex helper hardening: codex=off also refuses /ask astra; claude -p argv plan+prompts none, no disableAllHooks; launcher warns on group/other-readable Codex login dir",
+  "implementation_status": "complete",
+  "test_status": "pass",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-09-11T18:23:44Z"
+ },
+ {
+  "id": "task_045",
+  "description": "host-side Codex opt-in registry ~/.vibe/codex-allow required alongside the untracked marker; vibe codex allow|deny|list; deny stops the container",
+  "implementation_status": "complete",
+  "test_status": "pass",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-09-11T19:03:53Z"
+ },
+ {
+  "id": "task_046",
+  "description": "Codex system policy layer (/etc/codex requirements+config+managed hooks), guard adapter (ask->deny, patch paths), liveness gate, tool inventory; new checks_18",
+  "implementation_status": "complete",
+  "test_status": "pass",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-09-11T19:46:46Z"
+ },
+ {
+  "id": "task_047",
+  "description": "Codex skills $vs/$vss/$vsss in /etc/codex/skills with a substitution table; vibe-delegate role <role> --model --cwd dispatches /vs roles as fresh codex exec / claude -p processes",
+  "implementation_status": "complete",
+  "test_status": "pass",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-09-11T20:29:54Z",
+  "cycle_1_note": "Generator (sonnet) delivered AC1-AC7 (AC8 is the Tester's per spec, AC9 verified green by this cycle). SKILL.md wrappers at devcontainer/codex/skills/{vs,vss,vsss}/SKILL.md; Dockerfile COPY --chown=root:root codex/ already covers them (verified, no extra COPY; added explicit chmod 0755/0644 for the new dirs/files alongside the existing task_046 chmod block). vibe-delegate.mjs gained the `role` operation: ask/review/slots/status refactored only via two extractions (codexEvents(), claudeBilling()+claudeReply()) that reproduce their prior bodies verbatim -- diffed byte-for-byte equivalent, confirmed by the full existing suite staying green. Read-only roles (planner/spec-critic/reviewer/evaluator) reuse ask's own read-only argv verbatim in a private temp cwd; write roles (generator/tester) use the AC4 pinned vectors verbatim (Astra: -C <workspace> + danger-full-access, no --ignore-user-config; Claude: --permission-mode bypassPermissions, fixed tool allowlist), schema/output files always in the helper's own scratch dir. AC5 reply contract implemented (Astra schema-native status; Claude STATUS: done|blocked last-line derivation, missing -> blocked). vs.md/vss.md/vsss.md each gained an 6-line Running under Codex section (total word count 14289/14300 -- no trim needed elsewhere). README Codex section, ask.md pointer, and plan D5 wording updated. TDD scratch suite at .vs/cycle-1/scratch-tests/test_role.py (standalone, no smoke import) run red (against git-stashed pre-edit vibe-delegate.mjs) then green; python3 code-check.py clean; python3 smoke-test.py < /dev/null fully green (3695 checks), 0 regressions."
+ },
+ {
+  "id": "task_048",
+  "description": "codex-supervisor: unattended Codex thread via app-server JSON on stdio; prefix rewrite, quota wait on resetsAt, transient/turn-failure retries, ceilings, atomic state, thread/resume after kill, VSSS-EXIT gate",
+  "implementation_status": "complete",
+  "test_status": "pass",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-09-11T22:33:05Z",
+  "cycle_1_note": "Generator (opus) delivered AC1-AC9 and AC11 (AC10 is the Tester's). New devcontainer/codex-supervisor.mjs (Node ESM, builtins only) installed by the Dockerfile as root-owned /usr/local/bin/codex-supervisor and added to the chmod +x chain. vsss.md gained the VSSS-EXIT last-line exit contract and a 7-line Running under Codex note; README gained the \"unattended supervisor\" paragraph; plan D7 rewritten with method names verified against tag rust-v0.154.0. The vs+vss+vsss 14,300-word cap had 11 words of headroom, so the additions were paid for by compressing rationale prose in vsss.md (no rule or asserted phrase removed; total now 14,289). TDD harness at .vs/cycle-1/scratch-tests/{stub-codex.py,drive.py}: 20 scenarios / 116 assertions over every AC10 case, run red then green. python3 code-check.py clean; python3 smoke-test.py < /dev/null fully green.",
+  "cycle_1_tester_note": "Tester (sonnet) wrote smoke/checks_19_codex_supervisor.py (1018 lines, 25 test_codex_supervisor_* functions) independently of the Generator's diff/report, against a from-scratch Python stub codex app-server (self-locating fixture/log/meta files, since the supervisor's own spawn() env is pinned to exactly PATH/HOME/CODEX_HOME/LANG so no env-var channel to the stub exists). Registered in smoke/runner.py (import + call list). Every AC10 scenario covered: normal VSSS-EXIT completion, no-exit-line -> literal continue -> exit line, quota wait with known resetsAt (1020s = 900+120 grace) and blind backoff (300/600 with a fresh account/rateLimits/read before each retry), transient 429 backoff (60s), exec-policy-forbidden retry with the SAME resent text, sessionBudgetExceeded/interrupted exit 1, an unattended approval request answered without blocking, mid-run SIGTERM (subprocess.Popen, exit 130, valid state) followed by a resume run asserting thread/resume+turn/start and never turn/steer, promptHash/cwd mismatch exit 2 plus --new-run archiving, all three named ceilings (max-turns/max-quota-waits/max-wall-seconds mid quota-wait) exit 3, relative --cwd and missing CODEX_HOME exit 2 with nothing spawned, status with/without a state file, exact argv/env/initialize-line/ordering assertions, atomicity (no .tmp left), no stray files under --cwd, the REWRITES table via node -e import, and the Dockerfile/vsss.md/README/plan-D7 doc checks. python3 code-check.py clean; python3 smoke-test.py < /dev/null fully green (4037 passing check() lines). No AC left uncovered.",
+  "cycle_2_note": "Generator (opus) cycle 2: fixed all five Evaluator findings in devcontainer/codex-supervisor.mjs against the AMENDED AC4/AC6/AC7. (1) Terminal state + resume input: adoptState() now carries exitReason through, run() prints 'already complete: <reason>' and returns 0 without spawning, and a resumed run's first input is the literal 'continue' when turns is non-empty (the rewritten prompt only when no turn was ever started). (2) AC7(a) wall deadline while awaiting a turn: new nextNotificationOrDeadline() races the next notification against startedAt+maxWallSeconds \u2014 a single unref'd timer on the real clock, a 100 ms poll of the --now-source clock so a virtual advance fires it \u2014 then expireDuringTurn() sends turn/interrupt {threadId,turnId}, closes stdin, persists and exits 3. (3) AC7(b) waits capped: recordWait() records the would-be wait in waits[] and throws the ceiling instead of sleeping whenever until > deadline, so both the quota and transient paths are covered. (4) checkGates() gained turnFailures >= maxTurnFailures, and every --max-* below 1 is now a parse-time exit 2. (5) A persisted waits[] entry whose until is still in the future is honoured on resume before anything is sent (sleep, or exit 3 if it ends past the ceiling) \u2014 gates run either side of it, all before the server is spawned. Child env, argv, initialize line, REWRITES table and state-file atomicity untouched. TDD harness .vs/cycle-2/scratch-tests/{stub-codex.py,drive.py}: 13 scenarios / 48 assertions, run red (23 failing) then green (0 failing). python3 code-check.py clean (22 files); python3 smoke-test.py < /dev/null green, exit 0, 4037 passing checks including all 25 pinned smoke/checks_19_codex_supervisor.py tests, which were not edited.",
+  "cycle_2_tester_note": "Tester (sonnet) cycle 2: appended 11 test_codex_supervisor_c2_* functions covering every amended AC4/AC6/AC7 behaviour, driven through the real devcontainer/codex-supervisor.mjs (no scratch-tests, generator-report.md or diff.patch read). Cycle 1's smoke/checks_19_codex_supervisor.py (1019 lines) is untouched; the new tests live in a new smoke/checks_21_codex_supervisor_c2.py (563 lines, registered in smoke/runner.py) because appending in place would have crossed the smoke/ 1500-line-per-part convention. Covered: terminal exitReason state short-circuits run() to 'already complete: <reason>' exit 0 with the stub never spawned, and --new-run archives + starts fresh; the wall deadline firing while AWAITING a turn (turn/interrupt sent, exit 3, state written); a quota wait and a transient back-off each capped by the remaining wall budget (would-be wait still recorded in waits[], exit 3, no second turn/start); the turnFailures gate (--max-turn-failures 1 exits 1 on the first failure per AC5(v), then a resumed run already at the ceiling exits 3 without spawning) and every --max-* flag rejecting 0 with exit 2; an outstanding persisted waits[] entry honoured via the virtual clock before thread/resume+turn/start (or exit 3 without spawning if it would end past the deadline); and the resume-input split (rewritten prompt vs literal 'continue'). RESULT: 10 of 11 pass. The one failure is real, not a test bug: test_codex_supervisor_c2_resume_after_sigterm_sends_continue kills a turn mid-flight (turn/start sent, never completed -> persisted turns: []) and expects the resumed run to send 'continue' per the amended AC4 text ('the literal continue when turns is non-empty... the rewritten prompt only when no turn was ever started'); the actual implementation sent the rewritten prompt ('$vsss go c2') instead, because resumeThread()'s `if (resumed.turns.length) firstText = 'continue'` cannot distinguish 'a turn was attempted and killed before completing' from 'no turn was ever attempted' -- both leave turns: [] on disk with no other persisted marker. python3 code-check.py clean (22 files, shellcheck); python3 smoke-test.py < /dev/null: 4119 checks, 4118 passed, 1 failed, exit 1. No regressions: all cycle-1 checks_19 tests and every other smoke test still pass. Full output in .vs/cycle-2/test-output.log, 3-line summary in .vs/cycle-2/summary.md.",
+  "cycle_3_note": "Generator (sonnet) cycle 3: single targeted fix in devcontainer/codex-supervisor.mjs for the cycle-2 Tester finding, per the amended AC4 wording (turnsStarted). Added a persisted `turnsStarted` counter: present in freshState() (starts at 0), carried through adoptState()'s per-key copy loop (defaults to 0 for a legacy state file that predates the field), incremented and written atomically (this.persist(), the existing tmp+rename helper) at the very top of runTurn() \u2014 i.e. immediately before every `turn/start` send, including re-sends after a quota/transient/turn-failure wait, since the loop always re-enters runTurn() for those \u2014 and surfaced as a 'turns started' row in statusReport(). run()'s resume branch now decides firstText from `Number(resumed.turnsStarted || 0) >= 1` (literal 'continue') instead of `resumed.turns.length` (which cannot distinguish a turn killed mid-flight, leaving turns: [], from a thread that never got a turn/start at all). No other behaviour touched: argv, env, the initialize line, ordering/wait semantics, and state-file atomicity are all unchanged, and no test under smoke/ was edited. python3 code-check.py clean (22 files, shellcheck). python3 smoke-test.py < /dev/null: fully green, exit 0, 4120 check() lines all passing (0 failed), including every checks_19 and checks_21 test \u2014 test_codex_supervisor_c2_resume_after_sigterm_sends_continue (the cycle-2 failure) now passes. Report: .vs/cycle-3/generator-report.md. Diff: .vs/cycle-3/diff.patch.",
+  "cycle_4_tester_note": "Tester (sonnet) cycle 4: appended 6 test_codex_supervisor_c4_* functions to smoke/checks_21_codex_supervisor_c2.py (951 lines, still one part; checks_19 and the pre-existing checks_21 tests are untouched), registered in smoke/runner.py after the checks_21 block. Spec-only read (.vs/spec.md AC4/AC5/AC7 amended again after the reviewer's second pass); no cycle-4 generator-report.md, diff.patch or scratch-tests read. Covers: (a) three fresh scenarios -- quota failure, transient failure, and a plain failed turn, each BEFORE any completed turn -- asserting explicitly that the first turn/start is the rewritten prompt and the second is the literal 'continue' (checks_19's turn_failure_retries_same_text already covers the failed-turn path for its own purpose and is frozen/unedited; these three are independent cycle-4 confirmations across all three retry paths). (b) two never-answers-the-request tests using a new hang-stub variant (_write_hang_stub / _CODEX_STUB_HANG_SRC, self-locating like the base stub, logs receipt via the same IN/OUT log format then idles watching stdin for EOF instead of leaking a real sleeping process): turn/start never answered and thread/start never answered, each with a tiny --max-wall-seconds (5s, no --now-source) -- confirmed by reading codex-supervisor.mjs's boundedRequest() (lines ~512-521) that the real per-request setTimeout is computed as min(own limit, remaining wall budget) ONCE at request-issue time (not re-derived by polling a virtual clock afterward), so a small ceiling with instant stub replies on the earlier handshake steps naturally leaves only a few REAL seconds of budget by the time the hung request is sent. Both assert exit 3 naming max-wall-seconds (never exit 1) and that the stub log shows the request was received; only the turn/start case also asserts a state file exists, since thread/start had already succeeded and set this.state before turn/start hung, whereas the thread/start-hang case never obtains a threadId and the exit path only persists `if (this.state)` -- confirmed correct against the source (a spec-consistent design, not a bug) rather than assumed, after an initial draft of these two tests (using the c2 wall-deadline test's advance-the-clock-mid-run pattern) failed for the wrong reason and was corrected. (c) one hand-written-state-file resume test proving AC4/AC6's fresh-snapshot-wins merge rule: a persisted lastRateLimits.primary.resetsAt 1000s in the past is superseded by the stub's fresh account/rateLimits/read reply (resetsAt = now+900), so the recorded quota wait is 1020s (900+120 grace), not a stale/negative one. python3 code-check.py clean (22 files, shellcheck). python3 smoke-test.py < /dev/null: fully green, exit 0, 4155 check() lines all passing (0 failed) -- 30 new c4 checks across the 6 new functions, no regressions in any checks_19/checks_21/other smoke test. Full output: .vs/cycle-4/test-output.log. Summary: .vs/cycle-4/summary.md. Everything in the amended AC4/AC5/AC7 is covered; nothing left untested for this cycle's scope."
+ },
+ {
+  "id": "task_049",
+  "description": "vibe --agent codex: launcher flag/.vibe/agent/VIBE_AGENT, refused without the Codex login grant, launch_codex via root-owned codex-entry (liveness gate then exec codex), header line, Test 55; auto-resume stays Claude-only",
+  "implementation_status": "complete",
+  "test_status": "pass",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-09-11T23:16:47Z",
+  "cycle_1_tester_note": "Tester (sonnet) wrote smoke/checks_22_codex_agent.py (650 lines, 16 test_* functions, 87 check() assertions), independently of the Generator's diff/report (spec.md-only read; implementation was already complete on disk). Registered in smoke/runner.py (import + call list). Since launch_claude/launch_codex/launch_codex_plain and the AC2 gate/AC5 header block all live BELOW the VIBE_SOURCE_ONLY guard (sourcing vibe never reaches them, and no existing test in this suite runs the full launcher end-to-end through image-build/GitHub-setup to reach them either), the argv/header/pre-launch-line golden tests extract those exact snippets from the current vibe source text (same technique _task022_extract_function_body already uses elsewhere, here executed rather than only shape-checked) and run them for real against a devcontainer PATH stub (argv captured as JSON, compared for exact list equality), with the real _agent_resolve/_codex_desired_source/_codex_dir_mode_warning sourced live via VIBE_SOURCE_ONLY=1 so the registry/marker/config fixtures exercise the production functions rather than a reimplementation. Covered: _agent_resolve's full precedence matrix (flag > file > env > default) plus every file-rung failure mode (malformed content, tracked, symlinked file, symlinked .vibe dir -- each exactly one \u26a0 line, falls through); parser usage errors (--agent bogus / bare --agent -> usage + exit 1, zero devcontainer calls, via the real launcher + a devcontainer PATH stub); --agent codex granted -> the AC3 devcontainer exec argv equals the golden vector exactly, the AC5 agent header line, and the Claude-only pre-launch line all present; --agent codex denied -> exact AC2 refusal text, zero devcontainer calls; --agent claude and no flag -> the unchanged launch_claude golden argv (identical both ways) with the codex mount banner still shown but NO agent line, even when the codex mount is granted; launch_codex/launch_codex_plain source-shape checks (&, wait, no vibe_stall_watchdog, no heartbeat/marker seeding); launch_claude proven byte-identical between HEAD and the working tree (HEAD, no pinned sha); codex-entry.sh offline (missing requirements.toml, missing login-dir, liveness failure with pass-through text, success execing the stub with the args after --, and no 'dangerously'/' -c ' anywhere in the script); Dockerfile COPY --chown=root:root + chmod +x, codex-guard-liveness.sh's ownership list, the managed .gitignore block, and the README/MANUAL-TESTS Test 55/plan-item-7 doc text. python3 code-check.py clean (23 files, shellcheck including codex-entry.sh). python3 smoke-test.py < /dev/null: fully green, exit 0, 4245 check() lines all passing (0 failed), including all 87 new checks and zero regressions elsewhere. Not covered, with reason: the live Codex TUI trial (approval policy, denied .codex/config.toml write, git push --force denial) is explicitly out of scope for the smoke suite -- it needs a real Docker daemon and is Martin's MANUAL-TESTS Test 55 run, per the task's own framing that nothing in the suite has ever started a real Codex session. Full output: .vs/cycle-1/test-output.log. Summary: .vs/cycle-1/summary.md."
+ },
+ {
+  "id": "task_050",
+  "description": "codex-panel: N independent tool-less codex exec reviewers with nonces for /vs --panel under Codex; ordered ship/verify argv pin vs the delegate; verify mode reads each reviewer's own rollout (source-pinned filename template); incomplete panel never passes",
+  "implementation_status": "complete",
+  "test_status": "pass",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-09-11T23:54:59Z"
+ },
+ {
+  "id": "task_052",
+  "description": "delegate usage ledger .vibe/delegate-usage.jsonl (one line per model-invoking call, exact key set, no payload) and /budget split of Astra vs claude -p",
+  "implementation_status": "complete",
+  "test_status": "pass",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-09-12T00:33:01Z"
+ },
+ {
+  "id": "task_051",
+  "description": "$vs/$vss/$vsss aliases in Claude Code via a synced CLAUDE.md fragment plus one alias line per command file; hook route Martin-gated",
+  "implementation_status": "complete",
+  "test_status": "pass",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-09-12T01:06:28Z",
+  "cycle_1_tester_note": "Tester (haiku) AC5: updated the two checks_09_openproject_and_scanner.py pins (AC1 fragment count 14->15, expected_names gains dollar-prefix.md; AC2's 6,700-word cap left unchanged since the 15-fragment total is 6,563 words -- the new fragment fit, so per task_042's precedent only a comment was added, not a raise) with no other edits to that function. Extended the fixture-isolated fragment-sync test (task_007/t3 in smoke/checks_03_vibecopy_and_watcher.py) with a new test_task051_ac2_dollar_prefix_synced_like_web_research(), same isolation pattern with two fragments in source, asserting dollar-prefix.md's header and body sync exactly like web-research.md's; added a DOLLAR_PREFIX_MD constant to smoke/_core.py's __all__. Added test_dollar_prefix_fragment_and_aliases() to smoke/checks_13_spec_first.py (37 checks): fragment <=25 lines/<=200 words and contains $vs/$vss/$vsss/'first'/'case-sensitive'/literal $vss:foo; each of vs.md/vss.md/vsss.md has its own-named alias line immediately under its H1 pointing at claude-md/dollar-prefix.md; vs.md's line count is exactly HEAD+1; vss.md and vsss.md get only the alias-line and vsss.md's two protected-phrase checks ('never be reported as a perfection gate', 'VSSS-EXIT:'), per the spec's allowance that vss.md's rationale prose was trimmed to fit a word cap; README's $ spelling sentence and dollar-prefix.md pointer; the plan's section 3 'DELIVERED (task_051)' marker on item 10; TODO.md's UserPromptSubmit/Martin-gated/task_051 sentinels. Both new test functions registered in smoke/runner.py in a new task_051 block after task_050's. python3 code-check.py: clean, shellcheck across 23 files, exit 0. python3 smoke-test.py < /dev/null: fully green, exit 0, 4,445 check() lines passing, 0 failed. Not covered, with reason: the live/manual side of the deterministic UserPromptSubmit hook alternative is out of scope for this task (instructional-route-only; the hook itself is Martin-gated future work per TODO.md), so only its documented sentinel words were asserted, not a live hook trial. Full output: .vs/cycle-1/test-output.log. Summary: .vs/cycle-1/summary.md."
+ },
+ {
+  "id": "task_053",
+  "description": "/vs in Codex's own terminal: leading-space pass-through plus a root-owned managed UserPromptSubmit hook (codex-prompt-prefix) adding context that points at the $vs skill; hooks.json/liveness/docs updated",
+  "implementation_status": "complete",
+  "test_status": "pass",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-09-12T01:35:00Z",
+  "cycle_1_generator_note": "devcontainer/codex-prompt-prefix.sh (new, 41 lines, shellcheck-clean): reads UserPromptSubmit JSON via jq, matches /vs|/vss|/vsss as the first whitespace-delimited token (case-sensitive, exact), emits additionalContext via jq -n --arg, else/on-error prints nothing and exits 0. hooks.json gains the UserPromptSubmit group (no matcher key -- no tool to match), hardened command, timeout 10, no async. codex-guard-liveness.sh: check (a) ownership list gains codex-prompt-prefix; check (c) regex grouped to accept both hardened forms and now resolves hook_target per-program via bash [[ =~ ]] + BASH_REMATCH instead of a hardcoded adapter path. Dockerfile: COPY --chown=root:root next to the task_046 lines + chmod +x list. All three SKILL.md 'The / form' sections rewritten (only $name is a GUARANTEED match; leading-space /name also works, model-mediated) -- worded to satisfy the existing task_047 smoke assertions (checks_18) verbatim while being accurate about the new route. README's Codex-led-container paragraph gains two sentences before the panel-runner sentence; Test 55 not pushed past the 2000-char scan window. docs/codex-integration-plan.md: F6 gains an addendum with the two source citations (slash_commands.rs enum absence; slash_input.rs/chat_composer.rs leading-space mechanism); D3 rewritten to the shipped design; the stale out-of-scope bullet referencing '/prompts:vs is his call' corrected for consistency (not separately named in AC4 but directly contradicted the rewritten D3). MANUAL-TESTS.md Test 55 gains step 4 (renumbering old 4-6 to 5-7, 'Six further steps' -> 'Seven'); Pass criteria line mentions the new step. TODO.md Martin's-answers entry (b) verified accurate, no edit needed. Two permitted checks_18 edits only: _codex_liveness_fixture's copy tuple gains ('codex-prompt-prefix', PROMPT_PREFIX); test_codex_hooks_json_ac3's event-set check becomes {PreToolUse, UserPromptSubmit} plus new assertions on the UserPromptSubmit group's single hook (command, timeout==10, no async). python3 code-check.py: clean, shellcheck across 24 files. python3 smoke-test.py < /dev/null: 4453 passed, 1 failed -- '[task051] vs.md line count grew by exactly one vs HEAD' (HEAD had 462, now 462). Verified via git stash (full pop-back afterward, no data lost) that this failure is PRE-EXISTING and independent of every task_053 change: it reproduces identically against a working tree that exactly matches HEAD (4bffdb8, task_051's own commit), because the check computes current-vs-HEAD line-count delta and can never see +1 once the change it is checking for is already inside HEAD itself -- a self-referential test authored to run mid-cycle pre-commit that fails permanently post-commit. Confirmed unrelated to any AC1-4 file and out of my edit scope (checks_13_spec_first.py is not one of the two permitted checks_18 edits) -- left unfixed and flagged for the Evaluator/Tester rather than touched.",
+  "cycle_1_tester_note": "Tester (sonnet) read spec.md, smoke/_core.py, checks_18/checks_22 (conventions), and the current source tree only (no generator-report/diff/scratch-tests consulted). The flagged pre-existing failure in checks_13_spec_first.py ('[task051] vs.md line count grew by exactly one vs HEAD') was already gone from the tree at read time -- its check has been rewritten (lines ~966-976) to assert vs.md carries exactly one alias line, placed as the first non-blank line after the H1, instead of a HEAD-relative +1 line-count diff; a comment there attributes the fix to 'task_053's Generator caught the self-referential drift', so no action was needed from me. Added 10 AC5 test functions to smoke/checks_18_codex_runtime.py (grew from 1208 to 1421, well under the 1,500-line ceiling, so no move to checks_22_codex_agent.py was needed): test_codex_prompt_prefix_matches_ac5 and test_codex_prompt_prefix_non_matches_ac5 run devcontainer/codex-prompt-prefix.sh for real against Python-composed JSON UserPromptSubmit fixtures (hook_event_name/prompt/cwd/session_id/transcript_path) covering ' /vs fix the build' -> $vs + 'fix the build', '/vsss --hours 2 go' -> $vsss + '--hours 2 go', '/vss' and '/vss   ' -> $vss + '(no arguments)', and all six non-matches ($vs go, /vss:foo, /vssx, /VS, hello /vs) plus empty stdin, non-JSON stdin, and JSON with no .prompt key, all asserting silent exit 0; test_codex_prompt_prefix_script_shape_ac5 checks <=60 lines, #!/bin/bash shebang, no 'dangerously', no literal ' -c '; test_codex_liveness_hooks_hardened_both_commands_ac5 reuses the checks_18 fixture builder (_codex_liveness_fixture/_run_liveness/_codex_version_stub) to prove liveness check (c) passes with both hardened commands and fails (naming hooks-commands) when either the codex-prompt-prefix or the codex-guard-adapter command in a copied hooks.json is swapped for a bare `env`; test_codex_liveness_ownership_prompt_prefix_ac5 asserts the liveness source lists check_owned \"$prompt_prefix\" and that deleting codex-prompt-prefix from the fixture bin dir fails ownership naming the file; test_codex_prompt_prefix_dockerfile_ac5 checks the COPY --chown=root:root and chmod +x lines; test_codex_skill_leading_space_docs_ac5 checks each SKILL.md's 'The `/` form' section mentions the leading space and never mentions /prompts; test_codex_readme_prompt_prefix_ac5 checks README mentions the leading space and mentions /prompts: only alongside 'withdrawn' (never as a live /prompts:vs route) -- an initial stricter '/prompts: not in readme' assertion was corrected after a real run showed README explicitly names and retracts the route, matching AC4's 'withdraws any mention of /prompts:' intent; test_codex_integration_plan_prompt_prefix_ac5 checks the plan's F6 section cites SlashCommandItem and D3 cites UserPromptSubmit; test_manual_tests_55_leading_space_vs_ac5 checks Test 55 names a leading-space ' /vs' line. hooks.json's exactly-two-events/hardened-command/timeout-10/no-async shape is already covered by the Generator's permitted edit to test_codex_hooks_json_ac3, so it was not duplicated. All 10 registered in smoke/runner.py in a new task_053 block after the task_051 block, which stays frozen and unchanged. python3 code-check.py: clean, shellcheck across 24 files including codex-prompt-prefix.sh, exit 0. python3 smoke-test.py < /dev/null: fully green, 4,511 check() lines passing, 0 failed, exit 0. Nothing from AC5 left uncovered. Full output: .vs/cycle-1/test-output.log. Summary: .vs/cycle-1/summary.md."
+ },
+ {
+  "id": "task_054",
+  "description": "Codex project context, FM2C and OpenAI-native role routing",
+  "implementation_status": "complete",
+  "test_status": "pass",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-09-12T07:11:06Z",
+  "evidence": "Required shell check and complete smoke suite passed; independent review findings resolved. Source and offline fixtures only; see docs/codex-taskandi-readiness.md for live acceptance prerequisites."
+ },
+ {
+  "id": "task_055",
+  "description": "Restricted Mac build snapshot protocol and fixtures",
+  "implementation_status": "complete",
+  "test_status": "pass",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-09-12T07:11:06Z",
+  "evidence": "Required shell check and complete smoke suite passed; independent review findings resolved. Source and offline fixtures only; see docs/codex-taskandi-readiness.md for live acceptance prerequisites."
+ },
+ {
+  "id": "task_056",
+  "description": "Codex supervised launcher, ownership and recovery",
+  "implementation_status": "complete",
+  "test_status": "pass",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-09-12T07:11:06Z",
+  "evidence": "Required shell check and complete smoke suite passed; independent review findings resolved. Source and offline fixtures only; see docs/codex-taskandi-readiness.md for live acceptance prerequisites."
+ },
+ {
+  "id": "task_057",
+  "description": "Scoped Task&I Action Window client and durable outbox",
+  "implementation_status": "complete",
+  "test_status": "pass",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-09-12T07:11:06Z",
+  "evidence": "Required shell check and complete smoke suite passed; independent review findings resolved. Source and offline fixtures only; see docs/codex-taskandi-readiness.md for live acceptance prerequisites."
+ },
+ {
+  "id": "task_058",
+  "description": "Project-agnostic guided Codex onboarding, shared host Docker readiness and persistent runtime switching",
+  "implementation_status": "complete",
+  "test_status": "pass",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-09-12T11:52:05.578303+00:00",
+  "evidence": "Frozen full smoke suite passed (4782 passing assertion/summary lines), code-check clean across 25 shell files; independent reviews and real separate-repo 4-test development fixture. Rebuilt host acceptance remains open in MANUAL-TESTS Test 57 and docs/codex-readiness.md."
+ },
+ {
+  "id": "task_060",
+  "description": "Codex supervised handoff, completion evidence and owned recovery without Claude regressions",
+  "implementation_status": "complete",
+  "test_status": "pass",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-09-26",
+  "evidence": "Full smoke exit 0, shellcheck clean, independent spec/diff reviews; direct crash and detached-handoff fixtures. Live Test 61 deferred to rebuilt host."
+ },
+ {
+  "id": "task_061",
+  "description": "Task&I client: agent-exchange contract v2.1 (next_task, ask v2.1, list_asks owner-only, comment, record_time, complete, release)",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-10-30T21:03:05.259532+00:00"
+ },
+ {
+  "id": "task_062",
+  "description": "vibe link: registry, vibe:// URL handling, confirmation, rate limit and terminal launchers",
+  "implementation_status": "complete",
+  "test_status": "passing",
+  "assigned_to": "evaluator",
+  "mode": "rigorous",
+  "last_modified": "2026-10-31T00:04:53.796481+00:00"
+ },
+ {"id": "task_064", "description": "Task&I client: contract v2.2 over the built service's HTTP transport (descriptor binding, node:http Host rule, error classes, per-task cursors, limits)", "implementation_status": "complete", "test_status": "passing", "assigned_to": "evaluator", "mode": "rigorous", "last_modified": "2026-10-31T01:36:31.063632+00:00"},
+ {"id": "task_063", "description": "vibe link --install/--uninstall/--status: register vibe:// with macOS (local ad-hoc-signed applet) and Linux (.desktop)", "implementation_status": "complete", "test_status": "passing", "assigned_to": "evaluator", "mode": "rigorous", "last_modified": "2026-10-31T03:01:51.409808+00:00"},
+ {"id": "task_065", "description": "/vss and /vsss in a Task&I-bound project: taskandi-client decide (default-on-silence, budget, reclaim guard), Claude usage importer, harness prose blocks", "implementation_status": "complete", "test_status": "passing", "assigned_to": "evaluator", "mode": "rigorous", "last_modified": "2026-10-31T03:57:01.370716+00:00"},
+ {"id": "task_066", "description": "Task&I client: contract v2.3 alongside v2.2 (request_id with frozen bodies and safe resends, seq cursor, next-task --task, server limits, at on usage)", "implementation_status": "complete", "test_status": "passing", "assigned_to": "evaluator", "mode": "rigorous", "last_modified": "2026-10-31T06:18:13.450114+00:00"},
+ {"id": "task_067", "description": "vibe proposes tasks to the owner: create_task/update_task with repeat (Task&I v2.4/v2.5), created ledger, caps, self_created guard, harness step", "implementation_status": "complete", "test_status": "passing", "assigned_to": "evaluator", "mode": "rigorous", "last_modified": "2026-10-31T07:56:42.861177+00:00"},
+ {"id": "task_068", "description": "Harden ~/.vibe/codex-allow like the link registry via a shared consent-registry check", "implementation_status": "complete", "test_status": "passing", "assigned_to": "evaluator", "mode": "rigorous", "last_modified": "2026-10-31T09:50:30.978658+00:00"}
 ]

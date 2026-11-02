@@ -1,0 +1,15 @@
+{
+  "contract": "vibe-agent-exchange-v2.2",
+  "notes": "Ends the session's lease on the task and posts reason as a comment from the agent persona. Refused with lease_held while another session holds a live lease.",
+  "request": {
+    "action": "release",
+    "task": "leaf-b",
+    "reason": "Parked until the owner answers.",
+    "session": "session-a"
+  },
+  "response": {
+    "task": "leaf-b",
+    "released": true,
+    "comment_id": "1b2c3d4e-5f60-4718-9a0b-c1d2e3f40516"
+  }
+}

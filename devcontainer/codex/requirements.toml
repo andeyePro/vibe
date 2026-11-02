@@ -55,6 +55,26 @@ allowed_web_search_modes = ["disabled"]
 #   replace or disable the guard adapter.
 allow_managed_hooks_only = true
 
+# ConfigRequirementsToml::sqlite_home
+#   Option<AbsolutePathBuf> (codex-rs/config/src/config_requirements.rs:1034
+#   at rust-v0.159.0), applied as an EXACT requirement
+#   (`apply_exact!(sqlite_home)`, core/src/config/requirements.rs:35): it wins
+#   over a user/project config and over $CODEX_SQLITE_HOME (that override is
+#   the startup warning at requirements.rs:156).
+#   Why (2026-09-30): /home/node/.codex is the Mac's own ~/.codex, bind-mounted
+#   read-write for the login. Codex keeps seven WAL-mode SQLite databases in
+#   its sqlite home (state, logs, goals, memories v1+v2, queue, thread
+#   history), and
+#   SQLite locking does not hold between the Mac's Codex app and a container
+#   in Docker's VM, so the two corrupted each other's databases ("couldn't save
+#   diagnostic logs"; a rebuilt state DB on 2026-09-26). This moves every one
+#   of them to the vibe-codex-sqlite volume, which the launcher mounts only
+#   beside the Codex login and which lives in the VM, where locking works. The login, config and session
+#   transcripts stay in the shared ~/.codex. codex-compat-check fails the image
+#   build unless `codex doctor` reports every database under this path even
+#   against `-c sqlite_home` and $CODEX_SQLITE_HOME decoys.
+sqlite_home = "/home/node/.codex-sqlite"
+
 # ConfigRequirementsToml::feature_requirements
 #   Option<FeatureRequirementsToml>, `#[serde(rename = "features", alias =
 #   "feature_requirements")]` (config_requirements.rs:1010); the struct is a

@@ -1,0 +1,15 @@
+{
+  "contract": "vibe-agent-exchange-v2.2",
+  "notes": "Only for a task assigned to the agent. Refused with HTTP 409 {\"error\":\"open_children\",\"children\":[{\"task\",\"title\"}]} while the task has open children or unanswered questions, with not_assigned for a task not assigned to the persona and lease_held while another session holds it. Otherwise posts the summary, ends the lease and lands provisional: the owner sees \"Done by <agent>, confirm?\" and confirms or keeps it open. Repeating it returns the same completion.",
+  "request": {
+    "action": "complete",
+    "task": "leaf-b",
+    "summary": "Exporter written; tests green.",
+    "session": "session-a"
+  },
+  "response": {
+    "task": "leaf-b",
+    "state": "provisional",
+    "completion_id": "4e5f6071-8293-4a41-8c3d-e4f506172839"
+  }
+}

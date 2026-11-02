@@ -1,0 +1,24 @@
+{
+  "contract": "vibe-agent-exchange-v2.2",
+  "transport": "POST /api/browser-agent with Authorization: Bearer <token from the Connect Codex descriptor>; every request also carries \"connection\": <descriptor.connection>. Errors are HTTP 409 {\"error\": code}.",
+  "request": {
+    "action": "capabilities"
+  },
+  "response": {
+    "protocol": "taskandeye-browser-agent-v1",
+    "contract": "vibe-agent-exchange-v2.2",
+    "grade": "comment",
+    "calls": [
+      "capabilities",
+      "ask",
+      "list_asks",
+      "ask_status",
+      "next_task",
+      "release",
+      "comment",
+      "record_usage",
+      "record_time",
+      "complete"
+    ]
+  }
+}

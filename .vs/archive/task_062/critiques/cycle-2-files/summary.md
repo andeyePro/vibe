@@ -1,0 +1,3 @@
+total: vibe-link checks all pass (0 failures; new AC14-AC21 in smoke/checks_49_vibe_link_hardening.py, 8 new tests, 3 existing checks adjusted in checks_48); exit codes: vibe-link 0, code-check 0, smoke-test.py 0
+Regressions: none. Adjusted only: AC9 future-mtime (now limited, exit 3), expected-argv helper for AC15 wrapper, AC10 two log/argv assertions that the constant wrapper's own "$(" and quotes would trip.
+Caveats: ownership (AC19) is tested via a PATH `stat` shim printing another uid for %u (works because the launcher uses stat); the 4-word quoting of the AppleScript command line is matched by regex, the wrapper text and quoted path/vibe/task are asserted verbatim.

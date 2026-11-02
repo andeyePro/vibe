@@ -1,0 +1,39 @@
+{
+  "contract": "vibe-agent-exchange-v2.5",
+  "notes": "Refusals apply nothing. A bad repeat is invalid_request with \"repeat\" naming the field at fault (every, unit, weekdays, monthDay, nthWeekday, time, endTime, timeZone, starts, ends, or the name of an unknown field; \"ends\" also when the rule has no dates left). A parent outside the token's subtree, or one that does not exist, is wrong_scope.",
+  "invalid_repeat": {
+    "request": {
+      "action": "create_task",
+      "title": "Check the meeting agenda",
+      "estimate_minutes": 5,
+      "assign": "owner",
+      "repeat": {
+        "every": 2,
+        "unit": "week",
+        "weekdays": [
+          "fri"
+        ],
+        "time": "9am",
+        "timeZone": "Europe/London"
+      }
+    },
+    "status": 409,
+    "response": {
+      "error": "invalid_request",
+      "repeat": "time"
+    }
+  },
+  "outside_subtree": {
+    "request": {
+      "action": "create_task",
+      "parent": "private",
+      "title": "Somewhere the agent cannot see",
+      "estimate_minutes": 5,
+      "assign": "owner"
+    },
+    "status": 409,
+    "response": {
+      "error": "wrong_scope"
+    }
+  }
+}

@@ -43,6 +43,37 @@ from smoke.checks_31_mac_build_recovery import *
 from smoke.checks_30_supervisor_reconciliation import *
 from smoke.checks_32_managed_vendor_trust import *
 from smoke.checks_33_host_onboarding import *
+from smoke.checks_34_docker_hygiene import *
+from smoke.checks_35_vsss_stop_guard import *
+from smoke.checks_36_native_usage_wait import *
+from smoke.checks_37_capabilities import *
+from smoke.checks_38_vibe_shot import *
+from smoke.checks_39_auto_update import *
+from smoke.checks_40_delegate_connection import *
+from smoke.checks_41_codex_continuation import *
+from smoke.checks_42_session_safety import *
+from smoke.checks_43_op_diagnostics import *
+from smoke.checks_44_codex_remote import *
+from smoke.checks_45_model_policy import *
+from smoke.checks_46_link_opener import *
+from smoke.checks_47_taskandi_contract_v2 import *
+from smoke.checks_48_vibe_link import *
+from smoke.checks_49_vibe_link_hardening import *
+from smoke.checks_50_taskandi_http import *
+from smoke.checks_52_taskandi_http_more import *
+from smoke.checks_55_taskandi_http_review import *
+from smoke.checks_56_vibe_link_install import *
+from smoke.checks_53_taskandi_decide import *
+from smoke.checks_54_harness_prose import *
+from smoke.checks_57_taskandi_decide_review import *
+from smoke.checks_58_taskandi_v23 import *
+from smoke.checks_59_taskandi_v23_more import *
+from smoke.checks_60_taskandi_v23_review import *
+from smoke.checks_61_taskandi_propose import *
+from smoke.checks_62_taskandi_propose_more import *
+from smoke.checks_63_taskandi_propose_cycle2 import *
+from smoke.checks_64_readme_taskandi import *
+from smoke.checks_65_codex_allow_hardening import *
 
 def main() -> int:
     test_docker_preflight_is_shared_and_mac_start_preserves_target()
@@ -640,6 +671,7 @@ def main() -> int:
     test_task028_ac9_still_locks_down_at_the_end()
     test_task028_ac10_changelog_entry_present()
     test_task029_default_patience()
+    test_host_internal_resolves_ipv4()
     test_task030_mount_drift()
     test_task031_terminal_restore_and_exit_note()
     test_task014_ac1_sha1_helper()
@@ -874,6 +906,7 @@ def main() -> int:
     test_agent_claude_argv_default_and_flag()
     test_launch_codex_source_shape()
     test_launch_claude_unchanged_vs_head()
+    test_terminal_color_env_reaches_container()
     test_codex_entry_offline_refusals_and_success()
     test_codex_entry_no_dangerously_no_dash_c()
     test_dockerfile_codex_entry_copy_and_chmod()
@@ -996,6 +1029,340 @@ def main() -> int:
         test_codex_supervisor_review18_interrupted_confirms_boundary,   # item 18
     ])
     test_codex_panel_review19_partial_startup_failure_cleans_up()      # item 19
+
+    # task_059 — Docker hygiene: post-rebuild pruning, stale-container
+    # reaping, `vibe clean`, and the invariant that none of it can remove
+    # a volume.
+    test_hygiene_size_parser_decimal_and_binary()
+    test_hygiene_reclaimable_excludes_volumes()
+    test_hygiene_prune_after_build_is_scoped()
+    test_hygiene_prune_silent_when_nothing_reclaimed()
+    test_hygiene_helpers_survive_a_broken_docker()
+    test_hygiene_stale_container_query_excludes_running()
+    test_hygiene_stale_container_removal_never_forces_or_takes_volumes()
+    test_hygiene_stale_removal_wired_into_the_recreate_path()
+    test_hygiene_prune_wired_after_each_build()
+    test_clean_scope_default_and_all()
+    test_clean_dry_run_removes_nothing()
+    test_clean_without_a_tty_refuses_rather_than_deleting()
+    test_clean_yes_removes_containers_and_prunes_scoped()
+    test_clean_all_widens_both_sweeps()
+    test_clean_never_removes_a_volume_in_any_mode()
+    test_clean_rejects_unknown_arguments()
+    test_clean_usage_promises_volume_safety()
+    test_clean_is_dispatched_before_flag_parsing()
+    test_hygiene_check_warns_and_throttles()
+    test_hygiene_check_can_be_disabled()
+    test_hygiene_check_wired_into_preflight()
+    test_image_label_agrees_everywhere()
+    test_image_label_is_the_last_dockerfile_instruction()
+    test_launcher_has_no_volume_removal_anywhere()
+    test_image_carries_vibes_own_version()
+    # 2026-09-29 — automatic clean, launch notices, launch log.
+    test_clean_empty_label_does_not_shift_fields()
+    test_auto_clean_skips_young_containers_and_volumes()
+    test_auto_clean_all_is_opt_in_and_keeps_its_guards()
+    test_clean_superseded_image_reads_docker_short_ids()
+    test_hygiene_cleans_instead_of_only_warning()
+    test_hygiene_low_disk_bypasses_daily_throttle_but_not_hourly()
+    test_notices_are_replayed_at_hand_over()
+    test_launch_log_captures_and_strips()
+    test_launch_log_refuses_symlinks()
+    test_launch_log_survives_ctrl_c()
+    test_launch_log_can_be_disabled()
+    test_launch_log_terminal_detection_is_main_shell_only()
+    test_colour_env_only_while_the_log_holds_a_terminal()
+    test_launch_log_wiring()
+    test_stop_guard_blocks_a_live_owned_run()
+    test_stop_guard_allow_paths()
+    test_stop_guard_caps_refusals_without_a_commit()
+    test_stop_guard_wiring()
+    test_liveness_ties_each_hook_program_to_its_event()
+    test_ask_mode_parks_no_live_run_on_a_question()
+    test_every_smoke_test_is_registered_in_the_runner()
+    test_vibe_expands_possibly_empty_arrays_safely()
+    test_vs_tester_must_show_a_control_can_fail()
+    test_vs_model_economy_carries_the_cache_rules()
+    test_capabilities_finds_the_mac_account_from_the_ssh_config()
+    test_capabilities_missing_mac_key_is_not_available()
+    test_capabilities_without_a_mac_account_says_how_to_get_one()
+    test_capabilities_parsing_edges()
+    test_capabilities_fragment_has_mac_build_discipline()
+    test_capabilities_bridge_brief_and_setup_modes()
+    test_capabilities_reach_every_agent()
+    test_capability_nudge_sends_a_cant_back_once()
+    test_capability_nudge_is_wired_into_both_runtimes()
+    test_vibe_shot_url_round_trip()
+    test_vibe_shot_uploads_a_folder_or_file()
+    test_vibe_shot_refusals_and_check()
+    test_vibe_shot_playwright_script_parses()
+    test_vibe_shot_native_simulator_and_screen()
+    test_vibe_shot_native_failure_paths()
+    test_auto_update_helpers()
+    test_auto_update_rebuilds_when_either_cli_moved()
+    test_auto_update_falls_back_when_codex_fails_the_gate()
+    test_codex_databases_live_on_a_container_only_volume()
+    test_codex_compat_gate_is_wired_and_passes_the_installed_codex()
+    test_delegate_refreshes_and_retries_a_connection_failure()
+    run_supervisor_tests([
+        test_codex_evidence_required_for_every_exit,
+        test_codex_completion_identity_and_condition_validation,
+        test_codex_transients_reset_but_telemetry_accumulates,
+        test_codex_stop_guard_is_separate_and_has_no_fourth_escape,
+        test_codex_outer_runner_and_foreign_lock,
+        test_codex_detached_handoff_context_conflict_and_stop,
+        test_codex_runner_bounds_failures_without_completed_progress,
+        test_codex_original_budget_policy_and_retry_deadline,
+        test_codex_runner_does_not_mistake_old_completion_for_new_success,
+        test_codex_direct_watch_cannot_race_prompt_publication,
+        test_codex_new_run_never_discards_unresolved_effects,
+        test_codex_outer_runner_recovers_owned_supervisor_crash,
+        test_codex_known_completed_turn_recovery_never_replays,
+    ])
+    test_vibe_shot_is_named_wherever_seeing_comes_up()
+    test_statusline_records_the_window_reset()
+    test_native_wait_detector()
+    test_watchdog_stands_aside_during_a_native_wait()
+    test_relaunch_gate_ignores_the_native_wait()
+    test_main_body_is_one_brace_group()
+    test_container_run_state()
+    test_exit_note_names_a_stopped_container()
+    test_auto_resume_stops_on_dead_container()
+    test_forwarder_logs_unreachable_upstream()
+    test_register_names_the_failing_side()
+    test_codex_remote_frames_round_trip()
+    test_codex_remote_status_clients_revoke()
+    test_codex_remote_pair_prints_code_only_to_stdout()
+    test_codex_entry_remote_control_runs_owned_server()
+    test_codex_entry_remote_control_falls_back_and_refuses()
+    test_codex_entry_pairing_offer_on_a_terminal()
+    test_codex_remote_wiring()
+    test_model_policy_latest_in_class_and_ceiling()
+    test_model_policy_review_slot_and_unknown_lead()
+    test_model_policy_lead_detection_from_transcripts()
+    test_model_policy_older_model_pins()
+    test_model_policy_claude_agent_hook()
+    test_model_policy_supervisor_pins_run_model()
+    test_link_opener_container_side()
+    test_link_opener_host_watcher()
+    test_link_opener_wiring()
+    test_taskandi_v2_ac1_revision_handling()
+    test_taskandi_v2_ac1_v1_gate_refusals()
+    test_taskandi_v2_ac2_ask_validation()
+    test_taskandi_v2_ac3_task_targeting()
+    test_taskandi_v2_ac4_comment_time_usage()
+    test_taskandi_v2_ac5_flush_v21_fixture()
+    test_taskandi_v2_ac5_flush_schema_drift_and_ask_results()
+    test_taskandi_v2_ac6_next_task()
+    test_taskandi_v2_ac7_poll_v21()
+    test_taskandi_v2_ac8_complete_release()
+    test_taskandi_v2_ac8b_direct_call_predispatch()
+    test_taskandi_v2_ac9_outbox_invariants()
+    test_taskandi_v2_ac10_v1_regression_and_diff()
+    test_taskandi_v2_ac10_unbound_parity()
+    test_taskandi_v2_ac11_usage_importer()
+    test_taskandi_v2_ac12_docs_usage_changelog()
+    test_taskandi_v2_ac13_no_leakage()
+    test_vl_ac1_allow_list_deny()
+    test_vl_ac2_allow_refusals()
+    test_vl_ac3_registry_fail_closed()
+    test_vl_ac3_line_grammar()
+    test_vl_ac4_url_refusals()
+    test_vl_ac4_accepts()
+    test_vl_ac5_darwin_terminal_dry_run()
+    test_vl_ac6_darwin_terminals()
+    test_vl_ac6_linux()
+    test_vl_ac7_terminal_preference()
+    test_vl_ac8_dialog_and_assume()
+    test_vl_ac8_real_dialog_replies()
+    test_vl_unknown_project_dialog()
+    test_vl_ac9_rate_limit()
+    test_vl_ac10_launch_path_containment()
+    test_vl_ac11_help_and_docs()
+    test_vl_ac12_no_collateral_change()
+    test_vl_ac14_registered_folder()
+    test_vl_ac15_wrapper_argv()
+    test_vl_ac16_dialog_lock()
+    test_vl_ac17_rate_limit_fails_closed()
+    test_vl_ac18_link_last_symlinks()
+    test_vl_ac19_registry_ownership_and_size()
+    test_vl_ac20_assume_only_from_environment()
+    test_vl_ac21_uuid_task_ids()
+    test_vl_ac22_uuid_task_end_to_end()
+    test_vl_ac23_deny_always_withdraws_consent()
+    test_vl_ac24_stale_lock_race()
+    test_vl_ac25_writers_use_full_usability_check()
+    test_vl_ac26_owner_unreadable_registry()
+    test_vl_ac27_future_dated_recoverable()
+    test_vl_ac28_linear_registry_load()
+    test_vl_ac29_unknown_dialog_rate_limit()
+    test_launcher_remote_control_default_on()
+    test_statusline_records_the_weekly_window()
+    test_weekly_limit_vetoes_the_watchdog()
+    test_relaunch_countdown_waits_out_a_used_up_week()
+    test_live_session_count()
+    test_second_session_gets_a_heads_up()
+    test_recreate_spares_a_live_session()
+    run_supervisor_tests([
+        test_codex_supervisor_challenges_a_waiting_exit_once,
+        test_codex_supervisor_challenge_rearms_after_a_normal_turn,
+        test_codex_supervisor_turn_failures_count_in_a_row,
+        test_codex_supervisor_pending_challenge_survives_a_failed_turn,
+        test_codex_supervisor_default_ceilings_allow_a_week_of_windows,
+    ])
+    run_supervisor_tests([
+        test_codex_supervisor_context_exceeded_compacts_then_continues,
+        test_codex_supervisor_compaction_ceiling_is_fatal,
+        test_codex_supervisor_failed_compaction_is_fatal,
+        test_codex_supervisor_unfinished_compaction_needs_reconciliation,
+        test_codex_supervisor_pending_challenge_survives_a_compaction,
+        test_codex_supervisor_legacy_state_adopts_zero_compactions,
+        test_codex_supervisor_compactions_count_in_a_row,
+        test_codex_supervisor_compaction_refused_by_server,
+        test_codex_supervisor_compaction_binds_only_this_threads_turn,
+    ])
+
+    test_taskandi_http_ac1_descriptor()
+    test_taskandi_http_ac2_wire_per_fixture()
+    test_taskandi_http_ac3_host_and_headers()
+    test_taskandi_http_ac3_status_refusals_and_source()
+    test_taskandi_http_ac4_flush_job_states()
+    test_taskandi_http_ac4_direct_and_extras()
+    test_taskandi_http_ac5_capabilities_gate()
+    test_taskandi_http_ac5b_transport_limits()
+    test_taskandi_http_ac6_task_ids()
+    test_taskandi_http_ac7_binding_digest()
+    test_taskandi_http_ac8_cursors()
+    test_taskandi_http_ac9_next_task_shape()
+    test_taskandi_http_ac17_unusable_task_id()
+    test_taskandi_http_ac10_sessions_and_agents()
+    test_taskandi_http_ac11_record_time_and_usage()
+    test_taskandi_http_ac12_root_null_targets()
+    test_taskandi_http_ac16_limits()
+    test_taskandi_http_ac18_list_asks_shape()
+    test_taskandi_http_ac13_no_leakage()
+    test_taskandi_http_ac14_regression_and_matrix()
+    test_taskandi_http_ac15_docs_and_gates()
+    test_r6_ac19_launcher_and_supervisor()
+    test_r6_ac20_409_detail_fields()
+    test_r6_ac21_tls_counts_as_not_sent()
+    test_r6_ac22_unusable_id_releases_lease()
+    test_r6_ac23_status_invalid_descriptor()
+    test_r6_ac24_usage_one_pass()
+    test_r6_ac25_origin_in_binding()
+    test_r6_ac26_terminal_safe_stdout()
+    test_r6_ac27_pending_direct()
+    test_r6_ac28_tampered_jobs()
+    test_r6_ac29_seam_limits()
+    test_r6_ac30_observable_cleanups()
+    test_vli_ac1_darwin_dry_run()
+    test_vli_ac2_darwin_real_run()
+    test_vli_ac3_tool_failures()
+    test_vli_ac4_shim_precedence()
+    test_vli_ac5_linux()
+    test_vli_ac6_launcher_path()
+    test_vli_ac7_uninstall()
+    test_vli_ac8_status()
+    test_vli_ac9_template()
+    test_vli_ac10_usage_and_help()
+    test_vli_ac11_docs()
+    test_vli_ac12_reinstall_safe()
+    test_vli_ac13_14_plist_quoting()
+    test_vli_ac15_racing_directory()
+    test_vli_ac16_macos_default_handler()
+    test_vli_ac17_linux_failure_cleanup()
+    test_vli_ac18_docs_wording()
+    test_vli_ac19_20_shared_helpers()
+    test_td_ac1_conditions_per_ask()
+    test_td_ac1_task_level_conditions()
+    test_td_ac2_answered_and_unjudged()
+    test_td_ac3_resolve()
+    test_td_ac4_budget()
+    test_td_ac5_failure_and_idle()
+    test_td_ac6_reclaim_guard()
+    test_td_a4_release_flags_and_windows_used()
+    test_td_ac7_storage()
+    test_td_ac7b_claude_usage()
+    test_td_ac7c_pruning()
+    test_td_ac8_body_cap()
+    test_td_a6_check_argv()
+    test_hp_ac9_structure()
+    test_hp_ac10_commands()
+    test_hp_ac11_docs_and_gates()
+    test_rv_ac32_tombstones()
+    test_rv_ac33_usage_offset()
+    test_rv_ac34_unbound_never_touched()
+    test_rv_ac35_renewal_max()
+    test_rv_ac36_reclaim_set()
+    test_rv_ac37_as_parked()
+    test_rv_ac38_open_ask_predicate()
+    test_rv_ac39_body_file()
+    test_rv_ac40_fixture_pins()
+    test_v23_ac1_negotiation()
+    test_v23_ac2_binding_digest()
+    test_v23_ac3_wire_per_fixture()
+    test_v23_ac4_frozen_body_and_resend()
+    test_v23_ac5_crash_downgrade_upgrade()
+    test_v23_ac6_complete_release()
+    test_v23_family_treated_alike()
+    test_v23_ac7_error_table()
+    test_v23_ac8_seq_cursor()
+    test_v23_ac9_offer_schema()
+    test_v23_ac10_next_task_named()
+    test_v23_ac11_at()
+    test_v23_ac12_decide()
+    test_v23_ac13_server_limits()
+    test_v23_ac14_harness()
+    test_v23_ac16_fixtures_docs_limits()
+    test_v23_ac17_v22_negotiation()
+    test_v23_ac18_new_connection()
+    test_v23_ac19_definite_answers()
+    test_v23_ac20_not_sent()
+    test_v23_ac21_limits_after_send()
+    test_v23_ac22_at_not_identity()
+    test_v23_ac23_spent_contract()
+    test_v23_ac24_whole_workspace()
+    test_v23_ac25_action_bound()
+    test_v23_ac26_frozen_integrity()
+    test_v23_ac28_prose()
+    test_v23_ac29_non_proof_answers()
+    test_prop_ac1_wire()
+    test_prop_ac2_payload()
+    test_prop_ac3_repeat()
+    test_prop_ac4_gating()
+    test_prop_ac5_resend_reconcile()
+    test_prop_ac6_results()
+    test_prop_ac7_ledger()
+    test_prop_ac8_duplicates_caps()
+    test_prop_ac9_self_dispatch()
+    test_prop_ac10_update_targets()
+    test_prop_ac12_harness()
+    test_prop_ac14_docs_fixtures()
+    test_c2_ac15_updates_ledger()
+    test_c2_ac16_claimed_limits()
+    test_c2_ac17_order()
+    test_c2_ac18_ids()
+    test_c2_ac19_stampless()
+    test_c2_ac20_retry()
+    test_c2_ac21_reconciled()
+    test_c2_ac22_session_agent()
+    test_c2_ac23_limits_when_needed()
+    test_c2_ac24_hostile()
+    test_c2_ac25_secrets()
+    test_c2_ac26_terminal_safe()
+    test_c2_ac27_prose()
+    test_readme_taskandi_section()
+    test_cx_ac1_foreign_owner()
+    test_cx_ac2_unreadable_dir_cap()
+    test_cx_helper_reason_codes()
+    test_cx_ac3_writers_refuse()
+    test_cx_ac4_umask_dir()
+    test_cx_ac5_existing_messages_literal()
+    test_cx_ac7_shared_helper_static()
+    test_cx_ac9_allow_refuses_writable_dir_without_file()
+    test_cx_ac10_not_regular()
+    test_cx_ac11_unknown_code_fails_closed()
+    test_cx_ac11_source_level()
 
     print()
     if FAILURES:
