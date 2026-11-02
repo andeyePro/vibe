@@ -5593,6 +5593,7 @@ _vibe_mib_human() {
 # Whatever still needs the user afterwards becomes a notice (see above).
 #   VIBE_HYGIENE=0                  - disable all of it
 #   VIBE_AUTO_CLEAN=0               - warn only, as before (no automatic clean)
+#   VIBE_AUTO_CLEAN=all             - opt-in: the automatic clean uses --all's scope
 #   VIBE_DISK_WARN_GIB              - host free-space threshold (default 20)
 #   VIBE_DOCKER_RECLAIM_WARN_GIB    - reclaimable threshold (default 20)
 # shellcheck disable=SC2120  # the optional marker arg is passed only by tests
@@ -5639,13 +5640,21 @@ vibe_hygiene_check() {
       "    if it fills mid-write the image store can corrupt." \
       "    Cap it for good: Docker Desktop > Settings > Resources > Advanced > Disk usage limit."
     if [ "$cleaned" = 1 ] || { [ "$auto" != 0 ] && _vibe_marker_fresh "$clean_marker" 1; }; then
-      _vibe_notice "    vibe already cleaned up what it safely could. For more: vibe clean --all (volumes are never touched)."
+      if [ "$cleaned" = 1 ] && [ "$auto" = "all" ]; then
+        _vibe_notice "    vibe already removed all unused images and build cache (VIBE_AUTO_CLEAN=all); free space outside Docker."
+      else
+        _vibe_notice "    vibe already cleaned up what it safely could. For more: vibe clean --all (volumes are never touched)."
+      fi
     else
       _vibe_notice "    Reclaim: vibe clean"
     fi
   fi
   if [ -n "$reclaimable" ] && [ "$reclaimable" -gt $((reclaim_warn * 1024)) ]; then
-    if [ "$cleaned" = 1 ]; then
+    if [ "$cleaned" = 1 ] && [ "$auto" = "all" ]; then
+      _vibe_notice "  ⚠ Docker still holds $(_vibe_mib_human "$reclaimable") reclaimable after the automatic clean:" \
+        "    stopped containers vibe leaves for you, and unused tagged images." \
+        "    See what else can go: vibe clean --all --dry-run"
+    elif [ "$cleaned" = 1 ]; then
       _vibe_notice "  ⚠ Docker still holds $(_vibe_mib_human "$reclaimable") reclaimable that the safe automatic clean leaves alone." \
         "    Widen the sweep (volumes are never touched): vibe clean --all"
     else
@@ -5665,15 +5674,23 @@ vibe_hygiene_check() {
 # (image drift on a stopped container means a recreate), so removing them
 # costs the user nothing a launch would not. A stopped container still on the
 # current image holds no image space and is left for its project.
+# VIBE_AUTO_CLEAN=all (opt-in, off by default) widens the PRUNES to `vibe clean
+# --all`'s: all dangling images and all build cache, Docker work outside vibe
+# included. The containers it removes stay the narrow set above: a stopped
+# container on the current image may be about to be started by this or a
+# parallel launch, and an unlabelled one may be another tool's devcontainer.
 # Leaves the post-clean reclaimable figure in VIBE_AUTO_CLEAN_AFTER so the
 # caller need not walk the image store again. Prints one line saying what it
 # did (nothing if it did nothing).
 VIBE_AUTO_CLEAN_AFTER=""
 vibe_auto_clean() {
-  local rows removed before="${1:-}" after freed
+  local rows removed before="${1:-}" after freed reclaim="" what="auto-clean"
+  if [ "${VIBE_AUTO_CLEAN:-1}" = "all" ]; then
+    reclaim="all"; what="auto-clean (all images and build cache, VIBE_AUTO_CLEAN=all)"
+  fi
   [ -n "$before" ] || before="$(_vibe_docker_reclaimable_mib)"
   rows="$(_clean_stopped_containers auto)"
-  removed="$(_vibe_reclaim "$rows" "")"
+  removed="$(_vibe_reclaim "$rows" "$reclaim")"
   after="$(_vibe_docker_reclaimable_mib)"
   VIBE_AUTO_CLEAN_AFTER="$after"
   freed=0
@@ -5681,8 +5698,8 @@ vibe_auto_clean() {
     freed=$((before - after))
   fi
   [ "${removed:-0}" -gt 0 ] || [ "$freed" -gt 0 ] || return 0
-  printf '  ✓ auto-clean: removed %s stopped vibe container(s), freed about %s inside Docker (volumes untouched; VIBE_AUTO_CLEAN=0 turns this off).\n' \
-    "${removed:-0}" "$(_vibe_mib_human "$freed")" >&2
+  printf '  ✓ %s: removed %s stopped vibe container(s), freed about %s inside Docker (volumes untouched; VIBE_AUTO_CLEAN=0 turns this off).\n' \
+    "$what" "${removed:-0}" "$(_vibe_mib_human "$freed")" >&2
 }
 
 # _vibe_reclaim <rows> <all> - remove the containers in <rows> (as printed by
@@ -5821,6 +5838,18 @@ _clean_docker_ps_format() {
   printf '%s' '{{.ID}}|{{.Image}}|{{.RunningFor}}|{{.Label "com.andeye.vibe.image"}}|{{.Label "devcontainer.local_folder"}}'
 }
 
+# _clean_image_superseded <docker .Image> - rc 0 when the container's image is
+# shown as a bare id, i.e. its tag has moved on. Docker prints that id
+# truncated ("4c9b83549c2b") unless --no-trunc is given, so a "sha256:" prefix
+# alone misses every real case (Martin's `vibe clean --dry-run`, 2026-11-02).
+_clean_image_superseded() {
+  case "${1:-}" in
+    sha256:*) return 0 ;;
+    *[!0-9a-f]*|'') return 1 ;;
+  esac
+  [ "${#1}" -ge 12 ]
+}
+
 # _clean_is_young <docker RunningFor> - rc 0 when the container was created
 # under about an hour ago ("45 seconds ago", "12 minutes ago"), or when the
 # age cannot be read - the unattended clean skips anything it cannot age.
@@ -5850,7 +5879,7 @@ _clean_stopped_containers() {
   while IFS='|' read -r id img age lbl folder; do
     [ -n "$id" ] || continue
     if [ "$all" = "auto" ]; then
-      [ "${img#sha256:}" != "$img" ] || continue
+      _clean_image_superseded "$img" || continue
       _clean_is_young "$age" && continue
     fi
     if [ -n "$lbl" ]; then

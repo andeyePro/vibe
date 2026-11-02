@@ -341,7 +341,7 @@ Tuning, in `~/.vibe/config`:
 | Variable | Default | Effect |
 |---|---|---|
 | `VIBE_HYGIENE` | `1` | `=0` turns off the launch-time check entirely: no automatic clean and no warnings |
-| `VIBE_AUTO_CLEAN` | `1` | `=0` turns the automatic clean off and goes back to warning only |
+| `VIBE_AUTO_CLEAN` | `1` | `=0` turns the automatic clean off and goes back to warning only; `=all` (opt-in) also removes all dangling images and all build cache, including Docker work outside vibe, as `vibe clean --all` does. It still removes only the stopped containers the default would: vibe's own, on a replaced image, and over an hour old. Volumes and running containers are never touched. Suits a Mac that uses Docker mainly for vibe and runs short of disk |
 | `VIBE_LAUNCH_LOG` | `1` | `=0` stops writing `.vibe/last-launch.log` |
 | `VIBE_DISK_WARN_GIB` | `20` | clean (then warn) below this much free host disk |
 | `VIBE_DOCKER_RECLAIM_WARN_GIB` | `20` | clean (then warn) above this much reclaimable Docker space |

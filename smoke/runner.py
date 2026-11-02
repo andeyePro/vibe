@@ -1061,6 +1061,8 @@ def main() -> int:
     # 2026-09-29 — automatic clean, launch notices, launch log.
     test_clean_empty_label_does_not_shift_fields()
     test_auto_clean_skips_young_containers_and_volumes()
+    test_auto_clean_all_is_opt_in_and_keeps_its_guards()
+    test_clean_superseded_image_reads_docker_short_ids()
     test_hygiene_cleans_instead_of_only_warning()
     test_hygiene_low_disk_bypasses_daily_throttle_but_not_hourly()
     test_notices_are_replayed_at_hand_over()

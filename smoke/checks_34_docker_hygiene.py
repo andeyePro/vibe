@@ -520,6 +520,64 @@ def test_auto_clean_skips_young_containers_and_volumes() -> None:
         check("[clean] the interactive clean still takes a young container", "rm c5" in calls, calls)
 
 
+def test_auto_clean_all_is_opt_in_and_keeps_its_guards() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        log = str(Path(tmp) / "docker.log")
+        r = _hyg('vibe_auto_clean', env_extra={"VIBE_AUTO_CLEAN": "all"}, log=log)
+        calls = Path(log).read_text()
+        check("[auto-clean all] removes the same containers as the default",
+              "rm c2" in calls and "rm c6" in calls
+              and all(f"rm {c}" not in calls for c in ("c1", "c3", "c4", "c5", "c7")), calls)
+        check("[auto-clean all] prunes all dangling images and all build cache",
+              "image prune -f\n" in calls and "builder prune -f\n" in calls, calls)
+        check("[auto-clean all] lists stopped containers only, never running ones",
+              "--filter status=exited" in calls and "status=running" not in calls, calls)
+        check("[auto-clean all] no volume, no -v",
+              "volume" not in calls and " -v" not in calls, calls)
+        check("[auto-clean all] says what it widened",
+              "all images and build cache, VIBE_AUTO_CLEAN=all" in r.stderr, r.stderr)
+        check("[auto-clean all] never fails", r.returncode == 0, r.stderr)
+
+    for value in ("1", "yes", "ALL"):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = str(Path(tmp) / "docker.log")
+            _hyg('vibe_auto_clean', env_extra={"VIBE_AUTO_CLEAN": value}, log=log)
+            calls = Path(log).read_text()
+            check(f"[auto-clean all] VIBE_AUTO_CLEAN={value} keeps the safe prunes",
+                  "builder prune -f --filter until=168h" in calls
+                  and "builder prune -f\n" not in calls, calls)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        marker = str(Path(tmp) / "m")
+        log = str(Path(tmp) / "docker.log")
+        env = {"VIBE_DISK_WARN_GIB": "999999", "VIBE_DOCKER_RECLAIM_WARN_GIB": "0",
+               "VIBE_AUTO_CLEAN": "all"}
+        r = _hyg(f'vibe_hygiene_check {shlex.quote(marker)}', env_extra=env, log=log)
+        check("[hygiene all] low disk runs the wide prune",
+              "builder prune -f\n" in Path(log).read_text(), Path(log).read_text())
+        check("[hygiene all] low-disk notice says the wide clean ran",
+              "removed all unused images and build cache" in r.stderr, r.stderr)
+        check("[hygiene all] leftover notice names what is left and a next step",
+              "unused tagged images" in r.stderr and "vibe clean --all --dry-run" in r.stderr, r.stderr)
+        Path(log).write_text("")
+        r2 = _hyg(f'vibe_hygiene_check {shlex.quote(marker)}', env_extra=env, log=log)
+        check("[hygiene all] a throttled launch does not claim a clean it did not run",
+              "removed all unused images" not in r2.stderr, r2.stderr)
+
+    readme = (REPO / "README.md").read_text()
+    check("[auto-clean all] README documents the opt-in",
+          "| `VIBE_AUTO_CLEAN` |" in readme and "`=all` (opt-in)" in readme, "")
+
+
+def test_clean_superseded_image_reads_docker_short_ids() -> None:
+    cases = {"4c9b83549c2b": 0, "sha256:deadbeef": 0, "e7499770ba0f1234": 0,
+             "vibe-dev:latest": 1, "postgres:16": 1, "abc": 1, "": 1, "4C9B83549C2B": 1}
+    for img, want in cases.items():
+        r = _hyg(f'_clean_image_superseded {shlex.quote(img)}')
+        check(f"[clean] superseded({img!r}) -> {'yes' if want == 0 else 'no'}",
+              r.returncode == want, r.stderr)
+
+
 def test_hygiene_cleans_instead_of_only_warning() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         marker = str(Path(tmp) / "m")
